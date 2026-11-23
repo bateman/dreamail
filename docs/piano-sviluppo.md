@@ -22,10 +22,10 @@ Limiti noti: la CI non copre Keychain, firma, notarizzazione, Gmail reale né i 
 
 ## Passo 0 — base (orchestratore)
 
-☐ GitHub Actions attivo sul fork.
-☐ CI verde su `main` così com'è.
+☑ GitHub Actions attivo sul fork.
+☑ CI verde su `main` a `18294fa` (run n. 1, secondo tentativo). Al primo tentativo è fallito `ComposeBodyCaretScrollTests.testScrolledEditorFollowsTheCaretImmediately`, passato al rilancio senza modifiche: test instabile, affidato allo step 1F.
 ☐ Merge del registro v0.7 e di questo piano.
-☐ Decisione GO/NO-GO su MishMail come base (del proprietario).
+☑ Decisione GO su MishMail come base (proprietario, 23 novembre 2026).
 
 ## Ondata 1 — in parallelo, file disgiunti
 
@@ -36,6 +36,7 @@ Limiti noti: la CI non copre Keychain, firma, notarizzazione, Gmail reale né i 
 | 1C | Privacy dei log diagnostici | F-03 | `Support/DiagnosticLog.swift` |
 | 1D | Limiti sul listener OAuth | F-09 | `Auth/OAuth.swift` |
 | 1E | CI: permessi minimi, action fissate a SHA | F-10 | `.github/workflows/ci.yml` |
+| 1F | Rendere deterministico il test instabile dello scorrimento del cursore in composizione, senza saltarlo né disattivarlo | — | `Tests/MishMailTests/ComposeBodyCaretScrollTests.swift` |
 
 ## Ondata 2 — in parallelo, dopo il merge dell'ondata 1
 
@@ -68,4 +69,10 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 
 | Step | Branch | PR | Stato |
 |---|---|---|---|
-| 0 | `docs/registro-decisioni-v0.7` | — | In attesa di Actions |
+| 0 | `docs/registro-decisioni-v0.7` | — | Completato |
+| 1A | `security/fork-identity-updater-off` | — | Avviato |
+| 1B | `security/database-fail-closed` | — | Avviato |
+| 1C | `security/diagnostic-log-privacy` | — | Avviato |
+| 1D | `security/oauth-listener-limits` | — | Avviato |
+| 1E | `ci/least-privilege-pinning` | — | Avviato |
+| 1F | `tests/caret-scroll-deterministic` | — | Avviato |
