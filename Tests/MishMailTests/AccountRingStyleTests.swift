@@ -41,7 +41,7 @@ final class AccountRingStyleTests: XCTestCase {
     // MARK: - Ring color
 
     func testRingUsesTheChosenColor() {
-        for appearance in LabelPillStyle.Appearance.allCases {
+        for appearance in AccountRingStyle.Appearance.allCases {
             for surface in AccountRingStyle.Surface.allCases {
                 let style = AccountRingStyle.resolve(storedHex: "#3C78D8", accountId: "a@x.com",
                                                      appearance: appearance, surface: surface)
@@ -68,7 +68,7 @@ final class AccountRingStyleTests: XCTestCase {
     /// color itself stands out (1.5:1 against every surface color), or a
     /// neutral hairline that reaches 3:1 is drawn around it.
     func testRingIsVisibleEverywhere() {
-        for appearance in LabelPillStyle.Appearance.allCases {
+        for appearance in AccountRingStyle.Appearance.allCases {
             for surface in AccountRingStyle.Surface.allCases {
                 for hex in AccountLabelColorTests.sampleColors {
                     let style = AccountRingStyle.resolve(storedHex: hex, accountId: "a@x.com",
@@ -81,7 +81,7 @@ final class AccountRingStyleTests: XCTestCase {
                                                         "\(hex) \(appearance) \(surface) hairline")
                         } else {
                             XCTAssertGreaterThanOrEqual(style.color.contrast(with: behind),
-                                                        LabelPillStyle.minimumEdgeContrast,
+                                                        AccountRingStyle.minimumRingContrast,
                                                         "\(hex) \(appearance) \(surface) edge")
                         }
                     }
@@ -91,7 +91,7 @@ final class AccountRingStyleTests: XCTestCase {
     }
 
     func testHairlineOnlyForLowContrastColors() {
-        func hairline(_ hex: String, _ appearance: LabelPillStyle.Appearance,
+        func hairline(_ hex: String, _ appearance: AccountRingStyle.Appearance,
                       _ surface: AccountRingStyle.Surface) -> Bool {
             AccountRingStyle.resolve(storedHex: hex, accountId: "a@x.com",
                                      appearance: appearance, surface: surface).needsHairline
@@ -118,7 +118,7 @@ final class AccountRingStyleTests: XCTestCase {
         // that need no hairline on the sidebar in either appearance.
         for value in AccountLabelColor.defaultPalette {
             let hex = AccountLabelColor.hex(value)
-            for appearance in LabelPillStyle.Appearance.allCases {
+            for appearance in AccountRingStyle.Appearance.allCases {
                 let style = AccountRingStyle.resolve(storedHex: hex, accountId: "a@x.com",
                                                      appearance: appearance, surface: .sidebar)
                 XCTAssertFalse(style.needsHairline, "\(hex) \(appearance)")
@@ -131,34 +131,51 @@ final class AccountRingStyleTests: XCTestCase {
         XCTAssertEqual(AccountRingStyle.surfaceColors(.sidebar, .dark), [LabelRGB(hex: 0x232323)])
     }
 
+    func testRingColorIsTheStoredOrDefaultSRGB() {
+        XCTAssertEqual(AccountLabelColor.resolvedRGB(stored: "#3c78d8", accountId: "a@x.com"),
+                       LabelRGB(hex: 0x3C78D8))
+        XCTAssertEqual(AccountLabelColor.resolvedRGB(stored: nil, accountId: "a@x.com"),
+                       LabelRGB(hexString: AccountLabelColor.defaultHex(for: "a@x.com")))
+        XCTAssertEqual(AccountLabelColor.resolvedRGB(stored: "zzz", accountId: "a@x.com"),
+                       LabelRGB(hexString: AccountLabelColor.defaultHex(for: "a@x.com")))
+    }
+
+    func testHairlineReachesThreeToOneOnEverySurface() {
+        for appearance in AccountRingStyle.Appearance.allCases {
+            for surface in AccountRingStyle.Surface.allCases {
+                let behind = AccountRingStyle.surfaceColors(surface, appearance)
+                let hairline = AccountRingStyle.hairlineColor(on: behind)
+                for color in behind {
+                    XCTAssertGreaterThanOrEqual(hairline.contrast(with: color), 3,
+                                                "\(appearance) \(surface)")
+                }
+            }
+        }
+    }
+
     // MARK: - Metrics
 
-    func testMetricsForTheHeaderAvatar() {
-        let m = AccountRingMetrics(size: 28)
-        XCTAssertEqual(m.size, 28)
-        XCTAssertEqual(m.ringWidth, 2)
-        XCTAssertEqual(m.gap, 1.5)
-        XCTAssertEqual(m.hairlineWidth, 0.5)
-        XCTAssertEqual(m.photoDiameter, 21)
+    func testRingAndGapAreWholePixelsAtTwoX() {
+        XCTAssertEqual(AccountRingMetrics.ringWidth, 1.5)
+        XCTAssertEqual(AccountRingMetrics.gap, 1)
+        XCTAssertEqual(AccountRingMetrics.hairlineWidth, 0.5)
+        for value in [AccountRingMetrics.ringWidth, AccountRingMetrics.gap,
+                      AccountRingMetrics.hairlineWidth] {
+            XCTAssertEqual((value * 2).rounded(), value * 2, "\(value) pt at 2x")
+        }
+        XCTAssertLessThan(AccountRingMetrics.hairlineWidth, AccountRingMetrics.ringWidth,
+                          "the hairline leaves the ring visible")
     }
 
-    func testMetricsForTheRowAvatar() {
-        let m = AccountRingMetrics(size: 24)
-        XCTAssertEqual(m.size, 24)
-        XCTAssertEqual(m.ringWidth, 1.75)
-        XCTAssertEqual(m.gap, 1.25)
-        XCTAssertEqual(m.photoDiameter, 18)
-    }
-
-    func testMetricsKeepTheFootprintAndAVisibleGap() {
-        for size in stride(from: 16.0, through: 64.0, by: 2) {
+    /// Header and Settings: 32 pt frame, 27 pt photo (28 pt before the
+    /// ring). Popover rows: 26 pt frame, 21 pt photo (24 pt before).
+    func testPhotoKeepsAboutItsFormerSize() {
+        XCTAssertEqual(AccountRingMetrics(size: 32).photoDiameter, 27)
+        XCTAssertEqual(AccountRingMetrics(size: 26).photoDiameter, 21)
+        for size in [26.0, 32.0] {
             let m = AccountRingMetrics(size: size)
-            XCTAssertEqual(m.size, size, "the frame is unchanged")
-            XCTAssertGreaterThanOrEqual(m.gap, 1, "ring and disc stay apart at \(size)")
-            XCTAssertGreaterThanOrEqual(m.ringWidth, 1)
-            XCTAssertLessThan(m.hairlineWidth, m.ringWidth, "the hairline leaves the ring visible")
-            XCTAssertGreaterThan(m.photoDiameter, size * 0.6, "the photo stays the main element")
-            XCTAssertEqual(m.photoDiameter + 2 * (m.ringWidth + m.gap), size, accuracy: 1e-9)
+            XCTAssertEqual(m.photoDiameter + 2 * (AccountRingMetrics.ringWidth
+                                                  + AccountRingMetrics.gap), size)
         }
     }
 }

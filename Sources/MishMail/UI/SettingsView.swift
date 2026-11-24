@@ -362,7 +362,7 @@ struct AccountsSettings: View {
                         HStack {
                             AccountAvatarView(
                                 name: AccountLabelColor.title(account),
-                                key: account.id, size: 28,
+                                key: account.id, size: 32,
                                 photo: store.accountPhotos[account.id],
                                 ring: .init(storedHex: account.labelColor, surface: .groupedForm))
                                 .contextMenu {
@@ -374,6 +374,11 @@ struct AccountsSettings: View {
                                 }
                             VStack(alignment: .leading) {
                                 HStack {
+                                    // The title explains the avatar's initial.
+                                    if AccountLabelColor.title(account) != account.id {
+                                        Text(AccountLabelColor.title(account))
+                                            .fontWeight(.semibold)
+                                    }
                                     Text(account.id)
                                     if store.accountsNeedingReauth.contains(account.id) {
                                         Image(systemName: "exclamationmark.triangle.fill")
@@ -882,9 +887,8 @@ private struct SnippetEditor: View {
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(account.id)
                                             .font(.system(size: 12.5))
-                                        if !account.displayName.isEmpty,
-                                           account.displayName != account.id {
-                                            Text(account.displayName)
+                                        if AccountLabelColor.title(account) != account.id {
+                                            Text(AccountLabelColor.title(account))
                                                 .font(.system(size: 11))
                                                 .foregroundStyle(.secondary)
                                         }
@@ -1247,9 +1251,9 @@ struct AppearanceSettings: View {
                         Text("All accounts").tag(MailStore.BadgeScope.all.rawValue)
                         Text("Focused inbox").tag(MailStore.BadgeScope.focused.rawValue)
                         ForEach(store.accounts) { account in
-                            Text(account.displayName == account.id
+                            Text(AccountLabelColor.title(account) == account.id
                                  ? account.id
-                                 : "\(account.displayName) — \(account.id)")
+                                 : "\(AccountLabelColor.title(account)) — \(account.id)")
                                 .tag(MailStore.BadgeScope.account(account.id).rawValue)
                         }
                     }

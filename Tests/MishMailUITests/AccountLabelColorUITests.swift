@@ -26,6 +26,20 @@ final class AccountLabelColorUITests: XCTestCase {
         // Sidebar starts collapsed; → reveals it (as in SidebarNavUITests).
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
 
+        // Choose the account: the switcher header's title is its label.
+        let switcher = element(app, "accountSwitcher")
+        XCTAssertTrue(switcher.waitForExistence(timeout: 5), "account switcher in the sidebar")
+        switcher.click()
+        let row = inPopover(app, "Personal")
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "the account row is in the switcher")
+        row.click()
+        XCTAssertTrue(app.popovers.firstMatch.waitForNonExistence(timeout: 5),
+                      "choosing an account closes the switcher")
+        XCTAssertTrue(switcher.label.contains("Personal"),
+                      "the header's title is the label: \(switcher.label)")
+        XCTAssertFalse(switcher.label.contains("Alex Rivera"),
+                       "the header does not show the sender name: \(switcher.label)")
+
         openEditor(app) {
             // The switcher row's title is the label, not the sender name.
             XCTAssertTrue(self.inPopover(app, "Personal").waitForExistence(timeout: 5),

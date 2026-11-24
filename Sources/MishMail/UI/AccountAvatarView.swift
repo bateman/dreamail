@@ -37,13 +37,14 @@ struct AccountAvatarView: View {
             if let ring {
                 let style = AccountRingStyle.resolve(
                     storedHex: ring.storedHex, accountId: key,
-                    appearance: .init(colorScheme), surface: ring.surface)
+                    appearance: colorScheme == .dark ? .dark : .light, surface: ring.surface)
                 Circle()
-                    .strokeBorder(Color(style.color), lineWidth: CGFloat(metrics.ringWidth))
+                    .strokeBorder(ringColor(ring, style),
+                                  lineWidth: CGFloat(AccountRingMetrics.ringWidth))
                 if style.needsHairline {
                     Circle()
-                        .strokeBorder(Color(style.hairline),
-                                      lineWidth: CGFloat(metrics.hairlineWidth))
+                        .strokeBorder(Self.color(style.hairline),
+                                      lineWidth: CGFloat(AccountRingMetrics.hairlineWidth))
                 }
             }
             disc(diameter: inner)
@@ -53,6 +54,18 @@ struct AccountAvatarView: View {
         .accessibilityLabel(photo == nil ? "\(name) account" : "\(name) account photo")
         .accessibilityAddTraits(.isImage)
         .accessibilityHidden(decorative)
+    }
+
+    /// A chosen color as stored; the default as the same system color the
+    /// initial disc uses, so the two match in every appearance and macOS
+    /// version.
+    private func ringColor(_ ring: Ring, _ style: AccountRingStyle) -> Color {
+        LabelRGB.normalizedHex(ring.storedHex) == nil
+            ? Color.stable(for: key) : Self.color(style.color)
+    }
+
+    private static func color(_ rgb: LabelRGB) -> Color {
+        Color(.sRGB, red: rgb.r, green: rgb.g, blue: rgb.b)
     }
 
     @ViewBuilder

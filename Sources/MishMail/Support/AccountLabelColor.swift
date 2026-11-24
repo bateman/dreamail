@@ -56,6 +56,11 @@ enum AccountLabelColor {
               accountId: account.id)
     }
 
+    /// The stored color when valid, else the default, as sRGB.
+    static func resolvedRGB(stored: String?, accountId: String) -> LabelRGB {
+        LabelRGB(hexString: stored) ?? defaultRGB(for: accountId)
+    }
+
     /// The stored color when it is a valid `#rrggbb`, else the default.
     static func resolvedHex(stored: String?, accountId: String) -> String {
         LabelRGB.normalizedHex(stored) ?? defaultHex(for: accountId)

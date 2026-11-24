@@ -19,7 +19,7 @@ struct LabelOrganizer: View {
                 if store.accounts.count > 1 {
                     Picker("", selection: $selectedAccount) {
                         ForEach(store.accounts) { account in
-                            Text(account.displayName).tag(String?.some(account.id))
+                            Text(AccountLabelColor.title(account)).tag(String?.some(account.id))
                         }
                     }
                     .labelsHidden()
