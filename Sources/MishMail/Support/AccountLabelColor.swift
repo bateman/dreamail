@@ -11,17 +11,18 @@ enum AccountLabelColor {
     /// sRGB stand-ins for the system colors `Color.stable(for:)` picks for
     /// the account avatar (`Color.stablePalette`), in the same order, so the
     /// default pill keeps the avatar's hue. The light-appearance values: a
-    /// fixed table, so the pill does not change with the system. Tests pin
-    /// each entry to the system color it stands for.
+    /// fixed table, so the pill does not change with the appearance. Tests
+    /// pin each entry to the system color it stands for (macOS 26 values;
+    /// older systems draw the avatar in slightly different shades).
     static let defaultPalette: [UInt32] = [
-        0x007AFF, // blue
-        0xAF52DE, // purple
+        0x0088FF, // blue
+        0xCB30E0, // purple
         0xFF2D55, // pink
-        0xFF9500, // orange
-        0x30B0C7, // teal
-        0x5856D6, // indigo
-        0x28CD41, // green
-        0x32ADE6, // cyan
+        0xFF8D28, // orange
+        0x00C3D0, // teal
+        0x6155F5, // indigo
+        0x34C759, // green
+        0x00C0E8, // cyan
     ]
 
     static func hex(_ value: UInt32) -> String {
