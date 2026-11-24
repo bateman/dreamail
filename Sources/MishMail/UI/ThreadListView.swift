@@ -633,6 +633,7 @@ private struct ThreadListSections: View, Equatable {
                 }
                 .frame(height: ThreadListSectionMetrics.headerTitleHeight(fontScale: fontScale))
                 .padding(.top, ThreadListSectionMetrics.sectionGap(fontScale: fontScale))
+                .padding(.vertical, -ThreadListSectionMetrics.systemHeaderVerticalInset)
             }
             // No footer: on macOS a footer is a row of its own (minimum
             // height, no row background), which read as a missing white row.

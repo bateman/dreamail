@@ -51,18 +51,26 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(frames.count, 4, "demo inbox rows must be visible",
                                     file: file, line: line)
         guard frames.count >= 2 else { return }
-        let rowHeight = frames.map(\.height).sorted()[frames.count / 2]
         let gaps = zip(frames, frames.dropFirst()).map { $1.minY - $0.maxY }
+        // Rows inside one section are separated only by the List's row
+        // insets (the narrowest gap); a section break is clearly wider. The
+        // demo inbox spans Priority, Today, Yesterday and older sections,
+        // so at least one break is on screen.
+        let rowGap = gaps.min() ?? 0
         let widest = gaps.max() ?? 0
-        // Rows inside one section touch; a section break shows as the one
-        // clearly wider gap. The demo inbox spans Priority, Today,
-        // Yesterday and older sections, so at least one break is on screen.
-        XCTAssertGreaterThan(widest, 4,
+        // One row as the eye sees it: the row's frame plus its insets.
+        let rowPitch = frames.map(\.height).sorted()[frames.count / 2] + rowGap
+        XCTAssertGreaterThan(widest - rowGap, 4,
                              "expected at least one section break among the visible rows; gaps \(gaps)",
                              file: file, line: line)
-        XCTAssertLessThan(widest, rowHeight,
-                          "a section break must be shorter than one row (\(rowHeight) pt); gaps \(gaps)",
+        XCTAssertLessThan(widest, rowPitch,
+                          "a section break must be shorter than one row (\(rowPitch) pt); gaps \(gaps)",
                           file: file, line: line)
+        // The header band itself (break minus the normal row spacing) is
+        // about half a row.
+        XCTAssertLessThanOrEqual(widest - rowGap, 0.7 * rowPitch,
+                                 "the section header must be about half a row (\(rowPitch) pt); gaps \(gaps)",
+                                 file: file, line: line)
     }
 
     func testSectionBreakIsShorterThanARowInFullWidthList() {

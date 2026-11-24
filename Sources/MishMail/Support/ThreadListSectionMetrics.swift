@@ -24,8 +24,14 @@ enum ThreadListSectionMetrics {
     /// Height of the header's title line (12 pt semibold text, or the
     /// label pill in the Labels view, which adds 2 pt above and below).
     static func headerTitleHeight(fontScale: CGFloat) -> CGFloat {
-        18 * fontScale
+        16 * fontScale
     }
+
+    /// Padding the plain List puts above and below a section header's
+    /// content, independent of font scale (measured on macOS 26 in the UI
+    /// test: a 24 pt header took a 32 pt band). The header takes it back
+    /// with negative padding so the band is `headerHeight` alone.
+    static let systemHeaderVerticalInset: CGFloat = 4
 
     /// Whole header band: gap above plus title line.
     static func headerHeight(fontScale: CGFloat) -> CGFloat {
