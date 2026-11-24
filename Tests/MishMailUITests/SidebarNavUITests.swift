@@ -86,7 +86,7 @@ final class SidebarNavUITests: XCTestCase {
     /// cross the boundary. Read while the app is still alive.
     private static func appBreadcrumbs() -> String {
         let pasteboard = NSPasteboard(
-            name: NSPasteboard.Name("dev.ronboger.mishmail.uitest.breadcrumbs"))
+            name: NSPasteboard.Name("io.github.bateman.mishmail.uitest.breadcrumbs"))
         return pasteboard.string(forType: .string)
             ?? "(no breadcrumbs on pasteboard)"
     }

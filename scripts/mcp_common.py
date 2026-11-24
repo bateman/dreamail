@@ -7,7 +7,7 @@ import threading
 import urllib.request
 from pathlib import Path
 
-DISCOVERY = (Path.home() / "Library/Containers/dev.ronboger.MishMail/Data"
+DISCOVERY = (Path.home() / "Library/Containers/io.github.bateman.MishMail/Data"
              / "Library/Application Support/MishMail/mcp.json")
 # Preferred: a copy of the token outside the app container. Reading the
 # container itself needs Full Disk Access, and on a Mac without it the read

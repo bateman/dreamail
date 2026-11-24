@@ -9,7 +9,7 @@ import WebKit
 /// loading the message so HTTPS images stay blocked even if CSP head injection
 /// lands somewhere the HTML parser treats as inert.
 enum HTMLRemoteImageBlocker {
-    static let identifier = "dev.ronboger.MishMail.block-remote-html-images.v1"
+    static let identifier = "io.github.bateman.MishMail.block-remote-html-images.v1"
 
     /// Gmail remote content is HTTPS-only in MishMail's CSP. Restrict the rule
     /// to image resources so links and the synthetic about:blank document are
