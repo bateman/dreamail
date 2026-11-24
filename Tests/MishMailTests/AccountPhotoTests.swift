@@ -552,13 +552,16 @@ final class AccountPhotoTests: XCTestCase {
             source as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil))
         let meta: [CFString: Any] = [
             kCGImagePropertyExifDictionary: [kCGImagePropertyExifUserComment: "secret comment"],
+            kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFArtist: "secret artist"],
             kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 41.1, kCGImagePropertyGPSLatitudeRef: "N"],
         ]
         CGImageDestinationAddImage(dest, try XCTUnwrap(ctx.makeImage()), meta as CFDictionary)
         XCTAssertTrue(CGImageDestinationFinalize(dest))
         let inProps = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(
             CGImageSourceCreateWithData(source as CFData, nil)!, 0, nil) as? [CFString: Any])
-        XCTAssertNotNil(inProps[kCGImagePropertyGPSDictionary], "fixture carries metadata")
+        let tiffIn = inProps[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+        XCTAssertEqual(tiffIn?[kCGImagePropertyTIFFArtist] as? String, "secret artist",
+                       "fixture carries metadata")
 
         let out = try XCTUnwrap(AccountPhotoPolicy.normalizedImage(from: source as Data))
         XCTAssertLessThanOrEqual(out.count, AccountPhotoPolicy.maxStoredBytes)
@@ -566,15 +569,20 @@ final class AccountPhotoTests: XCTestCase {
         XCTAssertEqual(CGImageSourceGetType(outSource) as String?, UTType.png.identifier)
         let props = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(outSource, 0, nil)
             as? [CFString: Any])
-        XCTAssertNil(props[kCGImagePropertyExifDictionary])
-        XCTAssertNil(props[kCGImagePropertyGPSDictionary])
-        XCTAssertNil(props[kCGImagePropertyTIFFDictionary])
+        // ImageIO reports pixel dimensions under {Exif} for any PNG; what
+        // must not survive is the source's own metadata.
+        let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
+        XCTAssertNil(exif[kCGImagePropertyExifUserComment], "\(exif)")
+        XCTAssertNil(props[kCGImagePropertyGPSDictionary], "GPS survived")
+        let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
+        XCTAssertNil(tiff[kCGImagePropertyTIFFArtist], "\(tiff)")
         let profile = props[kCGImagePropertyProfileName] as? String ?? ""
         XCTAssertFalse(profile.localizedCaseInsensitiveContains("P3"), profile)
         let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(outSource, 0, nil))
-        XCTAssertNotEqual(image.colorSpace?.name, CGColorSpace.displayP3)
+        XCTAssertNotEqual(image.colorSpace?.name, CGColorSpace.displayP3, "\(String(describing: image.colorSpace))")
         XCTAssertEqual(image.bitsPerComponent, 8)
-        XCTAssertEqual(max(image.width, image.height), AccountPhotoPolicy.maxPixelSize)
+        XCTAssertEqual(max(image.width, image.height), AccountPhotoPolicy.maxPixelSize,
+                       "\(image.width)x\(image.height)")
         XCTAssertFalse(String(decoding: out, as: UTF8.self).contains("secret"))
     }
 
