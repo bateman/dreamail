@@ -266,7 +266,7 @@ struct ThreadDetailView: View {
                                 Spacer(minLength: 8)
                                 Text("Continue")
                                     .font(.system(size: 12.5 * fontScale, weight: .medium))
-                                    .foregroundStyle(.accentForeground)
+                                    .foregroundStyle(.accentText)
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 10 * fontScale, weight: .semibold))
                                     .foregroundStyle(.accentForeground)
@@ -1216,7 +1216,7 @@ struct ThreadDetailView: View {
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 11 * fontScale))
-                                .foregroundStyle(.tint)
+                                .foregroundStyle(.accentForeground)
                             Text(text)
                                 .font(.system(size: 12.5 * fontScale))
                                 .textSelection(.enabled)
@@ -2773,7 +2773,7 @@ private struct PlainTextBody: View {
             .font(.system(size: 14.5 * fontScale))
             .lineSpacing(4)
             .textSelection(.enabled)
-            .tint(accent.foreground)
+            .tint(accent.text)
             .accessibilityIdentifier("messageBody")
             .environment(\.openURL, OpenURLAction { url in
                 // Hand the link to the system, as the HTML body does; never

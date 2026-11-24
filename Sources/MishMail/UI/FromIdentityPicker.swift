@@ -57,7 +57,7 @@ struct FromIdentityPicker: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: PMRadius.sm)
-                .strokeBorder(.accentFill.opacity(focused ? 0.9 : 0), lineWidth: 1.5)
+                .strokeBorder(.accentForeground.opacity(focused ? 0.9 : 0), lineWidth: 1.5)
         )
         .animation(.easeOut(duration: 0.12), value: focused)
         .animation(.easeOut(duration: 0.12), value: hovering)

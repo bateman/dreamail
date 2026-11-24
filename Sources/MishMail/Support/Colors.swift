@@ -159,13 +159,13 @@ extension ShapeStyle where Self == Color {
     /// accent's `onFill` (white or black), else as above.
     static func mailIcon(selected: Bool, prominence: BackgroundProminence,
                          accent: MailAccent) -> Color {
-        SelectionInk.color(selected: true, prominence: prominence, accent: accent)
+        SelectionInk.color(prominence: prominence, accent: accent)
             ?? mailIcon(selected: selected, prominence: prominence)
     }
 
     /// The row title colour with the accent in effect, by the same rule.
     static func mailRowTitle(prominence: BackgroundProminence, accent: MailAccent) -> Color {
-        SelectionInk.color(selected: true, prominence: prominence, accent: accent)
+        SelectionInk.color(prominence: prominence, accent: accent)
             ?? mailRowTitle(prominence: prominence)
     }
 

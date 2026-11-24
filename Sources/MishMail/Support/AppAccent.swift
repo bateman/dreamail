@@ -20,23 +20,6 @@ enum AccentPreference {
         LabelRGB.normalizedHex(hex) ?? ""
     }
 
-    static func read(_ defaults: UserDefaults = .standard) -> LabelRGB? {
-        custom(raw: defaults.string(forKey: storageKey))
-    }
-
-    static func write(_ hex: String?, to defaults: UserDefaults = .standard) {
-        let value = storedValue(hex)
-        if value.isEmpty {
-            defaults.removeObject(forKey: storageKey)
-        } else {
-            defaults.set(value, forKey: storageKey)
-        }
-    }
-
-    static func reset(_ defaults: UserDefaults = .standard) {
-        defaults.removeObject(forKey: storageKey)
-    }
-
     /// One-click choices under the colour well: the label palette's hues
     /// that work as an accent (no grey or brown).
     static let presets: [(name: String, hex: String)] = Color.labelPalette.filter {
@@ -46,28 +29,47 @@ enum AccentPreference {
 
 /// The one rule for drawing with the accent, for one appearance.
 ///
-/// - `fill`: the accent itself, unmodified (selection highlights,
-///   prominent buttons, badges, washes).
+/// - `fill`: the accent itself, unmodified (painted selection, badges,
+///   washes, the app's own filled buttons).
 /// - `onFill`: text and glyphs drawn on the fill: white when it reaches
 ///   4.5:1, else black (which then always does: white below 4.5:1 means a
 ///   luminance above 0.183, where black is at least 4.67:1).
-/// - `foreground`: the accent as a glyph or text colour on the app's own
-///   surfaces (content, sidebar, read-row wash): the accent when it reaches
-///   3:1 on every one of them, else the same hue and saturation with the
+/// - `foreground`: the accent as a glyph or a small indicator (dots, rings,
+///   switch tracks) on the app's surfaces: the accent when it reaches 3:1
+///   on every one of them, else the same hue and saturation with the
 ///   lightness moved just far enough (darker in light mode, lighter in dark
 ///   mode) to reach it.
+/// - `text`: the accent as text (links, chip and button captions): the same
+///   move, to 4.5:1, also against the accent's own chip wash.
+/// - `control`: what system controls are tinted with (`.tint`): they draw
+///   their own white label on it (bordered-prominent buttons), so it is the
+///   accent darkened, same hue, until white reaches 4.5:1 on it.
+/// - `selectionBorder`: the fill is below 1.3:1 against a row or sidebar
+///   surface (white on white, black on dark): the painted selection then
+///   gets a `foreground` outline so it never vanishes.
 ///
-/// The default palette is not run through the rule: it is the app's fixed
-/// blue with white on it, exactly as before the setting existed.
+/// A pick with almost no chroma (below 0.05) moves as a grey: #fefeff must
+/// not turn into a vivid periwinkle. The default palette is not run through
+/// the rule: it is the app's fixed blue with white on it, exactly as before
+/// the setting existed.
 struct AccentPalette: Equatable, Sendable {
     typealias Appearance = LabelPillStyle.Appearance
 
     let fill: LabelRGB
     let onFill: LabelRGB
     let foreground: LabelRGB
+    let text: LabelRGB
+    let control: LabelRGB
+    let selectionBorder: Bool
 
     static let minimumOnFillContrast = 4.5
     static let minimumForegroundContrast = 3.0
+    static let minimumTextContrast = 4.5
+    static let minimumSelectionContrast = 1.3
+    /// Opacity of the accent chip wash (filter chips) that accent text sits on.
+    static let chipWashOpacity = 0.22
+    /// Below this chroma (max - min channel) a pick is treated as a grey.
+    static let greyChroma = 0.05
 
     /// The fixed default blue (`NSColor.mailAccent` before the setting).
     static func defaultAccent(_ appearance: Appearance) -> LabelRGB {
@@ -76,12 +78,13 @@ struct AccentPalette: Equatable, Sendable {
 
     static func `default`(_ appearance: Appearance) -> AccentPalette {
         let blue = defaultAccent(appearance)
-        return AccentPalette(fill: blue, onFill: .white, foreground: blue)
+        return AccentPalette(fill: blue, onFill: .white, foreground: blue, text: blue,
+                             control: blue, selectionBorder: false)
     }
 
-    /// The app surfaces an accent glyph or text sits on: content and
-    /// sidebar backgrounds (`Color.mailContent`, `Color.mailSidebar`) and
-    /// the read-row wash.
+    /// The app surfaces an accent glyph, text or selection sits on: content
+    /// and sidebar backgrounds (`Color.mailContent`, `Color.mailSidebar`)
+    /// and the read-row wash.
     static func surfaces(_ appearance: Appearance) -> [LabelRGB] {
         let sidebar = appearance == .light ? LabelRGB(hex: 0xF7F7F5) : LabelRGB(hex: 0x232323)
         return [LabelPillStyle.surfaceColor(.content, appearance),
@@ -89,13 +92,25 @@ struct AccentPalette: Equatable, Sendable {
                 sidebar]
     }
 
+    /// Surfaces for accent text: the above plus the accent's chip wash.
+    static func textSurfaces(_ accent: LabelRGB, _ appearance: Appearance) -> [LabelRGB] {
+        let content = LabelPillStyle.surfaceColor(.content, appearance)
+        return surfaces(appearance) + [content.composited(under: accent, alpha: chipWashOpacity)]
+    }
+
     /// The palette for a custom accent (nil: the default palette).
     static func resolve(_ accent: LabelRGB?, appearance: Appearance) -> AccentPalette {
         guard let accent else { return .default(appearance) }
-        return AccentPalette(fill: accent,
-                             onFill: onFill(accent),
-                             foreground: foreground(accent, on: surfaces(appearance),
-                                                    darken: appearance == .light))
+        let darken = appearance == .light
+        let rows = surfaces(appearance)
+        return AccentPalette(
+            fill: accent,
+            onFill: onFill(accent),
+            foreground: adjusted(accent, on: rows, minimum: minimumForegroundContrast, darken: darken),
+            text: adjusted(accent, on: textSurfaces(accent, appearance),
+                           minimum: minimumTextContrast, darken: darken),
+            control: adjusted(accent, on: [.white], minimum: minimumOnFillContrast, darken: true),
+            selectionBorder: rows.contains { accent.contrast(with: $0) < minimumSelectionContrast })
     }
 
     /// White or black, whichever the rule picks for text on `fill`.
@@ -103,20 +118,33 @@ struct AccentPalette: Equatable, Sendable {
         fill.contrast(with: .white) >= minimumOnFillContrast ? .white : .black
     }
 
-    /// `accent` with its lightness moved toward black (`darken`) or white
-    /// until it reaches 3:1 on every surface; unchanged when it already does.
-    static func foreground(_ accent: LabelRGB, on surfaces: [LabelRGB], darken: Bool) -> LabelRGB {
+    /// `color` with its lightness moved toward black (`darken`) or white
+    /// until it reaches `minimum` on every surface; unchanged when it
+    /// already does. Near-greys move as greys.
+    static func adjusted(_ color: LabelRGB, on surfaces: [LabelRGB], minimum: Double,
+                         darken: Bool) -> LabelRGB {
         func worst(_ c: LabelRGB) -> Double { surfaces.map { c.contrast(with: $0) }.min() ?? 21 }
-        if worst(accent) >= minimumForegroundContrast { return accent }
-        let hsl = HSL(accent)
+        if worst(color) >= minimum { return color }
+        var hsl = HSL(color)
+        if max(color.r, color.g, color.b) - min(color.r, color.g, color.b) < greyChroma {
+            hsl = HSL(h: 0, s: 0, l: hsl.l)
+        }
         // Lightness only ever moves away from the surfaces, so contrast
         // grows monotonically: bisect for the smallest move that reaches it.
         var near = hsl.l, far = darken ? 0.0 : 1.0
         for _ in 0..<24 {
             let mid = (near + far) / 2
-            if worst(hsl.with(l: mid).rgb) >= minimumForegroundContrast { far = mid } else { near = mid }
+            if worst(hsl.with(l: mid).rgb) >= minimum { far = mid } else { near = mid }
         }
         return hsl.with(l: far).rgb
+    }
+
+    /// The opacity for selection ink drawn at a reduced `emphasis` (a
+    /// secondary line, a date): the requested one when the blend of `onFill`
+    /// over the fill still reaches 4.5:1, else full strength.
+    func inkOpacity(_ emphasis: Double) -> Double {
+        let blended = fill.composited(under: onFill, alpha: emphasis)
+        return blended.contrast(with: fill) >= Self.minimumOnFillContrast ? emphasis : 1
     }
 }
 
@@ -182,34 +210,70 @@ struct HSL: Equatable {
 
 /// The accent in effect, as the app-wide provider hands it to views
 /// (`EnvironmentValues.mailAccent`, set once per window root by
-/// `.mailAccentRoot()`). Views never read the preference themselves.
+/// `.mailAccentRoot()`). Views never read the preference themselves. The
+/// palettes and colours are resolved once, when the value is made.
 struct MailAccent: Equatable, Sendable {
     /// The custom accent, or nil for the default palette.
     let custom: LabelRGB?
+    let light: AccentPalette
+    let dark: AccentPalette
+
+    /// Theme-adaptive colours for each role.
+    let fill: Color
+    let onFill: Color
+    let foreground: Color
+    let text: Color
+    let control: Color
+
+    init(custom: LabelRGB?) {
+        self.custom = custom
+        let light = AccentPalette.resolve(custom, appearance: .light)
+        let dark = AccentPalette.resolve(custom, appearance: .dark)
+        self.light = light
+        self.dark = dark
+        func color(_ role: KeyPath<AccentPalette, LabelRGB>) -> Color {
+            Color(nsColor: Self.adaptive(light[keyPath: role], dark[keyPath: role]))
+        }
+        fill = color(\.fill)
+        onFill = color(\.onFill)
+        foreground = color(\.foreground)
+        text = color(\.text)
+        control = color(\.control)
+    }
 
     static let `default` = MailAccent(custom: nil)
+
+    /// Equal accents resolve to equal palettes.
+    static func == (lhs: MailAccent, rhs: MailAccent) -> Bool { lhs.custom == rhs.custom }
 
     var isCustom: Bool { custom != nil }
 
     func palette(_ appearance: LabelPillStyle.Appearance) -> AccentPalette {
-        AccentPalette.resolve(custom, appearance: appearance)
+        appearance == .light ? light : dark
     }
 
-    /// Theme-adaptive colours for each role.
-    var fill: Color { color(\.fill) }
-    var onFill: Color { color(\.onFill) }
-    var foreground: Color { color(\.foreground) }
+    func palette(scheme: ColorScheme) -> AccentPalette {
+        scheme == .dark ? dark : light
+    }
 
-    var nsFill: NSColor { nsColor(\.fill) }
-    var nsForeground: NSColor { nsColor(\.foreground) }
-
-    private func color(_ role: KeyPath<AccentPalette, LabelRGB>) -> Color {
-        Color(nsColor: nsColor(role))
+    /// Whether the app paints list selections in the accent
+    /// (`AccentSelectionBackground`). Only with a custom accent, and only
+    /// where the mechanism is verified (macOS 26: a row background drawn
+    /// over AppKit's highlight, `backgroundProminence` reporting the
+    /// emphasized selection). Elsewhere selections keep the system
+    /// highlight and ink; the accent still applies everywhere else.
+    var paintsSelection: Bool {
+        guard isCustom else { return false }
+        if #available(macOS 26, *) { return true }
+        return false
     }
 
     func nsColor(_ role: KeyPath<AccentPalette, LabelRGB>) -> NSColor {
-        let light = palette(.light)[keyPath: role], dark = palette(.dark)[keyPath: role]
-        return NSColor(name: nil) { appearance in
+        Self.adaptive(light[keyPath: role], dark[keyPath: role])
+    }
+
+    private static func adaptive(_ light: LabelRGB, _ dark: LabelRGB) -> NSColor {
+        NSColor(name: nil) { appearance in
             let rgb = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
             return NSColor(srgbRed: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1)
         }
@@ -217,12 +281,14 @@ struct MailAccent: Equatable, Sendable {
 
     /// Places that drew with the system accent before the setting (menu
     /// highlights in sheets, Settings, AppKit text views): still the system
-    /// accent by default, the custom accent once one is picked.
+    /// accent by default, the custom accent's matching role once one is
+    /// picked. Kept as a family because Default must not change them.
     var fillOrSystem: Color { isCustom ? fill : Color.accentColor }
     var onFillOrSystem: Color { isCustom ? onFill : .white }
     var foregroundOrSystem: Color { isCustom ? foreground : Color.accentColor }
-    var nsFillOrSystem: NSColor { isCustom ? nsFill : .controlAccentColor }
-    var nsForegroundOrSystem: NSColor { isCustom ? nsForeground : .controlAccentColor }
+    var textOrSystem: Color { isCustom ? text : Color.accentColor }
+    var nsFillOrSystem: NSColor { isCustom ? nsColor(\.fill) : .controlAccentColor }
+    var nsTextOrSystem: NSColor { isCustom ? nsColor(\.text) : .controlAccentColor }
 
     /// For AppKit code with no SwiftUI environment (text views): the accent
     /// last provided by a window root. Such views pick a change up on their
@@ -250,7 +316,7 @@ extension EnvironmentValues {
 /// The accent as a shape style that resolves from the environment, so a
 /// view drawing with it follows the setting without reading it.
 struct MailAccentStyle: ShapeStyle {
-    enum Role: Sendable { case fill, onFill, foreground, fillOrSystem, foregroundOrSystem }
+    enum Role: Sendable { case fill, onFill, foreground, text, fillOrSystem, foregroundOrSystem, textOrSystem }
     let role: Role
 
     func resolve(in environment: EnvironmentValues) -> Color {
@@ -259,8 +325,10 @@ struct MailAccentStyle: ShapeStyle {
         case .fill: return accent.fill
         case .onFill: return accent.onFill
         case .foreground: return accent.foreground
+        case .text: return accent.text
         case .fillOrSystem: return accent.fillOrSystem
         case .foregroundOrSystem: return accent.foregroundOrSystem
+        case .textOrSystem: return accent.textOrSystem
         }
     }
 }
@@ -270,17 +338,24 @@ extension ShapeStyle where Self == MailAccentStyle {
     static var accentFill: MailAccentStyle { MailAccentStyle(role: .fill) }
     /// Text or glyphs drawn on `accentFill`.
     static var onAccentFill: MailAccentStyle { MailAccentStyle(role: .onFill) }
-    /// The accent as a text or glyph colour on the app's surfaces.
+    /// The accent as a glyph or small indicator on the app's surfaces (3:1).
     static var accentForeground: MailAccentStyle { MailAccentStyle(role: .foreground) }
+    /// The accent as text on the app's surfaces and its chip wash (4.5:1).
+    static var accentText: MailAccentStyle { MailAccentStyle(role: .text) }
     /// `accentFill`, or the system accent with the default palette.
     static var accentFillOrSystem: MailAccentStyle { MailAccentStyle(role: .fillOrSystem) }
     /// `accentForeground`, or the system accent with the default palette.
     static var accentForegroundOrSystem: MailAccentStyle { MailAccentStyle(role: .foregroundOrSystem) }
+    /// `accentText`, or the system accent with the default palette.
+    static var accentTextOrSystem: MailAccentStyle { MailAccentStyle(role: .textOrSystem) }
 }
 
 /// Reads the preference once per window root and provides it: the
-/// `mailAccent` environment value, and `.tint` for system controls
-/// (bordered-prominent buttons, toggles, pickers, links, progress).
+/// `mailAccent` environment value, and `.tint` for system control fills
+/// (bordered-prominent buttons, toggles, pickers, progress) in the palette's
+/// `control` role, where their own white labels stay readable. `.tint` is
+/// never used as a text or glyph colour: those take `.accentText` or
+/// `.accentForeground`.
 private struct MailAccentRoot: ViewModifier {
     @AppStorage(AccentPreference.storageKey) private var raw = ""
     /// Whether the default palette tints system controls with the app blue
@@ -292,7 +367,7 @@ private struct MailAccentRoot: ViewModifier {
         let accent = MailAccent(custom: AccentPreference.custom(raw: raw))
         content
             .environment(\.mailAccent, accent)
-            .tint(accent.isCustom || tintsDefault ? accent.fill : nil)
+            .tint(accent.isCustom || tintsDefault ? accent.control : nil)
             .onChange(of: accent, initial: true) { _, new in MailAccent.current = new }
     }
 }
@@ -306,30 +381,20 @@ extension View {
 
 // MARK: - Selection highlight
 
-/// Who draws a selected list row's highlight.
+/// A selectable row's `listRowBackground`, painting the selection in a
+/// custom accent.
 ///
 /// AppKit draws a `List`'s selection (the sidebar capsule, the thread
 /// row) in the system accent and ignores `.tint`. A row's
 /// `listRowBackground` is drawn over that highlight, and it still sees the
 /// list's own selection state through `backgroundProminence` (`.increased`
 /// while the selection is emphasized: focused list in the key window). So
-/// with a custom accent the app paints the emphasized highlight itself and
-/// leaves every other state (unfocused list, inactive window: the grey
-/// highlight) to AppKit. `List(selection:)`, keyboard navigation, VoiceOver
-/// and drag and drop are untouched: only the paint changes.
-enum SelectionHighlight: Equatable, Sendable {
-    /// The app paints the custom accent over the system highlight.
-    case accent
-    /// The system highlight shows (default accent, or not emphasized).
-    case system
-
-    static func resolve(accent: MailAccent, emphasized: Bool) -> SelectionHighlight {
-        accent.isCustom && emphasized ? .accent : .system
-    }
-}
-
-/// A selectable row's `listRowBackground`: the custom accent while the
-/// row's selection is emphasized, `unselected` otherwise.
+/// with a custom accent (`MailAccent.paintsSelection`) the app paints the
+/// emphasized highlight itself and leaves every other state (unfocused
+/// list, inactive window: the grey highlight) to AppKit.
+/// `List(selection:)`, keyboard navigation, VoiceOver and drag and drop
+/// are untouched: only the paint changes. A fill that would vanish into
+/// the surface (`AccentPalette.selectionBorder`) gets an outline.
 struct AccentSelectionBackground: View {
     let selected: Bool
     let accent: MailAccent
@@ -338,24 +403,30 @@ struct AccentSelectionBackground: View {
     let cornerRadius: CGFloat
     var unselected: Color = .clear
     @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Corner radius of the sidebar capsule this paints over.
     static let sidebarCornerRadius: CGFloat = 6
 
-    /// Sidebar rows (main window and Settings): nil with the default
-    /// accent, so the system draws everything exactly as before.
+    /// Sidebar rows (main window and Settings): nil unless the app paints
+    /// selections, so the system draws everything exactly as before.
     static func sidebar(selected: Bool, accent: MailAccent) -> AccentSelectionBackground? {
-        accent.isCustom
+        accent.paintsSelection
             ? AccentSelectionBackground(selected: selected, accent: accent,
                                         cornerRadius: sidebarCornerRadius)
             : nil
     }
 
     var body: some View {
-        if selected,
-           SelectionHighlight.resolve(accent: accent, emphasized: prominence == .increased) == .accent {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if selected, accent.paintsSelection, prominence == .increased {
+            let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            shape
                 .fill(accent.fill)
+                .overlay {
+                    if accent.palette(scheme: colorScheme).selectionBorder {
+                        shape.strokeBorder(accent.foreground, lineWidth: 1)
+                    }
+                }
                 .accessibilityHidden(true)
         } else {
             unselected
@@ -363,14 +434,14 @@ struct AccentSelectionBackground: View {
     }
 }
 
-/// Ink for a row's text and glyphs: on an emphasized selection in a
-/// custom accent, the rule's `onFill` (white or black); otherwise nil, and
-/// the row draws its usual colours (AppKit turns them white on its own
-/// highlight).
-struct SelectionInk {
-    static func color(selected: Bool, prominence: BackgroundProminence,
-                      accent: MailAccent) -> Color? {
-        guard selected, prominence == .increased, accent.isCustom else { return nil }
+/// Ink for a row's text and glyphs: on a selection the app paints
+/// (`AccentSelectionBackground`), the rule's `onFill` (white or black);
+/// otherwise nil, and the row draws its usual colours (AppKit turns them
+/// white on its own highlight). Callers pass only selected rows'
+/// prominence: it is `.increased` only on the emphasized selection.
+enum SelectionInk {
+    static func color(prominence: BackgroundProminence, accent: MailAccent) -> Color? {
+        guard accent.paintsSelection, prominence == .increased else { return nil }
         return accent.onFill
     }
 }
@@ -379,7 +450,7 @@ struct SelectionInk {
 /// capsule, the secondary label colour elsewhere.
 struct SidebarBadgeStyle: ShapeStyle {
     func resolve(in environment: EnvironmentValues) -> Color {
-        SelectionInk.color(selected: true, prominence: environment.backgroundProminence,
+        SelectionInk.color(prominence: environment.backgroundProminence,
                            accent: environment.mailAccent)
             ?? Color(nsColor: .secondaryLabelColor)
     }

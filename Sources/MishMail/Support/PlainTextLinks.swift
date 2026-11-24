@@ -160,9 +160,9 @@ enum PlainTextLinks {
             piece.link = link.url
             // SwiftUI `Text` draws the SwiftUI color. The selectable text
             // view draws the AppKit color. Set both, or the link stays black.
-            piece.foregroundColor = accent.foreground
+            piece.foregroundColor = accent.text
             piece.underlineStyle = .single
-            piece.appKit.foregroundColor = accent.nsForeground
+            piece.appKit.foregroundColor = accent.nsColor(\.text)
             piece.appKit.underlineStyle = .single
             out.append(piece)
             cursor = NSMaxRange(link.range)

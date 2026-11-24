@@ -2194,7 +2194,7 @@ struct ComposeView: View {
                 } else {
                     Button(proposalPhase.proposal == nil ? "Draft" : "Regenerate") { regenerateAIProposal() }
                         .buttonStyle(.plain)
-                        .foregroundStyle(.accentForeground)
+                        .foregroundStyle(.accentText)
                 }
                 Button {
                     stopAIProposal()
@@ -2220,7 +2220,7 @@ struct ComposeView: View {
                     HStack(spacing: 12) {
                         Button("Use draft") { applyAIProposal() }
                             .buttonStyle(PressScaleButtonStyle())
-                            .foregroundStyle(.accentForeground)
+                            .foregroundStyle(.accentText)
                             .disabled(!canApplyProposal)
                             .accessibilityIdentifier("compose.aiApply")
                         Button("Copy") {

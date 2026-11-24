@@ -33,9 +33,37 @@ final class AccentColorUITests: XCTestCase {
         try checkSelections(Self.yellow)
     }
 
+    /// The real feature path: pick a swatch in Settings → Appearance, and
+    /// the main window's selected sidebar row is repainted without a
+    /// relaunch; Default brings the system highlight back. No `-accentColor`
+    /// argument here: the argument domain would hide what Settings writes.
+    func testPickingASwatchInSettingsRepaintsTheSidebarLive() throws {
+        let (app, main) = launch(accentArgument: nil)
+        let inbox = try revealAndFocusInbox(app: app, main: main)
+        let strip = { Self.sidebarStrip(row: inbox, window: main) }
+
+        // Start from Default whatever an earlier run left behind.
+        try setAccent(app: app, swatch: nil)
+        try refocus(inbox, app: app, main: main)
+        try assertRow(strip, in: main, is: .systemBlue, "sidebar, Default before the pick")
+
+        // Red swatch (#eb5757): black ink by the rule (white is 3.5:1).
+        try setAccent(app: app, swatch: "Red")
+        try refocus(inbox, app: app, main: main)
+        try assertRow(strip, in: main, is: .accent(Self.redSwatch), "sidebar, after picking Red")
+        try assertNoSystemBlue(around: inbox, in: main, "sidebar, after picking Red")
+
+        // Default again: the system highlight is back.
+        try setAccent(app: app, swatch: nil)
+        try refocus(inbox, app: app, main: main)
+        try assertRow(strip, in: main, is: .systemBlue, "sidebar, Default again")
+    }
+
+    private static let redSwatch = Accent(hex: "#eb5757", rgb: (235, 87, 87), ink: (0, 0, 0))
+
     // MARK: - Scenario
 
-    private func checkSelections(_ accent: Accent) throws {
+    private func launch(accentArgument: String?) -> (XCUIApplication, XCUIElement) {
         let app = XCUIApplication()
         app.launchEnvironment["MISHMAIL_DEMO"] = "1"
         app.launchEnvironment["MISHMAIL_UI_TEST"] = "1"
@@ -44,8 +72,8 @@ final class AccentColorUITests: XCTestCase {
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
                                 "-threadOpenStyle", "readingPane",
-                                "-readingPaneHidden", "YES",
-                                "-accentColor", accent.hex]
+                                "-readingPaneHidden", "YES"]
+        if let accentArgument { app.launchArguments += ["-accentColor", accentArgument] }
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
@@ -54,16 +82,65 @@ final class AccentColorUITests: XCTestCase {
             NSPredicate(format: "NOT (title CONTAINS 'Settings')")).firstMatch
         XCTAssertTrue(main.waitForExistence(timeout: 10))
         app.activate()
+        return (app, main)
+    }
 
-        // Sidebar starts collapsed; → reveals it. Clicking Inbox focuses
-        // the sidebar list: its selection is emphasized.
+    /// Sidebar starts collapsed; → reveals it. Clicking Inbox focuses the
+    /// sidebar list: its selection is emphasized.
+    private func revealAndFocusInbox(app: XCUIApplication, main: XCUIElement) throws -> XCUIElement {
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         let inbox = main.descendants(matching: .any)
             .matching(identifier: "sidebar.inbox").firstMatch
         XCTAssertTrue(inbox.waitForExistence(timeout: 5))
         inbox.click()
+        return inbox
+    }
+
+    /// Back to the main window with the sidebar focused.
+    private func refocus(_ inbox: XCUIElement, app: XCUIApplication, main: XCUIElement) throws {
+        XCTAssertTrue(main.waitForExistence(timeout: 5))
+        inbox.click()
+    }
+
+    /// Opens Settings → Appearance, clicks the named swatch (nil: Default,
+    /// when enabled), and closes Settings again.
+    private func setAccent(app: XCUIApplication, swatch: String?) throws {
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows.matching(
+            NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        let pane = settings.descendants(matching: .any)
+            .matching(identifier: "settings.pane.appearance").firstMatch
+        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        pane.click()
+        let id = swatch.map { "accentSwatch.\($0)" } ?? "accentColorDefault"
+        let control = settings.descendants(matching: .any).matching(identifier: id).firstMatch
+        XCTAssertTrue(control.waitForExistence(timeout: 5), "\(id) in Settings → Appearance")
+        if control.isEnabled { control.click() }
+        let value = settings.descendants(matching: .any)
+            .matching(identifier: "accentColorValue").firstMatch
+        let expected = swatch == nil ? "Default" : Self.redSwatch.hex
+        XCTAssertTrue(Self.waitUntil { (value.value as? String ?? value.label) == expected },
+                      "the accent row should read \(expected), reads \(value.label)")
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(Self.waitUntil { !settings.exists }, "Settings should close with Cmd-W")
+    }
+
+    private static func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() > deadline { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return true
+    }
+
+    private func checkSelections(_ accent: Accent) throws {
+        let (app, main) = launch(accentArgument: accent.hex)
+        let inbox = try revealAndFocusInbox(app: app, main: main)
         let sidebarStrip = { Self.sidebarStrip(row: inbox, window: main) }
         try assertRow(sidebarStrip, in: main, is: .accent(accent), "sidebar, focused")
+        try assertNoSystemBlue(around: inbox, in: main, "sidebar, focused")
 
         // An unselected row keeps the sidebar background: the accent is
         // only on the selection.
@@ -76,6 +153,12 @@ final class AccentColorUITests: XCTestCase {
         // Focus the thread list and select a row in it.
         let selected = try focusThreadList(app: app, window: main, accent: accent)
         try assertRow(selected, in: main, is: .accent(accent), "thread list, focused")
+        // No system blue at the painted row's leading edge either (label
+        // chips further along may be blue).
+        let row = selected()
+        try assertNoSystemBlue(in: CGRect(x: row.minX - 10, y: row.minY - 2,
+                                          width: row.width + 10, height: row.height + 4),
+                               window: main, "thread list, focused")
         // The sidebar's selection is no longer emphasized: system grey.
         try assertRow(sidebarStrip, in: main, is: .grey, "sidebar, focus in the thread list")
 
@@ -145,13 +228,43 @@ final class AccentColorUITests: XCTestCase {
         case accent(Accent)
         /// Not the accent: a grey highlight or the plain background.
         case grey
+        /// The system's own (blue) emphasized highlight: the default.
+        case systemBlue
 
         func matches(_ background: (Double, Double, Double)) -> Bool {
             switch self {
             case .accent(let a): return Pixels.distance(background, a.rgb) < 40
             case .grey: return Pixels.ownColour(pixel: background, background: (128, 128, 128)) < 30
+            case .systemBlue: return Pixels.isSystemBlue(background)
             }
         }
+    }
+
+    /// No system-blue pixel shows around a painted selection (the corners
+    /// of a capsule painted smaller than AppKit's, a seam at an edge).
+    private func assertNoSystemBlue(around row: XCUIElement, in window: XCUIElement,
+                                    _ context: String, file: StaticString = #filePath,
+                                    line: UInt = #line) throws {
+        // The sidebar's whole row band: from the window edge across the
+        // sidebar, a few points above and below the label.
+        let r = row.frame
+        let band = CGRect(x: window.frame.minX, y: r.minY - 8,
+                          width: r.maxX - window.frame.minX + 30, height: r.height + 16)
+        try assertNoSystemBlue(in: band, window: window, context, file: file, line: line)
+    }
+
+    private func assertNoSystemBlue(in rect: CGRect, window: XCUIElement, _ context: String,
+                                    file: StaticString = #filePath, line: UInt = #line) throws {
+        let (stats, crop) = try capture(rect, in: window, context, file: file, line: line)
+        let blue = stats.all.filter(Pixels.isSystemBlue).count
+        if blue > 0 {
+            let attachment = XCTAttachment(image: NSImage(cgImage: crop, size: .zero))
+            attachment.name = "\(context) band"
+            XCTContext.runActivity(named: "\(context) system blue") { $0.add(attachment) }
+        }
+        print("AccentColor: \(context): \(blue) system-blue pixels around the selection")
+        XCTAssertEqual(blue, 0, "\(context): system blue shows around the painted selection",
+                       file: file, line: line)
     }
 
     /// Captures the strip until its background is as expected (the
@@ -213,6 +326,7 @@ final class AccentColorUITests: XCTestCase {
     private struct Pixels {
         var background = (0.0, 0.0, 0.0)
         var drawn: [(Double, Double, Double)] = []
+        var all: [(Double, Double, Double)] = []
         var foreground: Int { drawn.count }
 
         var summary: String {
@@ -245,6 +359,7 @@ final class AccentColorUITests: XCTestCase {
             background = bg
             for i in stride(from: 0, to: data.count, by: 4) {
                 let p = (Double(data[i]), Double(data[i + 1]), Double(data[i + 2]))
+                all.append(p)
                 if Pixels.distance(p, bg) > 40 { drawn.append(p) }
             }
         }
@@ -263,6 +378,12 @@ final class AccentColorUITests: XCTestCase {
                 return (r.0 * r.0 + r.1 * r.1 + r.2 * r.2).squareRoot() < 45
             }
             return Double(good.count) / Double(drawn.count)
+        }
+
+        /// The system accent blue of an emphasized highlight (#0064E1 and
+        /// its neighbours), not a grey, red or yellow, nor their blends.
+        static func isSystemBlue(_ p: (Double, Double, Double)) -> Bool {
+            p.2 > 150 && p.2 - p.0 > 90 && p.2 - p.1 > 40
         }
 
         /// Mean absolute channel difference.

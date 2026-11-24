@@ -1563,7 +1563,7 @@ private struct FilterChipLabel: View {
     }
 
     private var textColor: Color {
-        if active { return accent.foreground }
+        if active { return accent.text }
         return hovering ? .primary : .secondary
     }
 
@@ -1584,7 +1584,7 @@ private struct ActiveFilterChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.accentForeground)
+            Text(title).font(.caption).foregroundStyle(.accentText)
             Button(action: remove) {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
                     .pmHitTarget(extra: 8)
@@ -1611,7 +1611,7 @@ private struct ActiveLabelChipLabel: View {
             LabelDot(colors: colors, size: 8)
             Text(name).font(.caption)
         }
-        .foregroundStyle(.accentForeground)
+        .foregroundStyle(.accentText)
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(.accentFill.opacity(hovering ? 0.22 : 0.16), in: Capsule())
         .contentShape(Capsule())
@@ -1679,7 +1679,7 @@ struct FaviconView: View {
     var body: some View {
         Text(letter)
             .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.accentForeground)
+            .foregroundStyle(.accentText)
             .frame(width: 16, height: 16)
             .background(.accentFill.opacity(0.12), in: Circle())
     }
@@ -1757,6 +1757,7 @@ struct ThreadRow: View, Equatable {
     /// `.increased` while the row is the emphasized selection.
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
+    @Environment(\.colorScheme) private var colorScheme
 
     // Closures are deliberately excluded: a skipped body keeps the OLD
     // captures, which is safe only because they capture `store` (stable
@@ -1772,12 +1773,14 @@ struct ThreadRow: View, Equatable {
     /// black for every text and glyph of the row; nil elsewhere (AppKit
     /// already turns the usual colours white on its own highlight).
     private var ink: Color? {
-        SelectionInk.color(selected: model.isFocused, prominence: prominence, accent: accent)
+        model.isFocused ? SelectionInk.color(prominence: prominence, accent: accent) : nil
     }
 
-    /// `normal`, or the selection ink at the same emphasis.
+    /// `normal`, or the selection ink at the same emphasis, as long as the
+    /// dimmed ink still reaches 4.5:1 on the accent (else full strength).
     private func inked(_ normal: Color, emphasis: Double = 1) -> Color {
-        ink.map { $0.opacity(emphasis) } ?? normal
+        guard let ink else { return normal }
+        return ink.opacity(accent.palette(scheme: colorScheme).inkOpacity(emphasis))
     }
 
     private var thread: MailThread { model.thread }
@@ -1805,7 +1808,7 @@ struct ThreadRow: View, Equatable {
             .help(isChecked ? "Deselect (x)" : "Select (x). Shift-click for a range.")
 
             Circle()
-                .fill(thread.isUnread ? inked(accent.fill) : .clear)
+                .fill(thread.isUnread ? inked(accent.foreground) : .clear)
                 .frame(width: 7, height: 7)
 
             // Middle content: when this row is already selected (e.g. the
@@ -1840,13 +1843,20 @@ struct ThreadRow: View, Equatable {
                 if let category = model.category {
                     let tint = Color.aiCategory(category)
                     let chrome = ThreadRowPillChrome.forFocused(model.isFocused)
-                    // AI palette is mid/dark semantic colors — white on selection.
-                    let fg: Color = chrome == .onSelection ? .white : tint
+                    // AI palette is mid/dark semantic colors — white on the
+                    // system selection. On a selection painted in a custom
+                    // accent the tint could match it: the pill becomes an
+                    // outline in the selection ink.
+                    let fg: Color = ink ?? (chrome == .onSelection ? .white : tint)
                     Text(category)
                         .font(.system(size: 10.5 * fontScale, weight: .medium))
                         .foregroundStyle(fg)
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(tint.opacity(chrome.fillOpacity), in: Capsule())
+                        .background(ink == nil ? tint.opacity(chrome.fillOpacity) : .clear,
+                                    in: Capsule())
+                        .overlay {
+                            if let ink { Capsule().strokeBorder(ink, lineWidth: 1) }
+                        }
                         .fixedSize()
                 }
 
@@ -1888,7 +1898,7 @@ struct ThreadRow: View, Equatable {
                     }
                     if thread.isStarred {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 12 * fontScale)).foregroundStyle(.yellow)
+                            .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.yellow))
                     }
                     Text(thread.lastDate, format: relativeFormat)
                         .font(.system(size: 12 * fontScale).monospacedDigit())
@@ -1951,7 +1961,7 @@ struct ThreadRow: View, Equatable {
             messageCount: thread.messageCount,
             participants: participantsDisplay)
         guard style != .none else { return names }
-        let marker = Text("Draft").fontWeight(.medium).foregroundColor(.orange)
+        let marker = Text("Draft").fontWeight(.medium).foregroundColor(inked(.orange))
         if style == .draftOnly { return marker }
         return marker + Text(", ").foregroundColor(inked(.secondary, emphasis: 0.8)) + names
     }
@@ -1977,7 +1987,7 @@ struct ThreadRow: View, Equatable {
         Button(action: action) {
             Image(systemName: filled ? "\(icon).fill" : icon)
                 .font(.system(size: 13 * fontScale))
-                .foregroundStyle(filled && icon == "star" ? Color.yellow : inked(.secondary, emphasis: 0.8))
+                .foregroundStyle(filled && icon == "star" ? inked(.yellow) : inked(.secondary, emphasis: 0.8))
                 .padding(3)
                 // Dense row: expand hit without inflating the 18pt trailing strip
                 // (full 40×40 would collide with neighbors — skill allows shrink).

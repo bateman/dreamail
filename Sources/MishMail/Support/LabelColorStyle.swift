@@ -226,8 +226,11 @@ struct LabelPillStyle: Equatable, Sendable {
     ///   two always reaches 4.58:1). The neutral chip uses `neutralText`.
     /// - Border: only when the fill is practically invisible on the
     ///   surface (`fillStandsOut` fails for any of its colors), a neutral
-    ///   outline that contrasts with every color of the surface by at
-    ///   least 3:1.
+    ///   outline (`borderColor`): 3:1 against every color of the surface
+    ///   where one neutral reaches that; on a selection whose two colors
+    ///   (a light custom accent and the dark inactive grey, say) leave no
+    ///   neutral at 3:1 on both, the black or white with the better worst
+    ///   case.
     static func resolve(_ colors: LabelColors,
                         appearance: Appearance,
                         surface: Surface = .content,
@@ -256,6 +259,9 @@ struct LabelPillStyle: Equatable, Sendable {
     /// Mid grey where it reaches 3:1 against every surface color (white,
     /// dark and read rows); otherwise black or white, whichever has the
     /// larger worst-case contrast (the selection, blue or inactive grey).
+    /// That fallback can stay under 3:1 on one of the two selection colors
+    /// when they are far apart in lightness (a pale custom accent in dark
+    /// mode against the inactive grey).
     static func borderColor(on surfaces: [LabelRGB]) -> LabelRGB {
         func worst(_ c: LabelRGB) -> Double { surfaces.map { c.contrast(with: $0) }.min() ?? 21 }
         let grey = LabelRGB(hex: 0x808080)

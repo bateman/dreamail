@@ -117,7 +117,7 @@ struct PillSwitchStyle: ToggleStyle {
                 configuration.label
                 Spacer(minLength: 12)
                 Capsule()
-                    .fill(configuration.isOn ? AnyShapeStyle(.accentFill) : AnyShapeStyle(Color.secondary.opacity(0.3)))
+                    .fill(configuration.isOn ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(Color.secondary.opacity(0.3)))
                     .frame(width: 36, height: 21)
                     .overlay(alignment: configuration.isOn ? .trailing : .leading) {
                         Circle()
@@ -180,7 +180,7 @@ struct SearchField: View {
         .overlay {
             if emphasized {
                 RoundedRectangle(cornerRadius: compact ? PMRadius.xs + 1 : PMRadius.sm)
-                    .strokeBorder(.accentFill.opacity(0.7), lineWidth: 1.5)
+                    .strokeBorder(.accentForeground.opacity(0.7), lineWidth: 1.5)
             }
         }
         .animation(.easeOut(duration: 0.08), value: emphasized)

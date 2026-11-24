@@ -65,7 +65,7 @@ struct LabelPill<Trailing: View>: View {
 
     var body: some View {
         let style = LabelPillStyle.resolve(colors, appearance: .init(colorScheme), surface: surface,
-                                           selectionFill: accent.custom)
+                                           selectionFill: accent.paintsSelection ? accent.custom : nil)
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         CappedWidth(maxWidth: maxWidth ?? .infinity) {
             HStack(spacing: 4) {

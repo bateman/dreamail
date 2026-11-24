@@ -105,7 +105,7 @@ struct TemplateTextEditor: NSViewRepresentable {
             for placeholder in SnippetExpander.placeholders(in: textView.string) {
                 storage.addAttribute(
                     .foregroundColor,
-                    value: placeholder.known ? MailAccent.current.nsForegroundOrSystem : NSColor.systemOrange,
+                    value: placeholder.known ? MailAccent.current.nsTextOrSystem : NSColor.systemOrange,
                     range: placeholder.range)
             }
             storage.endEditing()

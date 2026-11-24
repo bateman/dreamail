@@ -258,7 +258,7 @@ private struct SnippetRow: View {
                 Button(action: insert) {
                     Text("Insert")
                         .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(.accentForeground)
+                        .foregroundStyle(.accentText)
                 }
                 .buttonStyle(.plain)
                 Button(action: delete) {

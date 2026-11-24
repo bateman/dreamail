@@ -1989,7 +1989,7 @@ struct Sidebar: View {
                 .mailIconStyle(selected: selected)
         }
         .listItemTint(.monochrome)
-        .badge(sidebarBadge(badge))
+        .modifier(SidebarCount(count: badge ?? 0, painted: accent.paintsSelection))
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
         // The selection capsule in the custom accent (`AccentSelectionBackground`).
         .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
@@ -1997,15 +1997,6 @@ struct Sidebar: View {
             TapGesture().onEnded { store.goTo(view) },
             including: reselect ? .gesture : .subviews)
         .tag(view)
-    }
-
-    /// The row's count, hidden at zero. With a custom accent the number
-    /// takes the selection ink on the painted capsule (white or black by
-    /// `AccentPalette.onFill`); with the default accent the system styles it.
-    private func sidebarBadge(_ count: Int?) -> Text? {
-        guard let count, count > 0 else { return nil }
-        let text = Text("\(count)")
-        return accent.isCustom ? text.foregroundStyle(SidebarBadgeStyle()) : text
     }
 
     /// Stable id for UI tests / a11y (e.g. `sidebar.inbox`, `sidebar.sent`).
@@ -2024,6 +2015,22 @@ struct Sidebar: View {
     }
 }
 
+
+/// A sidebar row's count, hidden at zero. Without a painted selection it
+/// is exactly the old `.badge(Int)`; on a selection the app paints in a
+/// custom accent the number takes the selection ink (`SidebarBadgeStyle`).
+private struct SidebarCount: ViewModifier {
+    let count: Int
+    let painted: Bool
+
+    func body(content: Content) -> some View {
+        if painted {
+            content.badge(count > 0 ? Text("\(count)").foregroundStyle(SidebarBadgeStyle()) : nil)
+        } else {
+            content.badge(count)
+        }
+    }
+}
 
 /// Measures the panel's natural content height so the floating panel can hug
 /// its rows (instead of ScrollView greedily claiming its full max height and
@@ -2680,7 +2687,7 @@ struct AccountLabelsEditor: View {
                     Color(nsColor: AccountLabelColor.nsColor(hex: chosen, accountId: account.id))
                 },
                 set: { color in
-                    if let hex = AccountLabelColor.pickedHex(color, shown: shownHex) {
+                    if let hex = PickedColor.pickedHex(color, shown: shownHex) {
                         labelColors[account.id] = hex
                     }
                 }

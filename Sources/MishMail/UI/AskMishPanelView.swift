@@ -600,7 +600,10 @@ struct AskMishPanelView: View {
         Button("Retry") {
             controller.retryLastTurn()
         }
-        .buttonStyle(.link)
+        // A link-looking button in the accent's text colour (`.link` would
+        // draw it in `.tint`, the control fill, which skips the text rule).
+        .buttonStyle(.plain)
+        .foregroundStyle(.accentText)
         .font(.caption)
         .disabled(!controller.canRetry)
     }
@@ -1160,7 +1163,7 @@ private struct ModelPickerPopover: View {
                     .font(.system(size: 12, weight: .medium))
                 Spacer(minLength: 4)
                 if provider.id == currentProviderID {
-                    Circle().fill(.accentFill).frame(width: 5, height: 5)
+                    Circle().fill(.accentForeground).frame(width: 5, height: 5)
                 }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 8, weight: .semibold))

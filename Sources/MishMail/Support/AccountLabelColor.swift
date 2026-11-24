@@ -73,20 +73,6 @@ enum AccountLabelColor {
                        arguments: [LabelRGB.normalizedHex(hex), accountId])
     }
 
-    // MARK: - Picker conversion (shared with the accent: `PickedColor`)
-
-    static func hex(from color: NSColor) -> String? { PickedColor.hex(from: color) }
-
-    static func hex(from color: Color) -> String? { PickedColor.hex(from: color) }
-
-    static func pickedHex(_ color: NSColor, shown shownHex: String) -> String? {
-        PickedColor.pickedHex(color, shown: shownHex)
-    }
-
-    static func pickedHex(_ color: Color, shown shownHex: String) -> String? {
-        PickedColor.pickedHex(color, shown: shownHex)
-    }
-
     /// The opaque sRGB color for a stored hex (default when malformed).
     static func nsColor(hex: String?, accountId: String) -> NSColor {
         let rgb = LabelRGB(hexString: hex) ?? defaultRGB(for: accountId)
