@@ -164,6 +164,21 @@ enum AccountLifecycle {
         try String.fetchAll(db, sql: "SELECT id FROM account")
     }
 
+    /// What the remove-account confirmation says is deleted. Ask Mish chats
+    /// are named only in a build with the AI features: without them there is
+    /// no chat to speak of (older chats are still purged, see `purgeAccount`).
+    static func removalConfirmationMessage(aiFeaturesEnabled: Bool) -> String {
+        let chats = aiFeaturesEnabled
+            ? ", and Ask Mish chats that may contain this account's mail"
+            : ""
+        return "This removes cached mail, opened attachments and the saved sign-in from this Mac. "
+            + "Also deleted: unsent scheduled mail, offline drafts and edits not yet synced for this account, "
+            + "its saved views, snippets available only to it, its sync and filter settings"
+            + (aiFeaturesEnabled ? ", its notifications" : " and its notifications")
+            + chats
+            + ". Gmail mail on the server is not deleted."
+    }
+
     static let removalFailedMessage =
         "The account couldn't be removed. Nothing was deleted; try again."
 

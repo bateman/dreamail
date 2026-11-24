@@ -222,6 +222,23 @@ final class AccountLifecycleTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: AccountLifecycle.pendingRemovalsKey))
     }
 
+    /// The confirmation names Ask Mish chats only when the build has AI
+    /// features; everything else it lists is the same either way.
+    func testRemovalConfirmationNamesChatsOnlyWithAIFeatures() {
+        let off = AccountLifecycle.removalConfirmationMessage(aiFeaturesEnabled: false)
+        let on = AccountLifecycle.removalConfirmationMessage(aiFeaturesEnabled: true)
+        XCTAssertFalse(off.contains("Ask Mish"))
+        XCTAssertTrue(on.contains("Ask Mish chats that may contain this account's mail"))
+        for text in [off, on] {
+            for item in ["opened attachments", "saved sign-in", "saved views",
+                         "snippets available only to it", "sync and filter settings",
+                         "notifications", "not deleted"] {
+                XCTAssertTrue(text.contains(item), "\(item) missing: \(text)")
+            }
+        }
+        XCTAssertTrue(off.contains("filter settings and its notifications. Gmail"))
+    }
+
     // MARK: - Reauthorization
 
     func testBackgroundSyncSkipsAccountsThatNeedReauth() {
