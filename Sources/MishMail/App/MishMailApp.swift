@@ -144,10 +144,10 @@ struct MishMailApp: App {
                     AppDelegate.store = store
                     AppTheme.apply(.from(raw: appThemeRaw))
                     RemoteImagePolicy.migrateIfNeeded()
-                    UpdateChecker.shared.prepareForQuit = { [weak store] in
+                    UpdateChecker.shared.prepareForQuit = { [weak store = store] in
                         await store?.prepareForTermination()
                     }
-                    UpdateChecker.shared.hasOpenDraft = { [weak store] in
+                    UpdateChecker.shared.hasOpenDraft = { [weak store = store] in
                         store?.composeRequest != nil
                     }
                     UpdateChecker.shared.startPeriodicChecks()
