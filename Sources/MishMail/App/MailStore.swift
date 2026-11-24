@@ -446,6 +446,20 @@ final class MailStore {
     @ObservationIgnored
     private var noticeTimer: Timer?
 
+    /// Cache state for this launch (F-02). Fixed until relaunch, so views
+    /// read it directly; ContentView shows its persistent indicator.
+    var storageState: AppDatabase.StorageState { AppDatabase.shared.storageState }
+
+    /// The one gate for local changes while the cache is read-only. SQLite
+    /// refuses the write anyway; this stops the change *before* it touches
+    /// Gmail or the Keychain, and tells the user once instead of failing
+    /// silently. Returns true when the caller may go ahead.
+    func cacheAcceptsWrites(silent: Bool = false) -> Bool {
+        guard let refusal = storageState.writeRefusal else { return true }
+        if !silent { showNotice(refusal) }
+        return false
+    }
+
     func showNotice(_ text: String) {
         notice = text
         noticeTimer?.invalidate()
@@ -572,6 +586,7 @@ final class MailStore {
             showNotice("VIP changes are disabled in the demo inbox")
             return
         }
+        guard cacheAcceptsWrites() else { return }
         let e = email.trimmingCharacters(in: .whitespaces).lowercased()
         guard e.contains("@") else { return }
         let adding = VIPMembership.normalizeGroups(groups)
@@ -645,6 +660,7 @@ final class MailStore {
             showNotice("VIP changes are disabled in the demo inbox")
             return VIPBulkResult(added: 0, updated: 0)
         }
+        guard cacheAcceptsWrites() else { return VIPBulkResult(added: 0, updated: 0) }
         let wanted = VIPMembership.normalizeGroups(groups)
         let seed = VIPMembership.normalizeGroups(defaultGroupsForNew)
         let normalized = Array(Set(
@@ -697,6 +713,7 @@ final class MailStore {
             showNotice("VIP changes are disabled in the demo inbox")
             return
         }
+        guard cacheAcceptsWrites() else { return }
         let e = email.trimmingCharacters(in: .whitespaces).lowercased()
         try? db.write { _ = try VIPSender.deleteOne($0, key: e) }
         loadVIPs()
@@ -732,6 +749,7 @@ final class MailStore {
             showNotice("VIP changes are disabled in the demo inbox")
             return
         }
+        guard cacheAcceptsWrites() else { return }
         let e = email.trimmingCharacters(in: .whitespaces).lowercased()
         let g = group.trimmingCharacters(in: .whitespaces)
         guard e.contains("@"), !g.isEmpty else { return }
@@ -1048,6 +1066,7 @@ final class MailStore {
             showNotice("Blocking is disabled in the demo inbox")
             return
         }
+        guard cacheAcceptsWrites() else { return }
         let e = email.trimmingCharacters(in: .whitespaces).lowercased()
         guard e.contains("@") else { return }
         try? db.write { try BlockedSender(email: e).save($0) }
@@ -1061,6 +1080,7 @@ final class MailStore {
             showNotice("Blocking is disabled in the demo inbox")
             return
         }
+        guard cacheAcceptsWrites() else { return }
         let e = email.trimmingCharacters(in: .whitespaces).lowercased()
         try? db.write { _ = try BlockedSender.deleteOne($0, key: e) }
         loadBlocked()
@@ -1727,10 +1747,6 @@ struct ComposeRequest: Identifiable {
         // window that put it in runDeferredStartupWork.
         loadBlocked()
         reloadThreads()
-        // Still-plaintext cache opened read-only: say why nothing syncs.
-        if !AppDatabase.shared.allowsWrites {
-            lastError = AppDatabase.encryptionPendingMessage
-        }
         startupTask = Task { await self.runDeferredStartupWork() }
         // The opt-in MCP server starts in runDeferredStartupWork, not here:
         // its Keychain token read and NWListener bind are main-thread work
@@ -2466,7 +2482,7 @@ struct ComposeRequest: Identifiable {
         // Read-only plaintext cache (F-02): the rebuild would fail and the
         // marker below would still skip it on every later launch.
         guard !UserDefaults.standard.bool(forKey: key), !accounts.isEmpty,
-              AppDatabase.shared.allowsWrites else { return }
+              storageState.allowsWrites else { return }
         Task {
             for account in accounts {
                 let engine = engines[account.id] ?? SyncEngine(accountId: account.id)
@@ -2996,7 +3012,7 @@ struct ComposeRequest: Identifiable {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         // Read-only plaintext cache (F-02): fetched matches could not be stored.
         guard !isShuttingDown, !q.isEmpty, !demoMode,
-              AppDatabase.shared.allowsWrites else { return [] }
+              storageState.allowsWrites else { return [] }
         let targets = activeAccountId.map { [$0] } ?? accounts.map(\.id)
         guard !targets.isEmpty else { return [] }
 
@@ -3553,6 +3569,7 @@ struct ComposeRequest: Identifiable {
     // MARK: - Saved views
 
     func saveView(_ view: SavedView) {
+        guard cacheAcceptsWrites() else { return }
         var v = view
         // If this is a lossless (chips-backed) view, fold any edits made to the
         // ViewEditor's structured fields back into the JSON so chipsJSON stays
@@ -3601,7 +3618,7 @@ struct ComposeRequest: Identifiable {
     }
 
     func deleteView(_ view: SavedView) {
-        guard let id = view.id else { return }
+        guard let id = view.id, cacheAcceptsWrites() else { return }
         try? db.write { db in _ = try SavedView.deleteOne(db, key: id) }
         if case .saved(let selectedId, _) = selectedView, selectedId == id {
             selectedView = .inbox
@@ -4602,6 +4619,7 @@ struct ComposeRequest: Identifiable {
 
     func saveSnippet(name: String, body: String, movesToBcc: Bool = false,
                      accountIds: [String] = []) {
+        guard cacheAcceptsWrites() else { return }
         try? db.write { db in
             var s = Snippet(id: nil, name: name, body: body, movesToBcc: movesToBcc)
             s.accountIds = accountIds
@@ -4611,11 +4629,13 @@ struct ComposeRequest: Identifiable {
     }
 
     func deleteSnippet(_ s: Snippet) {
+        guard cacheAcceptsWrites() else { return }
         try? db.write { db in _ = try Snippet.deleteOne(db, key: s.id) }
         reloadSnippets()
     }
 
     func updateSnippet(_ s: Snippet) {
+        guard cacheAcceptsWrites() else { return }
         try? db.write { db in try s.update(db) }
         reloadSnippets()
     }

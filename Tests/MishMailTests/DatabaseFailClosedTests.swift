@@ -158,6 +158,130 @@ final class DatabaseFailClosedTests: XCTestCase {
         try assertEncryptedAndIntact(expectedRows: 20)
     }
 
+    // MARK: App-level gating (AppDatabase.init)
+
+    /// The app's own open: a deferred plaintext cache comes up `.readOnly`,
+    /// its maintenance (checkpoint, vacuum) is a no-op rather than a write,
+    /// and the next open with conversion allowed is writable and encrypted.
+    func testAppDatabaseOpensDeferredPlaintextCacheReadOnly() throws {
+        try makeDatabase()
+        let before = try Data(contentsOf: URL(fileURLWithPath: path))
+
+        let readOnly = try AppDatabase(path: path, key: key, allowConversion: false)
+        XCTAssertEqual(readOnly.storageState, .readOnly)
+        XCTAssertFalse(readOnly.allowsWrites)
+        XCTAssertEqual(try probeCount(readOnly.dbPool), 20)
+        assertWritesRefused(readOnly.dbPool)
+        readOnly.checkpoint()
+        readOnly.checkpoint(force: true)
+        readOnly.checkpointIfNeeded()
+        readOnly.reclaimSpaceIfNeeded()
+        readOnly.close()
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), before,
+                       "a read-only launch must leave the plaintext file byte-identical")
+
+        let writable = try AppDatabase(path: path, key: key, allowConversion: true)
+        XCTAssertEqual(writable.storageState, .writable)
+        try writable.dbPool.write { db in
+            try db.execute(sql: "INSERT INTO failClosedProbe (body) VALUES ('new mail')")
+        }
+        writable.close()
+        try assertEncryptedAndIntact(expectedRows: 21)
+    }
+
+    /// Why `removeAccount` refuses up front: on a read-only cache the purge
+    /// that follows the Keychain delete cannot run, and the account and its
+    /// mail would stay on disk.
+    func testAccountPurgeIsRefusedOnAReadOnlyCache() throws {
+        try makeDatabase()
+        let seed = try DatabaseQueue(path: path)
+        try seed.write { db in
+            try AccountLifecycle.accountAfterSignIn(
+                email: "someone@example.com", name: "Someone", existing: nil).insert(db)
+        }
+        try seed.close()
+
+        let readOnly = try AppDatabase(path: path, key: key, allowConversion: false)
+        XCTAssertNotNil(readOnly.storageState.writeRefusal, "MailStore's gate refuses removal")
+        XCTAssertThrowsError(try readOnly.dbPool.write { db in
+            try AccountLifecycle.purgeAccount(db, id: "someone@example.com")
+        })
+        XCTAssertEqual(try readOnly.dbPool.read { db in try Account.fetchCount(db) }, 1)
+        readOnly.close()
+    }
+
+    /// A real legacy plaintext file predates encryption, so its schema is
+    /// behind this build, and it may hold WAL frames nobody checkpointed.
+    /// Read-only it cannot be migrated and the current queries fail on it,
+    /// so the app must not present it as a (seemingly empty) mailbox. Once
+    /// converted, the WAL content is kept and migrations run on the
+    /// encrypted copy.
+    func testLegacySchemaBehindThisBuildBlocksTheMailboxUntilEncrypted() throws {
+        // Build the legacy file elsewhere and copy it, sidecars included,
+        // while its writer still holds uncheckpointed frames: what a running
+        // old build leaves on disk.
+        let sourcePath = dir.appendingPathComponent("legacy-source.sqlite").path
+        let source = try DatabasePool(path: sourcePath)
+        try AppDatabase.migrator.migrate(source, upTo: "v10")
+        try source.write { db in
+            try db.execute(sql: "CREATE TABLE failClosedProbe (id INTEGER PRIMARY KEY, body TEXT NOT NULL)")
+            for i in 0..<20 {
+                try db.execute(sql: "INSERT INTO failClosedProbe (body) VALUES (?)",
+                               arguments: ["\(fixtureMarker) \(i)"])
+            }
+        }
+        let fm = FileManager.default
+        for suffix in ["", "-wal", "-shm"] {
+            try fm.copyItem(atPath: sourcePath + suffix, toPath: path + suffix)
+        }
+        try source.close()
+        let walSize = (try fm.attributesOfItem(atPath: path + "-wal")[.size] as? NSNumber)?.intValue ?? 0
+        XCTAssertGreaterThan(walSize, 0, "fixture must carry uncheckpointed WAL frames")
+
+        let blocked = try AppDatabase(path: path, key: key, allowConversion: false)
+        XCTAssertEqual(blocked.storageState, .encryptionRequired)
+        XCTAssertFalse(blocked.storageState.showsMailbox)
+        XCTAssertNotNil(blocked.storageState.statusMessage)
+        XCTAssertEqual(try probeCount(blocked.dbPool), 20, "WAL frames are visible read-only")
+        // What the mailbox would hit: a column added after v10.
+        XCTAssertThrowsError(try blocked.dbPool.read { db in
+            try Row.fetchAll(db, sql: "SELECT deliveredTo FROM message")
+        })
+        XCTAssertFalse(try blocked.dbPool.read { db in
+            try AppDatabase.migrator.hasCompletedMigrations(db)
+        }, "migrations must not run on the plaintext file")
+        assertWritesRefused(blocked.dbPool)
+        blocked.close()
+        XCTAssertTrue(AppDatabase.isPlaintext(path))
+
+        let converted = try AppDatabase(path: path, key: key, allowConversion: true)
+        XCTAssertEqual(converted.storageState, .writable)
+        XCTAssertTrue(try converted.dbPool.read { db in
+            try AppDatabase.migrator.hasCompletedMigrations(db)
+        })
+        converted.close()
+        try assertEncryptedAndIntact(expectedRows: 20)
+    }
+
+    func testStorageStatePolicy() {
+        XCTAssertTrue(AppDatabase.StorageState.writable.allowsWrites)
+        XCTAssertTrue(AppDatabase.StorageState.writable.showsMailbox)
+        XCTAssertNil(AppDatabase.StorageState.writable.statusMessage)
+        XCTAssertNil(AppDatabase.StorageState.writable.writeRefusal)
+        for state in [AppDatabase.StorageState.readOnly, .encryptionRequired] {
+            XCTAssertFalse(state.allowsWrites, "\(state)")
+            XCTAssertNotNil(state.statusMessage, "\(state)")
+            XCTAssertNotNil(state.writeRefusal, "\(state)")
+        }
+        XCTAssertTrue(AppDatabase.StorageState.readOnly.showsMailbox)
+        XCTAssertFalse(AppDatabase.StorageState.encryptionRequired.showsMailbox)
+        // The indicator must say what is paused, not only that sync is.
+        let readOnly = AppDatabase.StorageState.readOnly.statusMessage ?? ""
+        for word in ["sync", "scheduled sends", "queued edits"] {
+            XCTAssertTrue(readOnly.contains(word), word)
+        }
+    }
+
     func testOnlyEncryptedSchemesAllowWrites() {
         XCTAssertTrue(AppDatabase.KeyScheme.raw.allowsWrites)
         XCTAssertTrue(AppDatabase.KeyScheme.passphrase.allowsWrites)

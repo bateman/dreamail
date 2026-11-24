@@ -359,7 +359,10 @@ extension MailStore {
 
     /// Only hand off a message after claiming its durable queue row.
     private func takeScheduledSend(_ s: ScheduledSend) -> Bool {
-        guard !isScheduledSendInFlight(s), let id = s.id else { return false }
+        // Read-only cache (F-02): the row could not be claimed, so neither
+        // "Send now", edit nor discard can hand the message off.
+        guard !isScheduledSendInFlight(s), let id = s.id,
+              cacheAcceptsWrites() else { return false }
         do {
             let removed = try db.write { db in try ScheduledSend.deleteOne(db, key: id) }
             reloadScheduledSends()
@@ -430,10 +433,11 @@ extension MailStore {
     /// Every attempt, including a retry after an ambiguous 5xx or timeout,
     /// first asks Gmail whether the stable Message-ID already arrived.
     func fireDueScheduledSends() async {
-        // Read-only plaintext cache (F-02): a sent row could not be removed,
-        // so the next tick would send the same message again.
+        // Read-only cache (F-02): a sent row could not be removed, so the
+        // next tick would send the same message again. Also reached from the
+        // one-shot send timer and startup, not only the poll.
         guard !demoMode, !isShuttingDown, !scheduledSendFlushInFlight,
-              AppDatabase.shared.allowsWrites else { return }
+              cacheAcceptsWrites(silent: true) else { return }
         scheduledSendFlushInFlight = true
         defer { scheduledSendFlushInFlight = false }
         let due = scheduledSends.filter { $0.sendAt <= Date() }
@@ -669,6 +673,11 @@ extension MailStore {
             if !silent { showNotice("Drafts aren't saved in the demo inbox") }
             return nil
         }
+        // Read-only cache (F-02): Gmail would get a new draft on every
+        // autosave that the cache could not adopt, so remote drafts pile up
+        // and drift from local. Autosaves stay quiet; the persistent
+        // indicator already says why.
+        guard cacheAcceptsWrites(silent: silent) else { return nil }
         // Same rules as send(): a forward's original doesn't thread the
         // draft, but supplies the HTML body when the quote is untouched.
         let threadParent = forward ? nil : message
@@ -846,6 +855,9 @@ extension MailStore {
                       silent: Bool = false,
                       syncAfter: Bool? = nil,
                       composingRequestId: UUID? = nil) async -> DraftSaveOutcome {
+        // Read-only cache (F-02): neither Gmail (see saveDraft) nor the
+        // Outbox (a local write) can take the draft.
+        guard cacheAcceptsWrites(silent: silent) else { return .failed }
         // Set when Gmail was reachable but refused the save on the close path.
         var rejection: Error?
         if !isOffline {
@@ -960,10 +972,11 @@ extension MailStore {
     /// connectivity failure. One Drafts-mailbox sync afterwards so the
     /// uploaded rows appear where the user expects them.
     func flushLocalDrafts() async {
-        // Read-only plaintext cache (F-02): an uploaded draft could not
-        // leave the Outbox, so the next flush would upload it again.
+        // Read-only cache (F-02): an uploaded draft could not leave the
+        // Outbox, so the next flush would upload it again. Also reached from
+        // the Outbox list's button, hence the notice.
         guard !demoMode, !isShuttingDown, !localDraftFlushInFlight,
-              AppDatabase.shared.allowsWrites else { return }
+              cacheAcceptsWrites() else { return }
         localDraftFlushInFlight = true
         defer { localDraftFlushInFlight = false }
         let rows = (try? await db.read {
