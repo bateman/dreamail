@@ -627,7 +627,17 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
 /// maintenance all reach the same pool. `dbPool` is itself thread-safe and the
 /// pool lifecycle is guarded by `closeLock`.
 final class AppDatabase: @unchecked Sendable {
-    static let shared = try! AppDatabase()
+    /// Not `try!`: a failed `try!` prints the error's full description (GRDB
+    /// SQL text, file paths with the user name) to stderr and into the crash
+    /// report. Log the category, then stop with a fixed message.
+    static let shared: AppDatabase = {
+        do {
+            return try AppDatabase()
+        } catch {
+            NSLog("MishMail: mail cache could not be opened: %@", DiagnosticLog.describe(error))
+            fatalError("MishMail: mail cache could not be opened")
+        }
+    }()
     // A pool (WAL), not a serial queue: concurrent readers (e.g. the live
     // search dropdown's per-keystroke FTS lookup) run on their own snapshot
     // connections instead of queuing behind a sync-engine write transaction.
