@@ -7,6 +7,7 @@ extension MailStore {
     // MARK: - Reminders
 
     func setReminder(_ thread: MailThread, after days: Int?) {
+        guard cacheAcceptsWrites() else { return }
         var copy = thread
         let when = LocalReminders.fireAt(after: days)
         copy.reminderAt = when
