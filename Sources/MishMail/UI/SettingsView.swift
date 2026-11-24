@@ -1258,6 +1258,7 @@ struct AppearanceSettings: View {
                         }
                     }
                     .onChange(of: badgeScopeRaw) { store.refreshBadge() }
+                    DockBadgeStatusRow()
                 } header: {
                     Text("Dock badge")
                 } footer: {

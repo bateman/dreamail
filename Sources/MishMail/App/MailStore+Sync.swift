@@ -123,6 +123,10 @@ extension MailStore {
             Task { @MainActor in
                 guard let self, !self.isShuttingDown else { return }
                 self.rearmSyncTimerIfCadenceChanged()
+                // Repaint the Dock badge in case a paint was lost, and pick
+                // up notification settings changed meanwhile.
+                self.repaintDockBadge()
+                self.refreshDockBadgeSystemStatus()
                 // Only if the mailbox is actually stale. Without this floor,
                 // alt-tabbing back and forth would fire a full multi-account
                 // sync per switch — more requests against Gmail's quota than
