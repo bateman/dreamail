@@ -2370,21 +2370,19 @@ struct AccountSwitcher: View {
         } label: {
             HStack(spacing: 8) {
                 if let account = activeAccount {
-                    avatar(for: displayTitle(account), key: account.id, size: 28)
+                    avatar(for: account, size: 32, surface: .sidebar)
                 } else {
-                    allInboxesIcon(size: 28)
+                    allInboxesIcon(size: 32)
                 }
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 3) {
                         Text(title)
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
-                        if let account = activeAccount, let label = labelText(account) {
-                            labelPill(label, account: account, surface: .sidebar)
-                        }
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
                     }
                     Text(subtitle)
                         .font(.caption).foregroundStyle(.secondary)
@@ -2395,6 +2393,7 @@ struct AccountSwitcher: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(subtitle)")
         .accessibilityIdentifier("accountSwitcher")
         .popover(isPresented: $showMenu, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 1) {
@@ -2486,12 +2485,12 @@ struct AccountSwitcher: View {
                     }
                 }
                 if let account {
-                    avatar(for: displayTitle(account), key: account.id, size: 24)
+                    avatar(for: account, size: 26, surface: .popover)
                 } else {
-                    allInboxesIcon(size: 24)
+                    allInboxesIcon(size: 26)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(account.map(displayTitle) ?? "All accounts")
+                    Text(account.map { AccountLabelColor.title($0) } ?? "All accounts")
                         .font(.system(size: 12.5, weight: .medium))
                         .lineLimit(1)
                     Text(account?.id ?? inboxCountLabel)
@@ -2499,9 +2498,6 @@ struct AccountSwitcher: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                if let account, let label = labelText(account) {
-                    labelPill(label, account: account, surface: .content)
-                }
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .semibold))
@@ -2520,16 +2516,22 @@ struct AccountSwitcher: View {
         .hoverTint()
     }
 
-    /// Stacked-trays icon for the unified "All accounts" scope.
+    /// Stacked-trays icon for the unified "All accounts" scope, in the
+    /// avatar column. The frame matches the ringed avatars; the glyph keeps
+    /// its size from before the ring (frame 4 pt larger).
     private func allInboxesIcon(size: CGFloat) -> some View {
         Image(systemName: "tray.2.fill")
-            .font(.system(size: size * 0.54)).foregroundStyle(.secondary)
+            .font(.system(size: (size - 4) * 0.54)).foregroundStyle(.secondary)
             .frame(width: size, height: size)
     }
 
-    /// The account's Google photo, or the colored circle with the first initial.
-    private func avatar(for name: String, key: String, size: CGFloat) -> some View {
-        AccountAvatarView(name: name, key: key, size: size, photo: store.accountPhotos[key],
+    /// The account's Google photo, or the colored circle with the first
+    /// initial, ringed in the account's label color.
+    private func avatar(for account: Account, size: CGFloat,
+                        surface: AccountRingStyle.Surface) -> some View {
+        AccountAvatarView(name: AccountLabelColor.title(account), key: account.id, size: size,
+                          photo: store.accountPhotos[account.id],
+                          ring: .init(storedHex: account.labelColor, surface: surface),
                           decorative: true)
     }
 
@@ -2537,32 +2539,10 @@ struct AccountSwitcher: View {
         store.activeAccountId.flatMap { id in store.accounts.first { $0.id == id } }
     }
 
-    /// Full name first in the account header: the outgoing
-    /// sender name if set, then the local label, then the address.
-    private func displayTitle(_ account: Account) -> String {
-        if !account.senderName.isEmpty { return account.senderName }
-        return account.displayName
-    }
-
-    /// The local label, when it adds information beyond the title/address.
-    /// Rendered as a tinted pill next to the name, never as part of it.
-    private func labelText(_ account: Account) -> String? {
-        AccountLabelColor.pillLabel(account)
-    }
-
-    /// Small pill with the account's label ("Fund", "Personal") in the
-    /// color chosen in "Edit Account Labels…" (default: the avatar's hue),
-    /// drawn with the same readable rule as Gmail label pills.
-    private func labelPill(_ label: String, account: Account,
-                           surface: LabelPillStyle.Surface) -> some View {
-        LabelPill(name: label, colors: AccountLabelColor.colors(for: account),
-                  surface: surface, font: .system(size: 9.5, weight: .medium),
-                  verticalPadding: 2)
-            .fixedSize()
-    }
-
+    /// The account's label, else its sender name, else its address
+    /// (`AccountLabelColor.title`); the address is the second line.
     private var title: String {
-        activeAccount.map(displayTitle) ?? "All accounts"
+        activeAccount.map { AccountLabelColor.title($0) } ?? "All accounts"
     }
 
     private var inboxCountLabel: String {
@@ -2599,7 +2579,7 @@ private struct AccountDropDelegate: DropDelegate {
     }
 }
 
-/// Rename accounts ("Personal", "Fund", …) and color their label pills;
+/// Rename accounts ("Personal", "Fund", …) and color their avatar rings;
 /// labels and colors are local only.
 struct AccountLabelsEditor: View {
     @Environment(MailStore.self) var store
@@ -2625,6 +2605,7 @@ struct AccountLabelsEditor: View {
                             get: { senderNames[account.id] ?? account.senderName },
                             set: { senderNames[account.id] = $0 }
                         ), prompt: Text("e.g. Jane Doe"))
+                        .accessibilityIdentifier("accountSenderName.\(account.id)")
                         colorRows(account)
                     }
                 }
@@ -2661,25 +2642,22 @@ struct AccountLabelsEditor: View {
         LabelRGB.normalizedHex(labelColors[account.id] ?? account.labelColor)
     }
 
-    /// Label color: a preview pill and the system color picker, then the
-    /// organizer's swatches for one-click choices and "Default".
+    /// Label color: a preview of the ringed avatar and the system color
+    /// picker, then the organizer's swatches for one-click choices and
+    /// "Default". The ring always shows the color, so the rows are always
+    /// enabled.
     @ViewBuilder
     private func colorRows(_ account: Account) -> some View {
         let chosen = editedColor(account)
         let shownHex = AccountLabelColor.resolvedHex(stored: chosen, accountId: account.id)
-        let pillColors = LabelColors(background: shownHex, text: nil)
-        let name = labels[account.id] ?? account.displayName
-        // The switcher shows the pill only when the label adds something
-        // (see `AccountLabelColor.pillLabel`); otherwise the color has
-        // nothing to apply to, so the rows are disabled with a hint.
-        let showsPill = editedPillLabel(account) != nil
         HStack {
             Text("Label color")
             Spacer()
-            LabelPill(name: name.isEmpty ? account.id : name, colors: pillColors,
-                      font: .system(size: 9.5, weight: .medium), verticalPadding: 2)
-                .fixedSize()
-                .accessibilityHidden(true)
+            AccountAvatarView(name: editedTitle(account), key: account.id, size: 32,
+                              photo: store.accountPhotos[account.id],
+                              ring: .init(storedHex: chosen, surface: .groupedForm))
+                .accessibilityLabel("Label color preview")
+                .accessibilityIdentifier("accountLabelColorPreview.\(account.id)")
             ColorPicker("Label color", selection: Binding(
                 get: {
                     Color(nsColor: AccountLabelColor.nsColor(hex: chosen, accountId: account.id))
@@ -2694,7 +2672,6 @@ struct AccountLabelsEditor: View {
             .accessibilityLabel("Label color for \(account.id)")
             .accessibilityIdentifier("accountLabelColorPicker.\(account.id)")
         }
-        .disabled(!showsPill)
         HStack(spacing: 5) {
             ForEach(Color.labelPalette, id: \.hex) { swatch in
                 let selected = chosen == LabelRGB.normalizedHex(swatch.hex)
@@ -2723,21 +2700,12 @@ struct AccountLabelsEditor: View {
                 .accessibilityLabel("Default label color")
                 .accessibilityIdentifier("accountLabelColorDefault.\(account.id)")
         }
-        .disabled(!showsPill)
-        if !showsPill {
-            Text("Shown when \u{201C}Send as\u{201D} is set and differs from the label.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
-    /// The pill label with the edits so far, as Save would store them.
-    private func editedPillLabel(_ account: Account) -> String? {
-        let label = (labels[account.id] ?? account.displayName)
-            .trimmingCharacters(in: .whitespaces)
-        let sender = (senderNames[account.id] ?? account.senderName)
-            .trimmingCharacters(in: .whitespaces)
-        return AccountLabelColor.pillLabel(displayName: label.isEmpty ? account.id : label,
-                                           senderName: sender, accountId: account.id)
+    /// The title with the edits so far, for the preview avatar's initial.
+    private func editedTitle(_ account: Account) -> String {
+        AccountLabelColor.title(displayName: labels[account.id] ?? account.displayName,
+                                senderName: senderNames[account.id] ?? account.senderName,
+                                accountId: account.id)
     }
 }

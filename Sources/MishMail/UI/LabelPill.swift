@@ -45,17 +45,6 @@ struct LabelPill<Trailing: View>: View {
                   maxWidth: maxWidth, trailing: trailing)
     }
 
-    /// Any font, padded vertically instead of sized by the metrics (the
-    /// account switcher's pill).
-    init(name: String, colors: LabelColors,
-         surface: LabelPillStyle.Surface = .content,
-         font: Font, verticalPadding: CGFloat = 2.5,
-         @ViewBuilder trailing: @escaping () -> Trailing) {
-        self.init(name: name, colors: colors, surface: surface, font: font,
-                  horizontalPadding: 6, verticalPadding: verticalPadding,
-                  minHeight: 0, cornerRadius: 4, maxWidth: nil, trailing: trailing)
-    }
-
     private init(name: String, colors: LabelColors, surface: LabelPillStyle.Surface,
                  font: Font, horizontalPadding: Double, verticalPadding: CGFloat,
                  minHeight: Double, cornerRadius: Double, maxWidth: CGFloat?,
@@ -127,13 +116,6 @@ extension LabelPill where Trailing == EmptyView {
          maxWidth: CGFloat? = nil) {
         self.init(name: name, colors: colors, surface: surface, fontSize: fontSize,
                   maxWidth: maxWidth, trailing: { EmptyView() })
-    }
-
-    init(name: String, colors: LabelColors,
-         surface: LabelPillStyle.Surface = .content,
-         font: Font, verticalPadding: CGFloat = 2.5) {
-        self.init(name: name, colors: colors, surface: surface, font: font,
-                  verticalPadding: verticalPadding, trailing: { EmptyView() })
     }
 }
 
