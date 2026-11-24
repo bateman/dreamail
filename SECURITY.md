@@ -32,21 +32,22 @@ Appearance → Load remote images: Always; Ask each time and VIP senders are
 stricter). Mail in Spam and conversations that were not opened (including
 neighbour pre-render) never load them without a click.
 
-**Cached once per message.** When a message is opened with its remote
-images allowed, MishMail's own client (not WebKit) downloads each ordinary
-image of that message once and keeps it in the encrypted database with the
-message (see "What deleting means"); later opens, after a relaunch too, show
-it from there with no request. This reduces repeat requests; it is not a
-defence against tracking: a sender can make an image uncacheable (an empty
-or 204 answer, SVG, an oversized or slow image, `<picture>`, `image-set()`,
-CSS escapes, a 41st image), and that image then loads from WebKit on every
-open. The app's client is distinguishable from WebKit, and both may contact
-a sender for the same message (the app for what it caches, WebKit for the
-rest). Nothing is
-downloaded for mail that is not open, nor for a message whose images the
-policy blocks (Ask each time without a click, non-VIP senders, Spam): the
-cache never overrides the decision, and the neighbour pre-render and
-prefetch only read what is already cached. The app's client:
+**Cached once per message.** The first time a message is opened with its
+remote images allowed, it shows them exactly as before (WebKit loads them
+live), and MishMail's own client downloads each ordinary image of that
+message in the background and keeps it in the encrypted database with the
+message (see "What deleting means"). Later opens, after a relaunch too, show
+the message from there with no request, once all its cacheable images are
+stored. So on the first open the sender can see two fetches of an image (one
+from WebKit, one from the app's client, which is distinguishable from
+WebKit); afterwards none for those images. This reduces repeat requests; it
+is not a defence against tracking: a sender can make an image uncacheable
+(an empty or 204 answer, SVG, an oversized or slow image, `<picture>`,
+`image-set()`, CSS escapes, a 41st image), and that image then loads from
+WebKit on every open. Nothing is downloaded for mail that is not open, nor for a message whose
+images the policy blocks (Ask each time without a click, non-VIP senders,
+Spam): the cache never overrides the decision, and the neighbour pre-render
+and prefetch only read what is already cached. The app's client:
 
 - requests `https:` URLs only, on the default port, with a fixed `Accept`,
   `Accept-Language` and WebKit-shaped `User-Agent`, and no cookies, cache,

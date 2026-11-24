@@ -116,18 +116,15 @@ struct ThreadDetailView: View {
     /// `cid:` resolves still running: a remote-image resolve for the same
     /// message waits for it, so it works on the final base once.
     @State private var cidResolveInFlight: Set<String> = []
-    /// Bodies with remote images inlined (`RemoteInlinedBody`), for cards
-    /// whose remote images are allowed: seeded from a warmed payload (cache
-    /// only) or built by `startRemoteResolve`.
+    /// Bodies with every cacheable remote image from the cache
+    /// (`RemoteInlinedBody`), seeded from the payload when the conversation
+    /// opens (a warmed payload, or one an earlier open filled); never
+    /// changed while it is open.
     @State private var remoteBodyById: [String: RemoteInlinedBody] = [:]
     /// "id|cid" / "id|raw": remote resolves started, per base.
     @State private var remoteResolveAttempted: Set<String> = []
     /// Cards that asked for remote images while their `cid:` resolve ran.
     @State private var remoteResolveWanted: Set<String> = []
-    /// Resolves that ended with nothing to show: the card loads the body as
-    /// before (allowed CSP, live images) instead of waiting.
-    @State private var remoteResolveGaveUp: Set<String> = []
-    @State private var remoteResolveTokens: [String: UUID] = [:]
     /// The running resolve per message, cancelled when its card leaves or
     /// its images stop being allowed, and on a thread change.
     @State private var remoteResolveTasks: [String: Task<Void, Never>] = [:]
@@ -370,8 +367,6 @@ struct ThreadDetailView: View {
                 remoteBodyById = [:]
                 remoteResolveAttempted = []
                 remoteResolveWanted = []
-                remoteResolveGaveUp = []
-                remoteResolveTokens = [:]
                 for task in remoteResolveTasks.values { task.cancel() }
                 remoteResolveTasks = [:]
                 loadRemoteImagesForThread = false
@@ -618,7 +613,6 @@ struct ThreadDetailView: View {
                     cidInlinedHTML: cidInlinedHTMLById[message.id],
                     cidPrep: cidPrepByMessageId[message.id],
                     remoteBody: remoteBodyById[message.id],
-                    remoteResolveGaveUp: remoteResolveGaveUp.contains(message.id),
                     expandPolicy: messageExpandPolicy,
                     expandedMessageIds: $expandedMessageIds,
                     isCollapsible: MessageExpandPolicy.isCollapsible(
@@ -1047,14 +1041,12 @@ struct ThreadDetailView: View {
         }
     }
 
-    /// The card's remote-image decision allowed images (policy, click or
-    /// conversation opt-in): show the cached ones, fetch the rest once with
-    /// the app's own client, and keep them for later opens. Never called for
-    /// a card whose images are blocked, so the cache never overrides the
-    /// decision. First open: the card shows the body with remote images
-    /// blocked meanwhile (cached ones inlined as soon as they are read), and
-    /// swaps to the complete body when the fetch ends, so each image is
-    /// downloaded once, by the app, and first paint never waits.
+    /// The card's remote-image decision changed (or its base did), through
+    /// the one gate (`RemoteImageRendering.paneStep`). While images are
+    /// allowed and the card shows them live (exactly as without the cache),
+    /// the app fetches the cacheable ones in the background for the next
+    /// open; nothing is swapped in now. A blocked card cancels and fetches
+    /// nothing, so the cache never overrides the decision.
     private func remoteImagesDecisionChanged(id: String, allowed: Bool) {
         let cidHTML = cidInlinedHTMLById[id]
         let step = RemoteImageRendering.paneStep(
@@ -1069,7 +1061,7 @@ struct ThreadDetailView: View {
             if remoteResolveAttempted.insert("\(id)|warm").inserted {
                 store.noteCachedRemoteImagesShown(messageIds: [id])
             }
-        case .resolve(let baseIsCID):
+        case .fetchForNextOpen(let baseIsCID):
             startRemoteResolve(id: id, baseIsCID: baseIsCID)
         }
     }
@@ -1080,7 +1072,6 @@ struct ThreadDetailView: View {
     private func cancelRemoteResolve(id: String) {
         remoteResolveWanted.remove(id)
         remoteResolveTasks.removeValue(forKey: id)?.cancel()
-        remoteResolveTokens.removeValue(forKey: id)
         remoteResolveAttempted = remoteResolveAttempted.filter { !$0.hasPrefix(id + "|") }
     }
 
@@ -1092,8 +1083,6 @@ struct ThreadDetailView: View {
         let base = (baseIsCID ? cidInlinedHTMLById[id] : nil) ?? rawHTML
         let prep = baseIsCID ? cidPrepByMessageId[id] : bodyPrepByMessageId[id]
         let preInlineBytes = prep?.htmlBytes ?? rawHTML.utf8.count
-        let token = UUID()
-        remoteResolveTokens[id] = token
         let scale = fontScale
         let revision = store.contentRevision(of: thread.id)
         let threadId = thread.id
@@ -1101,40 +1090,22 @@ struct ThreadDetailView: View {
         let transport = store.remoteImageTransport
         let accountId = msg.accountId
         remoteResolveTasks[id]?.cancel()
+        // This open is not changed (WebKit shows the images live, as without
+        // the cache): the body the next open can show is kept with the
+        // payload, never swapped in now.
         remoteResolveTasks[id] = Task {
-            let final = await RemoteImageResolver.resolve(
+            let next = await RemoteImageResolver.fetchForNextOpen(
                 messageId: id, accountId: accountId, baseHTML: base,
                 preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCID,
-                fontScale: scale, store: imageStore, transport: transport,
-                onPartial: { partial in
-                    await MainActor.run {
-                        applyRemoteBody(partial, id: id, token: token, threadId: threadId,
-                                        revision: revision)
-                    }
-                })
+                fontScale: scale, store: imageStore, transport: transport)
             await MainActor.run {
-                guard remoteResolveTokens[id] == token else { return }
+                // A cancelled task's slot may already hold a newer one.
+                guard !Task.isCancelled else { return }
                 remoteResolveTasks.removeValue(forKey: id)
-                if let final {
-                    applyRemoteBody(final, id: id, token: token, threadId: threadId,
-                                    revision: revision)
-                } else if !Task.isCancelled {
-                    remoteResolveGaveUp.insert(id)
-                }
+                guard let next else { return }
+                store.rememberRemoteInline(next, messageId: id, threadId: threadId,
+                                           revision: revision)
             }
-        }
-    }
-
-    private func applyRemoteBody(_ body: RemoteInlinedBody, id: String, token: UUID,
-                                 threadId: String, revision: ThreadContentRevision) {
-        guard remoteResolveTokens[id] == token, thread.id == threadId,
-              splitMode || store.openedThreadId == threadId else { return }
-        // A partial body never replaces a final one.
-        if body.phase == .partial, remoteBodyById[id]?.phase == .final { return }
-        remoteBodyById[id] = body
-        if body.phase == .final {
-            store.rememberRemoteInline(body, messageId: id, threadId: threadId,
-                                       revision: revision)
         }
     }
 
@@ -1786,8 +1757,6 @@ struct MessageCard: View {
     /// just fetched by the app). Used only while this card's own decision
     /// allows remote images (`RemoteImageRendering.choice`).
     let remoteBody: RemoteInlinedBody?
-    /// The parent's resolve ended with nothing: load the body as before.
-    let remoteResolveGaveUp: Bool
     /// Single-active reading pane vs multi-open side-by-side compose.
     let expandPolicy: MessageExpandPolicy
     @Binding var expandedMessageIds: Set<String>
@@ -1902,7 +1871,6 @@ struct MessageCard: View {
          cidInlinedHTML: String? = nil,
          cidPrep: MessageHTMLPrep? = nil,
          remoteBody: RemoteInlinedBody? = nil,
-         remoteResolveGaveUp: Bool = false,
          expandPolicy: MessageExpandPolicy = .single,
          expandedMessageIds: Binding<Set<String>>,
          isCollapsible: Bool = true,
@@ -1923,7 +1891,6 @@ struct MessageCard: View {
         self.cidInlinedHTML = cidInlinedHTML
         self.cidPrep = cidPrep
         self.remoteBody = remoteBody
-        self.remoteResolveGaveUp = remoteResolveGaveUp
         self.expandPolicy = expandPolicy
         self._expandedMessageIds = expandedMessageIds
         self.isCollapsible = isCollapsible
@@ -2057,17 +2024,13 @@ struct MessageCard: View {
     }
 
     /// Which body this card paints for remote images
-    /// (`RemoteImageRendering.choice`): the cached/fetched body only while
-    /// images are allowed, the stored body blocked while the parent fetches
-    /// them, else the body as before.
+    /// (`RemoteImageRendering.choice`): the body from the cache only while
+    /// images are allowed, else the body exactly as without the cache.
     private var remoteChoice: RemoteImageRendering.Choice {
-        let hasCID = cidInlinedHTML.map { !$0.isEmpty } ?? false
-        let prep = hasCID ? cidPrep : bodyPrep
-        return RemoteImageRendering.choice(
+        RemoteImageRendering.choice(
             allowRemoteImages: allowRemoteImages,
             remoteBody: remoteBody,
-            cidInlined: hasCID,
-            remoteCandidateCount: remoteResolveGaveUp ? 0 : (prep?.remoteImageCount ?? 0))
+            cidInlined: cidInlinedHTML.map { !$0.isEmpty } ?? false)
     }
 
     private var metrics: ThreadMessageRowMetrics {
@@ -2359,7 +2322,6 @@ struct MessageCard: View {
             let loadAllowsRemoteImages: Bool = {
                 switch choice {
                 case .base(let allow): return allow
-                case .baseBlockedWhileResolving: return false
                 case .remote(let body): return body.loadAllowsRemoteImages
                 }
             }()

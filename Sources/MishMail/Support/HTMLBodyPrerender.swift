@@ -54,9 +54,9 @@ enum HTMLBodyNeighborPrerender {
     /// pixels for mail the user never opened. `opensWithRemoteImages` (the
     /// caller's image decision for that message) picks the document the open
     /// would show: for a message whose open loads remote images, the body
-    /// with the images already in the encrypted cache inlined (the rest
-    /// stay blocked and the open fetches them), never one that needs the
-    /// network (skipped: its blocked paint could never be claimed).
+    /// with all its cacheable images from the encrypted cache, never one
+    /// that needs the network (skipped: its blocked paint could never be
+    /// claimed).
     static func schedule(
         openedThreadId: String,
         displayOrder: [String],
@@ -94,18 +94,15 @@ enum HTMLBodyNeighborPrerender {
                 // with the inlined HTML (content id suffixed ":cid"), so
                 // paint that one or the open could never claim this view.
                 let inlined = payload.cidInlineByMessageId[message.id]
-                // Remote images: only what the encrypted cache already holds
-                // is painted (inlined as data: URLs), always under the
-                // blocked CSP, and only the document the open would show
-                // (`RemoteImageRendering.prerender`); nil skips the
-                // neighbour, as for an open that needs the network.
-                let candidateCount = (inlined?.prep
-                    ?? payload.bodyPrepByMessageId[message.id])?.remoteImageCount ?? 0
+                // Remote images: a body whose cacheable images are all in the
+                // encrypted cache is painted with them inlined, under the
+                // blocked CSP: the document its open shows
+                // (`RemoteImageRendering.prerender`). An open that loads
+                // images live is skipped, as before.
                 guard let plan = RemoteImageRendering.prerender(
                     opensWithRemoteImages: opensWithRemoteImages(threadId, message),
                     remoteBody: payload.remoteInlineByMessageId[message.id],
-                    cidInlined: inlined != nil,
-                    remoteCandidateCount: candidateCount) else { continue }
+                    cidInlined: inlined != nil) else { continue }
                 let selected: HTMLBodyPrerenderSelection.Candidate?
                 if case .remote(let body) = plan {
                     // Gated on the pre-inline sizes in its prep, as the card.

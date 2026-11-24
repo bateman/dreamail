@@ -227,8 +227,8 @@ final class RemoteImageDefaultTests: XCTestCase {
             // A body with no cacheable remote image: painted only when its
             // open is blocked (`RemoteImageRendering.prerender`).
             XCTAssertEqual(RemoteImageRendering.prerender(
-                opensWithRemoteImages: opens, remoteBody: nil, cidInlined: false,
-                remoteCandidateCount: 0) != nil, row.paints, "row \(i)")
+                opensWithRemoteImages: opens, remoteBody: nil,
+                cidInlined: false) != nil, row.paints, "row \(i)")
         }
     }
 

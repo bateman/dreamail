@@ -1,24 +1,17 @@
 import Foundation
 
-/// A message body with its remote images (those already known) inlined as
-/// `data:` URLs, plus the prep built from it off the main actor.
+/// A message body with every cacheable remote image inlined from the
+/// encrypted cache as a `data:` URL, plus the prep built from it off the main
+/// actor. Only ever built from the cache (no network), and only when every
+/// candidate the app may cache is there (or was refused): a message whose
+/// images are not all cached opens exactly as without the cache.
 ///
-/// - `partial`: built from the cache alone while some images were never
-///   fetched; shown with the blocked CSP (the missing ones stay blank until
-///   the open fetches them). The neighbour pre-render paints this.
-/// - `final`: every candidate was resolved or attempted. Shown with the
-///   blocked CSP when `needsNetwork` is false (nothing left to fetch, so a
-///   blocked pre-render of the same body can be claimed), else with the
-///   allowed CSP so what the app could not cache loads live as before.
+/// Shown with the blocked CSP when `needsNetwork` is false (nothing left to
+/// fetch, so a blocked pre-render of the same body can be claimed), else with
+/// the allowed CSP so what the app could not cache loads live as before.
 struct RemoteInlinedBody: Equatable, Sendable {
-    enum Phase: Equatable, Sendable {
-        case partial
-        case final
-    }
-
     var html: String
     var prep: MessageHTMLPrep
-    var phase: Phase
     /// Something in `html` can still load a remote image.
     var needsNetwork: Bool
     /// Candidate occurrences rewritten to `data:`.
@@ -26,20 +19,18 @@ struct RemoteInlinedBody: Equatable, Sendable {
     /// Built on the `cid:`-inlined body rather than the stored one.
     var baseIsCIDInlined: Bool
 
-    /// Appended to the card's content id (`HTMLBodyLoadKey`): a partial body
-    /// and the final one are different documents.
-    var contentSuffix: String {
-        phase == .final ? ":rimg" : ":rimg-p\(inlinedCount)"
-    }
+    /// Appended to the card's content id (`HTMLBodyLoadKey`).
+    var contentSuffix: String { ":rimg" }
 
     /// The CSP variant the card loads this body with.
-    var loadAllowsRemoteImages: Bool { phase == .final && needsNetwork }
+    var loadAllowsRemoteImages: Bool { needsNetwork }
 }
 
-/// Builds `RemoteInlinedBody`s: from the cache only (`cachedBody`, used by
-/// the prefetch, the pre-render and the open's first step), or from the
-/// cache plus the app's own fetch of what is missing (`resolve`, used only
-/// when a message is open and its remote images are allowed). Never logs.
+/// Builds `RemoteInlinedBody`s from the cache only (`cachedBody`: the
+/// prefetch and the pane), and fills the cache for the next open
+/// (`fetchForNextOpen`: only for a message that is open with its remote
+/// images allowed, while WebKit shows them live as without the cache).
+/// Never logs.
 enum RemoteImageResolver {
     /// What the cache says about one body.
     struct Lookup: Sendable {
@@ -80,44 +71,40 @@ enum RemoteImageResolver {
                       misses: misses)
     }
 
-    /// The body as far as the cache goes, with no network. Nil when it has
-    /// no candidate, or nothing cached while some are still to fetch (the
-    /// stored body, blocked, is then the same picture).
+    /// The body from the cache, with no network: nil unless it has a
+    /// candidate, every eligible candidate is cached or was refused, and at
+    /// least one is cached.
     static func cachedBody(messageId: String, accountId: String, baseHTML: String,
                            preInlineBytes: Int, baseIsCIDInlined: Bool, fontScale: Double,
                            store: RemoteImageStore?) async -> RemoteInlinedBody? {
         guard let found = await lookup(messageId: messageId, accountId: accountId,
                                        baseHTML: baseHTML, store: store),
-              !found.dataURLs.isEmpty || found.misses.isEmpty,
+              found.misses.isEmpty, !found.dataURLs.isEmpty,
               !Task.isCancelled else { return nil }
         return build(baseHTML: baseHTML, dataURLs: found.dataURLs,
-                     phase: found.misses.isEmpty ? .final : .partial,
                      preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCIDInlined,
                      fontScale: fontScale)
     }
 
-    /// The open's resolve: the cache first; then, when images are missing,
-    /// `onPartial` with what the cache had (only if it had any), the app's
-    /// fetch of the rest, the new images queued for storage, and the final
-    /// body. A cache-only result marks the message as used.
-    static func resolve(messageId: String, accountId: String, baseHTML: String,
-                        preInlineBytes: Int, baseIsCIDInlined: Bool, fontScale: Double,
-                        store: RemoteImageStore?, transport: RemoteImageTransport,
-                        onPartial: @Sendable (RemoteInlinedBody) async -> Void = { _ in })
-        async -> RemoteInlinedBody? {
+    /// The open's background work: fetch what the cache lacks (the app's
+    /// own client, within the caps, never a URL already in flight for this
+    /// message) and queue it for storage. The open itself is not changed:
+    /// WebKit shows the images live, as without the cache. Returns the body
+    /// the next open can show, when everything is now cached, so the caller
+    /// can keep it with the payload; a cache-only result marks the message
+    /// as used.
+    static func fetchForNextOpen(messageId: String, accountId: String, baseHTML: String,
+                                 preInlineBytes: Int, baseIsCIDInlined: Bool, fontScale: Double,
+                                 store: RemoteImageStore?,
+                                 transport: RemoteImageTransport) async -> RemoteInlinedBody? {
         guard let found = await lookup(messageId: messageId, accountId: accountId,
                                        baseHTML: baseHTML, store: store) else { return nil }
         var dataURLs = found.dataURLs
         if found.misses.isEmpty {
-            if !dataURLs.isEmpty { await store?.noteUsed([messageId]) }
-            return build(baseHTML: baseHTML, dataURLs: dataURLs, phase: .final,
-                         preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCIDInlined,
-                         fontScale: fontScale)
-        }
-        if !dataURLs.isEmpty {
-            await onPartial(build(baseHTML: baseHTML, dataURLs: dataURLs, phase: .partial,
-                                  preInlineBytes: preInlineBytes,
-                                  baseIsCIDInlined: baseIsCIDInlined, fontScale: fontScale))
+            guard !dataURLs.isEmpty else { return nil }
+            await store?.noteUsed([messageId])
+            return build(baseHTML: baseHTML, dataURLs: dataURLs, preInlineBytes: preInlineBytes,
+                         baseIsCIDInlined: baseIsCIDInlined, fontScale: fontScale)
         }
         // Within the message's byte cap; never a URL another resolve of the
         // same message is already fetching.
@@ -138,6 +125,7 @@ enum RemoteImageResolver {
         var used = found.cachedBytes
         var newImages: [RemoteImageCache.Image] = []
         var refusedKeys: [String] = []
+        var settled = Set(mine.filter { batch.refused.contains($0) })
         for url in mine {
             let key = RemoteImageHTML.urlKey(url)
             if batch.refused.contains(url) { refusedKeys.append(key) }
@@ -145,9 +133,11 @@ enum RemoteImageResolver {
             guard used + image.data.count <= RemoteImageFetchPolicy.maxMessageBytes else {
                 // Over the message's cap: a rule, not the network.
                 refusedKeys.append(key)
+                settled.insert(url)
                 continue
             }
             used += image.data.count
+            settled.insert(url)
             dataURLs[url] = CIDImageInliner.dataURI(mimeType: image.mimeType, data: image.data)
             newImages.append(RemoteImageCache.Image(urlKey: key, mimeType: image.mimeType,
                                                     data: image.data))
@@ -162,22 +152,21 @@ enum RemoteImageResolver {
             }
             await store.release(messageId: messageId, urls: mine)
         }
-        guard !Task.isCancelled else { return nil }
-        return build(baseHTML: baseHTML, dataURLs: dataURLs, phase: .final,
-                     preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCIDInlined,
-                     fontScale: fontScale)
+        // The next open's body, only when nothing is left to fetch.
+        guard !Task.isCancelled, !dataURLs.isEmpty,
+              Set(found.misses).isSubset(of: settled) else { return nil }
+        return build(baseHTML: baseHTML, dataURLs: dataURLs, preInlineBytes: preInlineBytes,
+                     baseIsCIDInlined: baseIsCIDInlined, fontScale: fontScale)
     }
 
     /// Rewrite and prep: whole-body string work, off the main actor.
-    static func build(baseHTML: String, dataURLs: [String: String],
-                      phase: RemoteInlinedBody.Phase, preInlineBytes: Int,
+    static func build(baseHTML: String, dataURLs: [String: String], preInlineBytes: Int,
                       baseIsCIDInlined: Bool, fontScale: Double) -> RemoteInlinedBody {
         let rewritten = RemoteImageHTML.rewrite(baseHTML, dataURLs: dataURLs)
         let prep = MessageHTMLPrepBuilder.cidInlinedPrep(
-            inlinedHTML: rewritten.html, preInlineBytes: preInlineBytes, fontScale: fontScale,
-            countRemoteCandidates: false)
+            inlinedHTML: rewritten.html, preInlineBytes: preInlineBytes, fontScale: fontScale)
         return RemoteInlinedBody(
-            html: rewritten.html, prep: prep, phase: phase,
+            html: rewritten.html, prep: prep,
             needsNetwork: rewritten.needsNetwork, inlinedCount: rewritten.rewrittenCount,
             baseIsCIDInlined: baseIsCIDInlined)
     }
@@ -189,65 +178,60 @@ enum RemoteImageResolver {
 enum RemoteImageRendering {
     enum Choice: Equatable {
         /// The stored (or `cid:`-inlined) body with the CSP the decision
-        /// gives: today's behaviour.
+        /// gives: exactly as without the cache.
         case base(allowRemoteImages: Bool)
-        /// The stored body with remote images blocked while the open fetches
-        /// them (no cached body yet).
-        case baseBlockedWhileResolving
+        /// The body with every cacheable image from the cache.
         case remote(RemoteInlinedBody)
     }
 
-    /// The card's choice. `remoteBody` is used only when remote images are
-    /// allowed for this message and it was built on the same base.
+    /// The card's choice. `remoteBody` (complete, from the cache, present
+    /// when the payload was warmed or a previous open filled it) is used
+    /// only when remote images are allowed for this message and it was built
+    /// on the same base.
     static func choice(allowRemoteImages: Bool, remoteBody: RemoteInlinedBody?,
-                       cidInlined: Bool, remoteCandidateCount: Int) -> Choice {
+                       cidInlined: Bool) -> Choice {
         guard allowRemoteImages else { return .base(allowRemoteImages: false) }
         if let remoteBody, remoteBody.baseIsCIDInlined == cidInlined {
             return .remote(remoteBody)
         }
-        return remoteCandidateCount > 0 ? .baseBlockedWhileResolving
-            : .base(allowRemoteImages: true)
+        return .base(allowRemoteImages: true)
     }
 
     /// What the reading pane does for one card, each time the card's
     /// decision or base changes.
     enum PaneStep: Equatable {
         /// Images not allowed (never were, or no longer: the card left, the
-        /// message went to Spam, the policy became Ask): stop any resolve of
+        /// message went to Spam, the policy became Ask): stop any fetch for
         /// this message; nothing is read or fetched.
         case cancel
-        /// A `cid:` resolve is changing the base: resolve after it.
+        /// A `cid:` resolve is changing the base: start after it.
         case waitForCID
-        /// The complete body came from the cache (warmed payload): only
-        /// mark it used.
+        /// The card shows the body from the cache: only mark it used.
         case markCachedUsed
-        /// Read the cache and fetch what is missing, on this base.
-        case resolve(baseIsCIDInlined: Bool)
+        /// The card shows images live; fetch the cacheable ones in the
+        /// background for the next open, on this base.
+        case fetchForNextOpen(baseIsCIDInlined: Bool)
     }
 
-    /// The gate every pane resolve goes through: `allowRemoteImages` is the
+    /// The gate every pane fetch goes through: `allowRemoteImages` is the
     /// card's `RemoteImagePolicy.autoLoads` decision, opt-ins included.
     static func paneStep(allowRemoteImages: Bool, cidResolveInFlight: Bool, cidInlined: Bool,
                          remoteBody: RemoteInlinedBody?) -> PaneStep {
         guard allowRemoteImages else { return .cancel }
         if cidResolveInFlight { return .waitForCID }
-        if let body = remoteBody, body.baseIsCIDInlined == cidInlined, body.phase == .final {
-            return .markCachedUsed
-        }
-        return .resolve(baseIsCIDInlined: cidInlined)
+        if let body = remoteBody, body.baseIsCIDInlined == cidInlined { return .markCachedUsed }
+        return .fetchForNextOpen(baseIsCIDInlined: cidInlined)
     }
 
     /// What the neighbour pre-render paints (always with the blocked CSP),
     /// or nil to skip: the document the open would claim, never one that
     /// needs the network.
     static func prerender(opensWithRemoteImages: Bool, remoteBody: RemoteInlinedBody?,
-                          cidInlined: Bool, remoteCandidateCount: Int) -> Choice? {
+                          cidInlined: Bool) -> Choice? {
         switch choice(allowRemoteImages: opensWithRemoteImages, remoteBody: remoteBody,
-                      cidInlined: cidInlined, remoteCandidateCount: remoteCandidateCount) {
+                      cidInlined: cidInlined) {
         case .base(let allow):
             return allow ? nil : .base(allowRemoteImages: false)
-        case .baseBlockedWhileResolving:
-            return .baseBlockedWhileResolving
         case .remote(let body):
             return body.loadAllowsRemoteImages ? nil : .remote(body)
         }
