@@ -156,7 +156,7 @@ final class AccountRingStyleTests: XCTestCase {
     // MARK: - Metrics
 
     func testRingAndGapAreWholePixelsAtTwoX() {
-        XCTAssertEqual(AccountRingMetrics.ringWidth, 1.5)
+        XCTAssertEqual(AccountRingMetrics.ringWidth, 3)
         XCTAssertEqual(AccountRingMetrics.gap, 1)
         XCTAssertEqual(AccountRingMetrics.hairlineWidth, 0.5)
         for value in [AccountRingMetrics.ringWidth, AccountRingMetrics.gap,
@@ -167,12 +167,12 @@ final class AccountRingStyleTests: XCTestCase {
                           "the hairline leaves the ring visible")
     }
 
-    /// Header and Settings: 32 pt frame, 27 pt photo (28 pt before the
-    /// ring). Popover rows: 26 pt frame, 21 pt photo (24 pt before).
+    /// Header and Settings: 35 pt frame, 27 pt photo (28 pt before the
+    /// ring). Popover rows: 29 pt frame, 21 pt photo (24 pt before).
     func testPhotoKeepsAboutItsFormerSize() {
-        XCTAssertEqual(AccountRingMetrics(size: 32).photoDiameter, 27)
-        XCTAssertEqual(AccountRingMetrics(size: 26).photoDiameter, 21)
-        for size in [26.0, 32.0] {
+        XCTAssertEqual(AccountRingMetrics(size: 35).photoDiameter, 27)
+        XCTAssertEqual(AccountRingMetrics(size: 29).photoDiameter, 21)
+        for size in [29.0, 35.0] {
             let m = AccountRingMetrics(size: size)
             XCTAssertEqual(m.photoDiameter + 2 * (AccountRingMetrics.ringWidth
                                                   + AccountRingMetrics.gap), size)

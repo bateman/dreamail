@@ -68,12 +68,12 @@ struct AccountRingStyle: Equatable, Sendable {
     }
 }
 
-/// Ring geometry for an avatar of a given size: a 1.5 pt ring and a 1 pt
+/// Ring geometry for an avatar of a given size: a 3 pt ring and a 1 pt
 /// gap at every size (whole pixels at 2x), drawn inside the avatar's
 /// frame. Callers size the frame so the photo keeps its former size
-/// (32 pt frame → 27 pt photo, 26 pt → 21 pt).
+/// (35 pt frame → 27 pt photo, 29 pt → 21 pt).
 struct AccountRingMetrics: Equatable, Sendable {
-    static let ringWidth = 1.5
+    static let ringWidth = 3.0
     static let gap = 1.0
     /// Outer hairline width, inside the ring's outer edge.
     static let hairlineWidth = 0.5
