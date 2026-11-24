@@ -361,7 +361,7 @@ actor GmailClient {
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)
             }
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await GoogleHTTP.session.data(for: req)
             let http = response as? HTTPURLResponse
             let code = http?.statusCode ?? 0
             guard !(code == 401 && !didRefreshAfter401) else {
@@ -465,7 +465,7 @@ actor GmailClient {
             var req = URLRequest(url: URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!)
             try await pace(units: 1)
             req.setValue("Bearer \(try await validToken())", forHTTPHeaderField: "Authorization")
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await GoogleHTTP.session.data(for: req)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             if code == 401, !didRefreshAfter401 {
                 tokenCache.expire()
@@ -874,7 +874,7 @@ actor GmailClient {
             req.setValue("Bearer \(try await validToken())", forHTTPHeaderField: "Authorization")
             req.setValue("multipart/mixed; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
             req.httpBody = body
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await GoogleHTTP.session.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if code == 401, !didRefreshAfter401 {
                 tokenCache.expire()

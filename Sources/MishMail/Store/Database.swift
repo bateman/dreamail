@@ -708,6 +708,7 @@ final class AppDatabase: @unchecked Sendable {
         // the pool opens and before migrations. Usually one cheap probe; the
         // one-time plaintext or passphrase→raw-key conversion copies the whole
         // file (a few seconds for a ~400 MB mailbox), exactly once.
+        Self.removePlaintextSetAside(path: path)
         let scheme = try Self.prepareDatabaseFile(
             path: path, key: key, allowConversion: allowConversion)
         do {
@@ -731,6 +732,13 @@ final class AppDatabase: @unchecked Sendable {
             try Self.setAsideUnreadable(path: path)
             dbPool = try Self.openAndMigrate(path: path, key: key, scheme: .raw)
             storageState = .writable
+        }
+        // Read-only (plaintext awaiting encryption): nothing can be deleted,
+        // and maintenance must not write to the file.
+        if storageState.allowsWrites {
+            dbPool.add(
+                transactionObserver: DeletionObserver { [weak self] in self?.scheduleScrub() },
+                extent: .databaseLifetime)
         }
     }
 
@@ -849,6 +857,15 @@ final class AppDatabase: @unchecked Sendable {
             }
             // Must follow the key: SQLCipher rejects most statements
             // on an un-keyed connection.
+            // Deleted content is overwritten with zeros in the page, and a
+            // freed page is zeroed before it joins the freelist, instead of
+            // being only unlinked ("deleted means gone"). SQLCipher already
+            // forces this on every keyed connection (`sqlcipherCodecAttach`
+            // calls `sqlite3BtreeSecureDelete(…, 1)` in 4.7.0); saying it
+            // here keeps it on if that ever changes, and on the unkeyed
+            // connections a deferred plaintext cache is read through. A
+            // connection setting: it writes nothing, so it is safe read-only.
+            try db.execute(sql: "PRAGMA secure_delete = ON")
             try db.execute(sql: "PRAGMA cache_size = -\(pageCacheKiB)")
             // Sorts and temp b-trees (ORDER BY over the thread list, FTS
             // ranking) stay in memory instead of spilling to a temp file that
@@ -1035,15 +1052,89 @@ final class AppDatabase: @unchecked Sendable {
         return busy == 0
     }
 
+    // MARK: Scrub after a deletion
+
+    /// Pending scrub state, guarded by `scrubLock`.
+    private let scrubLock = NSLock()
+    private var scrubScheduled = false
+    private var scrubRetries = 0
+    /// Longest wait between retries while readers keep the log busy.
+    static let maxScrubRetryDelay: TimeInterval = 60
+
+    /// Called after every committed transaction that deleted a row
+    /// (`DeletionObserver`). `secure_delete` zeroes the deleted content in
+    /// the page, but the page images from before the delete stay in the
+    /// write-ahead log until a checkpoint copies the zeroed pages back and
+    /// truncates the log. Left to the size threshold (16 MiB) or to quit,
+    /// that can take days; so a truncating checkpoint runs `scrubDelay`
+    /// after the first delete, folding in every delete made meanwhile.
+    /// Cheap when the log is small, which it is at that point.
+    func scheduleScrub() {
+        scrubLock.lock()
+        defer { scrubLock.unlock() }
+        guard !scrubScheduled else { return }
+        scrubScheduled = true
+        enqueueScrub(after: scrubDelay)
+    }
+
+    private func enqueueScrub(after delay: TimeInterval) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.runScheduledScrub()
+        }
+    }
+
+    private func runScheduledScrub() {
+        // Cleared before the checkpoint: a delete committed while it runs
+        // schedules the next one.
+        scrubLock.lock()
+        scrubScheduled = false
+        scrubLock.unlock()
+        let truncated = checkpoint()
+        closeLock.lock()
+        let open = phase == .open
+        closeLock.unlock()
+        scrubLock.lock()
+        defer { scrubLock.unlock() }
+        guard !truncated, open else {
+            scrubRetries = 0
+            return
+        }
+        // A reader still needed part of the log. Try again, backing off; the
+        // quit-path checkpoint is the last resort.
+        guard !scrubScheduled else { return }
+        scrubScheduled = true
+        scrubRetries += 1
+        let backoff = scrubDelay * pow(2, Double(min(scrubRetries, 6)))
+        enqueueScrub(after: min(backoff, Self.maxScrubRetryDelay))
+    }
+
     /// Moves an unreadable database out of the way (kept as .unreadable for
     /// post-mortems, replacing any previous one) along with its WAL sidecars.
+    ///
+    /// An encrypted file is kept: it is as unreadable without the key as the
+    /// live cache. A plaintext one (a damaged pre-encryption cache) is
+    /// deleted instead: it is unencrypted mail the app will never read
+    /// again, and everything in it resyncs from Gmail.
     private static func setAsideUnreadable(path: String) throws {
         let fm = FileManager.default
         try? fm.removeItem(atPath: path + ".unreadable")
-        try fm.moveItem(atPath: path, toPath: path + ".unreadable")
+        if isPlaintext(path) {
+            try fm.removeItem(atPath: path)
+        } else {
+            try fm.moveItem(atPath: path, toPath: path + ".unreadable")
+        }
         for sidecar in ["-wal", "-shm"] {
             try? fm.removeItem(atPath: path + sidecar)
         }
+    }
+
+    /// Deletes a plaintext `.unreadable` copy an earlier build set aside.
+    /// The file is never opened, so this is safe while another instance
+    /// runs.
+    private static func removePlaintextSetAside(path: String) {
+        let aside = path + ".unreadable"
+        guard isPlaintext(aside) else { return }
+        try? FileManager.default.removeItem(atPath: aside)
     }
 
     /// True for disposable, non-secret databases that must not touch a
@@ -1289,6 +1380,15 @@ final class AppDatabase: @unchecked Sendable {
         let tmp = path + ".encrypting"
         try? FileManager.default.removeItem(atPath: tmp)
         let plain = try DatabaseQueue(path: path)
+        // A failed export leaves no partial copy behind.
+        var swapped = false
+        defer {
+            if !swapped {
+                for suffix in ["", "-journal", "-wal", "-shm"] {
+                    try? FileManager.default.removeItem(atPath: tmp + suffix)
+                }
+            }
+        }
         try plain.inDatabase { db in
             try db.execute(sql: "ATTACH DATABASE ? AS encrypted KEY ?",
                            arguments: [tmp, rawKeyLiteral(key)])
@@ -1311,6 +1411,7 @@ final class AppDatabase: @unchecked Sendable {
         guard rename(tmp, path) == 0 else {
             throw RekeyError.swapFailed(errno)
         }
+        swapped = true
     }
 
     /// One-time migration of a passphrase-keyed file to the raw key.
@@ -2330,7 +2431,62 @@ final class AppDatabase: @unchecked Sendable {
             try db.create(index: "chatConversationAccount_on_accountId",
                           on: "chatConversationAccount", columns: ["accountId"])
         }
+
+        // v49: deleted terms leave the full-text index. By default FTS5
+        // deletes by appending a delete marker, and the term stays in the
+        // older segment until a merge happens to reach it. `secure-delete`
+        // (FTS5 in SQLite 3.42+; SQLCipher 4.7.0 is 3.49.1) removes the
+        // entry from its segment at delete time instead. It is stored in
+        // the index's own config table.
+        // WARNING: a migration that rebuilds `message_fts` must set it again
+        // (SecureDeleteTests pins it on the current schema).
+        // `optimize` then merges every segment once, dropping what earlier
+        // deletes left behind; the freed blocks are zeroed (secure_delete).
+        // A one-time cost at the first launch of this build, over an index
+        // of subjects and headers only.
+        m.registerMigration("v49") { db in
+            try db.execute(sql: """
+                INSERT INTO message_fts(message_fts, rank) VALUES('secure-delete', 1)
+                """)
+            try db.execute(sql: "INSERT INTO message_fts(message_fts) VALUES('optimize')")
+        }
         return m
+    }
+}
+
+// MARK: - Deletion observer
+
+/// Reports each committed transaction that deleted at least one row, so
+/// `AppDatabase` can scrub the deleted content out of the write-ahead log.
+/// Watches deletes only: inserts and updates (every sync write) would turn
+/// the scrub into a checkpoint after every transaction.
+final class DeletionObserver: TransactionObserver {
+    private let onDeletionCommitted: () -> Void
+    private var sawDeletion = false
+
+    init(_ onDeletionCommitted: @escaping () -> Void) {
+        self.onDeletionCommitted = onDeletionCommitted
+    }
+
+    func observes(eventsOfKind eventKind: DatabaseEventKind) -> Bool {
+        if case .delete = eventKind { return true }
+        return false
+    }
+
+    func databaseDidChange(with event: DatabaseEvent) {
+        sawDeletion = true
+        // One row is enough; skip the rest of this transaction's rows.
+        stopObservingDatabaseChangesUntilNextTransaction()
+    }
+
+    func databaseDidCommit(_ db: Database) {
+        guard sawDeletion else { return }
+        sawDeletion = false
+        onDeletionCommitted()
+    }
+
+    func databaseDidRollback(_ db: Database) {
+        sawDeletion = false
     }
 }
 

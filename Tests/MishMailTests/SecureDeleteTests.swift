@@ -306,6 +306,60 @@ final class SecureDeleteTests: XCTestCase {
         XCTAssertEqual(database.walSizeBytes, 0, "the delete must be folded out of the log")
     }
 
+    // MARK: Read-only cache
+
+    /// A plaintext cache awaiting encryption must not change (F-02): the
+    /// pragma is a connection setting, and every maintenance entry point,
+    /// including the scrub a delete schedules, is a no-op on it.
+    func testReadOnlyCacheGetsThePragmaButNoMaintenanceWrite() throws {
+        let plain = try DatabasePool(path: path)
+        try AppDatabase.migrator.migrate(plain)
+        try plain.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertFiller(db, account: "me@example.com", range: 0..<20)
+            _ = try Message.deleteOne(db, key: "me@example.com:filler-3")
+        }
+        try plain.close()
+        let before = try Data(contentsOf: URL(fileURLWithPath: path))
+
+        let database = try AppDatabase(path: path, key: key, allowConversion: false, scrubDelay: 0.05)
+        XCTAssertFalse(database.allowsWrites)
+        XCTAssertEqual(try database.dbPool.read(secureDelete), 1)
+        XCTAssertFalse(database.checkpoint())
+        XCTAssertFalse(database.checkpoint(force: true, reclaimAllFreePages: true))
+        database.scheduleScrub()
+        Thread.sleep(forTimeInterval: 0.5)
+        database.close()
+
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), before,
+                       "the plaintext file must stay byte-identical")
+        let wal = (try? FileManager.default.attributesOfItem(atPath: path + "-wal")[.size]
+                   as? NSNumber)?.intValue ?? 0
+        XCTAssertEqual(wal, 0, "nothing was logged for the plaintext file")
+    }
+
+    // MARK: Google HTTP
+
+    /// Gmail responses (mail bodies, headers, attachments) must never reach
+    /// the on-disk HTTP cache, where deleting them only unlinks rows.
+    func testGoogleRequestsAreNeverCachedOnDisk() throws {
+        let config = GoogleHTTP.configuration
+        XCTAssertNil(config.urlCache)
+        XCTAssertNil(config.httpCookieStorage)
+        XCTAssertFalse(config.httpShouldSetCookies)
+        XCTAssertEqual(config.requestCachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertNil(GoogleHTTP.session.configuration.urlCache)
+
+        for file in ["Sources/MishMail/Gmail/GmailClient.swift",
+                     "Sources/MishMail/Auth/OAuth.swift",
+                     "Sources/MishMail/App/MailStore+Accounts.swift"] {
+            let text = try String(contentsOf: LogHygieneTests.repoRoot.appendingPathComponent(file),
+                                  encoding: .utf8)
+            XCTAssertFalse(text.contains("URLSession.shared"), "\(file) uses the shared session")
+            XCTAssertTrue(text.contains("GoogleHTTP.session"), file)
+        }
+    }
+
     // MARK: Files set aside
 
     /// A damaged plaintext cache is reset; its unencrypted mail must not be

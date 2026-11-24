@@ -29,7 +29,7 @@ extension MailStore {
                 var req = URLRequest(url: URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!)
                 req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
                 struct UserInfo: Decodable { let email: String; let name: String? }
-                let (data, _) = try await URLSession.shared.data(for: req)
+                let (data, _) = try await GoogleHTTP.session.data(for: req)
                 let info = try JSONDecoder().decode(UserInfo.self, from: data)
 
                 try Task.checkCancellation()
@@ -107,14 +107,14 @@ extension MailStore {
             // After the Keychain delete: the next token request finds no
             // refresh token and fails, instead of reusing the cached one.
             await GmailClient.shared(accountEmail: id).forgetAccessToken()
-            // Fold the purged pages out of the WAL and the freelist now
-            // rather than at the next idle pass.
+            // The purge zeroed the account's rows in their pages
+            // (secure_delete); fold those pages out of the WAL, truncate it,
+            // and release every freed page now rather than at the next idle
+            // pass. A reader holding the log makes this a partial pass; the
+            // scrub the purge scheduled retries until it completes.
             _ = await Task.detached(priority: .utility) {
-                AppDatabase.shared.checkpoint()
+                AppDatabase.shared.checkpoint(reclaimAllFreePages: true)
             }.value
-            // Gmail API responses may sit in the shared HTTP cache on disk.
-            // Nothing there needs to survive, so all of it goes.
-            URLCache.shared.removeAllCachedResponses()
             guard let self, !self.isShuttingDown else { return }
             // Recent searches are not tagged by account; any of them may be
             // about this one's mail.
@@ -168,6 +168,10 @@ extension MailStore {
             _ = await Task.detached(priority: .utility) {
                 AttachmentCache.removeOrphans(liveAccounts: live)
             }.value
+            // Google responses no longer go to the on-disk HTTP cache
+            // (`GoogleHTTP`); earlier builds put them there. Unlinks their
+            // rows; it cannot scrub what the cache file already freed.
+            URLCache.shared.removeAllCachedResponses()
         }
     }
 
