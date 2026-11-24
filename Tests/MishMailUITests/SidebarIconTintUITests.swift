@@ -81,14 +81,21 @@ final class SidebarIconTintUITests: XCTestCase {
         XCTAssertTrue(about.waitForExistence(timeout: 5))
         about.click()
         Self.settle()
-        let panels = app.windows.allElementsBoundByIndex.filter { $0.frame != main.frame }
+        // The About panel is an NSPanel: XCUITest lists it as a dialog.
+        let panels = (app.dialogs.allElementsBoundByIndex + app.windows.allElementsBoundByIndex)
+            .filter { $0.frame != main.frame }
         XCTAssertFalse(panels.isEmpty, "the About panel should open")
         let strip = Self.strip(row: inbox, window: main)
         for panel in panels {
             XCTAssertFalse(panel.frame.intersects(strip),
                            "\(panel.identifier) \(panel.frame) covers the Inbox row \(strip)")
         }
-        try Self.assertMonochrome(row: inbox, window: main, "main sidebar, inactive window")
+        let inactive = try Self.assertMonochrome(row: inbox, window: main,
+                                                 "main sidebar, inactive window")
+        // Proof the window lost key status: the selection is no longer the
+        // accent capsule but the grey, unemphasized one.
+        XCTAssertLessThan(PixelStats.ownColour(pixel: inactive.background, background: (128, 128, 128)), 30,
+                          "inactive window: selection should be grey, is \(inactive.background)")
     }
 
     // MARK: - Pixels
@@ -105,10 +112,11 @@ final class SidebarIconTintUITests: XCTestCase {
         return CGRect(x: minX, y: r.minY, width: max(1, r.maxX - minX), height: r.height)
     }
 
+    @discardableResult
     private static func assertMonochrome(row: XCUIElement, window: XCUIElement,
                                          _ context: String,
                                          file: StaticString = #filePath,
-                                         line: UInt = #line) throws {
+                                         line: UInt = #line) throws -> PixelStats {
         let rect = strip(row: row, window: window)
         let shot = XCUIScreen.main.screenshot()
         let image = shot.image
@@ -139,6 +147,7 @@ final class SidebarIconTintUITests: XCTestCase {
             + "strip \(rect), \(stats.summary(scale: scale))"
         print("SidebarIconTint: \(detail)")
         XCTAssertLessThan(stats.saturatedFraction, 0.15, detail, file: file, line: line)
+        return stats
     }
 
     /// Foreground pixels: those far from the strip's most common colour
