@@ -54,6 +54,30 @@ final class MailIconStyleTests: XCTestCase {
         }
     }
 
+    /// A focused sidebar draws the selection as a solid accent capsule; the
+    /// row then draws white on it, as AppKit does, never black or the accent.
+    func testEmphasizedSelectionDrawsWhiteOnTheAccent() throws {
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let white = try XCTUnwrap(Self.resolve(.alternateSelectedControlTextColor, in: name))
+            for selected in [true, false] {
+                let icon = try XCTUnwrap(Self.resolve(
+                    NSColor(Color.mailIcon(selected: selected, prominence: .increased)), in: name))
+                XCTAssertTrue(Self.same(icon, white), "\(name) selected \(selected): \(icon)")
+                let plain = try XCTUnwrap(Self.resolve(
+                    NSColor(Color.mailIcon(selected: selected, prominence: .standard)), in: name))
+                let expected = try XCTUnwrap(Self.resolve(
+                    NSColor(Color.mailIcon(selected: selected)), in: name))
+                XCTAssertTrue(Self.same(plain, expected), "\(name) selected \(selected)")
+            }
+            let title = try XCTUnwrap(Self.resolve(NSColor(Color.mailRowTitle(prominence: .increased)), in: name))
+            XCTAssertTrue(Self.same(title, white), "\(name) title: \(title)")
+            let plainTitle = try XCTUnwrap(Self.resolve(NSColor(Color.mailRowTitle(prominence: .standard)), in: name))
+            let label = try XCTUnwrap(Self.resolve(.labelColor, in: name))
+            XCTAssertTrue(Self.same(plainTitle, label), "\(name) title: \(plainTitle)")
+            XCTAssertLessThan(Self.saturation(white), 0.1, "\(name)")
+        }
+    }
+
     // MARK: - Every navigation glyph uses the shared style
 
     func testNavigationGlyphsUseTheSharedStyle() throws {
@@ -65,12 +89,18 @@ final class MailIconStyleTests: XCTestCase {
             .listItemTint(.monochrome)
             """)), "sidebar rows")
         XCTAssertTrue(content.contains(Self.squash("""
+            .fontWeight(selected ? .semibold : .regular)
+                .mailRowTitleStyle()
+            """)), "sidebar row titles")
+        XCTAssertTrue(content.contains(Self.squash("""
             Image(systemName: "plus")
                 .mailIconStyle(selected: false)
             """)), "Add view")
 
         let settings = try Self.squashed("Sources/MishMail/UI/SettingsView.swift")
         XCTAssertTrue(settings.contains(Self.squash("""
+            Text(p.title).mailRowTitleStyle()
+            } icon: {
             Image(systemName: p.icon).mailIconStyle(selected: pane == p)
             }
             .listItemTint(.monochrome)

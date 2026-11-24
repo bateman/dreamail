@@ -1976,7 +1976,7 @@ struct Sidebar: View {
         return Label {
             Text(view.title)
                 .fontWeight(selected ? .semibold : .regular)
-                .foregroundStyle(Color(nsColor: .labelColor))
+                .mailRowTitleStyle()
         } icon: {
             Image(systemName: view.icon(selected: selected))
                 .mailIconStyle(selected: selected)

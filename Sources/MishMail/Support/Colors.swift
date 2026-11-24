@@ -134,4 +134,20 @@ extension ShapeStyle where Self == Color {
     static func mailIcon(selected: Bool) -> Color {
         selected ? Color(nsColor: .labelColor) : Color(nsColor: .secondaryLabelColor)
     }
+
+    /// The same tint on a row drawn over an emphasized selection (the solid
+    /// accent capsule of a focused sidebar list): white, as AppKit draws
+    /// text there, so the glyph never sits black on the accent.
+    static func mailIcon(selected: Bool, prominence: BackgroundProminence) -> Color {
+        prominence == .increased ? .mailOnEmphasizedSelection : mailIcon(selected: selected)
+    }
+
+    /// Row title colour for the navigation sidebars, by the same rule.
+    static func mailRowTitle(prominence: BackgroundProminence) -> Color {
+        prominence == .increased ? .mailOnEmphasizedSelection : Color(nsColor: .labelColor)
+    }
+
+    static var mailOnEmphasizedSelection: Color {
+        Color(nsColor: .alternateSelectedControlTextColor)
+    }
 }

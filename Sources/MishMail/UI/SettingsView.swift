@@ -83,7 +83,7 @@ struct SettingsView: View {
         HStack {
             // Monochrome like the main sidebar, not the accent.
             Label {
-                Text(p.title).foregroundStyle(Color(nsColor: .labelColor))
+                Text(p.title).mailRowTitleStyle()
             } icon: {
                 Image(systemName: p.icon).mailIconStyle(selected: pane == p)
             }

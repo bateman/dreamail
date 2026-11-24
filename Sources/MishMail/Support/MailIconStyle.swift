@@ -33,6 +33,8 @@ struct MailIconMetrics: Equatable {
 private struct MailIconModifier: ViewModifier {
     let selected: Bool
     let metrics: MailIconMetrics
+    /// `.increased` inside a row drawn over the emphasized (accent) selection.
+    @Environment(\.backgroundProminence) private var prominence
 
     func body(content: Content) -> some View {
         content
@@ -41,15 +43,30 @@ private struct MailIconModifier: ViewModifier {
             .fontDesign(metrics.design)
             .imageScale(.medium)
             .symbolRenderingMode(.monochrome)
-            .foregroundStyle(.mailIcon(selected: selected))
+            .foregroundStyle(.mailIcon(selected: selected, prominence: prominence))
             .frame(width: metrics.columnWidth)
+    }
+}
+
+private struct MailRowTitleModifier: ViewModifier {
+    @Environment(\.backgroundProminence) private var prominence
+
+    func body(content: Content) -> some View {
+        content.foregroundStyle(.mailRowTitle(prominence: prominence))
     }
 }
 
 extension View {
     /// The one style for navigation glyphs (see `MailIconMetrics`), in the
-    /// monochrome `mailIcon` tint: never the accent, selected or not.
+    /// monochrome `mailIcon` tint: never the accent, selected or not. On the
+    /// solid accent capsule of an emphasized selection it is white.
     func mailIconStyle(selected: Bool, scale: CGFloat = 1) -> some View {
         modifier(MailIconModifier(selected: selected, metrics: MailIconMetrics(scale: scale)))
+    }
+
+    /// Title of a navigation sidebar row: the label colour, white on an
+    /// emphasized selection (never the accent).
+    func mailRowTitleStyle() -> some View {
+        modifier(MailRowTitleModifier())
     }
 }

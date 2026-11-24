@@ -1,15 +1,18 @@
 import AppKit
 import XCTest
 
-/// The selected sidebar row draws its glyph and title in the label colour,
+/// The selected sidebar row draws its glyph and title in neutral colours,
 /// never the accent: in the main sidebar with the window active and
 /// inactive, and in the Settings sidebar, with the default and a red accent.
 ///
 /// Reads the rendered pixels of the selected row: a screen capture of the
 /// strip from the window's leading edge to the row's trailing edge, where
 /// the glyph and the title are drawn. The selection capsule's own colour is
-/// not judged: only the pixels that stand out from the strip's background
-/// (glyph, title), which must be grey. An unselected row is the control.
+/// not judged (a focused sidebar draws a solid accent capsule, and the row
+/// then draws white on it, as AppKit does): only the pixels that stand out
+/// from the strip's background (glyph, title), each of which must be a grey
+/// blended with that background. An accent-tinted glyph is not. An
+/// unselected row is the control.
 final class SidebarIconTintUITests: XCTestCase {
 
     func testSelectedRowIsMonochromeWithTheDefaultAccent() throws {
@@ -73,9 +76,8 @@ final class SidebarIconTintUITests: XCTestCase {
         app.typeKey("w", modifierFlags: .command)
         Self.settle()
         XCTAssertFalse(settings.exists, "Settings should close with Cmd-W")
-        let appMenu = app.menuBars.menuBarItems.element(boundBy: 1)
-        appMenu.click()
-        let about = app.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'About'")).firstMatch
+        // XCUITest opens the app menu on its way to the item.
+        let about = app.menuItems["About MishMail"]
         XCTAssertTrue(about.waitForExistence(timeout: 5))
         about.click()
         Self.settle()
@@ -131,16 +133,20 @@ final class SidebarIconTintUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(stats.foreground, 40,
                                     "\(context): no glyph or title found in the strip",
                                     file: file, line: line)
-        // Antialiased edges over a tinted capsule may pick up some colour;
-        // an accent-tinted glyph is saturated almost everywhere.
+        // A grey glyph's antialiased edges are grey-over-background blends
+        // too; an accent-tinted glyph is coloured almost everywhere.
         let detail = "\(context): \(stats.saturated) of \(stats.foreground) glyph/title pixels are coloured; "
             + "strip \(rect), \(stats.summary(scale: scale))"
         print("SidebarIconTint: \(detail)")
         XCTAssertLessThan(stats.saturatedFraction, 0.15, detail, file: file, line: line)
     }
 
-    /// Foreground pixels: those far from the strip's most common colour.
-    /// Saturated: HSV saturation above 0.4 at a value above 0.25.
+    /// Foreground pixels: those far from the strip's most common colour
+    /// (the background). Coloured ("saturated"): a foreground pixel that is
+    /// not a grey alpha-blended over the background, within a tolerance.
+    /// With channel deviations d = p - mean(p) and e = bg - mean(bg), a blend
+    /// a·bg + (1-a)·grey has d = a·e; the residual |d - a·e| at the best
+    /// a in 0...1 measures the colour the pixel adds of its own.
     private struct PixelStats {
         var foreground = 0
         var saturated = 0
@@ -193,14 +199,23 @@ final class SidebarIconTintUITests: XCTestCase {
                 foreground += 1
                 foregroundSum = (foregroundSum.0 + r, foregroundSum.1 + g, foregroundSum.2 + b)
                 foregroundX = (min(foregroundX.0, x), max(foregroundX.1, x))
-                let hi = max(r, g, b), lo = min(r, g, b)
-                let saturation = hi == 0 ? 0 : (hi - lo) / hi
-                if saturation > 0.4, hi / 255 > 0.25 {
+                if Self.ownColour(pixel: (r, g, b), background: bg) > 30 {
                     saturated += 1
                     saturatedSum = (saturatedSum.0 + r, saturatedSum.1 + g, saturatedSum.2 + b)
                     saturatedX = (min(saturatedX.0, x), max(saturatedX.1, x))
                 }
             }
+        }
+
+        static func ownColour(pixel p: (Double, Double, Double),
+                              background bg: (Double, Double, Double)) -> Double {
+            let pm = (p.0 + p.1 + p.2) / 3, bm = (bg.0 + bg.1 + bg.2) / 3
+            let d = (p.0 - pm, p.1 - pm, p.2 - pm)
+            let e = (bg.0 - bm, bg.1 - bm, bg.2 - bm)
+            let ee = e.0 * e.0 + e.1 * e.1 + e.2 * e.2
+            let a = ee < 1 ? 0 : min(1, max(0, (d.0 * e.0 + d.1 * e.1 + d.2 * e.2) / ee))
+            let r = (d.0 - a * e.0, d.1 - a * e.1, d.2 - a * e.2)
+            return (r.0 * r.0 + r.1 * r.1 + r.2 * r.2).squareRoot()
         }
     }
 }
