@@ -118,6 +118,29 @@ endef
 # but only on each user's Mac, after the release is already out. None of
 # these need Developer ID or notarization; an Apple Development (free Personal
 # Team) build passes all three. $(1) is the .app to check.
+# AI features and the MCP server in builds that leave this Mac (install,
+# release): always the TRACKED value from Config/Signing.xcconfig, passed on
+# the command line so an untracked Local.xcconfig (needed there for the
+# signing team, and symlinked into worktrees) cannot turn them on. A local
+# Debug build may still set MISHMAIL_AI_FEATURES in Local.xcconfig.
+TRACKED_AI_FEATURES := $(shell awk -F= '/^[ \t]*MISHMAIL_AI_FEATURES[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
+SHIP_AI_FLAGS = MISHMAIL_AI_FEATURES=$(TRACKED_AI_FEATURES)
+
+# The built app must carry exactly the tracked switch value.
+define check_ai_switch
+	@built=$$(plutil -extract MishMailAIFeatures raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
+		echo "Refusing: the built app has no MishMailAIFeatures key in its Info.plist."; \
+		exit 1; \
+	}; \
+	if [ "$$built" != "$(TRACKED_AI_FEATURES)" ]; then \
+		echo "Refusing: the built app has MishMailAIFeatures='$$built', but the tracked"; \
+		echo "configuration says '$(TRACKED_AI_FEATURES)'. Builds that leave this Mac"; \
+		echo "take the AI switch from Config/Signing.xcconfig only."; \
+		exit 1; \
+	fi
+	@echo "AI features in the built app: '$(TRACKED_AI_FEATURES)' (tracked configuration)."
+endef
+
 define check_ship_app
 	@codesign --verify --deep --strict "$(1)" || { \
 		echo "Refusing release: the built app's code signature does not verify."; \
@@ -248,8 +271,9 @@ INSTALL_SPEED_FLAGS = ONLY_ACTIVE_ARCH=YES SWIFT_COMPILATION_MODE=incremental
 install: gen require-stable-signing
 	xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 		-destination '$(DESTINATION)' -derivedDataPath $(DD) -quiet \
-		$(INSTALL_SPEED_FLAGS) $(INSTALL_SIGN_FLAGS)
+		$(INSTALL_SPEED_FLAGS) $(INSTALL_SIGN_FLAGS) $(SHIP_AI_FLAGS)
 	$(call check_relauncher,$(RELEASE_APP))
+	$(call check_ai_switch,$(RELEASE_APP))
 	rm -rf /Applications/MishMail.app
 	ditto "$(RELEASE_APP)" /Applications/MishMail.app
 	@echo "Installed MishMail.app → /Applications (your daily driver)."
@@ -335,11 +359,11 @@ release: require-pushed test ui-test-ci
 		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \
 			CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM=$(TEAM) \
-			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements; \
+			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS); \
 	else \
 		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \
-			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements; \
+			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS); \
 	fi
 	# Notarize and staple (Developer ID builds only): the in-app updater and
 	# Gatekeeper both reject un-notarized Developer ID builds. One-time setup:
@@ -354,6 +378,7 @@ release: require-pushed test ui-test-ci
 		xcrun stapler staple MishMail.app; \
 	fi
 	$(call check_relauncher,$(SHIP_APP))
+	$(call check_ai_switch,$(SHIP_APP))
 	$(call check_ship_app,$(SHIP_APP))
 	cd $(SHIP_DIR) && \
 		ditto -c -k --keepParent MishMail.app $(ZIP_NAME) && \

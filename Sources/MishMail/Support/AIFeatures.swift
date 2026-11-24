@@ -13,14 +13,18 @@ import Foundation
 /// - no AI surface is offered (Ask Mish, Handle with Mish, compose drafting
 ///   and suggested replies, thread summaries, AI sorting and grouping, the
 ///   AI/MCP pane in Settings, their palette entries and shortcuts);
-/// - `LLMClient`, `LLMTaskRunner` and `Ollama` refuse before building a
-///   request, so no provider, custom endpoint, Ollama daemon, model listing
-///   or provider sign-in is ever contacted and no stored credential is read;
-/// - `MCPLaunchPolicy` refuses to start the MCP server whatever
-///   `mcp.enabled` says, so no listener is bound and no `mcp.json` written.
+/// - `LLMTransport.live`, the one network path for every AI request
+///   (providers, custom endpoints, model listing, provider sign-in and
+///   refresh, the Ollama daemon), refuses before anything is sent;
+///   `LLMClient` and `LLMTaskRunner` also refuse before a request is built
+///   or a stored credential is read, and `LLMOAuthFlow.signIn` before a
+///   listener or a browser opens;
+/// - `MailStore.startMCPServer` returns first, whatever `mcp.enabled` says,
+///   so no listener is bound and no `mcp.json` written; at launch
+///   `MCPSwitchedOff` clears an earlier build's opt-in and discovery file.
 ///
-/// The code behind the switch is kept, and its tests keep running: each gated
-/// type takes the state as a parameter so tests can exercise both.
+/// The code behind the switch is kept, and its tests keep running: the
+/// gated types take the state as a parameter so tests can exercise both.
 enum AIFeatures {
     /// Info.plist key the build setting expands into.
     static let infoKey = "MishMailAIFeatures"

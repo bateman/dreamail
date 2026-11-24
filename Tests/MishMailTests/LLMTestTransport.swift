@@ -33,10 +33,6 @@ final class LLMRecordingTransport: @unchecked Sendable {
                 throw URLError(.badServerResponse)
             })
     }
-
-    var ollamaTransport: @Sendable (URLRequest) async throws -> (Data, URLResponse) {
-        transport.data
-    }
 }
 
 /// A Keychain stand-in: one saved value for every key, and a log of reads.

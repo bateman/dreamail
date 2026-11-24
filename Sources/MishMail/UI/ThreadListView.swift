@@ -903,7 +903,11 @@ struct FilterBar: View {
 
             // View options: grouping + which chips to show.
             Menu {
-                Picker("Group by", selection: $groupByRaw) {
+                // Reads the resolved choice, so a stored AI-category
+                // grouping in a build without AI still selects Date.
+                Picker("Group by", selection: Binding(
+                    get: { GroupBy.resolved(groupByRaw).rawValue },
+                    set: { groupByRaw = $0 })) {
                     ForEach(GroupBy.offered, id: \.rawValue) { g in
                         Label(g.title, systemImage: g.icon).tag(g.rawValue)
                     }

@@ -30,7 +30,7 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from mcp_common import MCP, EndpointError, post_json, validate_endpoint
+from mcp_common import MCP, EndpointError, post_json, run, validate_endpoint
 
 PROMPT = (
     "Summarize this email thread in 1-2 crisp sentences for an inbox "
@@ -218,4 +218,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run(main)

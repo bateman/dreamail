@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 
-from mcp_common import MCP
+from mcp_common import MCP, run
 
 
 def main():
@@ -60,4 +60,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run(main)

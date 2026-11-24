@@ -59,6 +59,43 @@ final class AIFeaturesTests: XCTestCase {
         XCTAssertFalse(try ForkIdentityTests.repoFile("project.yml").contains("MISHMAIL_AI_FEATURES"))
     }
 
+    /// `make install` and `make release` build apps that leave this Mac. A
+    /// Config/Local.xcconfig with MISHMAIL_AI_FEATURES = YES (it is needed
+    /// there for the signing team) must not reach them: both pass the tracked
+    /// value on the xcodebuild command line, which wins over every xcconfig,
+    /// and check the built Info.plist before installing or publishing.
+    func testInstallAndReleaseTakeTheSwitchFromTheTrackedConfigurationOnly() throws {
+        let makefile = try ForkIdentityTests.repoFile("Makefile")
+        XCTAssertTrue(makefile.contains(
+            "TRACKED_AI_FEATURES := $(shell awk -F= '/^[ \\t]*MISHMAIL_AI_FEATURES[ \\t]*=/"))
+        XCTAssertTrue(makefile.contains("Config/Signing.xcconfig)\nSHIP_AI_FLAGS = MISHMAIL_AI_FEATURES=$(TRACKED_AI_FEATURES)\n"))
+
+        func recipe(_ target: String) throws -> String {
+            let start = try XCTUnwrap(makefile.range(of: "\n\(target):"), target)
+            let rest = makefile[start.upperBound...]
+            let end = rest.range(of: "\n\n")?.lowerBound ?? rest.endIndex
+            return String(rest[..<end])
+        }
+        for (target, app) in [("install", "RELEASE_APP"), ("release", "SHIP_APP")] {
+            let body = try recipe(target)
+            let builds = body.components(separatedBy: "xcodebuild build").dropFirst()
+            XCTAssertFalse(builds.isEmpty, target)
+            for build in builds {
+                let command = build.components(separatedBy: "\n")
+                    .prefix { !$0.contains("$(call") && !$0.hasPrefix("\telse") && !$0.hasPrefix("\tfi") }
+                    .joined(separator: "\n")
+                XCTAssertTrue(command.contains("$(SHIP_AI_FLAGS)"), "\(target): \(command)")
+            }
+            let check = try XCTUnwrap(body.range(of: "$(call check_ai_switch,$(\(app)))"),
+                                      "\(target) does not check the built app")
+            let ship = target == "install" ? "ditto \"$(RELEASE_APP)\" /Applications" : "gh release create"
+            let shipAt = try XCTUnwrap(body.range(of: ship), target)
+            XCTAssertLessThan(check.lowerBound, shipAt.lowerBound, "\(target) checks after shipping")
+        }
+        XCTAssertTrue(makefile.contains(
+            "plutil -extract MishMailAIFeatures raw \"$(1)/Contents/Info.plist\""))
+    }
+
     // MARK: - LLM client: zero requests, zero credential reads
 
     private func provider(_ baseURL: String = "https://api.openai.com/v1",
@@ -106,57 +143,56 @@ final class AIFeaturesTests: XCTestCase {
         XCTAssertEqual(net.requests.count, 1)
     }
 
-    func testDisabledSignInAndRefreshPostsSendNothing() async {
+    /// The network gate itself: what every AI request (provider, sign-in,
+    /// refresh, Ollama) goes through in the app as `LLMTransport.live`.
+    func testGatedTransportSendsNothingWhenOff() async {
         let net = LLMRecordingTransport()
+        let off = LLMTransport.gated(enabled: false, net.transport)
+        let request = URLRequest(url: URL(string: "https://api.example/v1/models")!)
+        await assertAIDisabled("data") { _ = try await off.data(request) }
+        await assertAIDisabled("bytes") { _ = try await off.bytes(request) }
+        XCTAssertEqual(net.requests.count, 0)
+        let on = LLMTransport.gated(enabled: true, net.transport)
+        _ = try? await on.data(request)
+        XCTAssertEqual(net.requests.count, 1)
+    }
+
+    func testSignInRefreshAndOllamaPostsGoThroughTheGate() async {
+        let net = LLMRecordingTransport()
+        let off = LLMTransport.gated(enabled: false, net.transport)
         await assertAIDisabled("form") {
-            _ = try await LLMClient.postForm("https://auth.example/token", ["a": "b"],
-                                             enabled: false, transport: net.transport)
+            _ = try await LLMClient.postForm("https://auth.example/token", ["a": "b"], transport: off)
         }
         await assertAIDisabled("raw form") {
             _ = try await LLMClient.postFormRaw("https://auth.example/token", ["a": "b"],
-                                                enabled: false, transport: net.transport)
+                                                transport: off)
         }
         await assertAIDisabled("json") {
-            _ = try await LLMClient.postJSON("https://auth.example/token", ["a": "b"],
-                                             enabled: false, transport: net.transport)
+            _ = try await LLMClient.postJSON("https://auth.example/token", ["a": "b"], transport: off)
         }
         for vendor in [LLMOAuthVendor.claude, .chatGPT, .grok, .gemini, .openRouter] {
             await assertAIDisabled("\(vendor)") {
                 _ = try await LLMClient.postToken(vendor: vendor, ["refresh_token": "r"],
-                                                  enabled: false, transport: net.transport)
+                                                  transport: off)
             }
+        }
+        await assertAIDisabled("ollama") {
+            _ = try await Ollama.send(
+                URLRequest(url: URL(string: "http://127.0.0.1:11434/api/tags")!), transport: off)
         }
         XCTAssertEqual(net.requests.count, 0)
     }
 
     @MainActor
     func testDisabledSignInFlowStartsNoListener() async {
-        // The process-wide switch: off in every build of this repository.
-        guard !AIFeatures.isEnabled else { return }
         do {
-            try await LLMOAuthFlow.signIn(vendor: .claude, providerID: UUID())
+            try await LLMOAuthFlow.signIn(vendor: .claude, providerID: UUID(), enabled: false)
             XCTFail("sign-in must refuse")
         } catch {
             guard case LLMClientError.aiDisabled = error else {
                 return XCTFail("unexpected \(error)")
             }
         }
-    }
-
-    func testDisabledOllamaSendsNothing() async {
-        let net = LLMRecordingTransport()
-        let request = URLRequest(url: URL(string: "http://127.0.0.1:11434/api/tags")!)
-        do {
-            _ = try await Ollama.send(request, enabled: false, transport: net.ollamaTransport)
-            XCTFail("Ollama.send must refuse")
-        } catch {
-            guard case Ollama.OllamaError.aiDisabled = error else {
-                return XCTFail("unexpected \(error)")
-            }
-        }
-        XCTAssertEqual(net.requests.count, 0)
-        _ = try? await Ollama.send(request, enabled: true, transport: net.ollamaTransport)
-        XCTAssertEqual(net.requests.count, 1)
     }
 
     @MainActor
@@ -172,43 +208,85 @@ final class AIFeaturesTests: XCTestCase {
                 return XCTFail("unexpected \(error)")
             }
         }
-        do {
-            _ = try await LLMTaskRunner.generate(task: .triage, prompt: "private", enabled: false)
-            XCTFail("generate must fail")
-        } catch {
-            guard case LLMClientError.aiDisabled = error else {
-                return XCTFail("unexpected \(error)")
+    }
+
+    // MARK: - Redirects (AI-on correctness)
+
+    /// URLSession would follow a 307/308 and resend the mail text and the
+    /// key headers to the new origin. The guard follows same-origin only.
+    func testRedirectGuardFollowsOnlyTheSameOrigin() {
+        let guardDelegate = LLMRedirectGuard()
+        let task = URLSession.shared.dataTask(
+            with: URL(string: "https://api.example/v1/chat/completions")!)
+        defer { task.cancel() }
+        let response = HTTPURLResponse(url: URL(string: "https://api.example/v1/chat/completions")!,
+                                       statusCode: 307, httpVersion: nil, headerFields: nil)!
+        func decision(_ target: String) -> URLRequest? {
+            var followed: URLRequest?? = .none
+            guardDelegate.urlSession(URLSession.shared, task: task,
+                                     willPerformHTTPRedirection: response,
+                                     newRequest: URLRequest(url: URL(string: target)!)) {
+                followed = .some($0)
             }
+            guard case .some(let request) = followed else {
+                XCTFail("completion handler not called for \(target)")
+                return nil
+            }
+            return request
         }
+        XCTAssertNotNil(decision("https://api.example/v2/chat/completions"))
+        XCTAssertNotNil(decision("https://API.example:443/v1/other"))
+        for target in ["https://collector.example/v1/chat/completions",
+                       "https://api.example:8443/v1/chat/completions",
+                       "http://api.example/v1/chat/completions",
+                       "http://127.0.0.1:11434/api/chat"] {
+            XCTAssertNil(decision(target), target)
+        }
+        XCTAssertFalse(LLMRedirectGuard.allows(from: nil, to: URL(string: "https://api.example")))
     }
 
-    func testAutoSortNeverRunsWithTheFeaturesOff() {
-        defaults.set(true, forKey: AITriage.autoClassifyKey)
-        XCTAssertFalse(AITriage.isAutoClassifyEnabled(defaults, aiFeatures: false))
-        XCTAssertTrue(AITriage.isAutoClassifyEnabled(defaults, aiFeatures: true))
-        defaults.set(false, forKey: AITriage.autoClassifyKey)
-        XCTAssertFalse(AITriage.isAutoClassifyEnabled(defaults, aiFeatures: true))
+    // MARK: - MCP server state left by an earlier build
+
+    private func tempDiscovery() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AIFeaturesTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return dir.appendingPathComponent("mcp.json")
     }
 
-    // MARK: - MCP server
+    /// With the features off, a stored opt-in is cleared (no silent restart
+    /// when they come back), a stale mcp.json goes, and the token is marked
+    /// for rotation on the next opt-in.
+    func testSwitchedOffLaunchClearsTheOptInAndTheDiscoveryFile() throws {
+        let discovery = try tempDiscovery()
+        try Data(#"{"port":41888,"pid":1}"#.utf8).write(to: discovery)
+        defaults.set(true, forKey: MCPSwitchedOff.enabledKey)
 
-    func testMCPServerDoesNotStartWithStoredOptInWhenTheFeaturesAreOff() {
-        defaults.set(true, forKey: MCPLaunchPolicy.enabledKey)
-        XCTAssertFalse(MCPLaunchPolicy.shouldStartAtLaunch(aiFeatures: false, defaults: defaults))
-        var started = 0
-        let ran = MCPLaunchPolicy.startIfAllowed(aiFeatures: false) { started += 1 }
-        XCTAssertFalse(ran)
-        XCTAssertEqual(started, 0, "no listener, no token read, no mcp.json")
-        XCTAssertFalse(MCPLaunchPolicy.mayRun(aiFeatures: false))
+        XCTAssertTrue(MCPSwitchedOff.cleanUp(defaults: defaults, discoveryURL: discovery))
+        XCTAssertNil(defaults.object(forKey: MCPSwitchedOff.enabledKey))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: discovery.path))
+        XCTAssertTrue(MCPSwitchedOff.takeTokenRotation(defaults: defaults))
+        XCTAssertFalse(MCPSwitchedOff.takeTokenRotation(defaults: defaults), "once")
     }
 
-    func testMCPServerStartsOnlyWhenBothTheBuildAndTheUserSaySo() {
-        XCTAssertFalse(MCPLaunchPolicy.shouldStartAtLaunch(aiFeatures: true, defaults: defaults))
-        defaults.set(true, forKey: MCPLaunchPolicy.enabledKey)
-        XCTAssertTrue(MCPLaunchPolicy.shouldStartAtLaunch(aiFeatures: true, defaults: defaults))
-        var started = 0
-        XCTAssertTrue(MCPLaunchPolicy.startIfAllowed(aiFeatures: true) { started += 1 })
-        XCTAssertEqual(started, 1)
+    func testSwitchedOffLaunchWithNothingStoredChangesNothing() throws {
+        let discovery = try tempDiscovery()
+        XCTAssertFalse(MCPSwitchedOff.cleanUp(defaults: defaults, discoveryURL: discovery))
+        XCTAssertFalse(MCPSwitchedOff.takeTokenRotation(defaults: defaults))
+        defaults.set(false, forKey: MCPSwitchedOff.enabledKey)
+        XCTAssertFalse(MCPSwitchedOff.cleanUp(defaults: defaults, discoveryURL: discovery))
+        XCTAssertNil(defaults.object(forKey: MCPSwitchedOff.enabledKey))
+    }
+
+    func testStaleDiscoverySymlinkIsRemovedNotFollowed() throws {
+        let discovery = try tempDiscovery()
+        let target = discovery.deletingLastPathComponent().appendingPathComponent("keep.txt")
+        try Data("keep".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: discovery, withDestinationURL: target)
+        XCTAssertTrue(MCPSwitchedOff.cleanUp(defaults: defaults, discoveryURL: discovery))
+        XCTAssertNil(try? FileManager.default.destinationOfSymbolicLink(atPath: discovery.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
     }
 
     // MARK: - Surfaces

@@ -146,7 +146,7 @@ final class LLMCredentialOriginTests: XCTestCase {
         let origin = try XCTUnwrap(LLMRemotePolicy.origin(of: draft.baseURL))
         // No saved row and no record: nothing is authorised.
         XCTAssertFalse(LLMProviderStore.credentialMayBeSent(for: draft, from: defaults))
-        LLMProviderStore.setCredentialOrigin(origin, for: draft.id, to: defaults)
+        LLMProviderStore.setCredentialOrigin(origin, for: draft.id, .apiKey, to: defaults)
         XCTAssertTrue(LLMProviderStore.credentialMayBeSent(for: draft, from: defaults))
         _ = try await client.listModels(config: draft, sheetConsent: origin)
         XCTAssertEqual(net.requests.count, 1)
@@ -160,13 +160,112 @@ final class LLMCredentialOriginTests: XCTestCase {
     func testRecordedOriginOutlivesABaseURLChangeOfTheRow() {
         let config = saved("https://api.x.ai/v1")
         LLMProviderStore.setCredentialOrigin(LLMRemotePolicy.origin(of: config.baseURL),
-                                             for: config.id, to: defaults)
+                                             for: config.id, .apiKey, to: defaults)
         let moved = edited(config, to: "https://api.openai.com/v1")
         LLMProviderStore.save([moved], to: defaults)
         XCTAssertFalse(LLMProviderStore.credentialMayBeSent(for: moved, from: defaults))
-        LLMProviderStore.setCredentialOrigin(nil, for: config.id, to: defaults)
+        LLMProviderStore.setCredentialOrigin(nil, for: config.id, .apiKey, to: defaults)
         // With no record, the row's own origin is the authorised one.
         XCTAssertTrue(LLMProviderStore.credentialMayBeSent(for: moved, from: defaults))
+    }
+
+    // MARK: - Key and sign-in are bound separately
+
+    /// An API-key provider is edited to a new Base URL and signed in there,
+    /// then switched back to key mode without retyping the key: the old key
+    /// must not follow the sign-in to the new origin.
+    func testSigningInElsewhereDoesNotAuthoriseTheOldKeyThere() async {
+        let keyRow = saved("https://api.x.ai/v1")
+        // What Save does: pin what had no record, then record the new sign-in.
+        LLMProviderStore.pinCredentialOrigins(for: keyRow.id, from: defaults)
+        let movedOrigin = "https://api.openai.com:443"
+        LLMProviderStore.setCredentialOrigin(movedOrigin, for: keyRow.id, .signIn, to: defaults)
+        var signedIn = edited(keyRow, to: "https://api.openai.com/v1")
+        signedIn.authMode = .oauth(.chatGPT)
+        LLMProviderStore.save([signedIn], to: defaults)
+        XCTAssertTrue(LLMProviderStore.credentialMayBeSent(for: signedIn, from: defaults))
+
+        var backToKey = signedIn
+        backToKey.authMode = .apiKey
+        XCTAssertFalse(LLMProviderStore.credentialMayBeSent(for: backToKey, from: defaults))
+        do {
+            _ = try await client.listModels(config: backToKey)
+            XCTFail("the old key went to the sign-in's origin")
+        } catch {
+            guard case LLMClientError.credentialNotAuthorized = error else {
+                return XCTFail("unexpected \(error)")
+            }
+        }
+        XCTAssertEqual(net.requests.count, 0)
+        XCTAssertEqual(secrets.reads, [])
+    }
+
+    func testPinningKeepsExistingRecordsAndBindsUnrecordedOnes() {
+        let row = saved("https://api.x.ai/v1")
+        LLMProviderStore.setCredentialOrigin("https://api.x.ai:443", for: row.id, .signIn,
+                                             to: defaults)
+        LLMProviderStore.pinCredentialOrigins(for: row.id, from: defaults)
+        LLMProviderStore.save([edited(row, to: "https://api.groq.com/openai/v1")], to: defaults)
+        XCTAssertEqual(LLMProviderStore.authorizedCredentialOrigin(for: row.id, .apiKey,
+                                                                   from: defaults),
+                       "https://api.x.ai:443")
+        XCTAssertEqual(LLMProviderStore.authorizedCredentialOrigin(for: row.id, .signIn,
+                                                                   from: defaults),
+                       "https://api.x.ai:443")
+        LLMProviderStore.clearCredentialOrigins(for: row.id, from: defaults)
+        XCTAssertNil(defaults.object(forKey: LLMProviderStore.credentialOriginKey(for: row.id, .apiKey)))
+        XCTAssertNil(defaults.object(forKey: LLMProviderStore.credentialOriginKey(for: row.id, .signIn)))
+    }
+
+    // MARK: - Fetch models with a key typed in the sheet
+
+    /// Fetch uses the key in the field for this one listing and never reads
+    /// (or replaces) the saved one, so Cancel leaves the saved key and its
+    /// origin untouched.
+    func testFetchWithATypedKeySendsOnlyThatKey() async throws {
+        let config = saved("https://api.openai.com/v1")
+        let moved = edited(config, to: "https://llm.new.example/v1")
+        let origin = try XCTUnwrap(LLMRemotePolicy.origin(of: moved.baseURL))
+        _ = try await client.listModels(config: moved, sheetConsent: origin,
+                                        typedKey: "sk-typed-not-real")
+        XCTAssertEqual(net.requests.count, 1)
+        XCTAssertEqual(net.requests.first?.url?.host, "llm.new.example")
+        XCTAssertEqual(net.requests.first?.value(forHTTPHeaderField: "Authorization"),
+                       "Bearer sk-typed-not-real")
+        XCTAssertEqual(secrets.reads, [], "the saved key is not read")
+        // Nothing was recorded for the new origin.
+        XCTAssertFalse(LLMProviderStore.credentialMayBeSent(for: moved, from: defaults))
+        XCTAssertNil(defaults.object(forKey: LLMProviderStore.credentialOriginKey(for: config.id,
+                                                                                  .apiKey)))
+    }
+
+    func testAnEmptyTypedKeyIsNoKey() async {
+        let config = saved("https://api.openai.com/v1")
+        let moved = edited(config, to: "https://api.groq.com/openai/v1")
+        do {
+            _ = try await client.listModels(config: moved, typedKey: "")
+            XCTFail("an empty field must not unlock the saved key")
+        } catch {
+            guard case LLMClientError.credentialNotAuthorized = error else {
+                return XCTFail("unexpected \(error)")
+            }
+        }
+        XCTAssertEqual(net.requests.count, 0)
+    }
+
+    func testATypedKeyStillNeedsConsentForACustomHost() async {
+        let draft = LLMProviderConfig(id: UUID(), kind: .openAICompatible, label: "New",
+                                      baseURL: "https://llm.new.example/v1",
+                                      defaultModel: "m", authMode: .apiKey)
+        do {
+            _ = try await client.listModels(config: draft, typedKey: "sk-typed-not-real")
+            XCTFail("a custom host needs consent")
+        } catch {
+            guard case LLMClientError.untrustedEndpoint = error else {
+                return XCTFail("unexpected \(error)")
+            }
+        }
+        XCTAssertEqual(net.requests.count, 0)
     }
 
     func testCustomHostStillNeedsConsentBeforeAnything() async {

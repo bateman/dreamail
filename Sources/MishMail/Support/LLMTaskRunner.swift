@@ -105,10 +105,9 @@ enum LLMTaskRunner {
         }
     }
 
-    static func generate(task: LLMTask, prompt: String,
-                         enabled: Bool = AIFeatures.isEnabled) async throws -> String {
+    static func generate(task: LLMTask, prompt: String) async throws -> String {
         var output = ""
-        for try await token in stream(task: task, prompt: prompt, enabled: enabled) {
+        for try await token in stream(task: task, prompt: prompt) {
             output += token
         }
         return output.trimmingCharacters(in: .whitespacesAndNewlines)

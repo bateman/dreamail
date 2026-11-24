@@ -1755,7 +1755,7 @@ struct ComposeRequest: Identifiable {
 
     // MARK: - MCP server
 
-    static let mcpEnabledKey = MCPLaunchPolicy.enabledKey
+    static let mcpEnabledKey = MCPSwitchedOff.enabledKey
     static let mcpTokenKey = "mcp.token"
     static let mcpPortKey = "mcp.port"
 
@@ -1776,17 +1776,23 @@ struct ComposeRequest: Identifiable {
 
     var isMCPEnabled: Bool {
         get {
-            MCPLaunchPolicy.mayRun() && UserDefaults.standard.bool(forKey: Self.mcpEnabledKey)
+            AIFeatures.isEnabled && UserDefaults.standard.bool(forKey: Self.mcpEnabledKey)
         }
         set {
-            // A build without AI features keeps whatever was stored and
-            // runs nothing.
-            guard MCPLaunchPolicy.mayRun() else {
+            // A build without AI features stores nothing and runs nothing.
+            guard AIFeatures.isEnabled else {
                 stopMCPServer()
                 return
             }
             UserDefaults.standard.set(newValue, forKey: Self.mcpEnabledKey)
             if newValue {
+                // First opt-in after a build without AI features: the old
+                // token may still be posted by a helper (launchd) to a port
+                // anyone could have bound meanwhile, so mint a new one.
+                if MCPSwitchedOff.takeTokenRotation(defaults: .standard) {
+                    Keychain.delete(Self.mcpTokenKey)
+                    mcpToken = nil
+                }
                 startMCPServer()
             } else {
                 stopMCPServer()
@@ -1827,17 +1833,19 @@ struct ComposeRequest: Identifiable {
 
     /// The only place a server is created. Refuses, before the token read,
     /// the bind and the discovery file, in a build without AI features.
+    /// The only place a server is created and `mcp.json` written. With the
+    /// AI features off it returns before the token read, the bind and the
+    /// file, whatever `mcp.enabled` says (MCPServerGateTests checks this).
     func startMCPServer() {
+        guard AIFeatures.isEnabled else { return }
         stopMCPServer()
         do {
-            try MCPLaunchPolicy.startIfAllowed {
-                let token = try ensureMCPToken()
-                let bridge = MCPBridge(store: self)
-                let server = MCPServer(tools: bridge)
-                let port = try server.start(token: token, preferredPort: UInt16(mcpPreferredPort))
-                mcpListener = (server, port)
-                writeMCPDiscovery(port: port)
-            }
+            let token = try ensureMCPToken()
+            let bridge = MCPBridge(store: self)
+            let server = MCPServer(tools: bridge)
+            let port = try server.start(token: token, preferredPort: UInt16(mcpPreferredPort))
+            mcpListener = (server, port)
+            writeMCPDiscovery(port: port)
         } catch {
             showNotice("MCP server failed to start: \(error.localizedDescription)")
         }
@@ -1892,8 +1900,12 @@ struct ComposeRequest: Identifiable {
         // before the first frame despite the intent. Here it is past the
         // first suspension point, so the window has had a chance to draw;
         // a bind failure still only surfaces as a notice.
-        // The build switch wins over the stored opt-in (MCPLaunchPolicy).
-        if MCPLaunchPolicy.shouldStartAtLaunch(), !isShuttingDown {
+        // The build switch wins over the stored opt-in. Without it, an
+        // earlier build's state goes: the stale mcp.json, and the opt-in
+        // itself, so turning AI back on needs a fresh choice (and token).
+        if !AIFeatures.isEnabled {
+            MCPSwitchedOff.cleanUp(defaults: .standard, discoveryURL: mcpDiscoveryURL)
+        } else if isMCPEnabled, !isShuttingDown {
             startMCPServer()
         }
         // Contacts first: recipient autocomplete is the first deferred

@@ -11,8 +11,11 @@ so "nothing was sent" is observable.
 
 import importlib.util
 import io
+import json
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 import urllib.request
 from contextlib import redirect_stderr
@@ -164,6 +167,64 @@ class RedirectTests(unittest.TestCase):
         new = self.redirect("https://api.example/v1/chat/completions",
                             "/v2/chat/completions")
         self.assertEqual(new.full_url, "https://api.example/v2/chat/completions")
+
+
+class AdvertisedServerTests(unittest.TestCase):
+    """No token is posted to 127.0.0.1 unless mcp.json advertises a live
+    server: a build with the AI features off never writes it and removes a
+    stale one, and the port may meanwhile belong to any local process."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.discovery = Path(self.dir.name) / "mcp.json"
+        env = mock.patch.dict(os.environ, {"MISHMAIL_MCP_TOKEN": "t-not-real"})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("MISHMAIL_MCP_PORT", None)
+
+    def write(self, payload):
+        self.discovery.write_text(json.dumps(payload))
+
+    def test_missing_discovery_file_exits_before_any_request(self):
+        with self.assertRaises(SystemExit) as exit_:
+            mcp_common.MCP(discovery=self.discovery)
+        self.assertIn("no MCP server", str(exit_.exception.code))
+
+    def test_dead_process_exits(self):
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        self.write({"port": 41888, "pid": proc.pid})
+        with self.assertRaises(SystemExit) as exit_:
+            mcp_common.MCP(discovery=self.discovery)
+        self.assertIn("not up", str(exit_.exception.code))
+
+    def test_missing_pid_exits(self):
+        self.write({"port": 41888})
+        with self.assertRaises(SystemExit):
+            mcp_common.MCP(discovery=self.discovery)
+
+    def test_live_server_is_used(self):
+        self.write({"port": 45555, "pid": os.getpid()})
+        client = mcp_common.MCP(discovery=self.discovery)
+        self.assertEqual(client.url, "http://127.0.0.1:45555/mcp")
+
+
+class CleanExitTests(unittest.TestCase):
+    def test_a_refused_destination_ends_with_a_message(self):
+        def main():
+            raise mcp_common.EndpointError("refusing redirect to another origin")
+
+        with self.assertRaises(SystemExit) as exit_:
+            mcp_common.run(main)
+        self.assertIn("Refused", str(exit_.exception.code))
+
+    def test_other_errors_are_not_swallowed(self):
+        def main():
+            raise RuntimeError("boom")
+
+        with self.assertRaises(RuntimeError):
+            mcp_common.run(main)
 
 
 if __name__ == "__main__":

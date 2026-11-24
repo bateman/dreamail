@@ -109,26 +109,19 @@ enum Ollama {
     }
 
     /// The one way a request reaches the Ollama daemon (model list,
-    /// capabilities, unload). Chat goes through `LLMClient`, which applies the
-    /// same switch. With the AI features off nothing is sent.
+    /// capabilities, unload). Chat goes through `LLMClient`. Both use the
+    /// gated `LLMTransport.live`, so with the AI features off nothing is sent.
     static func send(_ request: URLRequest,
-                     enabled: Bool = AIFeatures.isEnabled,
-                     transport: @Sendable (URLRequest) async throws -> (Data, URLResponse)
-                        = { try await URLSession.shared.data(for: $0) })
-        async throws -> (Data, URLResponse) {
-        guard enabled else { throw OllamaError.aiDisabled }
-        return try await transport(request)
+                     transport: LLMTransport = .live) async throws -> (Data, URLResponse) {
+        try await transport.data(request)
     }
 
     enum OllamaError: LocalizedError {
         case insecureEndpoint
         case remoteNotAllowed
         case modelNotInstalled(String)
-        case aiDisabled
         var errorDescription: String? {
             switch self {
-            case .aiDisabled:
-                return AIFeatures.disabledMessage
             case .modelNotInstalled(let model):
                 return "Ollama does not have the model “\(model)”. Run “ollama pull \(model)”, or set the Model in Settings → AI to a name that “ollama list” shows."
             case .insecureEndpoint:

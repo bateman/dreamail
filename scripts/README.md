@@ -2,7 +2,15 @@
 ## MCP helper scripts
 
 These drive the in-app MCP server (Settings → AI → MCP must be on, MishMail
-running). They read the port from `mcp.json` in the app container. The bearer
+running). **This fork's tracked build has the AI features and the MCP server
+switched off** (`MISHMAIL_AI_FEATURES`, see the main README): no server runs,
+no `mcp.json` is written, and the scripts exit without sending anything when
+`mcp.json` advertises no live server. Unload the daily launchd job while AI is
+off (`launchctl unload -w ~/Library/LaunchAgents/io.github.bateman.mishmail-summarize.plist`):
+a launchd agent cannot read the app container, so it cannot see that the
+server is down, and would keep posting the old token to a port any local
+process may have bound. Turning MCP on again later mints a new token; copy it
+to `~/.config/mishmail/mcp-token` before reloading the job. They read the port from `mcp.json` in the app container. The bearer
 token stays in the Keychain; set `MISHMAIL_MCP_TOKEN` or put it in
 `~/.config/mishmail/mcp-token`. Older `mcp.json` files that still include
 `token` continue to work.

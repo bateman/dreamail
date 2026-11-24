@@ -39,8 +39,8 @@ extension MailStore {
     }
     func autoClassifyNewMail() async {
         // Runs after every sync: with the AI features off, schedule nothing.
-        guard AITriage.isAutoClassifyEnabled(UserDefaults.standard,
-                                             aiFeatures: AIFeatures.isEnabled) else { return }
+        guard AIFeatures.isEnabled,
+              AITriage.isAutoClassifyEnabled(UserDefaults.standard) else { return }
         // Auto-sort is silent. A cloud triage model would upload every new
         // snippet; skip unless the assigned provider stays on this Mac or
         // on the LAN (RFC1918 / link-local Ollama).
