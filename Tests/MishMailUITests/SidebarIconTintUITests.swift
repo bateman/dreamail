@@ -9,7 +9,7 @@ import XCTest
 /// strip from the window's leading edge to the row's trailing edge, where
 /// the glyph and the title are drawn. The selection capsule's own colour is
 /// not judged: only the pixels that stand out from the strip's background
-/// (glyph, title), which must be grey.
+/// (glyph, title), which must be grey. An unselected row is the control.
 final class SidebarIconTintUITests: XCTestCase {
 
     func testSelectedRowIsMonochromeWithTheDefaultAccent() throws {
@@ -48,6 +48,12 @@ final class SidebarIconTintUITests: XCTestCase {
         XCTAssertTrue(inbox.waitForExistence(timeout: 5))
         inbox.click()
         Self.settle()
+        // Control: an unselected row's outline glyph is grey too, so the
+        // measure itself does not see colour where there is none.
+        let starred = app.descendants(matching: .any)
+            .matching(identifier: "sidebar.starred").firstMatch
+        XCTAssertTrue(starred.waitForExistence(timeout: 5))
+        try Self.assertMonochrome(row: starred, window: main, "main sidebar, unselected row")
         try Self.assertMonochrome(row: inbox, window: main, "main sidebar, active window")
 
         // Settings: select General, check its row while Settings is key.
@@ -62,18 +68,24 @@ final class SidebarIconTintUITests: XCTestCase {
         Self.settle()
         try Self.assertMonochrome(row: general, window: settings, "Settings sidebar")
 
-        // The main window is now inactive (Settings is key). Move Settings
-        // off the Inbox row if it covers it, then check the row again.
+        // Inactive main window: close Settings (it covers the sidebar), then
+        // open the small, centred About panel, which takes key status.
+        app.typeKey("w", modifierFlags: .command)
+        Self.settle()
+        XCTAssertFalse(settings.exists, "Settings should close with Cmd-W")
+        let appMenu = app.menuBars.menuBarItems.element(boundBy: 1)
+        appMenu.click()
+        let about = app.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'About'")).firstMatch
+        XCTAssertTrue(about.waitForExistence(timeout: 5))
+        about.click()
+        Self.settle()
+        let panels = app.windows.allElementsBoundByIndex.filter { $0.frame != main.frame }
+        XCTAssertFalse(panels.isEmpty, "the About panel should open")
         let strip = Self.strip(row: inbox, window: main)
-        if settings.frame.intersects(strip) {
-            let shift = strip.maxX + 20 - settings.frame.minX
-            let grab = settings.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
-                .withOffset(CGVector(dx: 0, dy: 12))
-            grab.press(forDuration: 0.2, thenDragTo: grab.withOffset(CGVector(dx: shift, dy: 0)))
-            Self.settle()
+        for panel in panels {
+            XCTAssertFalse(panel.frame.intersects(strip),
+                           "\(panel.identifier) \(panel.frame) covers the Inbox row \(strip)")
         }
-        XCTAssertFalse(settings.frame.intersects(Self.strip(row: inbox, window: main)),
-                       "Settings must not cover the Inbox row: \(settings.frame)")
         try Self.assertMonochrome(row: inbox, window: main, "main sidebar, inactive window")
     }
 
@@ -121,9 +133,10 @@ final class SidebarIconTintUITests: XCTestCase {
                                     file: file, line: line)
         // Antialiased edges over a tinted capsule may pick up some colour;
         // an accent-tinted glyph is saturated almost everywhere.
-        XCTAssertLessThan(stats.saturatedFraction, 0.15,
-                          "\(context): \(stats.saturated) of \(stats.foreground) glyph/title pixels are coloured",
-                          file: file, line: line)
+        let detail = "\(context): \(stats.saturated) of \(stats.foreground) glyph/title pixels are coloured; "
+            + "strip \(rect), \(stats.summary(scale: scale))"
+        print("SidebarIconTint: \(detail)")
+        XCTAssertLessThan(stats.saturatedFraction, 0.15, detail, file: file, line: line)
     }
 
     /// Foreground pixels: those far from the strip's most common colour.
@@ -132,6 +145,25 @@ final class SidebarIconTintUITests: XCTestCase {
         var foreground = 0
         var saturated = 0
         var saturatedFraction: Double { foreground == 0 ? 0 : Double(saturated) / Double(foreground) }
+        var background = (0.0, 0.0, 0.0)
+        var foregroundSum = (0.0, 0.0, 0.0)
+        var saturatedSum = (0.0, 0.0, 0.0)
+        var foregroundX = (Int.max, Int.min)
+        var saturatedX = (Int.max, Int.min)
+
+        /// Where (x in points from the strip's leading edge) and what the
+        /// foreground and the coloured pixels are, for the failure message.
+        func summary(scale: CGFloat) -> String {
+            func rgb(_ c: (Double, Double, Double), _ n: Int) -> String {
+                n == 0 ? "-" : String(format: "rgb(%.0f,%.0f,%.0f)",
+                                      c.0 / Double(n), c.1 / Double(n), c.2 / Double(n))
+            }
+            func range(_ r: (Int, Int)) -> String {
+                r.0 > r.1 ? "-" : String(format: "x %.0f-%.0f pt", Double(r.0) / scale, Double(r.1) / scale)
+            }
+            return "background \(rgb(background, 1)), foreground \(rgb(foregroundSum, foreground)) "
+                + "\(range(foregroundX)), coloured \(rgb(saturatedSum, saturated)) \(range(saturatedX))"
+        }
 
         init(_ image: CGImage) {
             let w = image.width, h = image.height
@@ -152,14 +184,22 @@ final class SidebarIconTintUITests: XCTestCase {
             let bg = (Double((mode >> 10) & 31) * 8 + 4, Double((mode >> 5) & 31) * 8 + 4,
                       Double(mode & 31) * 8 + 4)
 
+            background = bg
             for i in stride(from: 0, to: data.count, by: 4) {
                 let r = Double(data[i]), g = Double(data[i + 1]), b = Double(data[i + 2])
                 let distance = (abs(r - bg.0) + abs(g - bg.1) + abs(b - bg.2)) / 3
                 guard distance > 40 else { continue }
+                let x = (i / 4) % w
                 foreground += 1
+                foregroundSum = (foregroundSum.0 + r, foregroundSum.1 + g, foregroundSum.2 + b)
+                foregroundX = (min(foregroundX.0, x), max(foregroundX.1, x))
                 let hi = max(r, g, b), lo = min(r, g, b)
                 let saturation = hi == 0 ? 0 : (hi - lo) / hi
-                if saturation > 0.4, hi / 255 > 0.25 { saturated += 1 }
+                if saturation > 0.4, hi / 255 > 0.25 {
+                    saturated += 1
+                    saturatedSum = (saturatedSum.0 + r, saturatedSum.1 + g, saturatedSum.2 + b)
+                    saturatedX = (min(saturatedX.0, x), max(saturatedX.1, x))
+                }
             }
         }
     }
