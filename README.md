@@ -398,6 +398,10 @@ OAuth client and you want to keep the grant.
   and path-traversal-safe attachment filenames.
 - **No bundled Google secrets** — every user (and every Debug vs Release copy)
   pastes their own OAuth client in Settings. Gmail traffic goes to Google.
+  Each account's own profile photo is fetched from Google's photo hosts
+  (`lh3`–`lh6.googleusercontent.com`, HTTPS only, no token, no redirects),
+  at most once a day, and stored with the account in the encrypted cache.
+  Accounts without a photo show the letter image Google generates for them.
   Optional AI is local Ollama by default; a hosted model you assign in
   Settings → AI sends that task's mail text to that provider, only after
   host-consent checks. Silent auto-sort never uses a hosted provider.

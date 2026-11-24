@@ -30,6 +30,25 @@ final class AccountRemovalResidueTests: XCTestCase {
         try String.fetchAll(db, sql: "SELECT id FROM chatConversation ORDER BY id")
     }
 
+    // MARK: - Profile photo
+
+    func testRemovalDeletesOnlyThatAccountsProfilePhoto() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.insertAccount(db, "a@x.com")
+            try self.insertAccount(db, "b@x.com")
+            for id in ["a@x.com", "b@x.com"] {
+                try AccountPhotoRecord(accountId: id, imageData: Data([0x89, 0x50]),
+                                       fetchedAt: Date()).insert(db)
+            }
+            try AccountLifecycle.purgeAccount(db, id: "a@x.com")
+        }
+        try q.read { db in
+            XCTAssertEqual(try String.fetchAll(db, sql: "SELECT accountId FROM accountPhoto"),
+                           ["b@x.com"])
+        }
+    }
+
     // MARK: - Ask Mish chats
 
     func testRemovalDeletesOnlyChatsThatDrewOnTheAccount() throws {

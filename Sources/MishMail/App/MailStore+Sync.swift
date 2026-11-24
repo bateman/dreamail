@@ -244,6 +244,7 @@ extension MailStore {
                         // Still run post-sync so successful upserts appear.
                         accountsNeedingReauth.remove(id)
                         await backfillSenderNameIfNeeded(accountId: id)
+                        refreshAccountPhotoIfDue(accountId: id)
                         await refreshSendIdentitiesIfStale(accountId: id)
                     } else if !OfflinePolicy.surfacesSyncFailure(error) {
                         // No network. The sync control reads "Offline";
@@ -263,6 +264,7 @@ extension MailStore {
                     accountsNeedingReauth.remove(id)
                     clearSyncFailureErrorIfNeeded(for: id)
                     await backfillSenderNameIfNeeded(accountId: id)
+                    refreshAccountPhotoIfDue(accountId: id)
                     await refreshSendIdentitiesIfStale(accountId: id)
                 }
             }
@@ -311,6 +313,7 @@ extension MailStore {
             accountsNeedingReauth.remove(accountId)
             clearSyncFailureErrorIfNeeded(for: accountId)
             await backfillSenderNameIfNeeded(accountId: accountId)
+            refreshAccountPhotoIfDue(accountId: accountId)
             await refreshSendIdentitiesIfStale(accountId: accountId)
             reloadAccounts()
             reloadThreads()
@@ -328,6 +331,7 @@ extension MailStore {
                 applyThreadContentChange(await engine.drainContentChange())
                 accountsNeedingReauth.remove(accountId)
                 await backfillSenderNameIfNeeded(accountId: accountId)
+                refreshAccountPhotoIfDue(accountId: accountId)
                 await refreshSendIdentitiesIfStale(accountId: accountId)
                 reloadAccounts()
                 reloadThreads()

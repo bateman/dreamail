@@ -55,6 +55,15 @@ final class MailStore {
     /// (see `lastSyncByAccount`) — never write these values back to the
     /// database; re-fetch inside the write transaction instead.
     var accounts: [Account] = [] { didSet { rebuildOwnDisplayNames() } }
+    /// Each account's own Google profile photo, decoded from the database
+    /// (`loadAccountPhotos`). Missing: the initial disc is drawn.
+    var accountPhotos: [String: NSImage] = [:]
+    @ObservationIgnored var accountPhotoData: [String: Data] = [:]
+    @ObservationIgnored var loadedPhotoAccountIds: Set<String> = []
+    @ObservationIgnored var photoRefreshTasks: [String: AccountPhotoRefreshHandle] = [:]
+    /// When each account's photo is next worth checking (in memory only).
+    @ObservationIgnored var photoNextCheck: [String: Date] = [:]
+    @ObservationIgnored var photoLoadTask: Task<Void, Never>?
     /// Per-account last-sync timestamps, published separately from `accounts`
     /// so a successful poll tick does not reassign the array views enumerate.
     /// Every successful `syncNow` stamps `Account.lastSyncAt`, and leaving that
@@ -2405,7 +2414,10 @@ struct ComposeRequest: Identifiable {
             accountSignInTask,
             serverSearchTask,
             classificationTask,
-        ].compactMap { $0 }
+            photoLoadTask,
+        ].compactMap { $0 } + photoRefreshTasks.values.map(\.task)
+        photoRefreshTasks = [:]
+        photoLoadTask = nil
         contactsRebuildTask = nil
         threadReloadTask = nil
         loadMoreTask = nil
@@ -2634,6 +2646,10 @@ struct ComposeRequest: Identifiable {
         // early-out. Load-bearing, not a micro-opt.
         if nextAccounts != accounts {
             accounts = nextAccounts
+        }
+        if Set(nextAccounts.map(\.id)) != loadedPhotoAccountIds {
+            loadedPhotoAccountIds = Set(nextAccounts.map(\.id))
+            scheduleAccountPhotoLoad()
         }
         if nextSync != lastSyncByAccount {
             lastSyncByAccount = nextSync
