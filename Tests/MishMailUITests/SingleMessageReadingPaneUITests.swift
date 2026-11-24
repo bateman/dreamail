@@ -88,23 +88,22 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
         XCTAssertGreaterThan(first, 0.4 * window.frame.height,
                              "the open card must fill the reading pane while it loads")
 
-        // Settle: sample until two readings agree, and check it never shrinks
-        // below what was first shown (no reduced stage, no stepwise jumps
-        // back down).
+        // The reservation holds until WebKit reports, so the span stays put
+        // and then grows once to the content. Wait for the report (the
+        // report is taller than the pane), checking it never shrinks below
+        // what was first shown (no reduced stage, no stepwise jumps down).
+        let target = window.frame.height * 0.9
         var last = first
-        var settled = false
-        let deadline = Date().addingTimeInterval(8)
+        let deadline = Date().addingTimeInterval(15)
         while Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
-            let now = span()
-            XCTAssertGreaterThanOrEqual(now, first - 1,
+            last = span()
+            XCTAssertGreaterThanOrEqual(last, first - 1,
                                         "the body must not shrink below its first frame")
-            if abs(now - last) < 1 { settled = true; break }
-            last = now
+            if last > target { break }
         }
-        XCTAssertTrue(settled, "the body height must settle")
         // Ends at the content height: the report is taller than the pane.
-        XCTAssertGreaterThan(last, window.frame.height * 0.9,
+        XCTAssertGreaterThan(last, target,
                              "the body must end at its full content height")
     }
 }
