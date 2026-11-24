@@ -362,7 +362,7 @@ struct AccountsSettings: View {
                         HStack {
                             AccountAvatarView(
                                 name: AccountLabelColor.title(account),
-                                key: account.id, size: 32,
+                                key: account.id, size: 35,
                                 photo: store.accountPhotos[account.id],
                                 ring: .init(storedHex: account.labelColor, surface: .groupedForm))
                                 .contextMenu {
@@ -1258,6 +1258,7 @@ struct AppearanceSettings: View {
                         }
                     }
                     .onChange(of: badgeScopeRaw) { store.refreshBadge() }
+                    DockBadgeStatusRow()
                 } header: {
                     Text("Dock badge")
                 } footer: {

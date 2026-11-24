@@ -2376,9 +2376,9 @@ struct AccountSwitcher: View {
         } label: {
             HStack(spacing: 8) {
                 if let account = activeAccount {
-                    avatar(for: account, size: 32, surface: .sidebar)
+                    avatar(for: account, size: 35, surface: .sidebar)
                 } else {
-                    allInboxesIcon(size: 32)
+                    allInboxesIcon(size: 35)
                 }
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 3) {
@@ -2491,9 +2491,9 @@ struct AccountSwitcher: View {
                     }
                 }
                 if let account {
-                    avatar(for: account, size: 26, surface: .popover)
+                    avatar(for: account, size: 29, surface: .popover)
                 } else {
-                    allInboxesIcon(size: 26)
+                    allInboxesIcon(size: 29)
                 }
                 VStack(alignment: .leading, spacing: 0) {
                     Text(account.map { AccountLabelColor.title($0) } ?? "All accounts")
@@ -2524,10 +2524,10 @@ struct AccountSwitcher: View {
 
     /// Stacked-trays icon for the unified "All accounts" scope, in the
     /// avatar column. The frame matches the ringed avatars; the glyph keeps
-    /// its size from before the ring (frame 4 pt larger).
+    /// its size from before the ring (frame 7 pt larger).
     private func allInboxesIcon(size: CGFloat) -> some View {
         Image(systemName: "tray.2.fill")
-            .font(.system(size: (size - 4) * 0.54)).foregroundStyle(.secondary)
+            .font(.system(size: (size - 7) * 0.54)).foregroundStyle(.secondary)
             .frame(width: size, height: size)
     }
 
@@ -2659,7 +2659,7 @@ struct AccountLabelsEditor: View {
         HStack {
             Text("Label color")
             Spacer()
-            AccountAvatarView(name: editedTitle(account), key: account.id, size: 32,
+            AccountAvatarView(name: editedTitle(account), key: account.id, size: 35,
                               photo: store.accountPhotos[account.id],
                               ring: .init(storedHex: chosen, surface: .groupedForm))
                 .accessibilityLabel("Label color preview")
