@@ -80,7 +80,8 @@ class MultilingualSpellTextView: NSTextView {
                                             orthography: NSOrthography,
                                             wordCount: Int) {
         super.handleTextCheckingResults(
-            filteredCheckingResults(results, checkedIn: orthography.dominantLanguage),
+            filteredCheckingResults(results, checkedIn: orthography.dominantLanguage,
+                                    offset: range.location),
             forRange: range, types: checkingTypes, options: options,
             orthography: orthography, wordCount: wordCount)
     }
@@ -88,10 +89,13 @@ class MultilingualSpellTextView: NSTextView {
     /// The results AppKit will mark, after the "correct in any chosen
     /// language" rule. `checkedIn` is the language AppKit says it checked
     /// in (the orthography it hands back), which flagged the words already.
+    /// Result ranges are relative to the checked range, which starts at
+    /// `offset` (proven against real AppKit by the continuous-checking test).
     func filteredCheckingResults(_ results: [NSTextCheckingResult],
-                                 checkedIn: String? = nil) -> [NSTextCheckingResult] {
+                                 checkedIn: String? = nil,
+                                 offset: Int = 0) -> [NSTextCheckingResult] {
         guard let languages = spellLanguages, !languages.isEmpty else { return results }
-        return ComposeSpellLanguages.filter(results, in: currentText,
+        return ComposeSpellLanguages.filter(results, in: currentText, offset: offset,
                                             languages: languages,
                                             checkedLanguage: checkedIn,
                                             documentTag: spellCheckerDocumentTag,

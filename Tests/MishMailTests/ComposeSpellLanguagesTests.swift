@@ -166,6 +166,18 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         XCTAssertTrue(checker.lookups.allSatisfy { $0.2 == 42 })
     }
 
+    func testResultRangesAreReadFromTheStartOfTheCheckedRange() {
+        let text = "Hello there\nCiao zorp" as NSString
+        let checker = FakeChecker(dictionary: ["en": ["hello"]])
+        let run = text.range(of: "Ciao zorp")
+        // "zorp" at 5 within the run; at 5 in the whole text is "there"'s tail.
+        let kept = ComposeSpellLanguages.filter([.spellCheckingResult(range: NSRange(location: 5, length: 4))],
+                                                in: text, offset: run.location, languages: enIt,
+                                                documentTag: 0, checker: checker)
+        XCTAssertEqual(kept.count, 1)
+        XCTAssertEqual(checker.lookups.map(\.0), ["zorp", "zorp"])
+    }
+
     func testTheLanguageAppKitCheckedInIsNotAskedAgain() {
         let text = "zorp" as NSString
         let checker = FakeChecker()
@@ -582,8 +594,11 @@ final class ComposeSpellLanguagesTests: XCTestCase {
     final class ProbeView: MultilingualSpellTextView {
         var checkedLanguages: [String?] = []
         var handled = 0
-        /// The text at each spelling result's range, read as the filter does.
+        /// The text at each spelling result's range, read as the filter
+        /// does: relative to the start of the checked range.
         var spellingWords: [String] = []
+        /// The same ranges read as whole-text positions, for the message.
+        var wholeTextReadings: [String] = []
         override func forwardCheck(in range: NSRange, types: NSTextCheckingTypes,
                                    options: [NSSpellChecker.OptionKey: Any]) {
             checkedLanguages.append((options[.orthography] as? NSOrthography)?.dominantLanguage)
@@ -596,9 +611,15 @@ final class ComposeSpellLanguagesTests: XCTestCase {
                                                 orthography: NSOrthography, wordCount: Int) {
             handled += 1
             let text = string as NSString
-            for result in results where result.resultType == .spelling
-                && NSMaxRange(result.range) <= text.length {
-                spellingWords.append(text.substring(with: result.range))
+            for result in results where result.resultType == .spelling {
+                let relative = NSRange(location: result.range.location + range.location,
+                                       length: result.range.length)
+                if NSMaxRange(relative) <= text.length {
+                    spellingWords.append(text.substring(with: relative))
+                }
+                if NSMaxRange(result.range) <= text.length {
+                    wholeTextReadings.append(text.substring(with: result.range))
+                }
             }
             super.handleTextCheckingResults(results, forRange: range, types: checkingTypes,
                                             options: options, orthography: orthography,
@@ -615,8 +636,9 @@ final class ComposeSpellLanguagesTests: XCTestCase {
     }
 
     /// Real AppKit, real NSSpellChecker: each run is checked and its results
-    /// come back, and a spelling result's range is a position in the whole
-    /// text (the filter reads the word there). The nonsense word is
+    /// come back, and a spelling result's range is relative to the start of
+    /// the checked range (the filter reads the word there). The nonsense
+    /// word is in the second run, so a whole-text reading would miss it. The nonsense word is
     /// misspelled in any dictionary, so the test does not depend on which
     /// languages the runner has.
     func testContinuousCheckingGoesThroughTheLanguageHooks() {
@@ -634,6 +656,7 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         view.checkedLanguages.removeAll()
         view.handled = 0
         view.spellingWords.removeAll()
+        view.wholeTextReadings.removeAll()
         let nonsense = "qzxwvbnkj"
         view.insertText("Hello there, thanks for the notes.\nAnother line with \(nonsense) inside.\n",
                         replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -645,7 +668,7 @@ final class ComposeSpellLanguagesTests: XCTestCase {
                        "one run per paragraph language")
         XCTAssertGreaterThanOrEqual(view.handled, 2, "every run's check delivers its results")
         XCTAssertTrue(view.spellingWords.contains(nonsense),
-                      "result ranges are whole-text positions; words seen: \(view.spellingWords.count)")
+                      "result ranges are relative to the checked range; read relative: \(view.spellingWords.count) words, whole-text readings: \(view.wholeTextReadings.map { $0.count })")
         XCTAssertTrue(view.spellingWords.allSatisfy { !$0.contains(" ") && !$0.contains("\n") })
         view.removeFromSuperview()
     }

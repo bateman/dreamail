@@ -204,7 +204,10 @@ enum ComposeSpellLanguages {
     /// chose to ignore in this message stay unmarked. `checkedLanguage` is
     /// the one AppKit reports having checked in: it flagged the word, so it
     /// is not asked again. Answers are kept in `cache` between checks.
+    /// `offset` is where the checked range starts: AppKit hands result
+    /// ranges back relative to it, not as positions in the whole text.
     static func filter(_ results: [NSTextCheckingResult], in text: NSString,
+                       offset: Int = 0,
                        languages: [String], checkedLanguage: String? = nil,
                        documentTag: Int, checker: SpellLanguageChecking,
                        cache: SpellLookupCache? = nil) -> [NSTextCheckingResult] {
@@ -212,8 +215,9 @@ enum ComposeSpellLanguages {
         let others = languages.filter { $0 != checkedLanguage }
         return results.filter { result in
             guard result.resultType == .spelling else { return true }
-            let r = result.range
-            guard r.location != NSNotFound, r.length > 0,
+            guard result.range.location != NSNotFound else { return true }
+            let r = NSRange(location: result.range.location + offset, length: result.range.length)
+            guard r.length > 0, r.location >= 0,
                   NSMaxRange(r) <= text.length else { return true }
             let word = text.substring(with: r)
             return !others.contains { language in
