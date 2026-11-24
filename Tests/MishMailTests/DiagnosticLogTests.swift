@@ -1,3 +1,4 @@
+import GRDB
 import XCTest
 
 final class DiagnosticLogTests: XCTestCase {
@@ -335,5 +336,35 @@ final class DiagnosticLogTests: XCTestCase {
         XCTAssertNil(DiagnosticLog.token("a@b.com"))
         let body = #"{"error":{"errors":[{"reason":"18c2f0a9b7d1e3f4"},{"reason":"backendError"}]}}"#
         XCTAssertTrue(DiagnosticLog.categorize(body: body).hasPrefix("reason=backendError "))
+    }
+
+    // MARK: - Store errors (Database.swift NSLog sites)
+
+    func testDatabaseErrorKeepsResultCodesButNotSQLOrMessage() {
+        let error = DatabaseError(
+            resultCode: .SQLITE_CONSTRAINT,
+            message: "UNIQUE constraint failed: messages.id (value 'secret.person@example.com')",
+            sql: "INSERT INTO messages (id, subject) VALUES ('18c2f0a9b7d1e3f4', 'Payroll')")
+        let text = DiagnosticLog.describe(error)
+        XCTAssertEqual(text, "error=DatabaseError code=\(ResultCode.SQLITE_CONSTRAINT.rawValue) "
+            + "extended=\(error.extendedResultCode.rawValue)")
+        for leaked in ["INSERT", "Payroll", "secret.person", "@", "18c2f0a9b7d1e3f4", "UNIQUE"] {
+            XCTAssertFalse(text.contains(leaked), "leaked \(leaked): \(text)")
+        }
+    }
+
+    func testFileErrorDropsThePath() {
+        let path = "/Users/jane.doe/Library/Containers/x/Data/Library/Application Support/MishMail/mail.sqlite"
+        let error = CocoaError(.fileWriteOutOfSpace, userInfo: [NSFilePathErrorKey: path])
+        let text = DiagnosticLog.describe(error)
+        XCTAssertFalse(text.contains("jane.doe"))
+        XCTAssertFalse(text.contains("/"))
+        XCTAssertTrue(text.contains("domain=NSCocoaErrorDomain"))
+        XCTAssertTrue(text.contains("code=\(CocoaError.Code.fileWriteOutOfSpace.rawValue)"))
+    }
+
+    func testKeychainErrorKeepsItsStatus() {
+        XCTAssertEqual(DiagnosticLog.describe(KeychainError.status(-25308)),
+                       "error=KeychainError status=-25308")
     }
 }

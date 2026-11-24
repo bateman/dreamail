@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import GRDB
 import os
 
 /// Persistent, greppable record of failures that a banner would otherwise
@@ -95,8 +96,9 @@ enum DiagnosticLog {
     }
 
     /// Error category only: `GmailError` by case and its non-identifying
-    /// fields, `DecodingError` by case and coding path, anything else by
-    /// type, NSError domain and code.
+    /// fields, `DecodingError` by case and coding path, `KeychainError` by
+    /// OSStatus, GRDB's `DatabaseError` by SQLite result codes, anything else
+    /// by type, NSError domain and code.
     static func describe(_ error: Error) -> String {
         if let g = error as? GmailError {
             switch g {
@@ -108,6 +110,15 @@ enum DiagnosticLog {
             }
         }
         if let d = error as? DecodingError { return describe(decoding: d) }
+        if let keychain = error as? KeychainError, case .status(let status) = keychain {
+            return "error=KeychainError status=\(status)"
+        }
+        if let db = error as? DatabaseError {
+            // Never `description`: it carries the SQL text and the SQLite
+            // message, which can quote values or a file path.
+            return "error=DatabaseError code=\(db.resultCode.rawValue) "
+                + "extended=\(db.extendedResultCode.rawValue)"
+        }
         let ns = error as NSError
         let typeName = token(String(describing: Swift.type(of: error))) ?? "unknown"
         let domain = token(ns.domain) ?? "unknown"
