@@ -6,6 +6,11 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **A single message opens at its full length.** Selecting a one-message
+  conversation no longer shows a reduced card first: the message is open from
+  the first frame, fills the reading pane while it loads, and stays open. A
+  message seen before, or pre-rendered while browsing, appears at its full
+  height without growing.
 - **Monochrome sidebar icons, as in Gmail.** Sidebar, Settings-sidebar and
   list-header icons are grey outline glyphs; the selected view gets the filled
   glyph, a darker tint and a bold title. Colour stays for label colours, the

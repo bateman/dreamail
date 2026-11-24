@@ -277,6 +277,25 @@ enum HTMLBodyLayout {
             height: h.map { max(1, Int($0.rounded())) })
     }
 
+    /// Content height from the measure script's result (a JS number bridged
+    /// as NSNumber/Double/Int), clamped; nil for anything else or <= 0.
+    static func measuredHeight(fromScriptResult result: Any?) -> CGFloat? {
+        let raw: CGFloat?
+        if let h = result as? CGFloat {
+            raw = h
+        } else if let n = result as? NSNumber {
+            raw = CGFloat(truncating: n)
+        } else if let d = result as? Double {
+            raw = CGFloat(d)
+        } else if let i = result as? Int {
+            raw = CGFloat(i)
+        } else {
+            raw = nil
+        }
+        guard let raw, raw.isFinite, raw > 0 else { return nil }
+        return clampContentHeight(raw)
+    }
+
     /// Clamp a measured content height into the publishable range.
     static func clampContentHeight(_ raw: CGFloat) -> CGFloat {
         guard raw.isFinite else { return CGFloat(minContentHeight) }
