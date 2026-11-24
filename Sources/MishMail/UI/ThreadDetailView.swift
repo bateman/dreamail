@@ -918,6 +918,9 @@ struct ThreadDetailView: View {
         // `MessageHTMLPrepBuilder.cidInlinedPrep`).
         let preInlineBytes = html.utf8.count
         let scale = fontScale
+        // Captured before the downloads: a change landing meanwhile must
+        // keep this result out of the cache (see `rememberCIDInline`).
+        let revision = store.contentRevision(of: thread.id)
         Task {
             guard let result = await store.inlineCIDImages(
                 message: msg, attachments: atts, html: html)
@@ -958,6 +961,13 @@ struct ThreadDetailView: View {
                         (message: m, attachment: $0)
                     }
                 }
+                // A re-fetch rewrote the message and bumped the revision;
+                // the next open loads the new rows and resolves again.
+                if !result.didRefetch {
+                    store.rememberCIDInline(
+                        CIDInlinedBody(html: result.html, prep: cidPrep),
+                        messageId: id, threadId: thread.id, revision: revision)
+                }
             }
         }
     }
@@ -973,6 +983,15 @@ struct ThreadDetailView: View {
         messages = loaded
         attachmentsByMessageId = payload.attachmentsByMessageId
         bodyPrepByMessageId = payload.bodyPrepByMessageId
+        // `cid:` images this session already resolved: paint them in the
+        // first frame and mark them attempted, so the open makes no
+        // attachment request and does not load the body a second time.
+        let cidSeed = CIDInlineSeed.seed(from: payload, fontScale: fontScale)
+        if !cidSeed.resolvedIds.isEmpty {
+            cidInlinedHTMLById = cidSeed.htmlById
+            cidPrepByMessageId = cidSeed.prepById
+            cidResolveAttempted.formUnion(cidSeed.resolvedIds)
+        }
         threadAttachments = ThreadRefresh.threadAttachments(in: payload)
         // Anchor on newest sent when multi-message; draft-only falls back to
         // the last row so a pure-draft pane still positions.

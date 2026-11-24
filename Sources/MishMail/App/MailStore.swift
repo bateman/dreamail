@@ -2915,14 +2915,16 @@ struct ComposeRequest: Identifiable {
     /// Record message-row changes reported by a sync (or server search) and
     /// wake the open reading pane. No-op when nothing moved.
     func applyThreadContentChange(_ change: ThreadContentChange) {
-        let epochBefore = contentRevisions.epoch
-        guard contentRevisions.apply(change) else { return }
-        if contentRevisions.epoch != epochBefore {
-            // Wholesale invalidation: every mirrored payload is already
-            // unreachable by revision, so release the memory now instead of
-            // waiting for four more navigations to evict it.
-            payloadMirror.removeAll()
-        }
+        // Payloads and painted views built before this change are
+        // unreachable by revision; release them now (mirror, repository,
+        // pre-render slots) instead of at eviction, so content that was
+        // just deleted does not stay decoded in memory.
+        guard let outcome = ThreadDetailInvalidation.apply(
+            change, revisions: &contentRevisions, mirror: &payloadMirror)
+        else { return }
+        let repository = threadDetailRepository
+        Task { await repository.discardStale(outcome.staleness) }
+        HTMLBodyNeighborPrerender.discard(threadIds: outcome.affectedThreadIds)
         threadContentToken &+= 1
     }
 
@@ -3501,7 +3503,8 @@ struct ComposeRequest: Identifiable {
             fontScale: fontScale)
         payloadMirror.store(
             load.payload, for: threadId,
-            revision: revision, suppressing: suppressed)
+            revision: revision, current: contentRevisions.revision(of: threadId),
+            suppressing: suppressed)
         return load
     }
 
@@ -3538,6 +3541,27 @@ struct ComposeRequest: Identifiable {
             for: threadId,
             revision: contentRevisions.revision(of: threadId),
             suppressing: suppressedDraftMessageIds)
+    }
+
+    /// Keep a resolved `cid:` body with the cached payload of its thread, so
+    /// the next open of this conversation paints the images at once and
+    /// makes no attachment request. `revision` is the one captured when the
+    /// resolve started: a change that landed meanwhile (the resolver's own
+    /// re-fetch included) leaves no matching entry, so nothing is stored.
+    /// Both copies drop it with the payload; `CIDInlineCachePolicy` decides
+    /// what is worth keeping.
+    func rememberCIDInline(_ body: CIDInlinedBody, messageId: String,
+                           threadId: String, revision: ThreadContentRevision) {
+        let scale = Self.readingPaneFontScale()
+        payloadMirror.rememberCIDInline(
+            body, messageId: messageId, threadId: threadId, revision: revision,
+            fontScale: scale)
+        let repository = threadDetailRepository
+        Task {
+            await repository.rememberCIDInline(
+                body, messageId: messageId, threadId: threadId,
+                revision: revision, fontScale: scale)
+        }
     }
 
     /// Off-main body hydration for an expanded reading-pane card, including
@@ -4051,10 +4075,12 @@ struct ComposeRequest: Identifiable {
             meta: "intent=\(intent.rawValue)")
         if intent.opensDetailImmediately {
             openDetail(id)
-        } else if intent == .browse {
-            // Warm prev/next while the user is still browsing so the eventual
-            // open lands on a cached payload. Same 90 ms cancel-on-next timer
-            // as openDetail — holding j/k does not thrash the DB.
+        } else if NeighborPrefetch.warmsOnSelection(intent) {
+            // Warm the highlighted row and prev/next while the user is still
+            // browsing (or before the first open, for the auto-highlighted
+            // top row) so the eventual open lands on a cached payload. Same
+            // 90 ms cancel-on-next timer as openDetail — holding j/k does not
+            // thrash the DB.
             scheduleNeighborPrefetch(openedId: id)
         }
         setSelectionFocus(id, intent: intent)
@@ -4179,8 +4205,9 @@ struct ComposeRequest: Identifiable {
         // Stamp each neighbour with its own revision now. A sync landing
         // during the settle can only make this payload miss later — it can
         // never install content the newer revision should have invalidated.
-        let (prev, next) = NeighborPrefetch.neighbors(selected: openedId, in: order)
-        let targets = [prev, next].compactMap { $0 }.map {
+        let targets = NeighborPrefetch.targets(
+            selected: openedId, openedId: openedThreadId, in: order
+        ).map {
             (id: $0, revision: contentRevisions.revision(of: $0))
         }
         neighborPrefetchTask = Task { [weak self] in
@@ -4201,7 +4228,9 @@ struct ComposeRequest: Identifiable {
                 // actor round-trip at exactly the moment MainActor is busiest.
                 self.payloadMirror.store(
                     load.payload, for: target.id,
-                    revision: target.revision, suppressing: suppressed)
+                    revision: target.revision,
+                    current: self.contentRevisions.revision(of: target.id),
+                    suppressing: suppressed)
             }
         }
     }

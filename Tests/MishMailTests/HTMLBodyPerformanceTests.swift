@@ -270,4 +270,14 @@ final class HTMLBodyPerformanceTests: XCTestCase {
         XCTAssertEqual(candidate?.contentID, "m2:full")
         XCTAssertEqual(candidate?.html, html)
     }
+
+    /// A card showing resolved `cid:` images mounts `<id>:<variant>:cid`; the
+    /// neighbour pre-render must paint under the same id or it is never
+    /// claimed.
+    func testPrerenderSelectionMatchesTheCardIdForResolvedCIDBodies() {
+        let html = "<p>Logo <img src=\"data:image/png;base64,AAAA\"></p>"
+        let candidate = HTMLBodyPrerenderSelection.candidate(
+            messageId: "m3", bodyHTML: html, cidInlined: true)
+        XCTAssertEqual(candidate?.contentID, "m3:full:cid")
+    }
 }

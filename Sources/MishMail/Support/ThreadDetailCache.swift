@@ -369,6 +369,12 @@ struct ThreadDetailPayload: Equatable {
     var attachmentsByMessageId: [String: [AttachmentRow]]
     /// Precomputed quote trails + assembled HTML, keyed by message id.
     var bodyPrepByMessageId: [String: MessageHTMLPrep]
+    /// Bodies whose `cid:` images were already resolved this session, keyed
+    /// by message id. Filled after the first open downloads the parts, so a
+    /// re-open paints the images in its first frame instead of downloading
+    /// every part from Gmail again and loading the body a second time.
+    /// Memory only: it lives and dies with this payload's cache entry.
+    var cidInlineByMessageId: [String: CIDInlinedBody] = [:]
 
     func suppressingDrafts(_ suppressedIds: Set<String>) -> ThreadDetailPayload {
         guard !suppressedIds.isEmpty else { return self }
@@ -381,7 +387,75 @@ struct ThreadDetailPayload: Equatable {
             },
             bodyPrepByMessageId: bodyPrepByMessageId.filter {
                 visibleIds.contains($0.key)
+            },
+            cidInlineByMessageId: cidInlineByMessageId.filter {
+                visibleIds.contains($0.key)
             })
+    }
+}
+
+/// A body with its `cid:` images rewritten to `data:` URIs, plus the prep
+/// built from it.
+///
+/// No attachment rows: only results that needed no Gmail re-fetch are
+/// remembered (`CIDInlineCachePolicy`), and those leave the rows exactly as
+/// the payload already carries them.
+struct CIDInlinedBody: Equatable, Sendable {
+    var html: String
+    var prep: MessageHTMLPrep
+
+    /// Font scale the prep's documents were assembled at, when any.
+    var fontScale: Double? { prep.documents?.fontScale }
+}
+
+/// Which resolved `cid:` bodies are worth keeping in memory.
+enum CIDInlineCachePolicy {
+    /// Above this the body re-downloads its images on the next open, as
+    /// before. Inlined images are base64 in the HTML, so a few large photos
+    /// would otherwise pin tens of megabytes per cached conversation.
+    static let maximumBytes = 4 * 1_024 * 1_024
+
+    /// Remember only a complete, bounded result for the current scale:
+    /// - nothing left unresolved (a part that failed to download must be
+    ///   retried on the next open, not frozen as a broken image);
+    /// - within `maximumBytes`;
+    /// - built at `fontScale`.
+    static func shouldRemember(_ body: CIDInlinedBody, fontScale: Double) -> Bool {
+        guard !CIDImageInliner.containsCIDReferences(body.html),
+              body.html.utf8.count <= maximumBytes else { return false }
+        if let scale = body.fontScale, abs(scale - fontScale) > 0.001 { return false }
+        return true
+    }
+}
+
+/// How a reading pane seeds its session `cid:` state from a payload.
+///
+/// Every id returned in `resolvedIds` is marked as already attempted, which
+/// is what keeps `resolveCIDImagesIfNeeded` from going to the network.
+enum CIDInlineSeed {
+    struct Seed: Equatable {
+        var htmlById: [String: String] = [:]
+        var prepById: [String: MessageHTMLPrep] = [:]
+        var resolvedIds: Set<String> = []
+
+        /// Mirrors the guard at the top of `resolveCIDImagesIfNeeded`.
+        func needsResolve(_ id: String, attempted: Set<String>) -> Bool {
+            !attempted.union(resolvedIds).contains(id)
+        }
+    }
+
+    /// Bodies built at another font scale are left out: the pane resolves
+    /// those again rather than mount documents at the wrong size.
+    static func seed(from payload: ThreadDetailPayload, fontScale: Double) -> Seed {
+        var seed = Seed()
+        let present = Set(payload.messages.map(\.id))
+        for (id, body) in payload.cidInlineByMessageId where present.contains(id) {
+            if let scale = body.fontScale, abs(scale - fontScale) > 0.001 { continue }
+            seed.htmlById[id] = body.html
+            seed.prepById[id] = body.prep
+            seed.resolvedIds.insert(id)
+        }
+        return seed
     }
 }
 
@@ -427,6 +501,15 @@ struct ThreadDetailLRU<Value> {
     }
 }
 
+/// Which cached payloads a content change made stale, by the revisions in
+/// force after it.
+enum ThreadContentStaleness: Equatable, Sendable {
+    /// These threads moved to these revisions.
+    case threads([String: ThreadContentRevision])
+    /// The epoch moved to this value; every older entry is stale.
+    case before(epoch: Int)
+}
+
 struct ThreadDetailLoad {
     let payload: ThreadDetailPayload
     let cacheHit: Bool
@@ -453,6 +536,12 @@ struct ThreadDetailCacheEntry: Equatable {
 actor ThreadDetailRepository {
     private let db: DatabasePool
     private var cache = ThreadDetailLRU<ThreadDetailCacheEntry>(capacity: 10)
+    /// Newest revisions `discardStale` has seen. A read that started before
+    /// a change (a delete among them) and finishes after it must not put
+    /// its stale payload back in memory. Locals reset with each epoch, so
+    /// the map is bounded the same way `ThreadContentRevisions` is.
+    private var knownEpoch = 0
+    private var knownLocals: [String: Int] = [:]
 
     init(db: DatabasePool) {
         self.db = db
@@ -489,12 +578,14 @@ actor ThreadDetailRepository {
             messages: [], attachmentsByMessageId: [:], bodyPrepByMessageId: [:])
         loaded.bodyPrepByMessageId = Self.buildBodyPrep(
             messages: loaded.messages, fontScale: fontScale)
-        cache.insert(
-            ThreadDetailCacheEntry(
-                revision: revision,
-                fontScale: fontScale,
-                payload: loaded),
-            for: threadId)
+        if !isSuperseded(revision, threadId: threadId) {
+            cache.insert(
+                ThreadDetailCacheEntry(
+                    revision: revision,
+                    fontScale: fontScale,
+                    payload: loaded),
+                for: threadId)
+        }
         return ThreadDetailLoad(
             payload: loaded.suppressingDrafts(suppressedIds),
             cacheHit: false)
@@ -534,6 +625,80 @@ actor ThreadDetailRepository {
         cache.removeValue(for: threadId)
     }
 
+    /// Release every payload a content change made unreachable.
+    ///
+    /// The revision test already keeps a stale entry from being *served*;
+    /// this makes it leave memory too, so a deleted message's decoded body,
+    /// assembled HTML and resolved images do not linger until ten more
+    /// conversations push them out ("deleted means gone").
+    ///
+    /// Takes the revisions *after* the change, and drops only entries built
+    /// under an older one: this runs in a task, so a reload for the new
+    /// revision may already have landed and must stay.
+    func discardStale(_ stale: ThreadContentStaleness) {
+        switch stale {
+        case .threads(let current):
+            for (id, revision) in current {
+                noteKnown(revision, threadId: id)
+                if cache.values[id].map({ $0.revision != revision }) ?? false {
+                    cache.removeValue(for: id)
+                }
+            }
+        case .before(let epoch):
+            if epoch > knownEpoch {
+                knownEpoch = epoch
+                knownLocals.removeAll(keepingCapacity: true)
+            }
+            for (id, entry) in cache.values where entry.revision.epoch != epoch {
+                cache.removeValue(for: id)
+            }
+        }
+    }
+
+    private func noteKnown(_ revision: ThreadContentRevision, threadId: String) {
+        if revision.epoch > knownEpoch {
+            knownEpoch = revision.epoch
+            knownLocals.removeAll(keepingCapacity: true)
+        }
+        if revision.epoch == knownEpoch {
+            knownLocals[threadId] = max(knownLocals[threadId] ?? 0, revision.local)
+        }
+    }
+
+    /// True when a newer revision of this thread is already known.
+    private func isSuperseded(_ revision: ThreadContentRevision,
+                              threadId: String) -> Bool {
+        revision.epoch < knownEpoch
+            || (revision.epoch == knownEpoch
+                && revision.local < (knownLocals[threadId] ?? 0))
+    }
+
+    /// Remember a resolved `cid:` body on the cached payload it belongs to.
+    ///
+    /// Stored only when the entry is still the one for `revision` and
+    /// `fontScale`; otherwise the result is dropped (the pane will resolve
+    /// again on the next open). Never creates an entry of its own, so
+    /// eviction and invalidation of the payload take this with it.
+    @discardableResult
+    func rememberCIDInline(_ body: CIDInlinedBody, messageId: String,
+                           threadId: String, revision: ThreadContentRevision,
+                           fontScale: Double) -> Bool {
+        guard CIDInlineCachePolicy.shouldRemember(body, fontScale: fontScale),
+              var entry = cache.values[threadId],
+              entry.revision == revision,
+              abs(entry.fontScale - fontScale) < 0.001,
+              entry.payload.messages.contains(where: { $0.id == messageId })
+        else { return false }
+        entry.payload.cidInlineByMessageId[messageId] = body
+        cache.insert(entry, for: threadId)
+        return true
+    }
+
+    /// Thread ids with a payload in memory (test observability).
+    func cachedThreadIds() -> Set<String> {
+        Set(cache.values.keys)
+    }
+
     /// Drop every cached payload (system memory pressure). Each entry holds
     /// a whole conversation's decoded bodies and assembled HTML documents.
     func removeAll() {
@@ -551,7 +716,8 @@ actor ThreadDetailRepository {
                        bccHeader, subject, date, snippet,
                        '' AS bodyText, NULL AS bodyHTML,
                        messageIdHeader, referencesHeader, labelIds, isUnread, hasAttachment,
-                       senderAuth, replyToHeader, deliveredTo
+                       senderAuth, replyToHeader, deliveredTo,
+                       listUnsubscribe, listUnsubscribePost
                 FROM message
                 WHERE threadId = ?
                 ORDER BY date
@@ -621,6 +787,8 @@ actor ThreadDetailRepository {
         fontScale: Double
     ) -> ThreadDetailPayload {
         var copy = payload
+        // CID preps carry the old scale; the pane re-resolves them on open.
+        copy.cidInlineByMessageId = [:]
         for message in payload.messages {
             guard var prep = copy.bodyPrepByMessageId[message.id] else { continue }
             prep = MessageHTMLPrepBuilder.reassembleDocuments(

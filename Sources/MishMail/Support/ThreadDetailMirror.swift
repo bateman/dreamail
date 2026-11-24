@@ -47,10 +47,16 @@ struct ThreadDetailMirror {
         return entry.payload
     }
 
+    /// `current` is the thread's revision *now*. A load stamped before a
+    /// change that landed while it was in flight is dropped here, so a
+    /// deleted conversation cannot come back into memory behind the
+    /// invalidation that removed it.
     mutating func store(_ payload: ThreadDetailPayload,
                         for threadId: String,
                         revision: ThreadContentRevision,
+                        current: ThreadContentRevision,
                         suppressing suppressedIds: Set<String>) {
+        guard revision == current else { return }
         lru.insert(
             Entry(revision: revision, suppressedIds: suppressedIds, payload: payload),
             for: threadId)
@@ -58,5 +64,36 @@ struct ThreadDetailMirror {
 
     mutating func removeAll() {
         lru.removeAll()
+    }
+
+    /// Same contract as `ThreadDetailRepository.invalidate`: a payload whose
+    /// revision moved leaves memory now, not at eviction.
+    mutating func invalidate(_ change: ThreadContentChange) {
+        switch change {
+        case .none:
+            break
+        case .threads(let ids):
+            for id in ids { lru.removeValue(for: id) }
+        case .everything:
+            lru.removeAll()
+        }
+    }
+
+    /// Record a resolved `cid:` body on the mirrored payload, when the entry
+    /// is still current and the message is in it. Never creates an entry.
+    mutating func rememberCIDInline(_ body: CIDInlinedBody, messageId: String,
+                                    threadId: String,
+                                    revision: ThreadContentRevision,
+                                    fontScale: Double) {
+        guard CIDInlineCachePolicy.shouldRemember(body, fontScale: fontScale),
+              let entry = lru.values[threadId], entry.revision == revision,
+              entry.payload.messages.contains(where: { $0.id == messageId })
+        else { return }
+        var payload = entry.payload
+        payload.cidInlineByMessageId[messageId] = body
+        lru.insert(
+            Entry(revision: entry.revision, suppressedIds: entry.suppressedIds,
+                  payload: payload),
+            for: threadId)
     }
 }

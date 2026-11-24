@@ -10,9 +10,14 @@ struct MailLatencyProbe: NSViewRepresentable {
 
     final class Marker: NSView {
         private static var clickTime: TimeInterval?
+        private static var clickDate: Date?
+        /// Clicks in this process: t1, t2, then t1 again for "reopen".
+        private static var clickCount = 0
         private static var reported: Set<String> = []
         private static let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             clickTime = ProcessInfo.processInfo.systemUptime
+            clickDate = Date()
+            clickCount += 1
             return event
         }
 
@@ -21,6 +26,8 @@ struct MailLatencyProbe: NSViewRepresentable {
         private var lastY: CGFloat?
         private var wheelMonitor: Any?
         private var firstWheel: TimeInterval?
+        /// When SwiftUI created this marker, i.e. built the body view.
+        private let madeAt = ProcessInfo.processInfo.systemUptime
         init(name: String) {
             self.name = name
             super.init(frame: .zero)
@@ -32,7 +39,10 @@ struct MailLatencyProbe: NSViewRepresentable {
         override func draw(_ dirtyRect: NSRect) {
             guard window?.isVisible == true, !visibleRect.isEmpty else { return }
             if name == "inbox" { record(name, since: 0) }
-            else if let start = Self.clickTime { record(name, since: start) }
+            else if let start = Self.clickTime {
+                // The third click re-opens the first conversation.
+                record(name == "short" && Self.clickCount >= 3 ? "reopen" : name, since: start)
+            }
             if name == "long", observedClip == nil, let clip = enclosingScrollView?.contentView {
                 observedClip = clip
                 lastY = clip.bounds.minY
@@ -65,6 +75,19 @@ struct MailLatencyProbe: NSViewRepresentable {
             let pasteboard = NSPasteboard(name: .init("mishmail.benchmark.\(key)"))
             pasteboard.clearContents()
             pasteboard.setString("\(token) \(seconds)", forType: .string)
+            // Stage breakdown for click-driven opens: app intervals that
+            // ended after the click (start/end offsets from the click, ms),
+            // and when the body view was built.
+            guard key != "inbox", key != "scroll", let start = Self.clickTime,
+                  let click = Self.clickDate else { return }
+            var stages = ["view.made=\(Int((madeAt - start) * 1000))"]
+            for sample in PerfMetrics.recentSamples() where sample.at >= click {
+                let end = sample.at.timeIntervalSince(click) * 1000
+                stages.append("\(sample.event)@\(Int(end - sample.ms))+\(Int(sample.ms))")
+            }
+            let board = NSPasteboard(name: .init("mishmail.benchmark.stages.\(key)"))
+            board.clearContents()
+            board.setString("\(token) " + stages.joined(separator: ","), forType: .string)
         }
     }
 }

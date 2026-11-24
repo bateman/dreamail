@@ -47,12 +47,12 @@ jobs:
                               data.setdefault(key, []).append(float(value))
               return data
           for event, title in [("MAIL_LATENCY", "UI action to verified result (includes XCTest overhead)"),
-                               ("MAIL_NATIVE", "Native launch to inbox draw, click to body draw, wheel to clip movement")]:
+                               ("MAIL_NATIVE", "Native launch to inbox draw, click to body draw, wheel to clip movement, click to re-opened body draw")]:
               print(f"### {title}\n")
               before, after = samples("baseline", event), samples("candidate", event)
               print("| Operation | Baseline median (ms) | Candidate median (ms) | Samples |")
               print("|---|---:|---:|---:|")
-              for key in ("inbox", "short", "long", "scroll"):
+              for key in ("inbox", "short", "long", "scroll", "reopen"):
                   a, b = before.get(key, []), after.get(key, [])
                   if event == "MAIL_LATENCY":
                       assert len(a) == len(b) == 8, f"Missing end-to-end samples for {key}"

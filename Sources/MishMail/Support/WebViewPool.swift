@@ -218,6 +218,22 @@ enum HTMLWebViewPool {
     }
 
     /// Drop every pre-painted neighbor (navigation cancelled / new thread).
+    /// Discard the parked pre-renders for these pool keys (wiped before
+    /// reuse). Keys with nothing parked are ignored.
+    static func discardPrerenders(poolKeys: [String]) {
+        guard !poolKeys.isEmpty else { return }
+        lock.lock()
+        var dropped: [PassthroughWebView] = []
+        for key in poolKeys where ledger.claimPrerender(key: key) {
+            if let view = prerendered.removeValue(forKey: key) { dropped.append(view) }
+        }
+        lock.unlock()
+        for view in dropped {
+            clearForReuse(view)
+        }
+        withExtendedLifetime(dropped) {}
+    }
+
     static func discardAllPrerenders() {
         lock.lock()
         let dropped = Array(prerendered.values)
