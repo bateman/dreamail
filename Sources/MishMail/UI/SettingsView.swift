@@ -361,9 +361,10 @@ struct AccountsSettings: View {
                     Section {
                         HStack {
                             AccountAvatarView(
-                                name: account.senderName.isEmpty ? account.displayName : account.senderName,
+                                name: AccountLabelColor.title(account),
                                 key: account.id, size: 28,
-                                photo: store.accountPhotos[account.id])
+                                photo: store.accountPhotos[account.id],
+                                ring: .init(storedHex: account.labelColor, surface: .groupedForm))
                                 .contextMenu {
                                     if !store.demoMode {
                                         Button("Refresh Profile Photo") {
