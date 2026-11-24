@@ -129,12 +129,17 @@ final class MailboxIconTests: XCTestCase {
 
     /// Gmail shows a starred conversation's star in yellow in the list.
     func testStarredThreadRowKeepsItsYellowStar() throws {
+        // Compared with whitespace collapsed, so re-indenting the row does
+        // not break the guard.
+        func squash(_ text: String) -> String {
+            text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        }
         let text = try ForkIdentityTests.repoFile("Sources/MishMail/UI/ThreadListView.swift")
-        XCTAssertTrue(text.contains("""
-                        if thread.isStarred {
-                            Image(systemName: "star.fill")
-                                .font(.system(size: 12 * fontScale)).foregroundStyle(.yellow)
-                        """))
+        XCTAssertTrue(squash(text).contains(squash("""
+            if thread.isStarred {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 12 * fontScale)).foregroundStyle(.yellow)
+            """)))
     }
 
     // MARK: - Helpers
