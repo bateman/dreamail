@@ -6,6 +6,11 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **A single message opens at its full length.** Selecting a one-message
+  conversation no longer shows a reduced card first: the message is open from
+  the first frame, fills the reading pane while it loads, and stays open. A
+  message seen before, or pre-rendered while browsing, appears at its full
+  height without growing.
 - **Deleted mail is gone, not just hidden.** Deleted content is overwritten in
   the mail cache and removed from the search index when it is deleted, and old
   copies are cleared from the cache's write-ahead log within seconds of a

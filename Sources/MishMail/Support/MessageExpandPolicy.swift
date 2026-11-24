@@ -84,17 +84,61 @@ enum MessageExpandPolicy: Equatable {
         return next
     }
 
-    /// Open set for the first frame of a pane seeded with `messages` (the
-    /// warm mirror). Same as the load's default, so the load does not change
-    /// what the first frame showed.
-    static func firstFrameExpandedIds(
-        messages: [Message],
-        policy: MessageExpandPolicy
+    // MARK: - Opening a conversation
+    //
+    // `ThreadDetailView` runs these in order: `init` seeds the default set
+    // (`initialExpandedIds`) from the warm mirror so the first frame is
+    // already open, the load task keeps it (`keptAtLoadStart`), and the
+    // payload applies its default (`applyingPayload`). A one-message
+    // conversation is open at every step.
+
+    /// Open set when the load task starts. The set `init` seeded belongs to
+    /// this conversation and stays (clearing it here collapsed the card for
+    /// the whole load). A side-by-side column that switches conversation
+    /// without a remount still holds the previous one's messages: start empty.
+    static func keptAtLoadStart(
+        current: Set<String>,
+        messageThreadIds: [String],
+        threadId: String
     ) -> Set<String> {
-        let roles = ThreadMessageRoles(messages: messages)
-        return initialExpandedIds(
-            policy: policy,
-            nonDraftIds: roles.nonDraftIds,
-            lastNonDraftId: roles.lastNonDraftId)
+        messageThreadIds.allSatisfy { $0 == threadId } ? current : []
+    }
+
+    /// Open set once the payload is applied. Side-by-side opens every card.
+    /// The reading pane keeps the cards already open that are still in the
+    /// thread (the seeded newest, or one the user opened meanwhile), and
+    /// otherwise opens the payload's newest.
+    static func applyingPayload(
+        current: Set<String>,
+        policy: MessageExpandPolicy,
+        nonDraftIds: [String],
+        lastNonDraftId: String?
+    ) -> Set<String> {
+        let seed = initialExpandedIds(
+            policy: policy, nonDraftIds: nonDraftIds, lastNonDraftId: lastNonDraftId)
+        switch policy {
+        case .multiple:
+            return seed
+        case .single:
+            let live = current.intersection(nonDraftIds)
+            return live.isEmpty ? seed : live
+        }
+    }
+
+    /// The card that fills the pane while its body loads: the open card of
+    /// the reading pane, or the newest card in side-by-side (where every
+    /// card is open and only the newest should claim the viewport).
+    static func fillsPane(
+        id: String,
+        policy: MessageExpandPolicy,
+        expanded: Set<String>,
+        lastNonDraftId: String?
+    ) -> Bool {
+        switch policy {
+        case .single:
+            return expanded.contains(id)
+        case .multiple:
+            return id == lastNonDraftId
+        }
     }
 }

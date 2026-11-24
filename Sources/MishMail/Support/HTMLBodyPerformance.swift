@@ -67,12 +67,18 @@ struct HTMLBodyHeightCache {
         }
     }
 
-    /// Store only when `key` has no entry yet: an estimate (an offscreen
-    /// pre-render at its own width) never replaces a height measured in the
-    /// pane.
+    /// Store an estimate (an offscreen pre-render) only when `key` has no
+    /// entry yet, so it never replaces a height measured in the pane. It
+    /// enters at the eviction end: estimates for neighbors the user may never
+    /// open must not push real measurements out of the cache.
     mutating func storeIfAbsent(_ height: CGFloat, width: CGFloat, for key: String) {
-        guard entries[key] == nil else { return }
-        store(height, width: width, for: key)
+        guard entries[key] == nil, height > 0, width > 0 else { return }
+        entries[key] = Entry(height: height, width: width)
+        order.insert(key, at: 0)
+        while order.count > capacity, let evicted = order.first {
+            order.removeFirst()
+            entries.removeValue(forKey: evicted)
+        }
     }
 
     mutating func removeAll() {
@@ -107,6 +113,18 @@ enum HTMLBodyHeightCacheStore {
         lock.lock()
         defer { lock.unlock() }
         cache.store(height, width: width, for: key)
+        if width > 0 { layoutWidth = width }
+    }
+
+    private static var layoutWidth: CGFloat?
+
+    /// Width of the last body measured in the pane (nil before the first).
+    /// Pre-renders lay out at it and first-frame lookups ask for it, so an
+    /// estimate is only used at the width it was measured at.
+    static var lastLayoutWidth: CGFloat? {
+        lock.lock()
+        defer { lock.unlock() }
+        return layoutWidth
     }
 
     static func storeIfAbsent(_ height: CGFloat, contentID: String,

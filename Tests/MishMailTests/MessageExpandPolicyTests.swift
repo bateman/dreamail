@@ -82,45 +82,99 @@ final class MessageExpandPolicyTests: XCTestCase {
             labelIds: labels, isUnread: false, hasAttachment: false)
     }
 
+    private func firstFrame(_ messages: [Message],
+                            _ policy: MessageExpandPolicy) -> Set<String> {
+        let roles = ThreadMessageRoles(messages: messages)
+        return MessageExpandPolicy.initialExpandedIds(
+            policy: policy, nonDraftIds: roles.nonDraftIds,
+            lastNonDraftId: roles.lastNonDraftId)
+    }
+
+    /// Runs the pane's open sequence — `init` seed, load-task start, payload
+    /// apply — the way `ThreadDetailView` does, and returns the open set
+    /// after each step.
+    private func openSequence(mirror: [Message], payload: [Message],
+                              policy: MessageExpandPolicy = .single,
+                              threadId: String = "a:t1") -> [Set<String>] {
+        let seeded = firstFrame(mirror, policy)
+        let atLoad = MessageExpandPolicy.keptAtLoadStart(
+            current: seeded, messageThreadIds: mirror.map(\.threadId),
+            threadId: threadId)
+        let roles = ThreadMessageRoles(messages: payload)
+        let applied = MessageExpandPolicy.applyingPayload(
+            current: atLoad, policy: policy,
+            nonDraftIds: roles.nonDraftIds, lastNonDraftId: roles.lastNonDraftId)
+        return [seeded, atLoad, applied]
+    }
+
     /// The reported bug: the pane seeded from the warm mirror painted its
-    /// first frame with no card open, so a one-message conversation showed a
-    /// header-only row. The first frame must already open it.
-    func testFirstFrameOpensTheOnlyMessage() {
+    /// first frame with no card open, and the load task cleared the set again
+    /// until the payload landed. A one-message conversation is open at every
+    /// step.
+    func testOneMessageConversationIsOpenAtEveryStepOfTheOpen() {
+        XCTAssertEqual(openSequence(mirror: [msg("1")], payload: [msg("1")]),
+                       [["a:1"], ["a:1"], ["a:1"]])
         XCTAssertEqual(
-            MessageExpandPolicy.firstFrameExpandedIds(
-                messages: [msg("1")], policy: .single),
-            ["a:1"])
+            openSequence(mirror: [msg("1")], payload: [msg("1")], policy: .multiple),
+            [["a:1"], ["a:1"], ["a:1"]])
+    }
+
+    func testColdOpenWithoutMirrorOpensOnPayload() {
+        XCTAssertEqual(openSequence(mirror: [], payload: [msg("1")]),
+                       [[], [], ["a:1"]])
+    }
+
+    func testPayloadWithANewerMessageKeepsTheSeededCardWhileItIsLive() {
+        // The newest from the mirror is still in the thread: it stays open
+        // rather than flipping to the newer one under the user's eyes.
+        let steps = openSequence(mirror: [msg("1")],
+                                 payload: [msg("1"), msg("2", offset: 10)])
+        XCTAssertEqual(steps.last, ["a:1"])
+        // A seeded id that left the thread falls back to the payload's newest.
         XCTAssertEqual(
-            MessageExpandPolicy.firstFrameExpandedIds(
-                messages: [msg("1")], policy: .multiple),
-            ["a:1"])
+            openSequence(mirror: [msg("old")], payload: [msg("new")]).last,
+            ["a:new"])
+    }
+
+    func testSideBySideSwitchStartsFromAnEmptySet() {
+        // The column still holds another conversation's messages.
+        XCTAssertEqual(
+            MessageExpandPolicy.keptAtLoadStart(
+                current: ["a:1"], messageThreadIds: ["a:t1"], threadId: "a:t2"),
+            [])
     }
 
     func testFirstFrameMatchesTheLoadDefaultForLongerThreads() {
         let thread = [msg("1"), msg("2", offset: 10), msg("3", offset: 20)]
+        XCTAssertEqual(firstFrame(thread, .single), ["a:3"],
+                       "reading pane: newest open, older collapsed")
+        XCTAssertEqual(firstFrame(thread, .multiple), ["a:1", "a:2", "a:3"],
+                       "side-by-side: every sent card open")
+        XCTAssertEqual(openSequence(mirror: thread, payload: thread).last, ["a:3"])
         XCTAssertEqual(
-            MessageExpandPolicy.firstFrameExpandedIds(messages: thread, policy: .single),
-            ["a:3"], "reading pane: newest open, older collapsed")
-        XCTAssertEqual(
-            MessageExpandPolicy.firstFrameExpandedIds(messages: thread, policy: .multiple),
-            ["a:1", "a:2", "a:3"], "side-by-side: every sent card open")
+            openSequence(mirror: thread, payload: thread, policy: .multiple).last,
+            ["a:1", "a:2", "a:3"])
     }
 
     func testFirstFrameSkipsDrafts() {
         // A trailing draft is a DraftMessageCard, never the open card.
-        XCTAssertEqual(
-            MessageExpandPolicy.firstFrameExpandedIds(
-                messages: [msg("1"), msg("d", labels: "DRAFT", offset: 10)],
-                policy: .single),
-            ["a:1"])
+        XCTAssertEqual(firstFrame([msg("1"), msg("d", labels: "DRAFT", offset: 10)], .single),
+                       ["a:1"])
         // Draft-only conversation: nothing to open, no MessageCard at all.
-        XCTAssertEqual(
-            MessageExpandPolicy.firstFrameExpandedIds(
-                messages: [msg("d", labels: "DRAFT")], policy: .single),
-            [])
-        XCTAssertEqual(
-            MessageExpandPolicy.firstFrameExpandedIds(messages: [], policy: .single),
-            [])
+        XCTAssertEqual(firstFrame([msg("d", labels: "DRAFT")], .single), [])
+        XCTAssertEqual(firstFrame([], .single), [])
+    }
+
+    func testOnlyTheOpenCardFillsThePane() {
+        XCTAssertTrue(MessageExpandPolicy.fillsPane(
+            id: "m2", policy: .single, expanded: ["m2"], lastNonDraftId: "m2"))
+        XCTAssertFalse(MessageExpandPolicy.fillsPane(
+            id: "m1", policy: .single, expanded: ["m2"], lastNonDraftId: "m2"))
+        // Side-by-side opens every card; only the newest claims the pane.
+        XCTAssertTrue(MessageExpandPolicy.fillsPane(
+            id: "m2", policy: .multiple, expanded: ["m1", "m2"], lastNonDraftId: "m2"))
+        XCTAssertFalse(MessageExpandPolicy.fillsPane(
+            id: "m1", policy: .multiple, expanded: ["m1", "m2"], lastNonDraftId: "m2"))
     }
 
     func testSoleCardIsNotCollapsible() {
