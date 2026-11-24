@@ -52,8 +52,8 @@ account removed), this is what happens to it:
 - **The write-ahead log: truncated.** Page images from before a delete stay
   in the `-wal` file until a checkpoint truncates it. A truncating
   checkpoint runs about five seconds after any committed deletion, at every
-  open, every five minutes when the log has not been truncated meanwhile,
-  and at quit.
+  open, at quit, and otherwise once the log has gone five minutes without a
+  truncation (checked after each sync pass and every five minutes).
 - **Outside the database: deleted (unlinked), not overwritten.** The
   attachment copies of a message that is gone, and the notifications of a
   thread with no message left, are removed when the deletion is processed:
@@ -92,7 +92,7 @@ The limits, stated plainly:
   seconds, longer while a reader holds the log (the scrub retries, then
   waits for readers), and until the next open after a crash. An updated
   row's earlier versions (text cleared from a draft) stay in the WAL for up
-  to about five minutes. Attachment copies and notifications stay until the
+  to about ten minutes. Attachment copies and notifications stay until the
   deletion is processed (seconds), or until the next launch if the app is
   killed first.
 - **Recent searches** are kept apart from the mail and cleared only when an
