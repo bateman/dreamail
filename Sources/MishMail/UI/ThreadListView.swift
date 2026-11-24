@@ -662,18 +662,15 @@ private struct ThreadListSections: View, Equatable {
     /// Labels view header: the label name as its colored pill,
     /// plus a count and a collapse chevron; clicking folds the section.
     private func labelSectionHeader(_ title: String, count: Int) -> some View {
-        let tint = title == "No label" ? Color.secondary : store.labelTint(anyAccount: title)
+        let colors = title == "No label" ? LabelColors.none : store.labelColors(anyAccount: title)
         let folded = collapsedLabels.contains(title)
         return Button {
             onToggleCollapsed(title)
         } label: {
             HStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: 12 * fontScale, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(tint.opacity(ThreadRowPillChrome.softTint.fillOpacity),
-                                in: Capsule())
+                LabelPill(name: title, colors: colors,
+                          font: .system(size: 12 * fontScale, weight: .semibold),
+                          verticalPadding: 2)
                 Text("\(count)")
                     .font(.system(size: 11 * fontScale).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -1416,7 +1413,7 @@ struct FilterBar: View {
                 // as FilterChipLabel so the pill doesn't feel dead.
                 ActiveLabelChipLabel(
                     name: "\(store.chips.labelExclude ? "≠ " : "")\(name)",
-                    tint: store.labelTint(anyAccount: name)
+                    colors: store.labelColors(anyAccount: name)
                 )
             } else {
                 chipLabel("Labels", icon: "tag", active: false)
@@ -1478,7 +1475,7 @@ struct FilterBar: View {
     /// the active filter.
     private func labelFilterRow(_ label: LabelRow) -> some View {
         let selected = store.chips.labelId == label.gmailLabelId
-        let tint = store.labelTint(label.name, account: label.accountId)
+        let colors = store.labelColors(label.name, account: label.accountId)
         return Button {
             store.chips.labelId = label.gmailLabelId
             store.chips.labelName = label.name
@@ -1486,7 +1483,7 @@ struct FilterBar: View {
             showLabelsPopover = false
         } label: {
             HStack(spacing: 8) {
-                Circle().fill(tint).frame(width: 9, height: 9)
+                LabelDot(colors: colors, size: 9)
                 Text(LabelSearch.highlighted(label.name, query: labelQuery))
                     .font(.system(size: 12.5)).lineLimit(1)
                 Spacer(minLength: 0)
@@ -1587,12 +1584,12 @@ private struct ActiveFilterChip: View {
 /// `FilterChipLabel` so the filter bar feels uniform.
 private struct ActiveLabelChipLabel: View {
     let name: String
-    let tint: Color
+    let colors: LabelColors
     @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 4) {
-            Circle().fill(tint).frame(width: 8, height: 8)
+            LabelDot(colors: colors, size: 8)
             Text(name).font(.caption)
         }
         .foregroundStyle(Color.mailAccent)
@@ -1674,24 +1671,11 @@ struct FaviconView: View {
     }
 }
 
-/// Pre-resolved label chip so rows don't hit `MailStore` during body eval.
-/// The tint and the on-selection foreground choice are derived once here
-/// (hex parsing + luminance), not in every pill's body.
+/// Pre-resolved label chip so rows don't hit `MailStore` during body eval:
+/// the label's name and its display colors (Gmail's, or the local pick).
 struct ThreadRowLabelChip: Equatable {
     let name: String
-    let colorHex: String?
-    let tint: Color
-    /// White (vs near-black) title on the blue selection highlight.
-    /// Missing/malformed hex → stable mid-tone colors → white title.
-    let lightForegroundOnSelection: Bool
-
-    init(name: String, colorHex: String?) {
-        self.name = name
-        self.colorHex = colorHex
-        self.tint = colorHex.flatMap(Color.hexString) ?? Color.stable(for: name)
-        self.lightForegroundOnSelection =
-            ThreadRowPillChrome.selectionUsesLightForeground(hex: colorHex) ?? true
-    }
+    let colors: LabelColors
 }
 
 /// Row strings computed once per layout pass (see `recomputeLayout`), not
@@ -1934,22 +1918,18 @@ struct ThreadRow: View, Equatable {
         return marker + Text(", ").foregroundColor(.secondary) + names
     }
 
-    /// Label pill: soft tinted capsule when idle; high-contrast
-    /// text on a stronger tint fill when selected so the chip stays legible
-    /// on the blue list highlight (white on dark tints, near-black on pale).
+    /// Label pill in the label's Gmail color, solid, with readable text.
+    /// The surface it sits on (plain, the read-row wash, the selection
+    /// highlight) decides whether it needs an outline. Never dimmed with the
+    /// read row's text.
     private func labelPill(_ chip: ThreadRowLabelChip) -> some View {
-        let tint = chip.tint
-        let chrome = ThreadRowPillChrome.forFocused(model.isFocused)
-        let fg: Color = {
-            guard chrome == .onSelection else { return tint }
-            return chip.lightForegroundOnSelection ? .white : Color.black.opacity(0.85)
-        }()
-        return Text(chip.name)
-            .font(.system(size: 10.5 * fontScale, weight: .medium))
-            .lineLimit(1)
-            .foregroundStyle(fg)
-            .padding(.horizontal, 8).padding(.vertical, 2.5)
-            .background(tint.opacity(chrome.fillOpacity), in: Capsule())
+        LabelPill(name: chip.name, colors: chip.colors, surface: pillSurface,
+                  font: .system(size: 10.5 * fontScale, weight: .medium))
+    }
+
+    private var pillSurface: LabelPillStyle.Surface {
+        if model.isFocused { return .selection }
+        return thread.isUnread ? .content : .readRow
     }
 
     private func hoverButton(_ icon: String, filled: Bool = false, action: @escaping () -> Void) -> some View {

@@ -1,6 +1,7 @@
 import Foundation
 
-/// Chrome for colored pills in a thread list row (user labels, AI categories).
+/// Chrome for the AI-category pill in a thread list row. User label pills
+/// use `LabelPillStyle` (solid Gmail color, contrast-checked text) instead.
 ///
 /// Idle rows use a soft tinted capsule. Selected rows sit
 /// on the system blue list highlight, where a 16% tint wash disappears and

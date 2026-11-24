@@ -619,10 +619,21 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     var gmailLabelId: String
     var name: String
     var type: String
-    /// Display color as "#RRGGBB". Locally chosen (or seeded from Gmail's
-    /// label color on first sync); nil falls back to a name-stable color.
+    /// The user's local color pick ("#RRGGBB") from the label organizer;
+    /// nil shows Gmail's own label color. Never written back to Gmail.
     var color: String?
     var sortOrder: Int = LabelRow.unsorted
+    /// Gmail's label color (`color.backgroundColor` / `color.textColor`),
+    /// refreshed on every label sync; nil when the label has no color.
+    var gmailBackgroundColor: String? = nil
+    var gmailTextColor: String? = nil
+
+    /// The colors a label is drawn with: the local pick when there is one
+    /// (its text color is then chosen for contrast), else Gmail's pair.
+    var displayColors: LabelColors {
+        if let color { return LabelColors(background: color, text: nil) }
+        return LabelColors(background: gmailBackgroundColor, text: gmailTextColor)
+    }
 }
 
 // MARK: - Database
@@ -2724,6 +2735,29 @@ final class AppDatabase: @unchecked Sendable {
         // message row goes (sync, prune, discard, account cascade) is seen.
         m.registerMigration("v50") { db in
             try DeletedMessageResidue.createQueue(db)
+        }
+
+        // v51: Gmail's label colors get their own columns, refreshed on
+        // every sync, and `color` keeps only local picks. Up to v50 `color`
+        // was also seeded from Gmail's background color (and never updated
+        // after), so a value that is not one of the organizer's swatches came
+        // from Gmail: clear it, and the next label sync fills the new columns.
+        m.registerMigration("v51") { db in
+            try db.alter(table: "label") { t in
+                t.add(column: "gmailBackgroundColor", .text)
+                t.add(column: "gmailTextColor", .text)
+            }
+            // The organizer palette as of v50 (`Color.labelPalette`), frozen
+            // here so a later palette change cannot change this migration.
+            let swatches = ["#EB5757", "#F2994A", "#DFAB01", "#27AE60", "#12A594", "#2D9CDB",
+                            "#5E6AD2", "#9B51E0", "#E255A1", "#9F6B53", "#787774"]
+            try db.execute(
+                sql: """
+                    UPDATE label SET color = NULL
+                    WHERE color IS NOT NULL
+                      AND UPPER(color) NOT IN (\(swatches.map { _ in "?" }.joined(separator: ",")))
+                    """,
+                arguments: StatementArguments(swatches))
         }
         return m
     }
