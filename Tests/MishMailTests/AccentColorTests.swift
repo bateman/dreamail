@@ -248,16 +248,17 @@ final class AccentColorTests: XCTestCase {
                            [LabelPillStyle.systemSelection(appearance),
                             LabelPillStyle.inactiveSelection(appearance)])
         }
-        // A red label chip on a red selection needs its outline; on the
-        // system blue it does not.
-        let redChip = LabelColors(background: "#cc3a21", text: "#ffffff")
-        XCTAssertTrue(LabelPillStyle.resolve(redChip, appearance: .light, surface: .selection,
-                                             selectionFill: red).needsBorder)
-        XCTAssertFalse(LabelPillStyle.resolve(redChip, appearance: .light, surface: .selection).needsBorder)
-        // A blue chip on a red selection stands out.
-        let blueChip = LabelColors(background: "#285bac", text: nil)
-        XCTAssertFalse(LabelPillStyle.resolve(blueChip, appearance: .light, surface: .selection,
-                                              selectionFill: red).needsBorder)
+        // A black label chip on a near-black selection needs its outline;
+        // on the system blue (and the inactive grey) it does not.
+        let nearBlack = LabelRGB(hex: 0x1A1A1A)
+        let blackChip = LabelColors(background: "#000000", text: "#ffffff")
+        XCTAssertTrue(LabelPillStyle.resolve(blackChip, appearance: .light, surface: .selection,
+                                             selectionFill: nearBlack).needsBorder)
+        XCTAssertFalse(LabelPillStyle.resolve(blackChip, appearance: .light, surface: .selection).needsBorder)
+        // Its outline contrasts with the near-black highlight.
+        let style = LabelPillStyle.resolve(blackChip, appearance: .light, surface: .selection,
+                                           selectionFill: nearBlack)
+        XCTAssertGreaterThanOrEqual(style.border.contrast(with: nearBlack), 3)
     }
 
     func testSelectionTextFollowsTheRuleForEveryAccent() {
