@@ -17,6 +17,12 @@ enum AITriage {
             || defaults.bool(forKey: autoClassifyKey)
     }
 
+    /// Whether the silent pass after a sync may run at all: the stored
+    /// preference only counts in a build with the AI features on.
+    static func isAutoClassifyEnabled(_ defaults: UserDefaults, aiFeatures: Bool) -> Bool {
+        aiFeatures && isAutoClassifyEnabled(defaults)
+    }
+
     /// Silent auto-sort must not upload inbox snippets to a cloud host.
     /// `nil` config means no provider resolved — do not skip; the classify
     /// pass runs and fails locally, same as before.

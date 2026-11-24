@@ -109,7 +109,8 @@ struct ContentView: View {
             // enough only with the panel closed keeps a three-pane layout it
             // can no longer fit.
             let askMishVisible = AskMishLayout.showsPanel(
-                hostWidth: proxy.size.width, enabled: store.showAskMish)
+                hostWidth: proxy.size.width,
+                enabled: store.showAskMish && AIFeatures.isEnabled)
             let panelWidth = askMishVisible
                 ? AskMishLayout.panelWidth(hostWidth: proxy.size.width) : 0
             let mode = MailLayout.mode(
@@ -347,13 +348,16 @@ struct ContentView: View {
                 .help(store.threadFocusMode
                       ? "Exit full-app conversation (esc or ⌘↩)"
                       : "Open conversation full-app (⌘↩)")
-                Button {
-                    store.showAskMish.toggle()
-                } label: {
-                    Label("Ask Mish", systemImage: "sparkles")
+                // No button, so no ⌥⌘M, in a build without AI features.
+                if AIFeatures.isEnabled {
+                    Button {
+                        store.showAskMish.toggle()
+                    } label: {
+                        Label("Ask Mish", systemImage: "sparkles")
+                    }
+                    .keyboardShortcut("m", modifiers: [.command, .option])
+                    .help("Ask Mish (⌥⌘M)")
                 }
-                .keyboardShortcut("m", modifiers: [.command, .option])
-                .help("Ask Mish (⌥⌘M)")
             }
         }
     }
@@ -1622,7 +1626,7 @@ private extension ContentView {
     private func askMishVisible(in window: NSWindow?) -> Bool {
         AskMishLayout.showsPanel(
             hostWidth: window?.contentView?.bounds.width ?? 0,
-            enabled: store.showAskMish)
+            enabled: store.showAskMish && AIFeatures.isEnabled)
     }
 
     /// Scroll the rightmost non-list pane (Ask Mish when it is up, else the

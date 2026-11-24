@@ -15,6 +15,12 @@ token stays in the Keychain; set `MISHMAIL_MCP_TOKEN` or put it in
   summarizers that can't reach 127.0.0.1 (Codex Cloud workers, remote batch
   jobs). Export to JSONL, have the remote job emit
   `{"thread_id", "summary"}` lines, import them back.
-- `mcp_common.py` — shared MCP JSON-RPC client used by the above.
+- `mcp_common.py` — shared MCP JSON-RPC client used by the above. Every
+  request (MCP, Ollama, hosted API) must go to `https://`, or to plain
+  `http://` on a loopback address (`127.0.0.1`, `::1`) only; a redirect must
+  pass the same rule and stay on the same origin. Keys come from the
+  environment (`OPENAI_API_KEY`, `MISHMAIL_MCP_TOKEN`), never from arguments.
+  Tests: `python3 -m unittest discover -s scripts/tests` (also run by the unit
+  suite).
 
 The exported JSONL contains full message bodies; treat it like the mailbox.

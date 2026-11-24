@@ -47,6 +47,9 @@ enum PaletteCommands {
         /// path, and what the multi-select bar shows.
         var checkedCount = 0
         var savedViews: [SavedViewRef] = []
+        /// Ask Mish and AI sorting are listed only in a build with the AI
+        /// features on.
+        var aiFeatures = AIFeatures.isEnabled
     }
 
     enum Action: Equatable {
@@ -78,10 +81,14 @@ enum PaletteCommands {
         var list: [Entry] = [
             Entry(id: "compose", title: "Compose New Message", icon: "square.and.pencil", action: .compose),
             Entry(id: "sync", title: "Sync All Accounts", icon: "arrow.clockwise", action: .syncAll),
-            Entry(id: "askmish", title: "Ask Mish", icon: "bubble.left.and.text.bubble.right", action: .toggleAskMish),
-            Entry(id: "aisort", title: "Sort Inbox with AI", icon: "sparkles", action: .sortInboxWithAI),
-            Entry(id: "newview", title: "Add View…", icon: "plus", action: .addView),
         ]
+        if ctx.aiFeatures {
+            list += [
+                Entry(id: "askmish", title: "Ask Mish", icon: "bubble.left.and.text.bubble.right", action: .toggleAskMish),
+                Entry(id: "aisort", title: "Sort Inbox with AI", icon: "sparkles", action: .sortInboxWithAI),
+            ]
+        }
+        list.append(Entry(id: "newview", title: "Add View…", icon: "plus", action: .addView))
         list += threadActions(ctx)
         for mailbox in BuiltinMailbox.allCases {
             list.append(Entry(id: "view.\(mailbox.title)", title: "Go to \(mailbox.title)",

@@ -194,10 +194,12 @@ struct ThreadDetailToolbar: ViewModifier {
                         }
                         .help("Reply (\(store.keyBindings.key(for: .reply)))")
                         .disabled(!loaded)
-                        Button { store.handleSelectedThreadWithMish() } label: {
-                            Label("Handle with Mish", systemImage: "wand.and.sparkles")
+                        if AIFeatures.isEnabled {
+                            Button { store.handleSelectedThreadWithMish() } label: {
+                                Label("Handle with Mish", systemImage: "wand.and.sparkles")
+                            }
+                            .help("Handle with Mish · the agent works this conversation and stops before anything is sent")
                         }
-                        .help("Handle with Mish · the agent works this conversation and stops before anything is sent")
                         if ReplyComposer.hasAdditionalReplyAllRecipients(
                             last, ownAddresses: store.ownEmailAddresses) {
                             Button {

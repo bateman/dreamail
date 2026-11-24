@@ -60,6 +60,9 @@ final class LLMProviderStoreTests: XCTestCase {
             baseURL: "https://llm.evil.example/v1", defaultModel: "x",
             authMode: .apiKey)
         XCTAssertFalse(LLMProviderStore.hasHostConsent(for: custom, from: defaults))
+        // A legacy host-only record covers the origin of the row saved with
+        // it, and nothing else (F-06; see LLMConsentOriginTests).
+        LLMProviderStore.save([custom], to: defaults)
         LLMProviderStore.setConsentedHost("llm.evil.example", for: id, to: defaults)
         XCTAssertTrue(LLMProviderStore.hasHostConsent(for: custom, from: defaults))
         var moved = custom

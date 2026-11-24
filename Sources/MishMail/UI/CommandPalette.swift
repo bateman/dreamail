@@ -136,6 +136,7 @@ struct CommandPalette: View {
         case .syncAll:
             Task { await store.syncAll() }
         case .toggleAskMish:
+            guard AIFeatures.isEnabled else { return }
             store.showAskMish.toggle()
         case .sortInboxWithAI:
             store.classifyInbox()

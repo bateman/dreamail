@@ -7,6 +7,10 @@ enum LLMClientError: LocalizedError {
     case http(Int, String? = nil)
     case keychainUnavailable
     case untrustedEndpoint(String)
+    /// The build has the AI features switched off (`AIFeatures`).
+    case aiDisabled
+    /// The stored key or sign-in belongs to another origin than this request.
+    case credentialNotAuthorized(String)
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +26,10 @@ enum LLMClientError: LocalizedError {
             return "Keychain is unavailable. Unlock your Mac and try again."
         case .untrustedEndpoint(let host):
             return "Mail would go to \(host). Open Settings → AI, edit this provider, and confirm that host."
+        case .aiDisabled:
+            return AIFeatures.disabledMessage
+        case .credentialNotAuthorized(let origin):
+            return "The saved key or sign-in for this provider was not given for \(origin). Enter the API key again, or sign in again, to use it there."
         }
     }
 }
@@ -57,11 +65,53 @@ enum LLMRetryPolicy {
     }
 }
 
+/// What actually reaches the network. Production uses `URLSession`; tests
+/// inject a recorder to prove which requests were (not) made.
+struct LLMTransport: Sendable {
+    var data: @Sendable (URLRequest) async throws -> (Data, URLResponse)
+    var bytes: @Sendable (URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse)
+
+    static let urlSession = LLMTransport(
+        data: { try await URLSession.shared.data(for: $0) },
+        bytes: { try await URLSession.shared.bytes(for: $0) })
+}
+
 /// One streaming client for every provider kind. Builds requests with the
 /// pure wire codecs, streams SSE/NDJSON lines through the matching
 /// StreamState, refreshes OAuth tokens on 401 (single retry).
+///
+/// Every request goes through `authorize` and the transport, and the
+/// transport is only reached while `enabled` (the build's `AIFeatures`
+/// switch): with the switch off nothing is built, no credential is read and
+/// nothing is sent.
 actor LLMClient {
     static let shared = LLMClient()
+
+    /// Reads one Keychain item. Injected so tests can hold a "saved" key.
+    typealias SecretReader = @Sendable (String) -> KeychainReadResult
+
+    /// Fixture builds (demo, UI tests) never touch the Keychain.
+    static let keychainSecrets: SecretReader = { key in
+        guard OAuthConfig.usesKeychain(environment: ProcessInfo.processInfo.environment) else {
+            return .notFound
+        }
+        return Keychain.read(key)
+    }
+
+    let enabled: Bool
+    private let transport: LLMTransport
+    private let secrets: SecretReader
+    private let defaults: UserDefaults
+
+    init(enabled: Bool = AIFeatures.isEnabled,
+         transport: LLMTransport = .urlSession,
+         secrets: @escaping SecretReader = LLMClient.keychainSecrets,
+         defaults: UserDefaults = .standard) {
+        self.enabled = enabled
+        self.transport = transport
+        self.secrets = secrets
+        self.defaults = defaults
+    }
 
     /// One in-flight refresh per provider. The actor is reentrant across
     /// awaits, so two concurrent streams would otherwise both POST the same
@@ -101,6 +151,7 @@ actor LLMClient {
                      toolChoiceNone: Bool,
                      allowRefresh: Bool,
                      yield: @Sendable (LLMEvent) -> Void) async throws {
+        guard enabled else { throw LLMClientError.aiDisabled }
         // Refresh up front when the stored token already expired, so the common
         // case costs one request instead of a 401 plus a retry. A failure here
         // is not fatal: the stale token still gets its 401 retry below.
@@ -118,7 +169,7 @@ actor LLMClient {
             let request = prepared.request
             let pair: (URLSession.AsyncBytes, URLResponse)
             do {
-                pair = try await URLSession.shared.bytes(for: request)
+                pair = try await transport.bytes(request)
             } catch let error as URLError {
                 guard attempt + 1 < LLMRetryPolicy.maxAttempts,
                       LLMRetryPolicy.shouldRetry(urlError: error) else { throw error }
@@ -262,6 +313,9 @@ actor LLMClient {
                               task: LLMTask,
                               maxOutputTokens: Int?,
                               toolChoiceNone: Bool) async throws -> PreparedRequest {
+        // Before anything else: the Ollama branch below may ask the daemon
+        // about the model, which is a request of its own.
+        try authorize(config: config)
         let thinking = Ollama.thinking(for: task)
         let hosted = config.kind == .ollama || LLMHostedThinking.supports(model)
             ? thinking : .modelDefault
@@ -313,15 +367,7 @@ actor LLMClient {
             await Ollama.LoadedModels.shared.note(model)
         }
         guard let url = URL(string: path) else { throw LLMClientError.http(0) }
-        if config.kind == .ollama {
-            try Ollama.validateEndpoint(url)
-        } else {
-            try LLMEndpoint.validate(url)
-        }
-        if !LLMProviderStore.hasHostConsent(for: config) {
-            throw LLMClientError.untrustedEndpoint(
-                LLMRemotePolicy.host(of: config.baseURL) ?? config.baseURL)
-        }
+        try validateEndpoint(url, kind: config.kind)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 300
@@ -336,18 +382,51 @@ actor LLMClient {
         return PreparedRequest(request: request, useResponses: useResponses)
     }
 
+    /// The one check before any request to a provider: generation, model
+    /// listing, and the connection check a model listing doubles as.
+    ///
+    /// - the build must have the AI features on;
+    /// - a custom host needs consent for its full origin (scheme, host and
+    ///   port); `sheetConsent` is the origin the user is confirming right now
+    ///   in an unsaved provider sheet;
+    /// - a saved key or sign-in goes only to the origin it was given for
+    ///   (`LLMProviderStore.credentialMayBeSent`), so an edited Base URL
+    ///   cannot carry it to a new host before the user enters it again (F-12).
+    ///
+    /// Runs before any credential is read and before anything is sent.
+    func authorize(config: LLMProviderConfig, sheetConsent: String? = nil) throws {
+        guard enabled else { throw LLMClientError.aiDisabled }
+        let origin = LLMRemotePolicy.origin(of: config.baseURL)
+        let consented = LLMProviderStore.hasHostConsent(for: config, from: defaults)
+            || (origin != nil && sheetConsent == origin)
+        guard consented else {
+            throw LLMClientError.untrustedEndpoint(
+                LLMRemotePolicy.host(of: config.baseURL) ?? config.baseURL)
+        }
+        // Ollama is keyless: there is no credential to bind.
+        if config.kind != .ollama,
+           !LLMProviderStore.credentialMayBeSent(for: config, from: defaults) {
+            throw LLMClientError.credentialNotAuthorized(origin ?? config.baseURL)
+        }
+    }
+
+    private func validateEndpoint(_ url: URL, kind: LLMProviderKind) throws {
+        if kind == .ollama {
+            try Ollama.validateEndpoint(url)
+        } else {
+            try LLMEndpoint.validate(url)
+        }
+    }
+
     private func applyAuth(to request: inout URLRequest, config: LLMProviderConfig,
                            model: String? = nil,
                            thinking: LLMThinking = .modelDefault,
                            hasTools: Bool = false,
                            chatGPTResponses: Bool = false) throws {
         if config.kind == .ollama { return } // local, keyless
-        guard OAuthConfig.usesKeychain(environment: ProcessInfo.processInfo.environment) else {
-            throw LLMClientError.missingCredential // fixture builds never touch Keychain
-        }
         switch config.authMode {
         case .apiKey:
-            let key = try Self.requiredSecret(LLMProviderStore.keychainKey(for: config.id))
+            let key = try requiredSecret(LLMProviderStore.keychainKey(for: config.id))
             switch config.kind {
             case .anthropic:
                 request.setValue(key, forHTTPHeaderField: "x-api-key")
@@ -395,8 +474,8 @@ actor LLMClient {
     /// A locked or otherwise unreadable Keychain is not a missing credential:
     /// reporting it as one would tell the user to sign in again and throw away
     /// a sign-in that is still there.
-    private static func requiredSecret(_ key: String) throws -> String {
-        switch Keychain.read(key) {
+    private func requiredSecret(_ key: String) throws -> String {
+        switch secrets(key) {
         case .value(let value): return value
         case .notFound: throw LLMClientError.missingCredential
         case .unavailable: throw LLMClientError.keychainUnavailable
@@ -404,15 +483,14 @@ actor LLMClient {
     }
 
     private func requiredTokens(providerID: UUID) throws -> LLMOAuthTokens {
-        let json = try Self.requiredSecret(LLMProviderStore.oauthKeychainKey(for: providerID))
+        let json = try requiredSecret(LLMProviderStore.oauthKeychainKey(for: providerID))
         guard let tokens = try? JSONDecoder().decode(LLMOAuthTokens.self, from: Data(json.utf8))
         else { throw LLMClientError.missingCredential }
         return tokens
     }
 
     private func storedTokensAreExpired(providerID: UUID) -> Bool {
-        guard OAuthConfig.usesKeychain(environment: ProcessInfo.processInfo.environment),
-              let tokens = try? requiredTokens(providerID: providerID) else { return false }
+        guard let tokens = try? requiredTokens(providerID: providerID) else { return false }
         return tokens.isExpired()
     }
 
@@ -439,7 +517,8 @@ actor LLMClient {
         guard let refreshToken = tokens.refreshToken, !refreshToken.isEmpty
         else { throw LLMClientError.missingCredential }
         let form = LLMOAuth.refreshRequestForm(vendor: vendor, refreshToken: refreshToken)
-        let data = try await Self.postToken(vendor: vendor, form)
+        let data = try await Self.postToken(vendor: vendor, form,
+                                            enabled: enabled, transport: transport)
         var merged = try LLMOAuth.parseTokens(from: data, now: Date())
         if merged.refreshToken?.isEmpty ?? true { merged.refreshToken = refreshToken }
         let encoded = try JSONEncoder().encode(merged)
@@ -447,39 +526,51 @@ actor LLMClient {
     }
 
     /// Model listing for the Settings "Fetch models" button.
-    func listModels(config: LLMProviderConfig) async throws -> [String] {
+    ///
+    /// `sheetConsent`: the origin the user has just confirmed in the provider
+    /// sheet, before saving. It stands in for stored consent for that origin
+    /// only; it never authorises a saved credential for a new origin.
+    func listModels(config: LLMProviderConfig,
+                    sheetConsent: String? = nil) async throws -> [String] {
+        // Refused before the token refresh below, which is a request too.
+        try authorize(config: config, sheetConsent: sheetConsent)
         // Same OAuth handling as `stream`: refresh an already-expired token up
         // front, and refresh once more on a 401 before one retry.
         if case .oauth(let vendor) = config.authMode,
            storedTokensAreExpired(providerID: config.id) {
             try? await refreshTokens(vendor: vendor, providerID: config.id)
         }
-        return try await runListModels(config: config, allowRefresh: true)
+        return try await runListModels(config: config, sheetConsent: sheetConsent,
+                                       allowRefresh: true)
     }
 
-    private func runListModels(config: LLMProviderConfig,
+    private func runListModels(config: LLMProviderConfig, sheetConsent: String?,
                                allowRefresh: Bool) async throws -> [String] {
+        try authorize(config: config, sheetConsent: sheetConsent)
         let path = LLMEndpoint.modelsPath(kind: config.kind, base: config.baseURL)
         guard let url = URL(string: path) else { throw LLMClientError.http(0) }
-        if config.kind == .ollama {
-            try Ollama.validateEndpoint(url)
-        } else {
-            try LLMEndpoint.validate(url)
-        }
+        try validateEndpoint(url, kind: config.kind)
         var request = URLRequest(url: url)
         try applyAuth(to: &request, config: config)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await transport.data(request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401, allowRefresh, case .oauth(let vendor) = config.authMode {
             try await refreshTokens(vendor: vendor, providerID: config.id)
-            return try await runListModels(config: config, allowRefresh: false)
+            return try await runListModels(config: config, sheetConsent: sheetConsent,
+                                           allowRefresh: false)
         }
         guard (200..<300).contains(status) else { throw LLMClientError.http(status) }
         return LLMEndpoint.modelNames(fromJSONObject: try? JSONSerialization.jsonObject(with: data))
     }
 
-    static func postForm(_ urlString: String, _ form: [String: String]) async throws -> Data {
-        let (status, data) = try await postFormRaw(urlString, form)
+    // Provider sign-in and token refresh. Static because the sign-in flow runs
+    // outside the actor; the same switch and transport gate them.
+
+    static func postForm(_ urlString: String, _ form: [String: String],
+                         enabled: Bool = AIFeatures.isEnabled,
+                         transport: LLMTransport = .urlSession) async throws -> Data {
+        let (status, data) = try await postFormRaw(urlString, form,
+                                                   enabled: enabled, transport: transport)
         guard (200..<300).contains(status) else { throw LLMClientError.http(status) }
         return data
     }
@@ -487,7 +578,10 @@ actor LLMClient {
     /// Form POST that also returns error bodies, for device-code polling where
     /// "authorization_pending" arrives as a 4xx with a JSON body.
     static func postFormRaw(_ urlString: String,
-                            _ form: [String: String]) async throws -> (Int, Data) {
+                            _ form: [String: String],
+                            enabled: Bool = AIFeatures.isEnabled,
+                            transport: LLMTransport = .urlSession) async throws -> (Int, Data) {
+        guard enabled else { throw LLMClientError.aiDisabled }
         guard let url = URL(string: urlString) else { throw LLMClientError.http(0) }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -496,31 +590,38 @@ actor LLMClient {
         var components = URLComponents()
         components.queryItems = form.map { URLQueryItem(name: $0.key, value: $0.value) }
         request.httpBody = Data((components.percentEncodedQuery ?? "").utf8)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await transport.data(request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 
     /// Anthropic's OAuth token endpoint takes JSON, not a urlencoded form.
-    static func postJSON(_ urlString: String, _ body: [String: String]) async throws -> Data {
+    static func postJSON(_ urlString: String, _ body: [String: String],
+                         enabled: Bool = AIFeatures.isEnabled,
+                         transport: LLMTransport = .urlSession) async throws -> Data {
+        guard enabled else { throw LLMClientError.aiDisabled }
         guard let url = URL(string: urlString) else { throw LLMClientError.http(0) }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await transport.data(request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw LLMClientError.http(status) }
         return data
     }
 
     /// Token-endpoint POST in whichever encoding the vendor requires.
-    static func postToken(vendor: LLMOAuthVendor, _ form: [String: String]) async throws -> Data {
+    static func postToken(vendor: LLMOAuthVendor, _ form: [String: String],
+                          enabled: Bool = AIFeatures.isEnabled,
+                          transport: LLMTransport = .urlSession) async throws -> Data {
         let constants = LLMOAuth.constants(for: vendor)
         if constants.tokenBodyIsJSON {
-            return try await postJSON(constants.tokenURL, form)
+            return try await postJSON(constants.tokenURL, form,
+                                      enabled: enabled, transport: transport)
         }
-        return try await postForm(constants.tokenURL, form)
+        return try await postForm(constants.tokenURL, form,
+                                  enabled: enabled, transport: transport)
     }
 }
 
@@ -546,6 +647,8 @@ enum LLMOAuthFlow {
     /// the code the user must confirm in the browser.
     static func signIn(vendor: LLMOAuthVendor, providerID: UUID,
                        onUserCode: ((String, String) -> Void)? = nil) async throws {
+        // No loopback listener, no browser, no token request with AI off.
+        guard AIFeatures.isEnabled else { throw LLMClientError.aiDisabled }
         guard OAuthConfig.usesKeychain(environment: ProcessInfo.processInfo.environment) else {
             throw LLMClientError.keychainUnavailable
         }

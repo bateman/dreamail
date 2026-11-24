@@ -436,7 +436,7 @@ final class MailStore {
     /// "Handle with Mish": open the panel and let the agent work the open
     /// thread on the Handle-with-Mish model.
     func handleSelectedThreadWithMish() {
-        guard selectedThread != nil else { return }
+        guard AIFeatures.isEnabled, selectedThread != nil else { return }
         showAskMish = true
         askMishControllerCreatingIfNeeded().handleSelectedThread()
     }
@@ -1755,7 +1755,7 @@ struct ComposeRequest: Identifiable {
 
     // MARK: - MCP server
 
-    static let mcpEnabledKey = "mcp.enabled"
+    static let mcpEnabledKey = MCPLaunchPolicy.enabledKey
     static let mcpTokenKey = "mcp.token"
     static let mcpPortKey = "mcp.port"
 
@@ -1775,8 +1775,16 @@ struct ComposeRequest: Identifiable {
     }
 
     var isMCPEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.mcpEnabledKey) }
+        get {
+            MCPLaunchPolicy.mayRun() && UserDefaults.standard.bool(forKey: Self.mcpEnabledKey)
+        }
         set {
+            // A build without AI features keeps whatever was stored and
+            // runs nothing.
+            guard MCPLaunchPolicy.mayRun() else {
+                stopMCPServer()
+                return
+            }
             UserDefaults.standard.set(newValue, forKey: Self.mcpEnabledKey)
             if newValue {
                 startMCPServer()
@@ -1817,15 +1825,19 @@ struct ComposeRequest: Identifiable {
         return token
     }
 
+    /// The only place a server is created. Refuses, before the token read,
+    /// the bind and the discovery file, in a build without AI features.
     func startMCPServer() {
         stopMCPServer()
         do {
-            let token = try ensureMCPToken()
-            let bridge = MCPBridge(store: self)
-            let server = MCPServer(tools: bridge)
-            let port = try server.start(token: token, preferredPort: UInt16(mcpPreferredPort))
-            mcpListener = (server, port)
-            writeMCPDiscovery(port: port)
+            try MCPLaunchPolicy.startIfAllowed {
+                let token = try ensureMCPToken()
+                let bridge = MCPBridge(store: self)
+                let server = MCPServer(tools: bridge)
+                let port = try server.start(token: token, preferredPort: UInt16(mcpPreferredPort))
+                mcpListener = (server, port)
+                writeMCPDiscovery(port: port)
+            }
         } catch {
             showNotice("MCP server failed to start: \(error.localizedDescription)")
         }
@@ -1880,7 +1892,8 @@ struct ComposeRequest: Identifiable {
         // before the first frame despite the intent. Here it is past the
         // first suspension point, so the window has had a chance to draw;
         // a bind failure still only surfaces as a notice.
-        if isMCPEnabled, !isShuttingDown {
+        // The build switch wins over the stored opt-in (MCPLaunchPolicy).
+        if MCPLaunchPolicy.shouldStartAtLaunch(), !isShuttingDown {
             startMCPServer()
         }
         // Contacts first: recipient autocomplete is the first deferred

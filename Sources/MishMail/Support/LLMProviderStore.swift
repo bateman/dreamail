@@ -148,18 +148,81 @@ enum LLMProviderStore {
         }
     }
 
-    /// Preset hosts do not need consent. A custom host must match the stored
-    /// origin exactly (changing scheme, host, or port requires a new confirm).
+    /// The full origin (`scheme://host:port`) a stored consent record
+    /// authorises, or nil.
+    ///
+    /// Older versions stored the bare host. Such a record says nothing about
+    /// scheme or port, so it migrates to exactly one origin: the one of the
+    /// provider row saved under the same id, and only when that row's host is
+    /// the recorded host. It never follows an edited, unsaved Base URL, and
+    /// never a row whose host has since changed (F-06).
+    static func consentedOrigin(for id: UUID,
+                                from defaults: UserDefaults = .standard) -> String? {
+        guard let stored = consentedHost(for: id, from: defaults), !stored.isEmpty else {
+            return nil
+        }
+        if stored.contains("://") { return stored }
+        guard let row = load(from: defaults).first(where: { $0.id == id }),
+              LLMRemotePolicy.host(of: row.baseURL) == stored else { return nil }
+        return LLMRemotePolicy.origin(of: row.baseURL)
+    }
+
+    /// Preset hosts do not need consent. A custom host must match the
+    /// consented origin exactly: changing scheme, host or port needs a new
+    /// confirm, also for a legacy host-only record (see `consentedOrigin`).
     static func hasHostConsent(for config: LLMProviderConfig,
                                from defaults: UserDefaults = .standard) -> Bool {
         guard LLMRemotePolicy.sendsMailOffDevice(config) else { return true }
         guard let origin = LLMRemotePolicy.origin(of: config.baseURL),
               let host = LLMRemotePolicy.host(of: config.baseURL) else { return false }
         if LLMRemotePolicy.isKnownHost(host) { return true }
-        let stored = consentedHost(for: config.id, from: defaults)
-        if stored == origin { return true }
-        // Older rows stored the host only. Accept that until the user saves.
-        return stored == host
+        return consentedOrigin(for: config.id, from: defaults) == origin
+    }
+
+    /// What the provider sheet persists on Save: the origin the user
+    /// confirmed, but only if it is still the origin being saved. `confirmed`
+    /// is the origin the consent toggle was turned on for; `saving` is the
+    /// custom origin of the Base URL at save time (nil for a preset or
+    /// loopback host). Anything else clears the record.
+    static func consentToSave(confirmed: String?, saving: String?) -> String? {
+        guard let saving, confirmed == saving else { return nil }
+        return saving
+    }
+
+    // MARK: - Credential origin (F-12)
+
+    static func credentialOriginKey(for id: UUID) -> String { "llm.keyOrigin.\(id.uuidString)" }
+
+    /// Records the origin a key or sign-in was entered for. Call it whenever
+    /// a credential is written; nil clears the record.
+    static func setCredentialOrigin(_ origin: String?, for id: UUID,
+                                    to defaults: UserDefaults = .standard) {
+        let key = credentialOriginKey(for: id)
+        if let origin, !origin.isEmpty {
+            defaults.set(origin.lowercased(), forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    /// The origin this provider's saved key or sign-in may be sent to: the
+    /// one recorded when it was entered or, for a credential saved before
+    /// that record existed, the origin of the provider row it was saved with.
+    static func authorizedCredentialOrigin(for id: UUID,
+                                           from defaults: UserDefaults = .standard) -> String? {
+        if let recorded = defaults.string(forKey: credentialOriginKey(for: id)), !recorded.isEmpty {
+            return recorded
+        }
+        guard let row = load(from: defaults).first(where: { $0.id == id }) else { return nil }
+        return LLMRemotePolicy.origin(of: row.baseURL)
+    }
+
+    /// True when a request for `config` may carry the credential stored
+    /// under its id: its Base URL has exactly the authorised origin.
+    static func credentialMayBeSent(for config: LLMProviderConfig,
+                                    from defaults: UserDefaults = .standard) -> Bool {
+        guard let origin = LLMRemotePolicy.origin(of: config.baseURL) else { return false }
+        return authorizedCredentialOrigin(for: config.id, from: defaults) == origin
     }
 
     static func assignmentKey(for task: LLMTask) -> String { "llm.task.\(task.rawValue)" }

@@ -27,6 +27,17 @@ enum GroupBy: String, CaseIterable {
         case .aiCategory: return "sparkles"
         }
     }
+
+    /// Grouping by AI category exists only with the AI features on.
+    static var offered: [GroupBy] {
+        allCases.filter { $0 != .aiCategory || AIFeatures.isEnabled }
+    }
+
+    /// The stored choice, or `.date` when this build does not offer it.
+    static func resolved(_ raw: String) -> GroupBy {
+        let stored = GroupBy(rawValue: raw) ?? .date
+        return offered.contains(stored) ? stored : .date
+    }
 }
 
 struct ThreadListView: View {
@@ -46,7 +57,7 @@ struct ThreadListView: View {
     /// Cap on Priority section size; 0 = no limit. Default 10.
     @AppStorage("priorityMaxCount") private var priorityMaxCount = 10
 
-    private var groupBy: GroupBy { GroupBy(rawValue: groupByRaw) ?? .date }
+    private var groupBy: GroupBy { GroupBy.resolved(groupByRaw) }
 
     private var groupedThreadCount: Int {
         grouped.reduce(0) { $0 + $1.1.count }
@@ -893,7 +904,7 @@ struct FilterBar: View {
             // View options: grouping + which chips to show.
             Menu {
                 Picker("Group by", selection: $groupByRaw) {
-                    ForEach(GroupBy.allCases, id: \.rawValue) { g in
+                    ForEach(GroupBy.offered, id: \.rawValue) { g in
                         Label(g.title, systemImage: g.icon).tag(g.rawValue)
                     }
                 }

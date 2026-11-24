@@ -84,7 +84,7 @@ enum Ollama {
         request.timeoutInterval = 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
+        guard let (data, _) = try? await send(request),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false } // unreachable Ollama: assume no, so the chat still runs
         let supported = (object["capabilities"] as? [String] ?? []).contains("thinking")
@@ -108,12 +108,27 @@ enum Ollama {
         set { UserDefaults.standard.set(newValue, forKey: "ollama.allowRemote") }
     }
 
+    /// The one way a request reaches the Ollama daemon (model list,
+    /// capabilities, unload). Chat goes through `LLMClient`, which applies the
+    /// same switch. With the AI features off nothing is sent.
+    static func send(_ request: URLRequest,
+                     enabled: Bool = AIFeatures.isEnabled,
+                     transport: @Sendable (URLRequest) async throws -> (Data, URLResponse)
+                        = { try await URLSession.shared.data(for: $0) })
+        async throws -> (Data, URLResponse) {
+        guard enabled else { throw OllamaError.aiDisabled }
+        return try await transport(request)
+    }
+
     enum OllamaError: LocalizedError {
         case insecureEndpoint
         case remoteNotAllowed
         case modelNotInstalled(String)
+        case aiDisabled
         var errorDescription: String? {
             switch self {
+            case .aiDisabled:
+                return AIFeatures.disabledMessage
             case .modelNotInstalled(let model):
                 return "Ollama does not have the model “\(model)”. Run “ollama pull \(model)”, or set the Model in Settings → AI to a name that “ollama list” shows."
             case .insecureEndpoint:
@@ -138,7 +153,7 @@ enum Ollama {
         try validateEndpoint(url)
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
-        let (data, _) = try await URLSession.shared.data(for: request)
+        let (data, _) = try await send(request)
         return LLMEndpoint.modelNames(fromJSONObject: try? JSONSerialization.jsonObject(with: data))
     }
 
@@ -173,7 +188,7 @@ enum Ollama {
         request.timeoutInterval = 2 // quit calls this; never block the app on it
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        _ = try? await URLSession.shared.data(for: request)
+        _ = try? await send(request)
         await LoadedModels.shared.forget(model)
     }
 
