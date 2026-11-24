@@ -171,7 +171,10 @@ extension MailStore {
     private func queueSendForReconnect(_ p: PendingSend) {
         let row = p.scheduled(at: Date())
         do {
-            try db.write { db in try row.insert(db) }
+            try db.write { db in
+                try AccountLifecycle.requireLiveAccount(db, id: row.accountId)
+                try row.insert(db)
+            }
         } catch {
             restoreFailedSend(p, error: error)
             return
@@ -318,6 +321,7 @@ extension MailStore {
         let row = p.scheduled(at: date)
         do {
             try db.write { db in
+                try AccountLifecycle.requireLiveAccount(db, id: row.accountId)
                 try row.insert(db)
                 if let retiringLocalID { _ = try LocalDraft.deleteOne(db, key: retiringLocalID) }
             }
@@ -490,9 +494,9 @@ extension MailStore {
                     try await deliver(p)
                     _ = try? await db.write { db in try ScheduledSend.deleteOne(db, key: rowId) }
                     holds[rowId] = nil
-                    Notifier.notify(title: "Scheduled message sent",
-                                    body: s.subject.isEmpty ? s.toHeader : s.subject,
-                                    id: "scheduled.\(rowId)")
+                    Notifier.notify(NotificationContent.scheduledSent(
+                        accountId: s.accountId, rowId: rowId, subject: s.subject,
+                        showDetails: NotificationContent.showsDetails()))
                     continue
                 } catch {
                     failure = error
@@ -899,6 +903,7 @@ extension MailStore {
         let pending = row
         do {
             stored = try await db.write { db -> LocalDraft in
+                try AccountLifecycle.requireLiveAccount(db, id: pending.accountId)
                 var saved = pending
                 // Update in place only while the row is still there. The
                 // reconnect flush (or a Discard) can retire it between two

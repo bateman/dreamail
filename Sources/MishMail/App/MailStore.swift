@@ -895,7 +895,7 @@ final class MailStore {
             filtersLoadError[accountId] = nil
         } catch GmailError.http(403, _) {
             filtersLoadError[accountId] =
-                "MishMail doesn't have permission to read this account's filters yet. Remove and re-add the account (Accounts pane) to grant it."
+                "MishMail doesn't have permission to read this account's filters yet. Sign in to it again with Add Google Account… (Accounts pane) to grant it; the account and its mail stay as they are."
             // Keep any previous good cache; only leave the slot empty when we
             // never had one (so UI can show the scope error).
             if previous == nil { filtersByAccount[accountId] = nil }
@@ -2609,6 +2609,9 @@ struct ComposeRequest: Identifiable {
         if nextLabels != labelsByAccount {
             labelsByAccount = nextLabels
         }
+        // Its own database read: `snapshot` may be the empty fallback of a
+        // failed read, which would make every account look removed.
+        sweepRemovedAccountResidueOnce()
     }
 
     func reloadSavedViews() {
@@ -4501,13 +4504,17 @@ struct ComposeRequest: Identifiable {
     private func attachmentTempURL(_ attachment: AttachmentRow, message: Message) async throws -> URL {
         // Keyed by attachment row too, so two same-named attachments on one
         // message can't serve each other's cached bytes.
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MishMailAttachments", isDirectory: true)
-            .appendingPathComponent(MessageParser.safeFilename(message.accountId), isDirectory: true)
-            .appendingPathComponent(MessageParser.safeFilename(message.gmailId), isDirectory: true)
-            .appendingPathComponent(String(attachment.id ?? 0), isDirectory: true)
+        let root = AttachmentCache.defaultRoot
+        let dir = AttachmentCache.messageDirectory(
+            root: root, accountId: message.accountId,
+            gmailMessageId: message.gmailId, attachmentRowId: attachment.id)
         let url = dir.appendingPathComponent(MessageParser.safeFilename(attachment.filename))
         let fm = FileManager.default
+        // A link anywhere in the tree would send the copy (and, at account
+        // removal, the cleanup) outside the cache. Refuse instead (F-04).
+        if fm.fileExists(atPath: dir.path), !AttachmentCache.isContained(dir, in: root) {
+            throw CocoaError(.fileWriteUnknown)
+        }
         if fm.fileExists(atPath: url.path) {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             if values.isRegularFile == true, values.isSymbolicLink != true {
@@ -4520,8 +4527,17 @@ struct ComposeRequest: Identifiable {
             try fm.removeItem(at: url)
         }
         let data = try await downloadAttachment(attachment, message: message)
+        // The account may have been removed while the download ran; writing
+        // now would recreate its folder after the cleanup (F-04).
+        guard AttachmentCache.mayStore(accountId: message.accountId,
+                                       liveAccounts: accounts.map(\.id)) else {
+            throw CancellationError()
+        }
         try fm.createDirectory(at: dir, withIntermediateDirectories: true,
                                attributes: [.posixPermissions: 0o700])
+        guard AttachmentCache.isContained(dir, in: root) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
         // createDirectory's attributes only apply to directories it creates;
         // tighten any tree an older build left at 0755.
         var ancestor = dir

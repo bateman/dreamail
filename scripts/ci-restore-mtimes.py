@@ -5,12 +5,19 @@ A fresh checkout stamps every file with "now", and xcodebuild treats a newer
 mtime as a changed input, so a restored DerivedData cache would rebuild
 everything. With commit times, only files that really changed since the cached
 build look new. Needs full history (`fetch-depth: 0`).
+
+Merge commits count too (`-m --first-parent`: each merge lists what it
+brought in from the merged branch). Without them, a branch that merges main
+stamps a merged file with main's commit time, which is exactly the stamp main's
+cached build recorded, so the file looks unchanged even though its content
+differs from main's, and its stale object from the cache gets linked.
 """
 import os
 import subprocess
 
 log = subprocess.run(
-    ["git", "log", "--format=%x00%ct", "--name-only", "--no-renames"],
+    ["git", "log", "--format=%x00%ct", "--name-only", "--no-renames",
+     "-m", "--first-parent"],
     check=True, capture_output=True, text=True).stdout
 
 remaining = set(subprocess.run(

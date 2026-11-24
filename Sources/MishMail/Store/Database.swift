@@ -532,6 +532,10 @@ struct ChatConversationRow: Codable, Identifiable, Hashable, FetchableRecord, Pe
     var modelID: String
     var createdAt: Date
     var updatedAt: Date
+    /// v48: true once the conversation records which accounts' mail it drew
+    /// on (`chatConversationAccount`). Rows from before v48 read false and
+    /// are deleted on any account removal (see `ChatProvenance`).
+    var tracksAccounts: Bool = true
 }
 
 /// One message inside an Ask Mish conversation (v35). Tool calls and results
@@ -2261,6 +2265,24 @@ final class AppDatabase: @unchecked Sendable {
             try db.alter(table: "message") { t in
                 t.add(column: "deliveredTo", .text)
             }
+        }
+
+        // v48: Ask Mish chat provenance (F-04). The accounts whose mail a
+        // conversation drew on, so removing an account deletes the chats
+        // that may quote it. Older conversations have none recorded and keep
+        // `tracksAccounts` 0: they are deleted on any removal.
+        m.registerMigration("v48") { db in
+            try db.alter(table: "chatConversation") { t in
+                t.add(column: "tracksAccounts", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(table: "chatConversationAccount") { t in
+                t.column("conversationId", .text).notNull()
+                    .references("chatConversation", onDelete: .cascade)
+                t.column("accountId", .text).notNull()
+                t.primaryKey(["conversationId", "accountId"])
+            }
+            try db.create(index: "chatConversationAccount_on_accountId",
+                          on: "chatConversationAccount", columns: ["accountId"])
         }
         return m
     }
