@@ -369,11 +369,12 @@ struct ThreadDetailPayload: Equatable {
     var attachmentsByMessageId: [String: [AttachmentRow]]
     /// Precomputed quote trails + assembled HTML, keyed by message id.
     var bodyPrepByMessageId: [String: MessageHTMLPrep]
-    /// Bodies whose `cid:` images were already resolved this session, keyed
-    /// by message id. Filled after the first open downloads the parts, so a
-    /// re-open paints the images in its first frame instead of downloading
+    /// Bodies whose `cid:` images were already resolved, keyed by message
+    /// id. Filled after the first open downloads the parts, or when the
+    /// payload is read, from the persistent cache (`InlineImageCache`), so
+    /// an open paints the images in its first frame instead of downloading
     /// every part from Gmail again and loading the body a second time.
-    /// Memory only: it lives and dies with this payload's cache entry.
+    /// This copy lives and dies with this payload's cache entry.
     var cidInlineByMessageId: [String: CIDInlinedBody] = [:]
 
     func suppressingDrafts(_ suppressedIds: Set<String>) -> ThreadDetailPayload {
@@ -535,6 +536,11 @@ struct ThreadDetailCacheEntry: Equatable {
 /// mounts ready strings into WebKit.
 actor ThreadDetailRepository {
     private let db: DatabasePool
+    /// Persistent `cid:` images. When set, a payload read from the database
+    /// carries the images of every hydrated body whose images are all
+    /// cached, so the first frame paints them (prefetched neighbours too:
+    /// reading the local cache is allowed there, downloading is not).
+    let inlineImages: InlineImageStore?
     private var cache = ThreadDetailLRU<ThreadDetailCacheEntry>(capacity: 10)
     /// Newest revisions `discardStale` has seen. A read that started before
     /// a change (a delete among them) and finishes after it must not put
@@ -543,8 +549,9 @@ actor ThreadDetailRepository {
     private var knownEpoch = 0
     private var knownLocals: [String: Int] = [:]
 
-    init(db: DatabasePool) {
+    init(db: DatabasePool, inlineImages: InlineImageStore? = nil) {
         self.db = db
+        self.inlineImages = inlineImages
     }
 
     /// The requested `revision` is the sole validity test — there is no
@@ -572,12 +579,26 @@ actor ThreadDetailRepository {
 
         // Hold the SQLCipher reader only for row fetch. Quote scans and HTML
         // document assembly are pure string work and must not pin a connection.
-        var loaded = (try? db.read { db in
-            try Self.fetchPayload(threadId: threadId, db: db)
-        }) ?? ThreadDetailPayload(
+        let readsImages = inlineImages != nil
+        let read = (try? db.read { db -> (ThreadDetailPayload, [String: [String: InlineImageCache.Part]]) in
+            let payload = try Self.fetchPayload(threadId: threadId, db: db)
+            let images = readsImages
+                ? try InlineImageCache.completeParts(db, for: payload.messages)
+                : [:]
+            return (payload, images)
+        })
+        var loaded = read?.0 ?? ThreadDetailPayload(
             messages: [], attachmentsByMessageId: [:], bodyPrepByMessageId: [:])
         loaded.bodyPrepByMessageId = Self.buildBodyPrep(
             messages: loaded.messages, fontScale: fontScale)
+        if let images = read?.1, !images.isEmpty {
+            loaded.cidInlineByMessageId = Self.cachedCIDBodies(
+                messages: loaded.messages, images: images, fontScale: fontScale)
+            if let store = inlineImages {
+                let used = Array(loaded.cidInlineByMessageId.keys)
+                Task { await store.noteUsed(used) }
+            }
+        }
         if !isSuperseded(revision, threadId: threadId) {
             cache.insert(
                 ThreadDetailCacheEntry(
@@ -761,6 +782,33 @@ actor ThreadDetailRepository {
             messages: messages,
             attachmentsByMessageId: Dictionary(grouping: attachments, by: \.messageId),
             bodyPrepByMessageId: [:])
+    }
+
+    /// Bodies rebuilt from persistently cached `cid:` images: the stored
+    /// HTML with each image as a `data:` URI, and its prep, exactly as the
+    /// pane's own resolve builds them. Pure string work, no DB. Only bodies
+    /// the in-memory policy keeps (`CIDInlineCachePolicy`) are returned; the
+    /// others resolve on open, from the same cache.
+    nonisolated static func cachedCIDBodies(
+        messages: [Message],
+        images: [String: [String: InlineImageCache.Part]],
+        fontScale: Double
+    ) -> [String: CIDInlinedBody] {
+        var out: [String: CIDInlinedBody] = [:]
+        for message in messages {
+            guard let html = message.bodyHTML, let parts = images[message.id],
+                  !parts.isEmpty else { continue }
+            let inlined = CIDImageInliner.rewrite(
+                html, parts: parts.mapValues { (mimeType: $0.mimeType, data: $0.data) })
+            let body = CIDInlinedBody(
+                html: inlined,
+                prep: MessageHTMLPrepBuilder.cidInlinedPrep(
+                    inlinedHTML: inlined, preInlineBytes: html.utf8.count,
+                    fontScale: fontScale))
+            guard CIDInlineCachePolicy.shouldRemember(body, fontScale: fontScale) else { continue }
+            out[message.id] = body
+        }
+        return out
     }
 
     /// Quote-trail scan + document assembly — pure string work, no DB.

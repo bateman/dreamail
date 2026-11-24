@@ -49,6 +49,40 @@ final class AccountRemovalResidueTests: XCTestCase {
         }
     }
 
+    // MARK: - Cached inline images
+
+    func testRemovalDeletesOnlyThatAccountsCachedInlineImages() throws {
+        let q = try makeDB()
+        try q.write { db in
+            for account in ["a@x.com", "b@x.com"] {
+                try self.insertAccount(db, account)
+                let id = "\(account):m1"
+                let html = "<img src=\"cid:logo\">"
+                _ = try SyncEngine.upsertPending(db, items: [.init(
+                    message: Message(
+                        id: id, accountId: account, gmailId: "m1", threadId: "\(account):t1",
+                        fromHeader: "A <a@y.com>", toHeader: account, ccHeader: "",
+                        subject: "s", date: Date(), snippet: "", bodyText: "", bodyHTML: html,
+                        messageIdHeader: "", referencesHeader: "", labelIds: "INBOX",
+                        isUnread: false, hasAttachment: false),
+                    attachments: [AttachmentRow(id: nil, messageId: id, gmailAttachmentId: "g",
+                                                filename: "logo.png", mimeType: "image/png",
+                                                size: 2, contentId: "logo")])])
+                let attachmentId = try XCTUnwrap(try Int64.fetchOne(
+                    db, sql: "SELECT id FROM attachment WHERE messageId = ?", arguments: [id]))
+                XCTAssertTrue(try InlineImageCache.store(db, .init(
+                    messageId: id, accountId: account, bodyDigest: InlineImageCache.bodyDigest(html),
+                    parts: [.init(attachmentId: attachmentId, contentId: "logo",
+                                  mimeType: "image/png", data: Data([0x89, 0x50]))]), now: Date()))
+            }
+            try AccountLifecycle.purgeAccount(db, id: "a@x.com")
+        }
+        try q.read { db in
+            XCTAssertEqual(try String.fetchAll(db, sql: "SELECT accountId FROM inlineImage"),
+                           ["b@x.com"])
+        }
+    }
+
     // MARK: - Ask Mish chats
 
     func testRemovalDeletesOnlyChatsThatDrewOnTheAccount() throws {

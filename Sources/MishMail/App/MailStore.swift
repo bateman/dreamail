@@ -1588,7 +1588,12 @@ struct ComposeRequest: Identifiable {
 
     let db = AppDatabase.shared.dbPool
     let threadDetailRepository = ThreadDetailRepository(
-        db: AppDatabase.shared.dbPool)
+        db: AppDatabase.shared.dbPool,
+        inlineImages: InlineImageStore(db: AppDatabase.shared.dbPool))
+    /// Persistent, encrypted `cid:` image cache (`InlineImageCache`): read
+    /// with the payload by the repository, written by `inlineCIDImages`,
+    /// shut down before the pool closes.
+    var inlineImageStore: InlineImageStore? { threadDetailRepository.inlineImages }
     @ObservationIgnored
     var syncTimer: Timer?
     @ObservationIgnored
@@ -2437,6 +2442,10 @@ struct ComposeRequest: Identifiable {
         // while the last optimistic action is still being committed.
         _ = await threadMutationPersistenceTask?.value
         threadMutationPersistenceTask = nil
+        // Queued inline-image writes are only a cache: dropped, and a write
+        // in progress is cancelled (rolled back) and awaited before the
+        // pool closes.
+        await inlineImageStore?.shutDown()
 
         await DatabaseLifecycle.shutDown(
             tasks: tasks,
@@ -4456,22 +4465,36 @@ struct ComposeRequest: Identifiable {
             }
         }
 
-        var parts: [String: (mimeType: String, data: Data)] = [:]
-        for cid in refs {
-            guard let att = byCID[cid] else { continue }
-            // Only image/* — skip non-image Content-ID parts. (Don't consult
-            // sanitizeMIME here: its fallback is image/jpeg, so it would pass
-            // everything.)
-            guard att.mimeType.lowercased().hasPrefix("image/") else { continue }
-            do {
-                let data = try await downloadAttachment(att, message: message)
-                guard !data.isEmpty else { continue }
-                parts[cid] = (att.mimeType, data)
-            } catch {
-                // Leave this cid unresolved; other images can still load.
-                continue
+        // Persistent cache first (images resolved before, this run or an
+        // earlier one), Gmail only for what it does not hold. Only image/*
+        // parts — skip non-image Content-ID parts. (Don't consult
+        // sanitizeMIME here: its fallback is image/jpeg, so it would pass
+        // everything.) A part that fails to download stays unresolved; the
+        // other images can still load.
+        let cached = await inlineImageStore?.cachedParts(
+            messageId: message.id, accountId: message.accountId,
+            bodyHTML: workingHTML) ?? [:]
+        let outcome = await CIDPartResolver.resolve(
+            references: refs, attachmentsByCID: byCID, cached: cached
+        ) { [weak self] att in
+            guard let self else { throw CancellationError() }
+            return try await self.downloadAttachment(att, message: message)
+        }
+        if let imageStore = inlineImageStore {
+            if outcome.fetchedCount > 0 {
+                // Only a complete result for the body as stored (no re-fetch
+                // rewrote it meanwhile) is kept.
+                if InlineImageCachePolicy.shouldStore(
+                    references: refs, parts: outcome.parts, didRefetch: didRefetch) {
+                    await imageStore.remember(
+                        messageId: message.id, accountId: message.accountId,
+                        bodyHTML: workingHTML, parts: Array(outcome.parts.values))
+                }
+            } else if !outcome.parts.isEmpty {
+                await imageStore.noteUsed([message.id])
             }
         }
+        let parts = outcome.parts.mapValues { (mimeType: $0.mimeType, data: $0.data) }
         guard !parts.isEmpty else {
             if didRefetch, let refreshed {
                 return CIDInlineResult(

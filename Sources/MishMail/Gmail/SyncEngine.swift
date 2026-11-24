@@ -607,6 +607,11 @@ actor SyncEngine {
         }
         let count = try Int.fetchOne(
             db, sql: "SELECT count(*) FROM message WHERE \(filter)", arguments: arguments) ?? 0
+        // Cached inline images cascade with the message rows; deleted by name
+        // too, so the prune does not depend on the foreign key alone.
+        try db.execute(
+            sql: "DELETE FROM inlineImage WHERE messageId IN (SELECT id FROM message WHERE \(filter))",
+            arguments: arguments)
         try SearchIndexDeletes.deleting(db, messages: count) {
             try db.execute(sql: "DELETE FROM message WHERE \(filter)", arguments: arguments)
         }
@@ -1341,6 +1346,9 @@ actor SyncEngine {
             msg.bodyHTML = nil
             try writeMessageRow(db, msg, existing: existing)
             try MessageBody(messageId: msg.id, bodyText: bodyText, bodyHTML: bodyHTML).save(db)
+            // New content: images resolved from the old body go (they also
+            // cascade with the attachment rows replaced below).
+            try InlineImageCache.forget(db, messageId: msg.id)
             try AttachmentRow.filter(Column("messageId") == item.message.id).deleteAll(db)
             for att in item.attachments {
                 try att.insert(db)
