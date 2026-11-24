@@ -217,10 +217,6 @@ enum RemoteImageCache {
         return victims
     }
 
-    static func forget(_ db: Database, messageId: String) throws {
-        try db.execute(sql: "DELETE FROM remoteImage WHERE messageId = ?", arguments: [messageId])
-    }
-
     static func forget(_ db: Database, account accountId: String) throws {
         try db.execute(sql: "DELETE FROM remoteImage WHERE accountId = ?", arguments: [accountId])
     }
@@ -335,6 +331,19 @@ actor RemoteImageStore {
         guard !isClosed else { return }
         if failed.count + urlKeys.count > Self.failedCapacity { failed.removeAll() }
         for key in urlKeys { failed.insert(messageId + "|" + key) }
+    }
+
+    /// "messageId|url" being fetched now.
+    private var inFlight: Set<String> = []
+
+    /// Of `urls`, those no other resolve of this message is fetching now,
+    /// marked as in flight; the caller `release`s them when done.
+    func claim(messageId: String, urls: [String]) -> [String] {
+        urls.filter { inFlight.insert(messageId + "|" + $0).inserted }
+    }
+
+    func release(messageId: String, urls: [String]) {
+        for url in urls { inFlight.remove(messageId + "|" + url) }
     }
 
     func failedKeys(messageId: String, among urlKeys: [String]) -> Set<String> {

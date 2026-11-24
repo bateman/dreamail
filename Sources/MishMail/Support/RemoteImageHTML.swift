@@ -8,17 +8,19 @@ import Foundation
 /// runs off the main actor on multi-megabyte bodies and unit tests can pin it.
 ///
 /// What is rewritten (`candidates`, `rewrite`):
-/// - `<img src>`. When it is rewritten, the image's `srcset` and `sizes` go
-///   (Gmail does not honour `srcset` either), so the cached `src` is what
-///   shows. An `<img>` with no `src` but a `srcset` uses one candidate: the
-///   highest density up to 2x, else the widest.
+/// - `<img>`: with a usable `srcset`, one candidate (the highest density up
+///   to 2x, else the widest) becomes the only one, as a `data:` URL with its
+///   descriptor, and `src` goes; otherwise `src`.
+/// - At most `outputBudget` bytes of `data:` URLs per document, whatever the
+///   number of occurrences; the rest stay remote (and need the network).
 /// - the `background` attribute of any element (`<body>`, `<table>`, `<td>`…).
 /// - CSS `url()` in `style` attributes and `<style>` blocks, except inside
 ///   `@font-face` and `@import` (fonts and style sheets never load: the CSP
 ///   blocks them) and inside `image-set()`.
 ///
 /// What is left alone, and keeps loading live from the web view when images
-/// are allowed: `<picture><source srcset>`, `<video poster>`,
+/// are allowed: an `<img>` `srcset` with a non-https candidate,
+/// `<picture><source srcset>`, `<video poster>`,
 /// `<input type=image>`, SVG `<image>`/`<use>`/`<feImage>`, `<link>`,
 /// `image-set()`, any URL in CSS written with a backslash escape, and every
 /// URL the transport refuses. `data:`, `cid:` and `http:` URLs are never
@@ -45,13 +47,14 @@ enum RemoteImageHTML {
 
     /// The candidate URLs of `html` (see the type's documentation).
     static func candidates(in html: String) -> [String] {
-        process(html, replacements: [:]).urls
+        process(html, replacements: [:], budget: 0).urls
     }
 
     /// Rewrites every candidate whose normalised URL has a `data:` URL in
     /// `dataURLs`; the rest stay as they are.
-    static func rewrite(_ html: String, dataURLs: [String: String]) -> Result {
-        process(html, replacements: dataURLs)
+    static func rewrite(_ html: String, dataURLs: [String: String],
+                        budget: Int = outputBudget) -> Result {
+        process(html, replacements: dataURLs, budget: budget)
     }
 
     /// Lookup key of one URL: SHA-256 (hex) of the normalised URL string.
@@ -86,11 +89,35 @@ enum RemoteImageHTML {
         var rewritten = 0
         var needsNetwork = false
         let replacements: [String: String]
+        /// Bytes of `data:` URLs this document may still take in. Caps
+        /// the rewritten size whatever the number of occurrences: one cached
+        /// image referenced ten thousand times is inlined only while it fits.
+        var budget: Int
 
         mutating func found(_ url: String) {
             if seen.insert(url).inserted { urls.append(url) }
         }
+
+        /// The `data:` URL to write for one occurrence of `url`, charged to
+        /// the budget; nil (and the occurrence needs the network) when there
+        /// is none or it no longer fits.
+        mutating func take(_ url: String) -> String? {
+            guard let data = replacements[url], data.utf8.count <= budget else {
+                needsNetwork = true
+                return nil
+            }
+            budget -= data.utf8.count
+            return data
+        }
     }
+
+    /// Most bytes of `data:` URLs one rewrite adds: base64 of the per-message
+    /// image cap, plus slack for a few repeated small images.
+    static let outputBudget = RemoteImageFetchPolicy.maxMessageBytes / 3 * 4 + 256 * 1_024
+
+    /// Attribute values longer than this that are already `data:` URLs are
+    /// skipped without decoding (an inlined image is never a candidate).
+    private static let longValueBytes = 4_096
 
     private struct Attribute {
         var name: String
@@ -106,9 +133,10 @@ enum RemoteImageHTML {
         "script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes",
     ]
 
-    private static func process(_ html: String, replacements: [String: String]) -> Result {
+    private static func process(_ html: String, replacements: [String: String],
+                                budget: Int) -> Result {
         let bytes = Array(html.utf8)
-        var state = State(replacements: replacements)
+        var state = State(replacements: replacements, budget: budget)
         scanDocument(bytes, &state)
         guard !state.edits.isEmpty else {
             return Result(html: html, urls: state.urls, rewrittenCount: 0,
@@ -230,6 +258,7 @@ enum RemoteImageHTML {
                                   _ state: inout State) {
         func decoded(_ attribute: Attribute?) -> String? {
             guard let range = attribute?.value else { return nil }
+            if range.count > longValueBytes, isDataURL(b, range) { return nil }
             return String(decoding: b[range], as: UTF8.self).decodingHTMLEntities()
         }
         let byName = Dictionary(attributes.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
@@ -239,14 +268,25 @@ enum RemoteImageHTML {
             handled.formUnion(["src", "srcset", "sizes"])
             handleImage(byName, decoded: decoded, &state)
         }
+        if tag == "link" {
+            // Style sheets and microdata links never load under the CSP;
+            // only preloads, prefetches and icons can fetch an image.
+            let rel = (decoded(byName["rel"]) ?? "").lowercased()
+            let fetches = ["preload", "prefetch", "prerender", "icon"].contains { rel.contains($0) }
+            if !fetches { handled.insert("href") }
+        }
         if let background = byName["background"] {
             handled.insert("background")
-            if let raw = decoded(background), let url = normalizedHTTPSURL(raw) {
-                state.found(url)
-                if let data = state.replacements[url], let range = background.valueWithQuotes {
-                    state.edits.append(Edit(range: range, bytes: Array("\"\(data)\"".utf8)))
-                    state.rewritten += 1
-                } else {
+            if let raw = decoded(background) {
+                if let url = normalizedHTTPSURL(raw) {
+                    state.found(url)
+                    if let range = background.valueWithQuotes, let data = state.take(url) {
+                        state.edits.append(Edit(range: range, bytes: Array("\"\(data)\"".utf8)))
+                        state.rewritten += 1
+                    } else {
+                        state.needsNetwork = true
+                    }
+                } else if looksRemote(raw) {
                     state.needsNetwork = true
                 }
             }
@@ -254,9 +294,10 @@ enum RemoteImageHTML {
         if let style = byName["style"], let raw = decoded(style) {
             handled.insert("style")
             let css = Array(raw.utf8)
-            var inner = State(replacements: state.replacements)
+            var inner = State(replacements: state.replacements, budget: state.budget)
             scanCSS(css, 0..<css.count, inline: true, &inner)
             for url in inner.urls { state.found(url) }
+            state.budget = inner.budget
             state.needsNetwork = state.needsNetwork || inner.needsNetwork
             if !inner.edits.isEmpty, let range = style.valueWithQuotes {
                 var rewritten: [UInt8] = []
@@ -285,58 +326,55 @@ enum RemoteImageHTML {
         }
     }
 
-    /// `<img>`: `src`, or the chosen `srcset` candidate when there is no
-    /// `src`; a rewrite drops `srcset` and `sizes`.
+    /// `<img>`: a usable `srcset` wins (it is what WebKit shows): its chosen
+    /// candidate becomes the only one, `srcset="data:… 2x"` with its own
+    /// descriptor (so Retina sharpness and intrinsic size are kept), and
+    /// `src` goes; `sizes` stays for a width descriptor. Without a usable
+    /// `srcset`, `src`.
     private static func handleImage(_ byName: [String: Attribute],
                                     decoded: (Attribute?) -> String?,
                                     _ state: inout State) {
         let src = byName["src"]
         let srcset = byName["srcset"]
-        let srcsetHasRemote = decoded(srcset).map {
-            $0.lowercased().contains("https:")
-        } ?? false
-        var url: String?
-        var target: Attribute?
-        if let src, let raw = decoded(src), !raw.trimmingCharacters(in: .whitespaces).isEmpty {
-            if let candidate = normalizedHTTPSURL(raw) {
-                url = candidate
-                target = src
-            } else if srcsetHasRemote {
-                // A data:/cid: src with a remote srcset: srcset wins on screen.
+        let srcsetRaw = decoded(srcset)
+        if let srcset, let raw = srcsetRaw, let chosen = chooseSrcsetCandidate(raw) {
+            state.found(chosen.url)
+            guard let range = srcset.valueWithQuotes, let data = state.take(chosen.url) else {
                 state.needsNetwork = true
                 return
             }
-        } else if let raw = decoded(srcset), let chosen = chooseSrcsetCandidate(raw) {
-            url = chosen
-            target = srcset
-        } else if srcsetHasRemote {
-            state.needsNetwork = true
-            return
-        }
-        guard let url, let target else { return }
-        state.found(url)
-        guard let data = state.replacements[url] else {
-            state.needsNetwork = true
-            return
-        }
-        if target.name == "src", let range = target.valueWithQuotes {
-            state.edits.append(Edit(range: range, bytes: Array("\"\(data)\"".utf8)))
-        } else {
-            state.edits.append(Edit(range: target.whole, bytes: Array("src=\"\(data)\"".utf8)))
-        }
-        state.rewritten += 1
-        for name in ["srcset", "sizes"] where name != target.name {
-            if let attribute = byName[name] {
-                state.edits.append(Edit(range: attribute.whole, bytes: []))
+            state.edits.append(Edit(range: range,
+                                    bytes: Array("\"\(data) \(chosen.descriptor)\"".utf8)))
+            state.rewritten += 1
+            if let src { state.edits.append(Edit(range: src.whole, bytes: [])) }
+            if chosen.descriptor.hasSuffix("x"), let sizes = byName["sizes"] {
+                state.edits.append(Edit(range: sizes.whole, bytes: []))
             }
+            return
         }
+        if let raw = srcsetRaw, looksRemote(raw) || raw.lowercased().contains("https:") {
+            // A srcset the app cannot use: WebKit loads it live.
+            state.needsNetwork = true
+            return
+        }
+        guard let src, let raw = decoded(src) else { return }
+        guard let url = normalizedHTTPSURL(raw) else {
+            if looksRemote(raw) { state.needsNetwork = true }
+            return
+        }
+        state.found(url)
+        guard let range = src.valueWithQuotes, let data = state.take(url) else {
+            state.needsNetwork = true
+            return
+        }
+        state.edits.append(Edit(range: range, bytes: Array("\"\(data)\"".utf8)))
+        state.rewritten += 1
     }
 
-    /// One `srcset` candidate: the highest density up to 2x (else the
-    /// lowest), or with width descriptors the widest. Nil unless it is an
-    /// https URL.
-    static func chooseSrcsetCandidate(_ srcset: String) -> String? {
-        var best: (url: String, density: Double?, width: Double?)?
+    /// One `srcset` candidate and its descriptor (`2x`, `900w`): the highest
+    /// density up to 2x (else the lowest), or with width descriptors the
+    /// widest. Nil unless every candidate is an https URL.
+    static func chooseSrcsetCandidate(_ srcset: String) -> (url: String, descriptor: String)? {
         var options: [(url: String, density: Double?, width: Double?)] = []
         for part in splitSrcset(srcset) {
             guard let url = normalizedHTTPSURL(part.url) else { return nil }
@@ -344,9 +382,9 @@ enum RemoteImageHTML {
             var width: Double?
             for descriptor in part.descriptors {
                 let d = descriptor.lowercased()
-                if d.hasSuffix("x"), let value = Double(d.dropLast()) {
+                if d.hasSuffix("x"), let value = Double(d.dropLast()), value > 0 {
                     density = value
-                } else if d.hasSuffix("w"), let value = Double(d.dropLast()) {
+                } else if d.hasSuffix("w"), let value = Double(d.dropLast()), value > 0 {
                     width = value
                     density = nil
                 }
@@ -355,14 +393,33 @@ enum RemoteImageHTML {
         }
         guard !options.isEmpty else { return nil }
         let widths = options.filter { $0.width != nil }
-        if !widths.isEmpty {
-            best = widths.max { ($0.width ?? 0) < ($1.width ?? 0) }
-        } else {
-            let upTo2 = options.filter { ($0.density ?? 1) <= 2 }
-            best = upTo2.max { ($0.density ?? 1) < ($1.density ?? 1) }
-                ?? options.min { ($0.density ?? 1) < ($1.density ?? 1) }
+        if let best = widths.max(by: { ($0.width ?? 0) < ($1.width ?? 0) }), let width = best.width {
+            return (best.url, "\(Int(width))w")
         }
-        return best?.url
+        let upTo2 = options.filter { ($0.density ?? 1) <= 2 }
+        guard let best = upTo2.max(by: { ($0.density ?? 1) < ($1.density ?? 1) })
+                ?? options.min(by: { ($0.density ?? 1) < ($1.density ?? 1) }) else { return nil }
+        let density = best.density ?? 1
+        let text = density == density.rounded() ? String(Int(density)) : String(density)
+        return (best.url, text + "x")
+    }
+
+    /// What the web view would still treat as an https URL although `URL`
+    /// does not parse it (`https:/host`, `https:host`, backslashes…).
+    private static func looksRemote(_ raw: String) -> Bool {
+        raw.filter { $0 != "\t" && $0 != "\n" && $0 != "\r" }
+            .trimmingCharacters(in: .whitespaces.union(.controlCharacters))
+            .lowercased().hasPrefix("https:")
+    }
+
+    /// Whether the value at `range` starts (after spaces) with `data:`.
+    private static func isDataURL(_ b: [UInt8], _ range: Range<Int>) -> Bool {
+        var i = range.lowerBound
+        while i < range.upperBound, isSpace(b[i]) { i += 1 }
+        let prefix = Array("data:".utf8)
+        guard range.upperBound - i >= prefix.count else { return false }
+        for k in 0..<prefix.count where toLower(b[i + k]) != prefix[k] { return false }
+        return true
     }
 
     private static func splitSrcset(_ s: String) -> [(url: String, descriptors: [String])] {
@@ -526,11 +583,9 @@ enum RemoteImageHTML {
             return i
         }
         state.found(url)
-        if let data = state.replacements[url] {
+        if let data = state.take(url) {
             state.edits.append(Edit(range: nameStart..<i, bytes: Array("url(\"\(data)\")".utf8)))
             state.rewritten += 1
-        } else {
-            state.needsNetwork = true
         }
         return i
     }

@@ -312,9 +312,64 @@ final class RemoteImageFetchTests: XCTestCase {
                                          headerFields: ["Content-Type": "image/png"])!)
         }, resolve: Self.publicResolver)
         let out = await RemoteImageFetcher.fetchAll(urls, transport: transport)
-        XCTAssertEqual(out.count, 10)
+        XCTAssertEqual(out.images.count, 10)
         XCTAssertLessThanOrEqual(probe.peak, RemoteImageFetchPolicy.concurrency)
         XCTAssertGreaterThan(probe.peak, 1)
+    }
+
+    func testFetchAllStopsStartingOnceTheByteBudgetIsReached() async {
+        let urls = (0..<20).map { "https://img.example.com/\($0).png" }
+        let png = Self.image(width: 64, height: 64)
+        let counter = ConcurrencyProbe()
+        let transport = RemoteImageTransport(fetch: { request, _ in
+            counter.enter()
+            return (png, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                         headerFields: ["Content-Type": "image/png"])!)
+        }, resolve: Self.publicResolver)
+        let out = await RemoteImageFetcher.fetchAll(urls, byteBudget: png.count * 2,
+                                                    transport: transport)
+        XCTAssertLessThan(counter.started, 20, "no download past the budget")
+        XCTAssertLessThanOrEqual(out.images.count, 2 + RemoteImageFetchPolicy.concurrency)
+    }
+
+    func testOnlyTheFourRasterSignaturesReachImageIO() {
+        XCTAssertEqual(RemoteImageFetchPolicy.magicType(Self.image(.png)), "public.png")
+        XCTAssertEqual(RemoteImageFetchPolicy.magicType(Self.image(.jpeg)), "public.jpeg")
+        XCTAssertEqual(RemoteImageFetchPolicy.magicType(Self.image(.gif)), "com.compuserve.gif")
+        XCTAssertEqual(RemoteImageFetchPolicy.magicType(Data("RIFF\u{0}\u{0}\u{0}\u{0}WEBPVP8 ".utf8)),
+                       "org.webmproject.webp")
+        for other in [Self.image(.tiff), Self.image(.bmp), Data("<svg/>".utf8), Data(),
+                      Data([0xFF, 0xD8]), Data("RIFF0000WAVE".utf8)] {
+            XCTAssertNil(RemoteImageFetchPolicy.magicType(other))
+            XCTAssertNil(RemoteImageFetchPolicy.sniffedMIME(other))
+        }
+        // A PNG signature in front of something else: ImageIO must agree.
+        var fake = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        fake.append(Self.image(.jpeg))
+        XCTAssertNil(RemoteImageFetchPolicy.sniffedMIME(fake))
+    }
+
+    func testAppWideGateLimitsRequestsInFlight() async {
+        let gate = RemoteImageFetchGate(limit: 2)
+        await gate.acquire()
+        await gate.acquire()
+        let third = Task { await gate.acquire() }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        let peak = await gate.peak
+        XCTAssertEqual(peak, 2)
+        await gate.release()
+        await third.value
+        let after = await gate.peak
+        XCTAssertEqual(after, 2, "the third ran only after a release")
+    }
+
+    func testOfflineAndUnresolvedAreNotRefusals() {
+        XCTAssertFalse(RemoteImageFetcher.isRefusal(URLError(.notConnectedToInternet)))
+        XCTAssertFalse(RemoteImageFetcher.isRefusal(URLError(.timedOut)))
+        XCTAssertFalse(RemoteImageFetcher.isRefusal(RemoteImageFetchError.unresolved))
+        XCTAssertFalse(RemoteImageFetcher.isRefusal(CancellationError()))
+        XCTAssertTrue(RemoteImageFetcher.isRefusal(RemoteImageFetchError.notAnImage))
+        XCTAssertTrue(RemoteImageFetcher.isRefusal(RemoteImageFetchError.privateAddress))
     }
 
     /// The fetcher, the cache and the rewriter write nothing but the
@@ -339,8 +394,10 @@ final class ConcurrencyProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var current = 0
     private var maximum = 0
+    private var count = 0
     var peak: Int { lock.withLock { maximum } }
-    func enter() { lock.withLock { current += 1; maximum = max(maximum, current) } }
+    var started: Int { lock.withLock { count } }
+    func enter() { lock.withLock { current += 1; count += 1; maximum = max(maximum, current) } }
     func leave() { lock.withLock { current -= 1 } }
 }
 

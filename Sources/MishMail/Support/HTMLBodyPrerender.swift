@@ -106,17 +106,18 @@ enum HTMLBodyNeighborPrerender {
                     remoteBody: payload.remoteInlineByMessageId[message.id],
                     cidInlined: inlined != nil,
                     remoteCandidateCount: candidateCount) else { continue }
-                var html = inlined?.html ?? message.bodyHTML
-                var remoteSuffix = ""
+                let selected: HTMLBodyPrerenderSelection.Candidate?
                 if case .remote(let body) = plan {
-                    html = body.html
-                    remoteSuffix = body.contentSuffix
+                    // Gated on the pre-inline sizes in its prep, as the card.
+                    selected = HTMLBodyPrerenderSelection.candidate(
+                        messageId: message.id, remoteBody: body, cidInlined: inlined != nil)
+                } else {
+                    selected = HTMLBodyPrerenderSelection.candidate(
+                        messageId: message.id,
+                        bodyHTML: inlined?.html ?? message.bodyHTML,
+                        cidInlined: inlined != nil)
                 }
-                guard let candidate = HTMLBodyPrerenderSelection.candidate(
-                    messageId: message.id,
-                    bodyHTML: html,
-                    cidInlined: inlined != nil,
-                    remoteSuffix: remoteSuffix) else { continue }
+                guard let candidate = selected else { continue }
 
                 let key = HTMLBodyLoadKey(
                     contentID: candidate.contentID,

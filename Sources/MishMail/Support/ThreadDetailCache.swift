@@ -253,8 +253,11 @@ enum MessageHTMLPrepBuilder {
     /// Documents are assembled only for variants the card will auto-render
     /// (rendered bytes within budget); the explicit-approval path builds its
     /// document off-main in `HTMLBodyView` instead.
+    /// `countRemoteCandidates`: false for a body whose remote images were
+    /// already resolved (nothing reads the count; skips a whole-body scan).
     static func cidInlinedPrep(inlinedHTML: String, preInlineBytes: Int,
-                               fontScale: Double) -> MessageHTMLPrep {
+                               fontScale: Double,
+                               countRemoteCandidates: Bool = true) -> MessageHTMLPrep {
         guard !inlinedHTML.isEmpty else { return .empty }
         let fullBytes = inlinedHTML.utf8.count
         let budget = HTMLBodyRenderPolicy.maximumAutomaticBytes
@@ -303,7 +306,8 @@ enum MessageHTMLPrepBuilder {
             htmlBytes: htmlBytes,
             htmlHeadBytes: htmlHeadBytes,
             documents: documents,
-            remoteImageCount: RemoteImageHTML.candidates(in: inlinedHTML).count)
+            remoteImageCount: countRemoteCandidates
+                ? RemoteImageHTML.candidates(in: inlinedHTML).count : 0)
     }
 
     /// Rebuild only the assembled documents for a new font scale, keeping the

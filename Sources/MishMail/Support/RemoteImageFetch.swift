@@ -8,15 +8,21 @@ import ImageIO
 /// the document and loads live, exactly as before the cache.
 enum RemoteImageFetchPolicy {
     /// One image, enforced while the body streams and on `Content-Length`.
-    static let maxImageBytes = 3 * 1_024 * 1_024
-    /// All cached images of one message together.
-    static let maxMessageBytes = 6 * 1_024 * 1_024
+    static let maxImageBytes = 2 * 1_024 * 1_024
+    /// All cached images of one message together. Base64-inlined (4/3) with
+    /// its body, a message's cached images still fit the in-memory body cap
+    /// (`CIDInlineCachePolicy.maximumBytes`, 4 MiB).
+    static let maxMessageBytes = 5 * 512 * 1_024
     /// Distinct image URLs fetched for one message; the rest load live.
     static let maxImagesPerMessage = 40
     /// Redirects followed, each to https on the default port and re-checked.
     static let maxRedirects = 3
     /// Requests in flight for one message.
     static let concurrency = 4
+    /// Requests in flight for the whole app.
+    static let globalConcurrency = 6
+    /// Longest wait for the DNS check before the image is left to WebKit.
+    static let resolveDeadline: TimeInterval = 5
     static let requestTimeout: TimeInterval = 15
     static let resourceTimeout: TimeInterval = 30
     /// Largest side and pixel count accepted (decoding stays WebKit's).
@@ -72,14 +78,39 @@ enum RemoteImageFetchPolicy {
         return req
     }
 
-    /// The stored MIME type of `data`, or nil unless ImageIO reads it as one
-    /// of the accepted raster types with sane dimensions. Reads the header
-    /// only (no pixel decode). Call off the main thread.
+    /// The raster type the leading bytes declare (JPEG `FF D8 FF`, the PNG
+    /// signature, `GIF87a`/`GIF89a`, `RIFF….WEBP`), as an ImageIO type
+    /// identifier; nil for anything else, which never reaches ImageIO.
+    static func magicType(_ data: Data) -> String? {
+        let b = [UInt8](data.prefix(12))
+        if b.count >= 3, b[0] == 0xFF, b[1] == 0xD8, b[2] == 0xFF { return "public.jpeg" }
+        if b.count >= 8, b[0..<8].elementsEqual([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return "public.png"
+        }
+        if b.count >= 6, b[0..<6].elementsEqual(Array("GIF87a".utf8))
+            || b[0..<6].elementsEqual(Array("GIF89a".utf8)) {
+            return "com.compuserve.gif"
+        }
+        if b.count >= 12, b[0..<4].elementsEqual(Array("RIFF".utf8)),
+           b[8..<12].elementsEqual(Array("WEBP".utf8)) {
+            return "org.webmproject.webp"
+        }
+        return nil
+    }
+
+    /// The stored MIME type of `data`, or nil unless its leading bytes are
+    /// one of the four accepted raster formats (`magicType`, checked before
+    /// any ImageIO call) and ImageIO reads it as that same type with sane
+    /// dimensions. Reads the header only (no pixel decode). Call off the
+    /// main thread.
     static func sniffedMIME(_ data: Data) -> String? {
-        let opts = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard !data.isEmpty,
-              let source = CGImageSourceCreateWithData(data as CFData, opts),
+        guard let declared = magicType(data) else { return nil }
+        let options: [CFString: Any] = [kCGImageSourceShouldCache: false,
+                                        kCGImageSourceTypeIdentifierHint: declared as CFString]
+        let opts = options as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, opts),
               let type = CGImageSourceGetType(source) as String?,
+              type == declared,
               let mime = acceptedTypes[type],
               CGImageSourceGetCount(source) >= 1,
               let props = CGImageSourceCopyPropertiesAtIndex(source, 0, opts) as? [CFString: Any],
@@ -167,37 +198,66 @@ enum RemoteImageHostPolicy {
     }
 
     /// Every address `host` resolves to (system resolver), or nil when it
-    /// does not resolve. Blocks a background thread for the lookup.
+    /// does not resolve within `RemoteImageFetchPolicy.resolveDeadline`.
+    /// The blocking lookup runs on a queue of its own, never on the
+    /// cooperative pool; a lookup past the deadline finishes there unheard.
     static func resolveLive(_ host: String) async -> [[UInt8]]? {
-        await Task.detached(priority: .utility) { () -> [[UInt8]]? in
-            var hints = addrinfo()
-            hints.ai_family = AF_UNSPEC
-            hints.ai_socktype = SOCK_STREAM
-            var result: UnsafeMutablePointer<addrinfo>?
-            guard getaddrinfo(host, "443", &hints, &result) == 0, let first = result else {
-                return nil
+        let once = ResumeOnce()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<[[UInt8]]?, Never>) in
+            once.set(continuation)
+            dnsQueue.async { once.resume(lookUp(host)) }
+            dnsQueue.asyncAfter(deadline: .now() + RemoteImageFetchPolicy.resolveDeadline) {
+                once.resume(nil)
             }
-            defer { freeaddrinfo(first) }
-            var out: [[UInt8]] = []
-            var cursor: UnsafeMutablePointer<addrinfo>? = first
-            while let info = cursor {
-                if let sa = info.pointee.ai_addr {
-                    if info.pointee.ai_family == AF_INET {
-                        sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
-                            var addr = sin.pointee.sin_addr
-                            out.append(withUnsafeBytes(of: &addr) { Array($0) })
-                        }
-                    } else if info.pointee.ai_family == AF_INET6 {
-                        sa.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
-                            var addr = sin6.pointee.sin6_addr
-                            out.append(withUnsafeBytes(of: &addr) { Array($0) })
-                        }
+        }
+    }
+
+    private static let dnsQueue = DispatchQueue(label: "remote-image-dns", qos: .utility,
+                                                attributes: .concurrent)
+
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<[[UInt8]]?, Never>?
+        func set(_ c: CheckedContinuation<[[UInt8]]?, Never>) {
+            lock.withLock { continuation = c }
+        }
+        func resume(_ value: [[UInt8]]?) {
+            let c: CheckedContinuation<[[UInt8]]?, Never>? = lock.withLock {
+                defer { continuation = nil }
+                return continuation
+            }
+            c?.resume(returning: value)
+        }
+    }
+
+    private static func lookUp(_ host: String) -> [[UInt8]]? {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, "443", &hints, &result) == 0, let first = result else {
+            return nil
+        }
+        defer { freeaddrinfo(first) }
+        var out: [[UInt8]] = []
+        var cursor: UnsafeMutablePointer<addrinfo>? = first
+        while let info = cursor {
+            if let sa = info.pointee.ai_addr {
+                if info.pointee.ai_family == AF_INET {
+                    sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+                        var addr = sin.pointee.sin_addr
+                        out.append(withUnsafeBytes(of: &addr) { Array($0) })
+                    }
+                } else if info.pointee.ai_family == AF_INET6 {
+                    sa.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
+                        var addr = sin6.pointee.sin6_addr
+                        out.append(withUnsafeBytes(of: &addr) { Array($0) })
                     }
                 }
-                cursor = info.pointee.ai_next
             }
-            return out
-        }.value
+            cursor = info.pointee.ai_next
+        }
+        return out
     }
 
     /// Literal checks, then (for a name) every resolved address public.
@@ -217,6 +277,8 @@ enum RemoteImageHostPolicy {
 enum RemoteImageFetchError: Error, Equatable {
     case notAllowedURL
     case privateAddress
+    /// DNS gave no answer (offline, slow resolver): transient.
+    case unresolved
     case badStatus
     case redirected
     case notAnImage
@@ -320,13 +382,6 @@ final class RemoteImageRedirectGuard: NSObject, URLSessionTaskDelegate, @uncheck
         self.resolve = resolve
     }
 
-    /// Redirects followed so far.
-    var redirectCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return hops
-    }
-
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
@@ -394,9 +449,22 @@ enum RemoteImageFetcher {
               let host = url.host else {
             throw RemoteImageFetchError.notAllowedURL
         }
-        guard await RemoteImageHostPolicy.hostIsReachable(host, resolve: transport.resolve) else {
-            throw RemoteImageFetchError.privateAddress
+        guard !RemoteImageHostPolicy.isRefusedHost(host) else {
+            throw RemoteImageFetchError.notAllowedURL
         }
+        var bare = host.lowercased()
+        if bare.hasPrefix("["), bare.hasSuffix("]") { bare = String(bare.dropFirst().dropLast()) }
+        if RemoteImageHostPolicy.literalAddress(bare) == nil {
+            guard let addresses = await transport.resolve(bare), !addresses.isEmpty else {
+                throw RemoteImageFetchError.unresolved
+            }
+            guard addresses.allSatisfy(RemoteImageHostPolicy.isPublic) else {
+                throw RemoteImageFetchError.privateAddress
+            }
+        }
+        await RemoteImageFetchGate.shared.acquire()
+        defer { Task { await RemoteImageFetchGate.shared.release() } }
+        try Task.checkCancellation()
         let (data, response) = try await transport.fetch(
             RemoteImageFetchPolicy.request(for: url), RemoteImageFetchPolicy.maxImageBytes)
         guard let http = response as? HTTPURLResponse else { throw RemoteImageFetchError.badStatus }
@@ -420,29 +488,90 @@ enum RemoteImageFetcher {
         return FetchedRemoteImage(url: urlString, mimeType: mime, data: data)
     }
 
+    /// What `fetchAll` learned.
+    struct Batch: Sendable {
+        var images: [String: FetchedRemoteImage] = [:]
+        /// URLs the rules refused or the server answered with something
+        /// unusable: not asked again this run. Transient failures (offline,
+        /// timeout, DNS, cancellation) and URLs never started are absent.
+        var refused: Set<String> = []
+    }
+
     /// Fetches `urls` with at most `RemoteImageFetchPolicy.concurrency` in
-    /// flight. Returns the successes by URL; failures are simply absent.
-    /// Stops starting new requests when the task is cancelled.
-    static func fetchAll(_ urls: [String],
-                         transport: RemoteImageTransport) async -> [String: FetchedRemoteImage] {
-        await withTaskGroup(of: FetchedRemoteImage?.self,
-                            returning: [String: FetchedRemoteImage].self) { group in
-            var out: [String: FetchedRemoteImage] = [:]
+    /// flight, stopping before starting new requests once `byteBudget` bytes
+    /// arrived or the task is cancelled.
+    static func fetchAll(_ urls: [String], byteBudget: Int = RemoteImageFetchPolicy.maxMessageBytes,
+                         transport: RemoteImageTransport) async -> Batch {
+        await withTaskGroup(of: (String, Result<FetchedRemoteImage, Error>).self,
+                            returning: Batch.self) { group in
+            var batch = Batch()
+            var received = 0
             var next = 0
             while next < urls.count, next < RemoteImageFetchPolicy.concurrency {
                 let url = urls[next]
-                group.addTask { try? await fetch(url, transport: transport) }
                 next += 1
+                group.addTask { await attempt(url, transport: transport) }
             }
-            while let result = await group.next() {
-                if let image = result { out[image.url] = image }
-                if next < urls.count, !Task.isCancelled {
+            while let item = await group.next() {
+                switch item.1 {
+                case .success(let image):
+                    batch.images[item.0] = image
+                    received += image.data.count
+                case .failure(let error):
+                    if isRefusal(error) { batch.refused.insert(item.0) }
+                }
+                if next < urls.count, received < byteBudget, !Task.isCancelled {
                     let url = urls[next]
-                    group.addTask { try? await fetch(url, transport: transport) }
                     next += 1
+                    group.addTask { await attempt(url, transport: transport) }
                 }
             }
-            return out
+            return batch
+        }
+    }
+
+    private static func attempt(_ url: String, transport: RemoteImageTransport)
+        async -> (String, Result<FetchedRemoteImage, Error>) {
+        do {
+            return (url, .success(try await fetch(url, transport: transport)))
+        } catch {
+            return (url, .failure(error))
+        }
+    }
+
+    /// A refusal is a rule or a server answer, never the network failing.
+    static func isRefusal(_ error: Error) -> Bool {
+        if let refusal = error as? RemoteImageFetchError { return refusal != .unresolved }
+        return false
+    }
+}
+
+/// App-wide limit on remote-image requests in flight.
+actor RemoteImageFetchGate {
+    static let shared = RemoteImageFetchGate(limit: RemoteImageFetchPolicy.globalConcurrency)
+
+    private let limit: Int
+    private var inFlight = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var peak = 0
+
+    init(limit: Int) { self.limit = limit }
+
+    func acquire() async {
+        if inFlight < limit {
+            inFlight += 1
+            peak = max(peak, inFlight)
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+        peak = max(peak, inFlight)
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            inFlight = max(0, inFlight - 1)
+        } else {
+            waiters.removeFirst().resume()
         }
     }
 }

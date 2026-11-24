@@ -97,14 +97,18 @@ final class RemoteImageCacheTests: XCTestCase {
         return Server { [self] url in png(seeds[url] ?? 9) }
     }
 
-    /// The pane's open: the card's decision, then the resolve.
+    /// The pane's open through its real gate (`RemoteImageRendering.paneStep`
+    /// with the card's decision), then the resolve it starts.
     private func open(_ message: Message, store: RemoteImageStore?, server: Server,
-                      allowed: Bool = true, base: String? = nil) async -> RemoteInlinedBody? {
-        let html = base ?? message.bodyHTML ?? ""
-        return await RemoteImageResolver.resolveIfAllowed(
-            allowed, messageId: message.id, accountId: message.accountId, baseHTML: html,
-            preInlineBytes: html.utf8.count, baseIsCIDInlined: false,
-            fontScale: 1.0, store: store, transport: server.transport, onPartial: { _ in })
+                      allowed: Bool = true) async -> RemoteInlinedBody? {
+        let html = message.bodyHTML ?? ""
+        guard case .resolve(let baseIsCID) = RemoteImageRendering.paneStep(
+            allowRemoteImages: allowed, cidResolveInFlight: false, cidInlined: false,
+            remoteBody: nil) else { return nil }
+        return await RemoteImageResolver.resolve(
+            messageId: message.id, accountId: message.accountId, baseHTML: html,
+            preInlineBytes: html.utf8.count, baseIsCIDInlined: baseIsCID,
+            fontScale: 1.0, store: store, transport: server.transport)
     }
 
     private func rowCount(_ pool: DatabasePool, messageId: String? = nil) throws -> Int {
@@ -253,8 +257,8 @@ final class RemoteImageCacheTests: XCTestCase {
         // The sender adds an image: the body now has one cached, one new.
         let both = html([a, b])
         let partials = PartialLog()
-        let final = await RemoteImageResolver.resolveIfAllowed(
-            true, messageId: one.id, accountId: me, baseHTML: both, preInlineBytes: both.utf8.count,
+        let final = await RemoteImageResolver.resolve(
+            messageId: one.id, accountId: me, baseHTML: both, preInlineBytes: both.utf8.count,
             baseIsCIDInlined: false, fontScale: 1, store: store,
             transport: sender.transport, onPartial: { partials.add($0) })
         let partial = try XCTUnwrap(partials.bodies.first)
@@ -341,7 +345,7 @@ final class RemoteImageCacheTests: XCTestCase {
                                                cidInlined: false, remoteCandidateCount: 2)
         XCTAssertEqual(card, .remote(body))
         let candidate = HTMLBodyPrerenderSelection.candidate(
-            messageId: message.id, bodyHTML: body.html, remoteSuffix: body.contentSuffix)
+            messageId: message.id, remoteBody: body, cidInlined: false)
         XCTAssertEqual(candidate?.contentID, message.id + ":full:rimg-p1")
         var reopened = message
         reopened.bodyHTML = updated
@@ -484,7 +488,7 @@ final class RemoteImageCacheTests: XCTestCase {
                 .init(urlKey: "k-too-big", mimeType: "image/png",
                       data: Data(count: RemoteImageFetchPolicy.maxImageBytes + 1)),
             ]), now: Date())
-            XCTAssertEqual(written, 2, "SVG, oversized and over-the-cap images are skipped")
+            XCTAssertEqual(written, 1, "SVG, oversized and over-the-cap images are skipped")
             XCTAssertLessThanOrEqual(try RemoteImageCache.messageBytes(db, messageId: "\(self.me):m1"),
                                      RemoteImageFetchPolicy.maxMessageBytes)
             // Another account's message id is refused outright.
@@ -517,8 +521,8 @@ final class RemoteImageCacheTests: XCTestCase {
     func testBudgetsAndCaps() {
         XCTAssertEqual(RemoteImageCache.totalBudgetBytes, 200 * 1_024 * 1_024)
         XCTAssertEqual(InlineImageCache.totalBudgetBytes, 200 * 1_024 * 1_024, "separate budgets")
-        XCTAssertEqual(RemoteImageFetchPolicy.maxImageBytes, 3 * 1_024 * 1_024)
-        XCTAssertEqual(RemoteImageFetchPolicy.maxMessageBytes, 6 * 1_024 * 1_024)
+        XCTAssertEqual(RemoteImageFetchPolicy.maxImageBytes, 2 * 1_024 * 1_024)
+        XCTAssertEqual(RemoteImageFetchPolicy.maxMessageBytes, 5 * 512 * 1_024)
         XCTAssertEqual(RemoteImageFetchPolicy.maxImagesPerMessage, 40)
         XCTAssertEqual(RemoteImageFetchPolicy.maxRedirects, 3)
     }
@@ -586,6 +590,67 @@ final class RemoteImageCacheTests: XCTestCase {
         await store.flush()
         await store.clearAll()
         XCTAssertEqual(try rowCount(pool), 0)
+        await store.shutDown()
+        try close(pool)
+    }
+
+    // MARK: The pane's gate
+
+    func testPaneStepFollowsTheCardsDecision() {
+        let local = RemoteInlinedBody(html: "x", prep: .empty, phase: .final, needsNetwork: false,
+                                      inlinedCount: 1, baseIsCIDInlined: false)
+        var partial = local
+        partial.phase = .partial
+        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: false, cidResolveInFlight: false,
+                                                     cidInlined: false, remoteBody: local), .cancel,
+                       "blocked: nothing read, nothing fetched, any resolve cancelled")
+        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: true, cidResolveInFlight: true,
+                                                     cidInlined: false, remoteBody: nil), .waitForCID)
+        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: true, cidResolveInFlight: false,
+                                                     cidInlined: false, remoteBody: local), .markCachedUsed)
+        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: true, cidResolveInFlight: false,
+                                                     cidInlined: false, remoteBody: partial),
+                       .resolve(baseIsCIDInlined: false))
+        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: true, cidResolveInFlight: false,
+                                                     cidInlined: true, remoteBody: local),
+                       .resolve(baseIsCIDInlined: true), "a body built on another base is redone")
+    }
+
+    func testAnURLInFlightIsNotFetchedTwice() async throws {
+        let pool = try openPool()
+        let store = RemoteImageStore(db: pool)
+        let first = await store.claim(messageId: "m", urls: [a, b])
+        XCTAssertEqual(first, [a, b])
+        let second = await store.claim(messageId: "m", urls: [a, b])
+        XCTAssertEqual(second, [], "both in flight")
+        let other = await store.claim(messageId: "n", urls: [a])
+        XCTAssertEqual(other, [a], "per message")
+        await store.release(messageId: "m", urls: [a])
+        let again = await store.claim(messageId: "m", urls: [a, b])
+        XCTAssertEqual(again, [a])
+        await store.shutDown()
+        try close(pool)
+    }
+
+    func testTransientFailuresAreRetriedAndRefusalsAreNot() async throws {
+        let pool = try openPool()
+        let message = try await pool.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "m1", body: self.html([self.a, self.b]))
+        }
+        let offline = a
+        let transport = RemoteImageTransport(fetch: { request, _ in
+            if request.url!.absoluteString == offline { throw URLError(.notConnectedToInternet) }
+            return (Data("not an image".utf8),
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                    headerFields: ["Content-Type": "image/png"])!)
+        }, resolve: { _ in [[93, 184, 216, 34]] })
+        let store = RemoteImageStore(db: pool, flushDelayNanoseconds: 1_000_000)
+        _ = await RemoteImageResolver.resolve(
+            messageId: message.id, accountId: me, baseHTML: message.bodyHTML!, preInlineBytes: 0,
+            baseIsCIDInlined: false, fontScale: 1, store: store, transport: transport)
+        let failed = await store.failedKeys(messageId: message.id,
+                                            among: [RemoteImageHTML.urlKey(a), RemoteImageHTML.urlKey(b)])
+        XCTAssertEqual(failed, [RemoteImageHTML.urlKey(b)], "offline is not a refusal; not-an-image is")
         await store.shutDown()
         try close(pool)
     }

@@ -236,13 +236,6 @@ enum HTMLBodyPrerenderPolicy {
 
 /// Pure decision: which HTML fragment (if any) to pre-render for a neighbor.
 enum HTMLBodyPrerenderSelection {
-    /// Paint a neighbour only when its open renders the blocked variant
-    /// (`HTMLBodyPrerenderPolicy`): an open that loads remote images uses
-    /// another pool key, so the paint would be thrown away.
-    static func paintsNeighbor(opensWithRemoteImages: Bool) -> Bool {
-        HTMLBodyPrerenderPolicy.allowRemoteImages == opensWithRemoteImages
-    }
-
     struct Candidate: Equatable {
         let contentID: String
         let html: String
@@ -255,14 +248,29 @@ enum HTMLBodyPrerenderSelection {
     /// `cidInlined`: `bodyHTML` is the session copy with `cid:` images
     /// rewritten to `data:`; the content id then matches the one the card
     /// mounts (`…:cid`).
-    /// `remoteSuffix`: `RemoteInlinedBody.contentSuffix` when `bodyHTML`
-    /// carries cached remote images.
+    /// The candidate for a body with remote images inlined, decided as the
+    /// card decides it: from its prep (authored head when there is one),
+    /// gated on the pre-inline sizes, with no rescan of the inlined body.
+    static func candidate(messageId: String, remoteBody body: RemoteInlinedBody,
+                          cidInlined: Bool) -> Candidate? {
+        let suffix = (cidInlined ? ":cid" : "") + body.contentSuffix
+        if let head = body.prep.htmlHead {
+            guard !HTMLBodyRenderPolicy.requiresExplicitLoad(
+                byteCount: body.prep.htmlHeadBytes, userApproved: false) else { return nil }
+            return Candidate(contentID: messageId + ":authored" + suffix, html: head,
+                             byteCount: body.prep.htmlHeadBytes)
+        }
+        guard !HTMLBodyRenderPolicy.requiresExplicitLoad(
+            byteCount: body.prep.htmlBytes, userApproved: false) else { return nil }
+        return Candidate(contentID: messageId + ":full" + suffix, html: body.html,
+                         byteCount: body.prep.htmlBytes)
+    }
+
     static func candidate(messageId: String, bodyHTML: String?,
-                          cidInlined: Bool = false,
-                          remoteSuffix: String = "") -> Candidate? {
+                          cidInlined: Bool = false) -> Candidate? {
         guard let html = bodyHTML, !html.isEmpty else { return nil }
         let fullBytes = html.utf8.count
-        let suffix = (cidInlined ? ":cid" : "") + remoteSuffix
+        let suffix = cidInlined ? ":cid" : ""
 
         if fullBytes <= HTMLBodyRenderPolicy.maximumAutomaticBytes,
            let head = QuotedReply.authoredHTMLHead(html) {

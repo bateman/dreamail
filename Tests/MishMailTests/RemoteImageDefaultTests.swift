@@ -224,8 +224,11 @@ final class RemoteImageDefaultTests: XCTestCase {
                 policy: row.policy, fromHeader: row.from, messageLabelIds: row.labels,
                 senderAuthenticated: row.auth, threadInSpam: row.threadInSpam,
                 vipEmails: vips, messageOptIn: false, threadOptIn: false)
-            XCTAssertEqual(HTMLBodyPrerenderSelection.paintsNeighbor(
-                opensWithRemoteImages: opens), row.paints, "row \(i)")
+            // A body with no cacheable remote image: painted only when its
+            // open is blocked (`RemoteImageRendering.prerender`).
+            XCTAssertEqual(RemoteImageRendering.prerender(
+                opensWithRemoteImages: opens, remoteBody: nil, cidInlined: false,
+                remoteCandidateCount: 0) != nil, row.paints, "row \(i)")
         }
     }
 

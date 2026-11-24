@@ -119,19 +119,32 @@ enum RemoteImageResolver {
                                   preInlineBytes: preInlineBytes,
                                   baseIsCIDInlined: baseIsCIDInlined, fontScale: fontScale))
         }
-        let fetched = await RemoteImageFetcher.fetchAll(found.misses, transport: transport)
+        // Within the message's byte cap; never a URL another resolve of the
+        // same message is already fetching.
+        let room = RemoteImageFetchPolicy.maxMessageBytes - found.cachedBytes
+        var mine: [String] = []
+        if room > 0 {
+            if let store {
+                mine = await store.claim(messageId: messageId, urls: found.misses)
+            } else {
+                mine = found.misses
+            }
+        }
+        var batch = RemoteImageFetcher.Batch()
+        if !mine.isEmpty {
+            batch = await RemoteImageFetcher.fetchAll(mine, byteBudget: room, transport: transport)
+        }
         // In document order, within the message's cap.
         var used = found.cachedBytes
         var newImages: [RemoteImageCache.Image] = []
-        var failedKeys: [String] = []
-        for url in found.misses {
+        var refusedKeys: [String] = []
+        for url in mine {
             let key = RemoteImageHTML.urlKey(url)
-            guard let image = fetched[url] else {
-                failedKeys.append(key)
-                continue
-            }
+            if batch.refused.contains(url) { refusedKeys.append(key) }
+            guard let image = batch.images[url] else { continue }
             guard used + image.data.count <= RemoteImageFetchPolicy.maxMessageBytes else {
-                failedKeys.append(key)
+                // Over the message's cap: a rule, not the network.
+                refusedKeys.append(key)
                 continue
             }
             used += image.data.count
@@ -140,37 +153,19 @@ enum RemoteImageResolver {
                                                     data: image.data))
         }
         if let store {
-            // A cancelled open is not a refusal: those URLs are tried again.
-            if !Task.isCancelled, !failedKeys.isEmpty {
-                await store.noteFailed(messageId: messageId, urlKeys: failedKeys)
+            if !refusedKeys.isEmpty {
+                await store.noteFailed(messageId: messageId, urlKeys: refusedKeys)
             }
             if !newImages.isEmpty {
                 await store.remember(RemoteImageCache.Pending(
                     messageId: messageId, accountId: accountId, images: newImages))
             }
+            await store.release(messageId: messageId, urls: mine)
         }
         guard !Task.isCancelled else { return nil }
         return build(baseHTML: baseHTML, dataURLs: dataURLs, phase: .final,
                      preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCIDInlined,
                      fontScale: fontScale)
-    }
-
-    /// The reading pane's entry point for one open message. `allowed` is the
-    /// card's `RemoteImagePolicy.autoLoads` decision (opt-ins included):
-    /// when false nothing at all happens (no cache read, no request).
-    /// `preInlineBytes`: the stored body's size (the oversized-body gate
-    /// keys on it, not on the inlined one).
-    static func resolveIfAllowed(
-        _ allowed: Bool, messageId: String, accountId: String, baseHTML: String,
-        preInlineBytes: Int, baseIsCIDInlined: Bool, fontScale: Double,
-        store: RemoteImageStore?, transport: RemoteImageTransport,
-        onPartial: @escaping @Sendable (RemoteInlinedBody) async -> Void
-    ) async -> RemoteInlinedBody? {
-        guard allowed else { return nil }
-        return await resolve(
-            messageId: messageId, accountId: accountId, baseHTML: baseHTML,
-            preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCIDInlined,
-            fontScale: fontScale, store: store, transport: transport, onPartial: onPartial)
     }
 
     /// Rewrite and prep: whole-body string work, off the main actor.
@@ -179,7 +174,8 @@ enum RemoteImageResolver {
                       baseIsCIDInlined: Bool, fontScale: Double) -> RemoteInlinedBody {
         let rewritten = RemoteImageHTML.rewrite(baseHTML, dataURLs: dataURLs)
         let prep = MessageHTMLPrepBuilder.cidInlinedPrep(
-            inlinedHTML: rewritten.html, preInlineBytes: preInlineBytes, fontScale: fontScale)
+            inlinedHTML: rewritten.html, preInlineBytes: preInlineBytes, fontScale: fontScale,
+            countRemoteCandidates: false)
         return RemoteInlinedBody(
             html: rewritten.html, prep: prep, phase: phase,
             needsNetwork: rewritten.needsNetwork, inlinedCount: rewritten.rewrittenCount,
@@ -211,6 +207,34 @@ enum RemoteImageRendering {
         }
         return remoteCandidateCount > 0 ? .baseBlockedWhileResolving
             : .base(allowRemoteImages: true)
+    }
+
+    /// What the reading pane does for one card, each time the card's
+    /// decision or base changes.
+    enum PaneStep: Equatable {
+        /// Images not allowed (never were, or no longer: the card left, the
+        /// message went to Spam, the policy became Ask): stop any resolve of
+        /// this message; nothing is read or fetched.
+        case cancel
+        /// A `cid:` resolve is changing the base: resolve after it.
+        case waitForCID
+        /// The complete body came from the cache (warmed payload): only
+        /// mark it used.
+        case markCachedUsed
+        /// Read the cache and fetch what is missing, on this base.
+        case resolve(baseIsCIDInlined: Bool)
+    }
+
+    /// The gate every pane resolve goes through: `allowRemoteImages` is the
+    /// card's `RemoteImagePolicy.autoLoads` decision, opt-ins included.
+    static func paneStep(allowRemoteImages: Bool, cidResolveInFlight: Bool, cidInlined: Bool,
+                         remoteBody: RemoteInlinedBody?) -> PaneStep {
+        guard allowRemoteImages else { return .cancel }
+        if cidResolveInFlight { return .waitForCID }
+        if let body = remoteBody, body.baseIsCIDInlined == cidInlined, body.phase == .final {
+            return .markCachedUsed
+        }
+        return .resolve(baseIsCIDInlined: cidInlined)
     }
 
     /// What the neighbour pre-render paints (always with the blocked CSP),

@@ -118,32 +118,113 @@ final class RemoteImageHTMLTests: XCTestCase {
 
     // MARK: srcset
 
-    func testSrcsetIsDroppedWhenSrcIsCached() {
-        let html = "<img srcset=\"\(b) 2x\" src=\"\(a)\" sizes=\"100vw\">"
-        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [a])
-        let out = rewrite(html, [a: dataA])
-        XCTAssertFalse(out.html.contains("srcset"))
-        XCTAssertFalse(out.html.contains("sizes"))
-        XCTAssertTrue(out.html.contains("src=\"\(dataA)\""))
+    func testSrcsetCandidateWinsKeepsItsDensityAndDropsSrc() {
+        let html = "<img srcset=\"\(a) 1x, \(b) 2x\" src=\"\(a)\" sizes=\"100vw\">"
+        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [b], "what WebKit shows on Retina")
+        let out = rewrite(html, [b: dataB])
+        XCTAssertTrue(out.html.contains("srcset=\"\(dataB) 2x\""), out.html)
+        XCTAssertFalse(out.html.contains("src=\"\(a)"), "src goes")
+        XCTAssertFalse(out.html.contains("sizes"), "sizes is meaningless with a density")
         XCTAssertFalse(out.needsNetwork)
     }
 
-    func testSrcsetIsKeptLiveWhenSrcIsNotCached() {
+    func testWidthDescriptorKeepsSizes() {
+        let html = "<img srcset=\"\(a) 300w, \(b) 900w\" sizes=\"50vw\">"
+        let out = rewrite(html, [b: dataB])
+        XCTAssertTrue(out.html.contains("srcset=\"\(dataB) 900w\""), out.html)
+        XCTAssertTrue(out.html.contains("sizes=\"50vw\""))
+        XCTAssertFalse(out.needsNetwork)
+    }
+
+    func testUncachedSrcsetStaysLive() {
         let html = "<img srcset=\"\(b) 2x\" src=\"\(a)\">"
-        let out = rewrite(html, [:])
-        XCTAssertEqual(out.html, html)
+        let out = rewrite(html, [a: dataA])
+        XCTAssertEqual(out.html, html, "the srcset candidate is what shows: nothing to rewrite")
         XCTAssertTrue(out.needsNetwork)
     }
 
-    func testSrcsetOnlyUsesOneCandidate() {
+    func testMixedSrcsetIsLeftLive() {
+        let html = "<img srcset=\"http://x.example.com/1.png 1x, \(b) 2x\" src=\"\(a)\">"
+        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [])
+        XCTAssertTrue(rewrite(html, [a: dataA]).needsNetwork)
+    }
+
+    func testSrcsetChoice() {
         let c = "https://img.example.com/c.png"
-        XCTAssertEqual(RemoteImageHTML.chooseSrcsetCandidate("\(a) 1x, \(b) 2x, \(c) 3x"), b)
-        XCTAssertEqual(RemoteImageHTML.chooseSrcsetCandidate("\(a) 300w, \(b) 900w"), b)
-        XCTAssertEqual(RemoteImageHTML.chooseSrcsetCandidate("\(a)"), a)
-        let html = "<img srcset=\"\(a) 1x, \(b) 2x\" alt=x>"
-        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [b])
-        let out = rewrite(html, [b: dataB])
-        XCTAssertEqual(out.html, "<img src=\"\(dataB)\" alt=x>")
+        let x = RemoteImageHTML.chooseSrcsetCandidate("\(a) 1x, \(b) 2x, \(c) 3x")
+        XCTAssertEqual(x?.url, b)
+        XCTAssertEqual(x?.descriptor, "2x")
+        let w = RemoteImageHTML.chooseSrcsetCandidate("\(a) 300w, \(b) 900w")
+        XCTAssertEqual(w?.url, b)
+        XCTAssertEqual(w?.descriptor, "900w")
+        XCTAssertEqual(RemoteImageHTML.chooseSrcsetCandidate("\(a)")?.descriptor, "1x")
+        XCTAssertEqual(RemoteImageHTML.chooseSrcsetCandidate("\(a) 1.5x")?.descriptor, "1.5x")
+        let only = "<img srcset=\"\(a) 1x, \(b) 2x\" alt=x>"
+        XCTAssertEqual(rewrite(only, [b: dataB]).html, "<img srcset=\"\(dataB) 2x\" alt=x>")
+    }
+
+    // MARK: Output budget
+
+    /// One cached image referenced ten thousand times: the rewrite stays
+    /// within its budget; the occurrences past it stay remote.
+    func testRepeatedReferencesCannotInflateTheDocument() {
+        let big = "data:image/png;base64," + String(repeating: "A", count: 1_000_000)
+        let html = String(repeating: "<img src=\"\(a)\">", count: 10_000)
+        let out = rewrite(html, [a: big])
+        XCTAssertLessThanOrEqual(out.html.utf8.count, html.utf8.count + RemoteImageHTML.outputBudget)
+        XCTAssertGreaterThan(out.rewrittenCount, 0)
+        XCTAssertLessThan(out.rewrittenCount, 10_000)
+        XCTAssertTrue(out.needsNetwork, "the rest load live")
+        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [a])
+        // Same through CSS, inline and in a block.
+        let css = String(repeating: "<div style=\"background:url(\(a))\"></div>", count: 10_000)
+            + "<style>" + String(repeating: ".x{background:url(\(a))}", count: 10_000) + "</style>"
+        let cssOut = rewrite(css, [a: big])
+        XCTAssertLessThanOrEqual(cssOut.html.utf8.count, css.utf8.count + RemoteImageHTML.outputBudget)
+        XCTAssertTrue(cssOut.needsNetwork)
+    }
+
+    func testTheBudgetCoversTheMessageCap() {
+        XCTAssertGreaterThanOrEqual(RemoteImageHTML.outputBudget,
+                                    RemoteImageFetchPolicy.maxMessageBytes / 3 * 4)
+        XCTAssertLessThanOrEqual(RemoteImageFetchPolicy.maxMessageBytes / 3 * 4 + 256 * 1_024,
+                                 CIDInlineCachePolicy.maximumBytes,
+                                 "a message's cached images fit the in-memory body cap")
+    }
+
+    // MARK: URLs the app cannot parse
+
+    func testUnparsableHTTPSURLsStillNeedTheNetwork() {
+        for raw in ["https:/img.example.com/a.png", "https:img.example.com/a.png",
+                    "https:\\\\img.example.com\\a.png", " HTTPS:/x"] {
+            for html in ["<img src=\"\(raw)\">", "<td background=\"\(raw)\">"] {
+                let out = rewrite(html, [:])
+                XCTAssertTrue(out.needsNetwork, html)
+            }
+        }
+    }
+
+    // MARK: link
+
+    func testStyleSheetAndMicrodataLinksDoNotNeedTheNetwork() {
+        for html in ["<link rel=\"stylesheet\" href=\"https://css.example.com/s.css\">",
+                     "<link itemprop=\"url\" href=\"https://x.example.com/\">",
+                     "<link rel=canonical href=https://x.example.com/>"] {
+            XCTAssertFalse(rewrite(html, [:]).needsNetwork, html)
+        }
+        for html in ["<link rel=preload as=image href=\"\(a)\">",
+                     "<link rel=\"shortcut icon\" href=\"\(a)\">",
+                     "<link rel=prefetch href=\"\(a)\">"] {
+            XCTAssertTrue(rewrite(html, [:]).needsNetwork, html)
+        }
+    }
+
+    func testLongDataURLValuesAreSkipped() {
+        let long = "data:image/png;base64," + String(repeating: "Q", count: 20_000)
+        let html = "<img src=\"\(long)\"><img src=\"\(a)\">"
+        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [a])
+        let out = rewrite(html, [a: dataA])
+        XCTAssertTrue(out.html.hasPrefix("<img src=\"\(long)\">"))
         XCTAssertFalse(out.needsNetwork)
     }
 

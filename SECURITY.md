@@ -33,11 +33,16 @@ stricter). Mail in Spam and conversations that were not opened (including
 neighbour pre-render) never load them without a click.
 
 **Cached once per message.** When a message is opened with its remote
-images allowed, MishMail's own client (not WebKit) downloads each image of
-that message once and keeps it in the encrypted database with the message
-(see "What deleting means"); every later open, after a relaunch too, shows
-it from there with no request. So the sender sees one fetch per image per
-message, from the app's client, instead of one per open. Nothing is
+images allowed, MishMail's own client (not WebKit) downloads each ordinary
+image of that message once and keeps it in the encrypted database with the
+message (see "What deleting means"); later opens, after a relaunch too, show
+it from there with no request. This reduces repeat requests; it is not a
+defence against tracking: a sender can make an image uncacheable (an empty
+or 204 answer, SVG, an oversized or slow image, `<picture>`, `image-set()`,
+CSS escapes, a 41st image), and that image then loads from WebKit on every
+open. The app's client is distinguishable from WebKit, and both may contact
+a sender for the same message (the app for what it caches, WebKit for the
+rest). Nothing is
 downloaded for mail that is not open, nor for a message whose images the
 policy blocks (Ask each time without a click, non-VIP senders, Spam): the
 cache never overrides the decision, and the neighbour pre-render and
@@ -49,20 +54,29 @@ prefetch only read what is already cached. The app's client:
 - follows at most 3 redirects, each re-checked against the same rules;
 - refuses `localhost`, `.local`/`.internal`/single-label names, literal
   private, loopback, link-local, CGNAT or unique-local addresses, and names
-  whose DNS answer includes one (a DNS answer that changes between that
-  check and the connection is not caught);
-- keeps at most 3 MiB per image (enforced while streaming), 6 MiB and 40
-  images per message, raster images only (JPEG, PNG, GIF, WebP; animated GIF
-  stored as served) as checked by ImageIO, never SVG.
+  whose DNS answer includes one. Not caught: a DNS answer that changes
+  between that check and the connection, and a system proxy or PAC file,
+  which resolves and connects for the app, so the check does not govern the
+  destination there;
+- keeps at most 2 MiB per image (enforced while streaming), 2.5 MiB and 40
+  images per message, at most 6 requests at a time app-wide, raster images
+  only (JPEG, PNG, GIF, WebP; animated GIF stored as served), never SVG.
+- checks the leading bytes against those four formats before anything else,
+  then lets ImageIO read the image's header (no pixel decode) in the app
+  process. This is new attack surface in the app process for those four
+  parsers' header code; every other format is rejected before ImageIO sees
+  it. Decoding stays WebKit's, as before.
 
-What is cached: `<img src>` (its `srcset` is then dropped, as Gmail does; an
-`<img>` with only a `srcset` uses one candidate), `background` attributes,
-and CSS `url()` images in `style` attributes and `<style>` blocks. What still
-loads live from WebKit when allowed, exactly as before: `<picture>` sources,
-`<video poster>`, `<input type=image>`, SVG `<image>`, `image-set()`, CSS
-written with escapes, images beyond the caps, and anything the client
-refuses or fails to fetch (retried by the app on the next launch, not in the
-same run). A URL is stored only as its SHA-256.
+What is cached: `<img>` images (with a `srcset`, the one candidate the app
+picks, kept with its density so Retina sharpness and size do not change;
+otherwise `src`), `background` attributes, and CSS `url()` images in `style`
+attributes and `<style>` blocks. What still loads live from WebKit when
+allowed, exactly as before: `<picture>` sources, `<video poster>`,
+`<input type=image>`, SVG `<image>`, `image-set()`, CSS written with
+escapes, images beyond the caps, anything the client refuses (asked again
+on the next launch, not in the same run) and anything it could not fetch
+for a network reason (asked again on the next open). A URL is stored only
+as its SHA-256.
 
 With images allowed, these risks remain:
 
@@ -142,7 +156,7 @@ happens to it:
   deletion, through the cascading deletes) and with their account (removal
   also deletes them by name), under the same overwrite and log truncation.
   This cache holds at most 200 MiB of its own (apart from the inline images'
-  200 MiB) and 6 MiB per message; beyond that the least recently used
+  200 MiB) and 2.5 MiB per message; beyond that the least recently used
   messages' images are deleted. Nothing is written outside the database (no
   HTTP cache, no temporary file); the app's client uses an ephemeral session
   with no disk cache.
