@@ -33,6 +33,11 @@ jobs:
       - name: Check workflow pinning and token scope
         run: python3 .github/scripts/check-workflows.py
 
+      # Swift packages pinned by commit in project.yml, matching the recorded
+      # pins: a version or branch rule would let a moved tag change the build.
+      - name: Check Swift package pins
+        run: python3 .github/scripts/check-package-pins.py
+
       - name: Test the CI checks
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
@@ -64,6 +69,8 @@ jobs:
 
       # DerivedData and the GRDB package checkout. Runs read the newest cache
       # for this Xcode and project file; only main (and manual runs) write one.
+      # The package pin is in project.yml (and checked to match the pins
+      # file), so a new pin starts from a cold package checkout.
       - name: Restore the build cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -77,6 +84,12 @@ jobs:
       # With no app on disk they skip, so the old order never ran them.
       - name: Build app
         run: make build
+
+      # The build resolved the packages (or reused a cached checkout): check
+      # that GRDB is at the pinned commit and its manifest declares the pinned
+      # binary checksum, which SwiftPM enforces on download.
+      - name: Check resolved packages against the pins
+        run: python3 .github/scripts/check-package-pins.py --resolved build/dd.noindex
 
       - name: Run unit tests
         run: |

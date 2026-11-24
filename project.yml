@@ -4,9 +4,13 @@ options:
   deploymentTarget:
     macOS: "14.0"
 packages:
+  # DuckDuckGo's GRDB build with SQLCipher, shipped as a prebuilt binary.
+  # Package tag 3.0.0 (GRDB 7.4.1, SQLCipher 4.7.0), pinned by commit because
+  # a tag can be moved. CI checks what resolves against .github/package-pins.txt;
+  # to upgrade, change both together (docs/DEPENDENCIES.md).
   GRDB:
     url: https://github.com/duckduckgo/GRDB.swift
-    exactVersion: 3.0.0
+    revision: 46098847eeabdb008f238bef5750a8e64097b6ed
 targets:
   MishMail:
     type: application

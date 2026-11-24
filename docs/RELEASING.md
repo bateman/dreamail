@@ -42,6 +42,10 @@ everyone." This doc is about `make release`.
   certificate, no paid program) — see [Signing tiers](#signing-tiers). Run
   `make signing-doctor` to check. Pure ad-hoc (no team at all) is refused:
   an ad-hoc signature provides no publisher identity for the updater.
+- **Dependencies**: GRDB/SQLCipher is pinned by commit and binary checksum;
+  its provenance, licences and upgrade steps are in
+  [DEPENDENCIES.md](DEPENDENCIES.md). A published build should carry the
+  GRDB (MIT) and SQLCipher (BSD 3-Clause) notices.
 
 ## Release checklist
 
