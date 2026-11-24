@@ -128,6 +128,7 @@ make build    # generate + build without launching
 make test     # run the hostless unit tests
 make ui-test  # run the demo-inbox UI smoke test
 make hooks    # pre-commit runs unit tests; post-merge removes merged branches and worktrees
+make checks   # shellcheck + Python script tests + CI pin checks (no Xcode)
 ```
 
 You can also open `MishMail.xcodeproj` in Xcode. Configure the free Personal

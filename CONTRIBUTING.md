@@ -12,6 +12,7 @@ make test      # generate the project + run the unit tests
 make ui-test   # launch the fictional inbox and smoke-test the core UI
 make build     # build the app
 make run       # open the isolated Debug app with fictional demo mail
+make checks    # shellcheck + Python script tests + CI pin checks (no Xcode)
 ```
 
 The Xcode project is **generated** from [`project.yml`](project.yml) by
