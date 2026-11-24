@@ -573,6 +573,46 @@ struct ContentView: View {
                 OnboardingView()
             }
         }
+        // Read-only cache (F-02): a persistent strip, separate from the error
+        // banner, so nothing dismisses it and no later error replaces it.
+        .overlay(alignment: .top) {
+            if store.storageState == .readOnly, let message = store.storageState.statusMessage {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "lock.trianglebadge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Text(message)
+                        .font(.system(size: 12))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 520, alignment: .leading)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: PMRadius.md))
+                .overlay(RoundedRectangle(cornerRadius: PMRadius.md).strokeBorder(.orange.opacity(0.4)))
+                .padding(.top, 8)
+                .accessibilityElement(children: .combine)
+            }
+        }
+        // Plaintext cache too old to read without migrating it (F-02): show no
+        // mailbox — it would look empty — and no onboarding either.
+        .overlay {
+            if !store.storageState.showsMailbox, let message = store.storageState.statusMessage {
+                VStack(spacing: 14) {
+                    Image(systemName: "lock.trianglebadge.exclamationmark")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.orange)
+                    Text("Finish encrypting your mail")
+                        .font(.title2.weight(.semibold))
+                    Text(message)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 440)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(40)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background)
+                .accessibilityElement(children: .combine)
+            }
+        }
         .onChange(of: store.undoAction?.id) {
             guard let undo = store.undoAction else { return }
             postAccessibilityAnnouncement("\(undo.label). Undo is available.")

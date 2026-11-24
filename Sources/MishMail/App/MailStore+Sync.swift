@@ -15,6 +15,11 @@ extension MailStore {
         // up failed syncs and error banners over the screenshot fixtures.
         if demoMode { return }
         guard !isShuttingDown else { return }
+        // Read-only cache (F-02): the poll, the reconnect edge and the due
+        // sweeps (reminders, snoozes, scheduled sends) all write, and a sweep
+        // whose clearing write is refused re-fires every tick — one overdue
+        // reminder would notify once a minute. One gate for all of them.
+        guard storageState.allowsWrites else { return }
         // Catch snoozes that came due while the app was closed.
         await fireDueSnoozes()
         guard !isShuttingDown else { return }
@@ -159,6 +164,10 @@ extension MailStore {
             return
         }
         guard !isShuttingDown else { return }
+        // Read-only cache (F-02): every fetched row would be refused, and
+        // the offline queues could not record what they sent. Reached from
+        // the toolbar and menu as well as the (already gated) poll.
+        guard cacheAcceptsWrites(silent: !interactive) else { return }
         // Covers every exit below, including the no-accounts and early-out
         // paths — all of them count as "we just looked".
         defer { lastSyncAttemptedAt = Date() }
@@ -285,6 +294,7 @@ extension MailStore {
         // A follow-up sync (after a send or failed edit) must not restart a
         // pass for an account that is being removed.
         guard !isShuttingDown, isKnownAccount(accountId) else { return }
+        guard cacheAcceptsWrites(silent: true) else { return }
         let engine = engines[accountId] ?? SyncEngine(accountId: accountId)
         engines[accountId] = engine
 

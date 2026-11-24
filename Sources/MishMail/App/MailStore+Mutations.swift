@@ -158,6 +158,8 @@ extension MailStore {
     /// belongs to one account (reauthorization, quota) skips that account
     /// only; rows of a removed account are deleted (see `ThreadOpReplay`).
     func flushPendingThreadOps() async {
+        // Only syncAll calls this, and it is gated on the cache being
+        // writable (F-02): a replayed op could not leave a read-only queue.
         guard !demoMode, !isShuttingDown, !pendingOpsFlushInFlight else { return }
         pendingOpsFlushInFlight = true
         defer { pendingOpsFlushInFlight = false }

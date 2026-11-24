@@ -18,6 +18,10 @@ extension MailStore {
             return
         }
         guard !isShuttingDown, !connectingAccount else { return }
+        // Read-only cache (F-02): refuse before OAuth, or the refresh token
+        // lands in the Keychain and the account insert then fails, leaving
+        // an orphan token for an account the app never shows.
+        guard cacheAcceptsWrites() else { return }
         accountSignInTask = Task {
             defer { accountSignInTask = nil }
             do {
@@ -67,6 +71,11 @@ extension MailStore {
             _ = exitDemoMode()
             return
         }
+        // Read-only cache (F-02): refuse before anything changes. Removal
+        // deletes the Keychain token first and then purges the rows; with
+        // the purge refused, the token would be gone while the account and
+        // its mail stayed on disk and came back on the next reload.
+        guard cacheAcceptsWrites() else { return }
         let pool = db
         // Stop the account's sync first: a pass still running would write
         // rows for an account that is being deleted. Drop the account from
