@@ -14,6 +14,7 @@ import SwiftUI
 /// The list is an in-window overlay (not a Menu/popover) so the focused
 /// control keeps receiving key presses while it is open.
 struct FromIdentityPicker: View {
+    @Environment(\.mailAccent) private var accent
     @Environment(MailStore.self) private var store
     let requestID: UUID
     let identities: [SendIdentity]
@@ -45,7 +46,7 @@ struct FromIdentityPicker: View {
             if canChoose {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(focused ? Color.mailAccent : .secondary)
+                    .foregroundStyle(focused ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
             }
         }
         .padding(.horizontal, 7)
@@ -56,7 +57,7 @@ struct FromIdentityPicker: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: PMRadius.sm)
-                .strokeBorder(Color.mailAccent.opacity(focused ? 0.9 : 0), lineWidth: 1.5)
+                .strokeBorder(.accentFill.opacity(focused ? 0.9 : 0), lineWidth: 1.5)
         )
         .animation(.easeOut(duration: 0.12), value: focused)
         .animation(.easeOut(duration: 0.12), value: hovering)
@@ -116,7 +117,7 @@ struct FromIdentityPicker: View {
     }
 
     private var chromeFill: Color {
-        if focused { return Color.mailAccent.opacity(0.10) }
+        if focused { return accent.fill.opacity(0.10) }
         if hovering, canChoose { return Color.primary.opacity(0.06) }
         return .clear
     }
@@ -158,7 +159,7 @@ struct FromIdentityPicker: View {
             HStack(alignment: .center, spacing: 8) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.mailAccent)
+                    .foregroundStyle(.accentForeground)
                     .opacity(isSelected ? 1 : 0)
                     .frame(width: 12)
                 VStack(alignment: .leading, spacing: 1) {
@@ -183,7 +184,7 @@ struct FromIdentityPicker: View {
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
-            .background(isHighlighted ? Color.mailAccent.opacity(0.16) : .clear,
+            .background(.accentFill.opacity(isHighlighted ? 0.16 : 0),
                         in: RoundedRectangle(cornerRadius: PMRadius.xs))
             .contentShape(Rectangle())
         }

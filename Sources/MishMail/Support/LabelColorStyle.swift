@@ -178,16 +178,30 @@ struct LabelPillStyle: Equatable, Sendable {
 
     /// Approximate opaque color behind a pill. Content backgrounds match
     /// `Color.mailContent`; read rows add the list's 5% primary wash; the
-    /// selection is the system blue list highlight (see `surfaceColors`
-    /// for the inactive-window grey).
-    static func surfaceColor(_ surface: Surface, _ appearance: Appearance) -> LabelRGB {
-        surfaceColors(surface, appearance)[0]
+    /// selection is the list highlight: the custom accent when one is set
+    /// (`selectionFill`), else the system blue (see `surfaceColors` for the
+    /// inactive-window grey).
+    static func surfaceColor(_ surface: Surface, _ appearance: Appearance,
+                             selectionFill: LabelRGB? = nil) -> LabelRGB {
+        surfaceColors(surface, appearance, selectionFill: selectionFill)[0]
     }
 
-    /// Every color the surface can take. The selection highlight is blue
-    /// in a key window and grey when the window is inactive; a pill must
-    /// stand out on both.
-    static func surfaceColors(_ surface: Surface, _ appearance: Appearance) -> [LabelRGB] {
+    /// The system list highlight (default accent) in a key window.
+    static func systemSelection(_ appearance: Appearance) -> LabelRGB {
+        appearance == .light ? LabelRGB(hex: 0x0064E1) : LabelRGB(hex: 0x0058D0)
+    }
+
+    /// The unemphasized (inactive window, or list without focus) highlight.
+    static func inactiveSelection(_ appearance: Appearance) -> LabelRGB {
+        appearance == .light ? LabelRGB(hex: 0xDCDCDC) : LabelRGB(hex: 0x464646)
+    }
+
+    /// Every color the surface can take. The selection highlight is the
+    /// accent in a key window and grey when the window is inactive; a pill
+    /// must stand out on both. `selectionFill` is the custom accent the app
+    /// draws its selection in, nil for the system highlight.
+    static func surfaceColors(_ surface: Surface, _ appearance: Appearance,
+                              selectionFill: LabelRGB? = nil) -> [LabelRGB] {
         let content = appearance == .light ? LabelRGB(hex: 0xFFFFFF) : LabelRGB(hex: 0x191919)
         switch surface {
         case .content:
@@ -196,9 +210,7 @@ struct LabelPillStyle: Equatable, Sendable {
             let primary = appearance == .light ? LabelRGB.black : LabelRGB.white
             return [content.composited(under: primary, alpha: readRowWashOpacity)]
         case .selection:
-            return appearance == .light
-                ? [LabelRGB(hex: 0x0064E1), LabelRGB(hex: 0xDCDCDC)]
-                : [LabelRGB(hex: 0x0058D0), LabelRGB(hex: 0x464646)]
+            return [selectionFill ?? systemSelection(appearance), inactiveSelection(appearance)]
         }
     }
 
@@ -219,7 +231,8 @@ struct LabelPillStyle: Equatable, Sendable {
     static func resolve(_ colors: LabelColors,
                         appearance: Appearance,
                         surface: Surface = .content,
-                        shape: Shape = .chip) -> LabelPillStyle {
+                        shape: Shape = .chip,
+                        selectionFill: LabelRGB? = nil) -> LabelPillStyle {
         let ownFill = LabelRGB(hexString: colors.background)
         let fill = ownFill ?? neutralFill(appearance)
         let text: LabelRGB
@@ -232,7 +245,7 @@ struct LabelPillStyle: Equatable, Sendable {
         } else {
             text = fill.contrast(with: .black) >= fill.contrast(with: .white) ? .black : .white
         }
-        let behind = surfaceColors(surface, appearance)
+        let behind = surfaceColors(surface, appearance, selectionFill: selectionFill)
         let needsBorder = behind.contains {
             !fillStandsOut(fill, on: $0, surface: surface, shape: shape)
         }

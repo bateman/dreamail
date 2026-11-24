@@ -420,8 +420,8 @@ struct ComposeBodyEditor: NSViewRepresentable {
             let mono = NSFont.monospacedSystemFont(ofSize: fontSize - 1, weight: .regular)
             let heading = NSFont.systemFont(ofSize: fontSize + 2, weight: .semibold)
             let marker = NSColor.tertiaryLabelColor
-            let accent = NSColor.controlAccentColor
-            let codeBg = NSColor.controlAccentColor.withAlphaComponent(0.12)
+            let accent = MailAccent.current.nsForegroundOrSystem
+            let codeBg = MailAccent.current.nsFillOrSystem.withAlphaComponent(0.12)
             let mathColor = NSColor.systemPurple
 
             let full = NSRange(location: 0, length: storage.length)

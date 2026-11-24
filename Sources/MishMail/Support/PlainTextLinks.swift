@@ -134,17 +134,18 @@ enum PlainTextLinks {
 
     // MARK: - Attributed text
 
-    /// `text` unchanged, with `.link` on each detected range. Memoized: the
-    /// reading pane asks again on every view update.
-    static func attributed(_ text: String) -> AttributedString {
-        let key = text as NSString
+    /// `text` unchanged, with `.link` on each detected range, coloured with
+    /// the accent's text colour. Memoized per accent: the reading pane asks
+    /// again on every view update.
+    static func attributed(_ text: String, accent: MailAccent = .default) -> AttributedString {
+        let key = "\(accent.custom?.hexString ?? "default")\u{0}\(text)" as NSString
         if let hit = cache.object(forKey: key) { return hit.value }
-        let value = buildAttributed(text)
+        let value = buildAttributed(text, accent: accent)
         cache.setObject(Box(value), forKey: key, cost: key.length)
         return value
     }
 
-    private static func buildAttributed(_ text: String) -> AttributedString {
+    private static func buildAttributed(_ text: String, accent: MailAccent) -> AttributedString {
         let found = links(in: text)
         guard !found.isEmpty else { return AttributedString(text) }
         let ns = text as NSString
@@ -159,9 +160,9 @@ enum PlainTextLinks {
             piece.link = link.url
             // SwiftUI `Text` draws the SwiftUI color. The selectable text
             // view draws the AppKit color. Set both, or the link stays black.
-            piece.foregroundColor = Color.mailAccent
+            piece.foregroundColor = accent.foreground
             piece.underlineStyle = .single
-            piece.appKit.foregroundColor = .mailAccent
+            piece.appKit.foregroundColor = accent.nsForeground
             piece.appKit.underlineStyle = .single
             out.append(piece)
             cursor = NSMaxRange(link.range)

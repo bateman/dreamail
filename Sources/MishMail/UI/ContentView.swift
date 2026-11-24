@@ -1778,6 +1778,7 @@ private extension ContentView {
 
 struct Sidebar: View {
     @Environment(MailStore.self) var store
+    @Environment(\.mailAccent) private var accent
     /// `@Environment` has no projected value, so controls that need two-way
     /// access to the store go through this instead of `$store`.
     private var bound: Bindable<MailStore> { Bindable(store) }
@@ -1785,7 +1786,6 @@ struct Sidebar: View {
     // Driven by `/` (Gmail-style) via store.searchFocusToken.
     @FocusState private var searchFocused: Bool
     @State private var viewToDelete: SavedView?
-    @FocusState private var sidebarListFocused: Bool
 
     private var confirmingViewDeleteShown: Binding<Bool> {
         Binding(
@@ -1883,7 +1883,6 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
-            .focused($sidebarListFocused)
             .environment(\.defaultMinListRowHeight, 30)
             .scrollContentBackground(.hidden)
 
@@ -1984,13 +1983,23 @@ struct Sidebar: View {
                 .mailIconStyle(selected: selected)
         }
         .listItemTint(.monochrome)
-        .badge((badge ?? 0) > 0 ? badge! : 0)
+        .badge(sidebarBadge(badge))
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
-        .listRowBackground(AccentSelectionProbe(selected: selected, listFocused: sidebarListFocused))
+        // The selection capsule in the custom accent (`AccentSelectionBackground`).
+        .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
         .simultaneousGesture(
             TapGesture().onEnded { store.goTo(view) },
             including: reselect ? .gesture : .subviews)
         .tag(view)
+    }
+
+    /// The row's count, hidden at zero. With a custom accent the number
+    /// takes the selection ink on the painted capsule (white or black by
+    /// `AccentPalette.onFill`); with the default accent the system styles it.
+    private func sidebarBadge(_ count: Int?) -> Text? {
+        guard let count, count > 0 else { return nil }
+        let text = Text("\(count)")
+        return accent.isCustom ? text.foregroundStyle(SidebarBadgeStyle()) : text
     }
 
     /// Stable id for UI tests / a11y (e.g. `sidebar.inbox`, `sidebar.sent`).
@@ -2027,6 +2036,7 @@ private struct SearchPanelContentHeightKey: PreferenceKey {
 /// ↑/↓/Enter come in from the global key monitor via searchHighlight /
 /// searchActivateToken, so the flow is fully keyboard-driven after `/`.
 struct SearchResultsPanel: View {
+    @Environment(\.mailAccent) private var accent
     @Environment(MailStore.self) var store
     // Live thread matches; refreshed as the query changes.
     @State private var threadPreview: [MailThread] = []
@@ -2172,7 +2182,7 @@ struct SearchResultsPanel: View {
     }
 
     private func rowBackground(_ index: Int) -> some View {
-        (index == highlight ? Color.mailAccent.opacity(0.18) : Color.clear)
+        (index == highlight ? accent.fill.opacity(0.18) : Color.clear)
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -2504,7 +2514,7 @@ struct AccountSwitcher: View {
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.mailAccent)
+                        .foregroundStyle(.accentForeground)
                 }
                 if let shortcut, shortcut <= 9 {
                     Text("⌘\(shortcut)")
@@ -2635,9 +2645,7 @@ struct AccountLabelsEditor: View {
         .frame(width: 420)
         // The system color panel is shared and outlives the sheet: close it
         // on Save, Cancel or Esc so it does not linger over the app.
-        .onDisappear {
-            if NSColorPanel.sharedColorPanelExists { NSColorPanel.shared.close() }
-        }
+        .onDisappear { PickedColor.closeSharedPanel() }
     }
 
     /// The account's color as edited so far: `#rrggbb`, or nil for the default.
@@ -2677,23 +2685,11 @@ struct AccountLabelsEditor: View {
         }
         HStack(spacing: 5) {
             ForEach(Color.labelPalette, id: \.hex) { swatch in
-                let selected = chosen == LabelRGB.normalizedHex(swatch.hex)
-                Button {
+                ColorSwatch(name: swatch.name, hex: swatch.hex,
+                            selected: chosen == LabelRGB.normalizedHex(swatch.hex),
+                            accessibilityID: "accountLabelSwatch.\(account.id).\(swatch.name)") {
                     labelColors[account.id] = LabelRGB.normalizedHex(swatch.hex) ?? ""
-                } label: {
-                    LabelDot(colors: LabelColors(background: swatch.hex, text: nil), size: 14)
-                        .padding(2)
-                        .overlay {
-                            if selected {
-                                Circle().strokeBorder(Color.primary, lineWidth: 1.5)
-                            }
-                        }
                 }
-                .buttonStyle(.plain)
-                .help(swatch.name)
-                .accessibilityLabel(swatch.name)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-                .accessibilityIdentifier("accountLabelSwatch.\(account.id).\(swatch.name)")
             }
             Spacer(minLength: 4)
             Button("Default") { labelColors[account.id] = "" }

@@ -11,6 +11,7 @@ import SwiftUI
 /// - The `send_draft` confirm line comes from `pendingConfirmation.summary`
 ///   (built from the stored draft), never from the model's arguments.
 struct AskMishPanelView: View {
+    @Environment(\.mailAccent) private var accent
     let controller: AskMishController
     @Environment(MailStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -93,7 +94,7 @@ struct AskMishPanelView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Color.mailAccent)
+                    .foregroundStyle(.accentForeground)
                 conversationMenu
                 Spacer(minLength: 8)
                 Button {
@@ -351,7 +352,7 @@ struct AskMishPanelView: View {
                     .textSelection(.enabled)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
-                    .background(Color.mailAccent.opacity(0.16),
+                    .background(.accentFill.opacity(0.16),
                                 in: RoundedRectangle(cornerRadius: PMRadius.md))
                     .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
@@ -669,7 +670,7 @@ struct AskMishPanelView: View {
                     controller.confirmPendingTool(id: pending.id, allow: true)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(isSend ? .red : Color.mailAccent)
+                .tint(isSend ? .red : accent.fill)
                 // Create and send put mail on the wire. Return would confirm
                 // a keystroke meant for the chat, so those need a click.
                 .keyboardShortcut(nil)
@@ -817,7 +818,7 @@ struct AskMishPanelView: View {
             .font(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.mailAccent.opacity(0.16), in: Capsule())
+            .background(.accentFill.opacity(0.16), in: Capsule())
         }
         .buttonStyle(.plain)
         .help("Stop sending this conversation")
@@ -905,7 +906,7 @@ struct AskMishPanelView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(controller.includeSelectedThread
-                        ? Color.mailAccent.opacity(0.16)
+                        ? accent.fill.opacity(0.16)
                         : Color.primary.opacity(0.06),
                         in: Capsule())
         }
@@ -1159,7 +1160,7 @@ private struct ModelPickerPopover: View {
                     .font(.system(size: 12, weight: .medium))
                 Spacer(minLength: 4)
                 if provider.id == currentProviderID {
-                    Circle().fill(Color.mailAccent).frame(width: 5, height: 5)
+                    Circle().fill(.accentFill).frame(width: 5, height: 5)
                 }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 8, weight: .semibold))
@@ -1251,7 +1252,7 @@ private struct ModelPickerPopover: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color.mailAccent)
+                        .foregroundStyle(.accentForeground)
                 }
             }
             .padding(.horizontal, 8)
@@ -1260,7 +1261,7 @@ private struct ModelPickerPopover: View {
         }
         .buttonStyle(.plain)
         .help(model)
-        .background(isSelected ? Color.mailAccent.opacity(0.10) : .clear,
+        .background(.accentFill.opacity(isSelected ? 0.10 : 0),
                     in: RoundedRectangle(cornerRadius: PMRadius.sm))
         .contextMenu { modelActions(provider: provider, model: model,
                                     isDefault: isDefault,

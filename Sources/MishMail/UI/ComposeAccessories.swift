@@ -57,8 +57,8 @@ struct SlashSnippetPicker: View {
                                     }
                                     .padding(.horizontal, 8).padding(.vertical, 4)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(snippet.listId == selectionId
-                                                ? Color.mailAccent.opacity(0.14) : .clear,
+                                    .background(.accentFill.opacity(snippet.listId == selectionId
+                                                ? 0.14 : 0),
                                                 in: RoundedRectangle(cornerRadius: 5))
                                     .contentShape(Rectangle())
                                 }
@@ -258,7 +258,7 @@ private struct SnippetRow: View {
                 Button(action: insert) {
                     Text("Insert")
                         .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Color.mailAccent)
+                        .foregroundStyle(.accentForeground)
                 }
                 .buttonStyle(.plain)
                 Button(action: delete) {
