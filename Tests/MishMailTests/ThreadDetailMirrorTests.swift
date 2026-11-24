@@ -10,9 +10,9 @@ final class ThreadDetailMirrorTests: XCTestCase {
     func testReturnsPayloadWhenRevisionAndSuppressionMatch() {
         var mirror = ThreadDetailMirror(capacity: 3)
         let revision = ThreadContentRevision(epoch: 0, local: 0)
-        mirror.store(payload(["m1"]), for: "t1", revision: revision, suppressing: [])
+        mirror.store(payload(["m1"]), for: "t1", revision: revision, current: revision, suppressing: [])
 
-        let hit = mirror.payload(for: "t1", revision: revision, suppressing: [])
+        let hit = mirror.payload(for: "t1", revision: revision, current: revision, suppressing: [])
 
         XCTAssertEqual(hit?.messages.map(\.id), ["m1"])
     }
@@ -21,6 +21,7 @@ final class ThreadDetailMirrorTests: XCTestCase {
         var mirror = ThreadDetailMirror(capacity: 3)
         mirror.store(payload(["m1"]), for: "t1",
                      revision: ThreadContentRevision(epoch: 0, local: 0),
+                     current: ThreadContentRevision(epoch: 0, local: 0),
                      suppressing: [])
 
         let hit = mirror.payload(
@@ -36,7 +37,7 @@ final class ThreadDetailMirrorTests: XCTestCase {
     func testMissesWhenSuppressionChanged() {
         var mirror = ThreadDetailMirror(capacity: 3)
         let revision = ThreadContentRevision(epoch: 0, local: 0)
-        mirror.store(payload(["m1"]), for: "t1", revision: revision, suppressing: [])
+        mirror.store(payload(["m1"]), for: "t1", revision: revision, current: revision, suppressing: [])
 
         let hit = mirror.payload(for: "t1", revision: revision, suppressing: ["d1"])
 
@@ -55,13 +56,13 @@ final class ThreadDetailMirrorTests: XCTestCase {
     func testEvictsLeastRecentlyUsedBeyondCapacity() {
         var mirror = ThreadDetailMirror(capacity: 2)
         let revision = ThreadContentRevision(epoch: 0, local: 0)
-        mirror.store(payload(["a"]), for: "t1", revision: revision, suppressing: [])
-        mirror.store(payload(["b"]), for: "t2", revision: revision, suppressing: [])
-        mirror.store(payload(["c"]), for: "t3", revision: revision, suppressing: [])
+        mirror.store(payload(["a"]), for: "t1", revision: revision, current: revision, suppressing: [])
+        mirror.store(payload(["b"]), for: "t2", revision: revision, current: revision, suppressing: [])
+        mirror.store(payload(["c"]), for: "t3", revision: revision, current: revision, suppressing: [])
 
-        XCTAssertNil(mirror.payload(for: "t1", revision: revision, suppressing: []))
-        XCTAssertNotNil(mirror.payload(for: "t2", revision: revision, suppressing: []))
-        XCTAssertNotNil(mirror.payload(for: "t3", revision: revision, suppressing: []))
+        XCTAssertNil(mirror.payload(for: "t1", revision: revision, current: revision, suppressing: []))
+        XCTAssertNotNil(mirror.payload(for: "t2", revision: revision, current: revision, suppressing: []))
+        XCTAssertNotNil(mirror.payload(for: "t3", revision: revision, current: revision, suppressing: []))
     }
 
     private func payload(_ ids: [String]) -> ThreadDetailPayload {
