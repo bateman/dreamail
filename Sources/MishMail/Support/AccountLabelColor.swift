@@ -3,15 +3,15 @@ import Foundation
 import GRDB
 import SwiftUI
 
-/// The color of an account's label pill ("Personal", "Fund", …) in the
-/// account switcher. Local only: stored on the `account` row as `#rrggbb`
+/// The color of an account's label ("Personal", "Fund", …), drawn as the
+/// ring around its avatar (`AccountRingStyle`). Local only: stored on the `account` row as `#rrggbb`
 /// (`labelColor`, NULL = default), never sent to Google, and gone with the
 /// account row when the account is removed.
 enum AccountLabelColor {
     /// sRGB stand-ins for the system colors `Color.stable(for:)` picks for
     /// the account avatar (`Color.stablePalette`), in the same order, so the
-    /// default pill keeps the avatar's hue. The light-appearance values: a
-    /// fixed table, so the pill does not change with the appearance. Tests
+    /// default ring keeps the avatar's hue. The light-appearance values: a
+    /// fixed table, so the ring does not change with the appearance. Tests
     /// pin each entry to the system color it stands for (macOS 26 values;
     /// older systems draw the avatar in slightly different shades).
     static let defaultPalette: [UInt32] = [
@@ -38,31 +38,32 @@ enum AccountLabelColor {
         hex(defaultPalette[Color.stableIndex(for: accountId, count: defaultPalette.count)])
     }
 
-    /// The label the switcher shows as a pill, or nil when it adds nothing:
-    /// no sender name (the label is then the title), or a label equal to
-    /// the address or the sender name.
-    static func pillLabel(displayName: String, senderName: String, accountId: String) -> String? {
-        guard !senderName.isEmpty else { return nil }
-        guard !displayName.isEmpty, displayName != accountId, displayName != senderName else {
-            return nil
+    /// The title an account is shown under (switcher header and rows,
+    /// Settings → Accounts' avatar), above its address: the local label
+    /// when it is set and is not just the address, else the sender name,
+    /// else the address.
+    static func title(displayName: String, senderName: String, accountId: String) -> String {
+        let label = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !label.isEmpty, label.caseInsensitiveCompare(accountId) != .orderedSame {
+            return label
         }
-        return displayName
+        let sender = senderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sender.isEmpty ? accountId : sender
     }
 
-    static func pillLabel(_ account: Account) -> String? {
-        pillLabel(displayName: account.displayName, senderName: account.senderName,
-                  accountId: account.id)
+    static func title(_ account: Account) -> String {
+        title(displayName: account.displayName, senderName: account.senderName,
+              accountId: account.id)
+    }
+
+    /// The stored color when valid, else the default, as sRGB.
+    static func resolvedRGB(stored: String?, accountId: String) -> LabelRGB {
+        LabelRGB(hexString: stored) ?? defaultRGB(for: accountId)
     }
 
     /// The stored color when it is a valid `#rrggbb`, else the default.
     static func resolvedHex(stored: String?, accountId: String) -> String {
         LabelRGB.normalizedHex(stored) ?? defaultHex(for: accountId)
-    }
-
-    /// The pill colors for an account; text is left to `LabelPillStyle`.
-    static func colors(for account: Account) -> LabelColors {
-        LabelColors(background: resolvedHex(stored: account.labelColor, accountId: account.id),
-                    text: nil)
     }
 
     /// Saves an account's label color. nil, empty or malformed resets it to
