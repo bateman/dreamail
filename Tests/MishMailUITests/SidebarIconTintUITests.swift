@@ -42,14 +42,13 @@ final class SidebarIconTintUITests: XCTestCase {
         app.launch()
         addTeardownBlock { app.terminate() }
 
-        // The main window is the one listing the demo threads; pin it by its
-        // identifier, since its content changes as the test clicks around.
-        let listing = app.windows.containing(
-            NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
-        XCTAssertTrue(listing.waitForExistence(timeout: 10))
-        let mainID = listing.identifier
-        XCTAssertFalse(mainID.isEmpty, "main window needs an identifier")
-        let main = app.windows[mainID]
+        // The main window: the app's one window that is not Settings (the
+        // About panel is a dialog). Its SwiftUI identifier is a long type
+        // name that XCUITest refuses as a query, and its content changes as
+        // the test clicks around, so match it by title.
+        let main = app.windows.matching(
+            NSPredicate(format: "NOT (title CONTAINS 'Settings')")).firstMatch
+        XCTAssertTrue(main.waitForExistence(timeout: 10))
         app.activate()
 
         // Sidebar starts collapsed; → reveals it. Clicking Inbox gives the
