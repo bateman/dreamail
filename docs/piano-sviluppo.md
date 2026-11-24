@@ -145,7 +145,7 @@ Esiti da ricordare:
 - PR #21: la review ha trovato che un caricamento in corso durante una cancellazione rimetteva in memoria il contenuto cancellato (contro DEC-019); corretto prima del merge. Misure sulla macchina di CI, casella dimostrativa: prima apertura da 736 a 514 ms (mediana). L'obiettivo di 50 ms non è raggiunto in CI e va giudicato sul Mac.
 - PR #26: salto tra sezioni da circa 140 pt (riferito dal proprietario) a 29 pt misurati in CI.
 
-Opzione in sospeso, da decidere dopo le prove del proprietario: **cache persistente e cifrata delle immagini**. Renderebbe immediata anche la prima apertura dopo un riavvio; costa byte di immagini su disco, un database più grande e altro contenuto da sovrascrivere alla cancellazione (DEC-019). Non implementare prima della decisione.
+Opzione rimasta in sospeso in questo giro e decisa nel quarto: **cache persistente e cifrata delle immagini** (DEC-032, PR #39).
 
 Seguiti annotati:
 
@@ -182,6 +182,39 @@ Seguiti annotati:
 - Su macOS precedenti al 26 il colore predefinito della pillola dell'account può differire leggermente da quello del disco dell'avatar.
 - La build dei test di interfaccia non passa il blocco sui warning.
 
+## Quarto giro di richieste del proprietario
+
+| Contenuto | PR |
+|---|---|
+| Colore dell'account come anello intorno alla foto; nome della label come titolo dell'account al posto del nome del mittente; pillola dell'account rimossa | #36 |
+| Label a forma di rettangolo arrotondato come in Gmail, senza contorno sulle righe normali | #37 |
+| Pannello di lettura: i messaggi di una conversazione sono righe piatte separate da un filetto, come in Gmail | #38 |
+| Cache persistente e cifrata delle immagini incorporate (migrazione v54) | #39 |
+| Immagini remote caricate per impostazione predefinita all'apertura; Spam sempre bloccato; nessun caricamento anticipato | #40 |
+| Anello dell'account a spessore doppio (3 pt). Modifica semplice: sessione Sonnet, nessuna review, unita a CI verde (DEC-036) | #41 |
+| Cache cifrata delle immagini remote, solo dove sono già permesse (migrazione v55) | #42, in lavorazione |
+| Colore d'accento configurabile in Settings → Appearance | #43, in lavorazione |
+
+Il 24 novembre 2026 il proprietario ha sostituito l'orchestratore con una nuova sessione (DEC-037). Le sessioni non toccano più `CHANGELOG.md` né `docs/`: propongono le righe nel corpo della PR e l'orchestratore le raccoglie in una PR di documentazione.
+
+Esiti da ricordare:
+
+- PR #36: l'anello predefinito usa lo stesso colore di sistema del disco con l'iniziale; sotto 1,5:1 di contrasto con lo sfondo si aggiunge un filetto neutro, il colore scelto non viene mai alterato. Una label riempita in automatico con il nome del profilo Google resta visibile dopo una modifica di "Send as": si corregge modificando la label.
+- PR #37: il contorno si decide con una distanza di colore (CIE76), non con il rapporto WCAG, perché i pastelli di Gmail sono chiari quanto la riga letta. Le label restano a destra, prima della data.
+- PR #38: riga compressa di 80 pt senza spazio tra le righe (prima scheda di circa 72 pt più 12 pt). L'avatar della propria posta vale solo per i messaggi che Gmail ha archiviato come SENT da un proprio indirizzo o alias: un mittente falsificato non riceve la foto. Nessun anello dell'account nelle righe dei messaggi.
+- PR #39: immagini solo dentro il database cifrato, mai in file; 200 MiB in tutto, 3 MiB per messaggio, esce prima ciò che è usato meno di recente; cancellazione a cascata con allegato, messaggio e account. Nessun confronto di latenza in CI: da giudicare sul Mac.
+- PR #40: un'installazione che non aveva mai scelto segue il nuovo predefinito; una scelta salvata resta; un valore sconosciuto vale "Ask". Con un tasto freccia tenuto premuto si apre solo la conversazione su cui ci si ferma. Nessun avviso nell'app per chi non aveva mai scelto: lo dice solo il changelog. `SECURITY.md` ha una nuova nota "Remote images".
+
+Seguiti annotati:
+
+- Label prima dell'oggetto come in Gmail (oggi a destra, prima della data): offerto come lavoro separato.
+- Le label senza colore sono grigio neutro come in Gmail; il proprietario può chiedere di tornare al colore automatico per nome.
+- Avviso nell'app per chi non aveva mai impostato "Load remote images".
+- Comando "Svuota cache immagini" nelle impostazioni (oggi non esiste una sezione su archiviazione o privacy).
+- Sospetto preesistente, da verificare su Mac: `preconnect` e `dns-prefetch` nell'HTML di un messaggio potrebbero risolvere o contattare host del mittente anche a immagini bloccate. La ricetta di prova è nel corpo della PR #40.
+- La preparazione anticipata del documento resta attiva per la variante bloccata: da misurare.
+- Il messaggio più lungo del benchmark ha ora 43 messaggi invece di 40: i numeri non sono confrontabili uno a uno con quelli precedenti.
+
 ## Cancello — prova su Mac del proprietario
 
 ☐ Build locale, test e uso della demo.
@@ -190,6 +223,7 @@ Seguiti annotati:
 ☐ Verifiche emerse dalle PR #17 e #18: shortcut su tastiera italiana (`]`, `[`, `#`, `*`), cursore nei campi Cc e Bcc e scelta del mittente in composizione, pannello di lettura su finestra stretta e su schermo da 13 pollici, lettura anticipata scorrendo con `j` e `k`; tempo della ricostruzione dell'indice di ricerca al primo avvio; ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio; nessun `Cache.db` che cresce nella cartella Caches.
 ☐ Verifiche emerse dalle PR #20–#26: aspetto delle icone monocromatiche e della voce selezionata; email singola espansa (anche in "center peek" e vista compatta, e restringimento per email HTML corte); correttore con English e Italian scelti (menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta); riapertura di email con loghi senza sfarfallio, velocità della prima apertura e di `j`/`k`; colori delle label in lista, pannello di lettura e menu, riga selezionata con colore d'accento non blu e a finestra in secondo piano; intestazioni di sezione su macOS 14 e 15, intestazione fissa durante lo scorrimento, vista Labels.
 ☐ Verifiche emerse dalle PR #31–#34: editor del colore della label (pannello colori di sistema, chiusura all'uscita, riga disattivata quando la pillola non si vede), testo nero sulle pillole predefinite blu, viola e rosa; foto profilo con un account reale (download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione, VoiceOver nel menu degli account); icone in modalità scura, con accento giallo o grafite, con dimensione della barra laterale piccola e grande, su macOS 14 e 15.
+☐ Verifiche emerse dalle PR #36–#41: aspetto dell'anello sulle superfici reali (barra laterale, popover, impostazioni), centratura del testo dell'intestazione e altezza delle righe del popover, lettura di VoiceOver; forma delle label (testo centrato, troncamento al limite); righe dei messaggi in modalità scura con posta HTML, pannelli stretti con testo grande, pannello di 400–450 pt con un mittente dal nome lungo; immagini incorporate dopo un riavvio con posta reale e velocità percepita; piè di pagina delle impostazioni sulle immagini remote, messaggio in Spam con "Load images", comportamento reale di rete all'apertura, tasto freccia tenuto premuto; prova di `preconnect` e `dns-prefetch` a immagini bloccate.
 ☐ Solo dopo, collegamento di un account Gmail reale.
 
 ## Ondata 3 — parità Gmail
@@ -236,4 +270,13 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | — | `feature/account-profile-photo` | #32 | Unito |
 | — | `ci/script-tests-warnings-shellcheck` | #33 | Unito |
 | — | `ux/sidebar-icon-shape` | #34 | Unito |
+| — | `docs/ux-round-3` | #35 | Unito |
+| — | `ux/account-ring-and-label-title` | #36 | Unito |
+| — | `ux/gmail-label-shape` | #37 | Unito |
+| — | `ux/thread-message-list-spacing` | #38 | Unito |
+| — | `perf/persistent-image-cache` | #39 | Unito |
+| — | `ux/remote-images-default-on` | #40 | Unito |
+| — | `ux/account-ring-thicker` | #41 | Unito, modifica semplice senza review |
+| — | `perf/remote-image-cache` | #42 | In lavorazione |
+| — | `ux/custom-accent-color` | #43 | In lavorazione |
 | 3 | — | — | Non avviare: in attesa del proprietario |

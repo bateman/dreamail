@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.11
+Versione: 0.12
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -39,7 +39,16 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-025 | **Colore della label dell'account** | Ogni account ha un colore locale per la sua label, scelto con il selettore di colore di sistema; non viene inviato a Google e viene cancellato con l'account (PR #31). |
 | DEC-026 | **Foto profilo Google** | L'avatar dell'account è la foto profilo Google, ottenuta senza nuovi permessi, scaricata solo da host Google senza token, conservata nel database cifrato e cancellata con l'account (PR #32). |
 | DEC-027 | **Warning come errori in CI** | La CI fallisce su qualsiasi warning di compilazione nel codice dell'app e dei test di unità, ed esegue i test degli script e `shellcheck`; le build locali e di rilascio non cambiano (PR #33). |
-| DEC-028 | **Icone della barra laterale** | Le icone seguono la dimensione della barra laterale impostata in macOS e non usano mai il colore d'accento; la capsula di selezione resta quella standard di macOS, in attesa di conferma del proprietario (PR #34). |
+| DEC-028 | **Icone della barra laterale** | Le icone seguono la dimensione della barra laterale impostata in macOS e non usano mai il colore d'accento (PR #34). La questione della capsula di selezione standard, rimasta in attesa di conferma, è superata da DEC-035: il proprietario ha chiesto un colore d'accento configurabile. |
+| DEC-029 | **Forma delle label come in Gmail** | Le label sono rettangoli arrotondati compatti nel colore della label, senza contorno sulle righe normali; il contorno resta solo per colori quasi invisibili sullo sfondo, sulla selezione quando la label vi si confonderebbe e sui pallini di colore. Le label senza colore sono grigio neutro (PR #37). |
+| DEC-030 | **Colore dell'account come anello, label come titolo** | Il colore della label dell'account è un anello intorno alla foto (spessore 3 pt, raddoppiato su richiesta) e il nome della label sostituisce il nome del mittente come titolo dell'account; la pillola dell'account è rimossa. Nei punti visibili ai destinatari resta il nome del mittente (PR #36, #41). |
+| DEC-031 | **Messaggi di un thread come in Gmail** | Nel pannello di lettura i messaggi di una conversazione sono righe piatte a tutta larghezza separate da un filetto, non schede (PR #38). |
+| DEC-032 | **Cache persistente e cifrata delle immagini incorporate** | "Sì, è necessaria": le immagini incorporate (`cid:`) già risolte restano nel database cifrato tra un avvio e l'altro, entro 200 MiB, e spariscono con messaggio, thread e account secondo DEC-019 (PR #39, migrazione v54). |
+| DEC-033 | **Immagini remote caricate per impostazione predefinita** | Il predefinito di "Load remote images" è caricarle, con due limiti approvati: si caricano solo all'apertura del messaggio, mai in anticipo per i vicini, e la posta in Spam resta bloccata. Una scelta salvata viene rispettata; "Ask each time" e "VIP senders" restano disponibili. Costo accettato: il mittente apprende apertura, indirizzo IP e client (PR #40). |
+| DEC-034 | **Cache delle immagini remote solo dove sono già permesse** | Le immagini remote entrano nella cache cifrata solo per i messaggi in cui il caricamento è già consentito; stesse regole di cancellazione di DEC-019 e DEC-032 (PR #42, migrazione v55, in lavorazione). |
+| DEC-035 | **Colore d'accento configurabile** | Il colore d'accento dell'app si sceglie con il selettore di colore di sistema in Settings → Appearance (PR #43, in lavorazione). Supera la questione lasciata aperta in DEC-028. |
+| DEC-036 | **Modifiche semplici senza review** | Quando il proprietario qualifica una richiesta come semplice, la esegue una sessione Sonnet, senza `ponytail-review` né `security-audit`, e la PR si unisce in `main` a CI verde. La scorciatoia non si applica per iniziativa dell'orchestratore (prima applicazione: PR #41). |
+| DEC-037 | **Processo: archiviazione, branch, subentro** | Una sessione che ha finito senza nulla di pendente viene archiviata subito dall'orchestratore; non si chiede di cancellare i branch, che GitHub elimina all'unione. Il 24 novembre 2026 il proprietario ha sostituito l'orchestratore con una nuova sessione, a cui sono state passate tutte le istruzioni di processo. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -429,7 +438,8 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-24 | 0.8 | Dopo le ondate 1 e 2 del piano di sviluppo: aggiunte DEC-010–016, DEC-009 segnata come implementata, chiusa la questione su AI e MCP. Lo stato di ogni finding e i seguiti sono in [piano-sviluppo.md](piano-sviluppo.md); i riferimenti di riga della sezione 12 valgono solo per il commit auditato `18294fa`. |
 | 2026-11-24 | 0.9 | Aggiunte DEC-017–020: shortcut come Gmail Web, pannello di lettura predefinito, "cancellato vuol dire sparito", regola delle chat alla rimozione di un account. L'ondata 3 non è avviata. |
 | 2026-11-24 | 0.10 | Dopo la prima prova su Mac: aggiunte DEC-021–024 (icone monocromatiche, correttore in più lingue, colori delle label come in Gmail, stile di comunicazione conciso). La cache persistente e cifrata delle immagini resta un'opzione in attesa delle prove del proprietario, annotata in [piano-sviluppo.md](piano-sviluppo.md). L'ondata 3 non è avviata. |
-| 2026-11-24 | **0.11** | Terzo giro di richieste: aggiunte DEC-025–028 (colore della label dell'account, foto profilo Google, warning come errori in CI, icone della barra laterale). L'ondata 3 non è avviata. |
+| 2026-11-24 | 0.11 | Terzo giro di richieste: aggiunte DEC-025–028 (colore della label dell'account, foto profilo Google, warning come errori in CI, icone della barra laterale). L'ondata 3 non è avviata. |
+| 2026-11-24 | **0.12** | Quarto giro di richieste: aggiunte DEC-029–037 (forma delle label, anello e titolo dell'account, righe dei messaggi, cache cifrata delle immagini incorporate, immagini remote attive per impostazione predefinita, cache delle immagini remote, colore d'accento configurabile, modifiche semplici senza review, archiviazione e subentro dell'orchestratore). Aggiornata DEC-028. DEC-034 e DEC-035 sono decise ma ancora in lavorazione. L'ondata 3 non è avviata. |
 
 ---
 

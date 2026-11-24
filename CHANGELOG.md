@@ -6,6 +6,33 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Remote images now load by default when you open a message.** Opening
+  includes moving to a conversation in the list while the reading pane is
+  showing, and landing on one after archive or delete. The sender can then see
+  that you opened the message and when, your IP address and your mail client.
+  Installs that never chose a setting follow the new default; a stored choice
+  is kept. To go back, choose Settings → Appearance → Load remote images → Ask
+  each time (or VIP senders). Exceptions: mail in Spam never loads remote
+  images without its own click, conversations you have not opened are never
+  loaded in advance (the background pre-render stays blocked), and holding an
+  arrow key opens only the conversation where you stop. `SECURITY.md` has a new
+  "Remote images" note.
+- **Inline images survive a relaunch.** Inline images of a conversation you
+  opened before now appear without downloading again, even after quitting: they
+  are kept in the encrypted local database (up to 200 MiB, least recently used
+  out first) and deleted with their mail.
+- **Conversations read like Gmail's.** In the reading pane the messages of a
+  conversation are flat rows (avatar, bold sender, date, one-line snippet)
+  split by a hairline, instead of cards; opening a message keeps its header in
+  place.
+- **Label chips shaped like Gmail's.** A compact rounded rectangle in the
+  label's colour, with no outline (kept only on near-white labels, on the
+  selection highlight when a chip would blend into it, and on colour dots).
+- **The account's colour is a ring, its label is its title.** The account's
+  label colour is now a 3 pt ring around its avatar, and the label (e.g.
+  "Work") is the account's title in the switcher and Settings instead of the
+  sender name; the colour can be chosen even without a "Send as" name. The
+  account pill is gone.
 - **Crisper, monochrome sidebar icons.** Sidebar and Settings sidebar icons
   are drawn at the row title's size, in medium weight, so they read less soft
   and large; they follow the "Sidebar icon size" setting in System Settings ▸
@@ -31,13 +58,12 @@ minor versions may still change behavior.
   the runner. The Python tests of the helper scripts run on every push, and
   shellcheck covers every shell script. `make checks` runs the Linux checks
   locally.
-- **Choose the colour of each account's label.** "Edit Account Labels…" now
-  has a colour per account: the system colour picker, the label organizer's
-  swatches for one click, and "Default" (the avatar's hue). The account pill in
-  the switcher is drawn like Gmail label pills: a solid fill with black or white
-  text that is readable on it, and a thin outline when the fill is close to the
-  background, so the pale-on-pale pill is gone. The colour stays on this Mac,
-  is never sent to Google, and is removed with the account.
+- **Choose the colour of each account's label.** "Edit Account Labels…" now has
+  a colour per account: the system colour picker, the label organizer's
+  swatches for one click, and "Default" (the avatar's hue). The colour is drawn
+  as a ring around the account's avatar, with a thin outline when it is close
+  to the background. The colour stays on this Mac, is never sent to Google, and
+  is removed with the account.
 - **Faster first open, and inline images are not downloaded twice.** The first
   conversation you open is ready sooner, and re-opening a conversation with
   inline images no longer downloads the images again. Deleted mail leaves the
@@ -52,13 +78,13 @@ minor versions may still change behavior.
   scaled with the list's font size.
 - **Label colours you can read, as in Gmail.** Label pills are drawn in the
   label's Gmail colour as a solid fill, with Gmail's text colour when it is
-  readable on it (4.5:1) and black or white otherwise. Very light labels get a
-  thin grey outline on a white row, very dark ones on a dark row. Colours
-  changed in Gmail now show after the next sync; a colour picked in the label
-  organizer still wins, and "Gmail color" goes back to Gmail's. Labels with no
-  Gmail colour and no colour picked here are neutral grey, as in Gmail. Same
-  rule for the reading pane, the Labels filter, the label picker and the
-  organizer.
+  readable on it (4.5:1) and black or white otherwise. Only near-white labels
+  get a thin grey outline on a light row; on the selection highlight a chip
+  that would blend in gets one too. Colours changed in Gmail now show after the
+  next sync; a colour picked in the label organizer still wins, and "Gmail
+  color" goes back to Gmail's. Labels with no Gmail colour and no colour picked
+  here are neutral grey, as in Gmail. Same rule for the reading pane, the
+  Labels filter, the label picker and the organizer.
 - **A single message opens at its full length.** Selecting a one-message
   conversation no longer shows a reduced card first: the message is open from
   the first frame, fills the reading pane while it loads, and stays open. A
@@ -78,17 +104,18 @@ minor versions may still change behavior.
   with what this does and does not cover (SSD and backup copies, the short
   window before clean-up, files handed to other apps).
 
-- **Default shortcuts and layout follow Gmail on the web.** `u` now goes back to
-  the conversation list (it was mark read/unread: use Shift-I / Shift-U, which
-  now only mark read / unread, or bind the toggle again in Settings), `o` opens,
-  `]` / `[` archive the open conversation and move on, Shift-N refreshes, `g b`
-  and `g l` go to Snoozed and Labels, `*` then a / n / r / u / s / t selects,
-  and ⌘⇧C / ⌘⇧B / ⌘⇧F / ⌘⇧9 work in compose. The default for opening a
-  conversation is now the reading pane beside the list, also on installs that
-  never chose a style (a stored choice is kept); browsing with j/k therefore
-  opens each conversation, which marks it read sooner (remote images stay
-  blocked). Custom keys are kept; a new default that collides with one is left
-  unbound.
+- **Default shortcuts and layout follow Gmail on the web.** `u` now goes back
+  to the conversation list (it was mark read/unread: use Shift-I / Shift-U,
+  which now only mark read / unread, or bind the toggle again in Settings), `o`
+  opens, `]` / `[` archive the open conversation and move on, Shift-N
+  refreshes, `g b` and `g l` go to Snoozed and Labels, `*` then a / n / r / u /
+  s / t selects, and ⌘⇧C / ⌘⇧B / ⌘⇧F / ⌘⇧9 work in compose. The default for
+  opening a conversation is now the reading pane beside the list, also on
+  installs that never chose a style (a stored choice is kept); browsing with
+  j/k therefore opens each conversation, which marks it read sooner and, with
+  the default image setting, loads its remote images (see the remote-images
+  entry above). Custom keys are kept; a new default that collides with one is
+  left unbound.
 - **AI features and the local MCP server are off.** A build setting
   (`MISHMAIL_AI_FEATURES`, empty in the tracked configuration) decides it, not
   a preference. Off means no Ask Mish, summaries, AI drafting, suggested
