@@ -92,11 +92,16 @@ final class DatabaseFailClosedTests: XCTestCase {
         XCTAssertEqual(try probeCount(keyed), expectedRows, file: file, line: line)
         try keyed.close()
 
-        let unkeyed = try DatabaseQueue(path: path)
-        XCTAssertThrowsError(
-            try unkeyed.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master") },
-            "schema must not be readable without the key", file: file, line: line)
-        try? unkeyed.close()
+        // GRDB reads the schema while opening, so the unkeyed open itself
+        // is what must fail (SQLITE_NOTADB).
+        XCTAssertThrowsError(try {
+            let unkeyed = try DatabaseQueue(path: path)
+            defer { try? unkeyed.close() }
+            _ = try unkeyed.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master") }
+        }(), "schema must not be readable without the key", file: file, line: line) { error in
+            XCTAssertEqual((error as? DatabaseError)?.resultCode, .SQLITE_NOTADB, "\(error)",
+                           file: file, line: line)
+        }
 
         let fm = FileManager.default
         let marker = Data(fixtureMarker.utf8)
