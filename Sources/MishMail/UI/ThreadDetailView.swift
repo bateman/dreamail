@@ -1097,8 +1097,7 @@ struct ThreadDetailView: View {
                         // User label: solid pill in its Gmail color, the
                         // remove button in the pill's own text color.
                         LabelPill(name: chip.name, colors: colors,
-                                  font: .system(size: 11.5 * fontScale, weight: .medium),
-                                  verticalPadding: 3) {
+                                  fontSize: 11.5 * fontScale) {
                             removeChipButton(chip.id, name: chip.name)
                         }
                     } else {

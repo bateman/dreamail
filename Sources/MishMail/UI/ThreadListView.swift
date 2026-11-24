@@ -690,9 +690,7 @@ private struct ThreadListSections: View, Equatable {
             onToggleCollapsed(title)
         } label: {
             HStack(spacing: 6) {
-                LabelPill(name: title, colors: colors,
-                          font: .system(size: 12 * fontScale, weight: .semibold),
-                          verticalPadding: 2)
+                LabelPill(name: title, colors: colors, fontSize: 12 * fontScale)
                 Text("\(count)")
                     .font(.system(size: 11 * fontScale).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -1852,9 +1850,11 @@ struct ThreadRow: View, Equatable {
             // hover so the row never changes size.
             ZStack(alignment: .trailing) {
                 HStack(spacing: 5) {
-                    // User labels as colored pills right before the date.
-                    ForEach(model.userLabels.prefix(2), id: \.name) { chip in
-                        labelPill(chip)
+                    // User labels as Gmail-style chips right before the date.
+                    HStack(spacing: LabelChipMetrics(fontSize: Self.labelChipSize * fontScale).spacing) {
+                        ForEach(model.userLabels.prefix(2), id: \.name) { chip in
+                            labelPill(chip)
+                        }
                     }
                     if model.userLabels.count > 2 {
                         Text("+\(model.userLabels.count - 2)")
@@ -1940,13 +1940,17 @@ struct ThreadRow: View, Equatable {
         return marker + Text(", ").foregroundColor(.secondary) + names
     }
 
-    /// Label pill in the label's Gmail color, solid, with readable text.
+    /// Label chip text size at font scale 1: Gmail's 13 pt chip, which
+    /// keeps the chip (17.5 pt) inside the 18 pt trailing strip.
+    private static let labelChipSize = 13.0
+
+    /// Label chip in the label's Gmail color, solid, with readable text.
     /// The surface it sits on (plain, the read-row wash, the selection
     /// highlight) decides whether it needs an outline. Never dimmed with the
     /// read row's text.
     private func labelPill(_ chip: ThreadRowLabelChip) -> some View {
         LabelPill(name: chip.name, colors: chip.colors, surface: pillSurface,
-                  font: .system(size: 10.5 * fontScale, weight: .medium))
+                  fontSize: Self.labelChipSize * fontScale)
     }
 
     /// Checked rows (a 10% accent wash) count as plain content: the wash
