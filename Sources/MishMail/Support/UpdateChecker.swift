@@ -10,33 +10,70 @@ import CryptoKit
 /// over the running app and restarts. Verification failures open the release
 /// page; install failures fall back to revealing the app in Finder.
 ///
-/// Inert unless the build configured an `UpdateChannel`. Without one (the
-/// tracked default) nothing here touches the network, schedules a check,
-/// downloads, or installs: see `UpdateChannel` for why there is no default.
+/// Inert unless the build configured an `UpdateChannel` *and* the running
+/// app is signed with a Team ID. Otherwise nothing here touches the network,
+/// schedules a check, downloads, or installs: see `UpdateChannel` for why
+/// there is no default channel, and `Availability.unsignedInstall` for why an
+/// ad-hoc build never updates itself even with one.
 @MainActor
 final class UpdateChecker: ObservableObject {
     static let shared = UpdateChecker(
-        channel: UpdateChannel.configured(in: Bundle.main.infoDictionary))
+        channel: UpdateChannel.configured(in: Bundle.main.infoDictionary),
+        runningTeamID: teamIdentifier(of: Bundle.main.bundleURL))
 
-    /// Releases source, or `nil` when updates are disabled for this build.
-    let channel: UpdateChannel?
+    enum Availability: Equatable {
+        case enabled(UpdateChannel)
+        /// No release channel configured: the tracked default.
+        case noChannel
+        /// A channel is configured, but the running app is ad-hoc signed
+        /// (every `make build`, and `make install` without a team). With no
+        /// Team ID to pin, the trust check could only ask for "some notarized
+        /// Developer ID", which any publisher can satisfy (F-01), so such a
+        /// build never replaces itself.
+        case unsignedInstall
+    }
+
+    let availability: Availability
+    /// Releases source, or `nil` when updates are off for this build.
+    var channel: UpdateChannel? {
+        if case .enabled(let channel) = availability { return channel }
+        return nil
+    }
     var isEnabled: Bool { channel != nil }
 
     /// Fetches the latest-release metadata. Injected so tests can prove that a
-    /// build without a channel never makes the request at all.
+    /// disabled build never makes the request at all.
     typealias Fetch = @Sendable (URLRequest) async throws -> (Data, URLResponse)
     private let fetch: Fetch
 
-    init(channel: UpdateChannel?,
+    /// - Parameter runningTeamID: Team ID of the running app's signature,
+    ///   `nil` for an ad-hoc build. Passed in rather than read here so tests
+    ///   can state it.
+    init(channel: UpdateChannel?, runningTeamID: String?,
          fetch: @escaping Fetch = { try await URLSession.shared.data(for: $0) }) {
-        self.channel = channel
+        if let channel {
+            availability = runningTeamID == nil ? .unsignedInstall : .enabled(channel)
+        } else {
+            availability = .noChannel
+        }
         self.fetch = fetch
     }
 
-    /// What Settings and an explicit check say when no channel is configured.
-    static let disabledStatus =
+    static let noChannelStatus =
         "Automatic updates are disabled in this build: no release channel is configured. "
         + "Update by building from source."
+    static let unsignedInstallStatus =
+        "Automatic updates are disabled: this copy of MishMail is ad-hoc signed, so there is "
+        + "no publisher identity to check an update against. Update by building from source."
+
+    /// What Settings and an explicit check say when updates are off.
+    var disabledStatus: String? {
+        switch availability {
+        case .enabled: return nil
+        case .noChannel: return Self.noChannelStatus
+        case .unsignedInstall: return Self.unsignedInstallStatus
+        }
+    }
 
     struct Release {
         let version: String       // tag with any leading "v" stripped
@@ -122,7 +159,7 @@ final class UpdateChecker: ObservableObject {
     func check(quietly: Bool = false) async {
         guard let channel else {
             available = nil
-            if !quietly { status = Self.disabledStatus }
+            if !quietly { status = disabledStatus }
             return
         }
         if checking {
@@ -224,7 +261,7 @@ final class UpdateChecker: ObservableObject {
         // and the in-place swap.
         guard isEnabled else {
             available = nil
-            status = Self.disabledStatus
+            status = disabledStatus
             return
         }
         guard let available else { return }
@@ -408,6 +445,8 @@ final class UpdateChecker: ObservableObject {
         case versionMismatch(expected: String, found: String?)
         case teamMismatch(expected: String, found: String?)
         case adHocDowngrade
+        case bundleIdentifierMismatch(expected: String?, found: String?)
+        case unsignedInstall
         case notDeveloperID
         case notNotarized
 
@@ -424,6 +463,10 @@ final class UpdateChecker: ObservableObject {
             case .teamMismatch(let exp, let found):
                 return "Team ID mismatch (running \(exp), update \(found ?? "ad-hoc"))"
             case .adHocDowngrade: return "refusing ad-hoc update while running a team-signed build"
+            case .bundleIdentifierMismatch(let exp, let found):
+                return "bundle identifier mismatch (running \(exp ?? "unknown"), update \(found ?? "unknown"))"
+            case .unsignedInstall:
+                return "this copy is ad-hoc signed, so no publisher can be verified"
             case .notDeveloperID: return "update is not Developer ID signed"
             case .notNotarized: return "update is not notarized"
             }
@@ -519,6 +562,15 @@ final class UpdateChecker: ObservableObject {
 
         guard let appURL = findApp(in: extractDir) else { throw UpdateError.noAppInArchive }
         try verifyCodeSignature(of: appURL)
+        // Same app, not merely the same publisher: a team's other signed
+        // apps must not be able to take this one's place (and its container
+        // and Keychain items). Read after the signature check, which seals
+        // Info.plist.
+        let runningID = bundleIdentifier(of: runningAppURL)
+        let updateID = bundleIdentifier(of: appURL)
+        guard let runningID, updateID == runningID else {
+            throw UpdateError.bundleIdentifierMismatch(expected: runningID, found: updateID)
+        }
         // Signatures prove identity, not freshness. Every past release is
         // public and carries the same Team ID, so whoever controls the GitHub
         // account — with no signing key at all — could re-publish an old,
@@ -622,12 +674,21 @@ final class UpdateChecker: ObservableObject {
     /// `CFBundleShortVersionString` of a bundle on disk — the same string
     /// `currentVersion` reads for the running app, so the two compare.
     nonisolated static func bundleVersion(of appURL: URL) -> String? {
+        infoValue("CFBundleShortVersionString", of: appURL)
+    }
+
+    /// `CFBundleIdentifier` of a bundle on disk.
+    nonisolated static func bundleIdentifier(of appURL: URL) -> String? {
+        infoValue("CFBundleIdentifier", of: appURL)
+    }
+
+    private nonisolated static func infoValue(_ key: String, of appURL: URL) -> String? {
         let plist = appURL.appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: plist),
               let info = try? PropertyListSerialization.propertyList(
                 from: data, options: [], format: nil) as? [String: Any]
         else { return nil }
-        return info["CFBundleShortVersionString"] as? String
+        return info[key] as? String
     }
 
     nonisolated static func findApp(in directory: URL) -> URL? {
@@ -742,8 +803,10 @@ final class UpdateChecker: ObservableObject {
     /// - **Developer ID updates must be notarized** (whether or not a checksum
     ///   was published) — covers ad-hoc/source installs upgrading to a public
     ///   binary and official Developer ID releases.
-    /// - Source/ad-hoc installs may upgrade only to a notarized Developer ID
-    ///   build; an ad-hoc signature has no identity and is not a trust anchor.
+    /// - **Source/ad-hoc installs never update in place.** With no Team ID to
+    ///   pin, "notarized Developer ID" is all that could be asked for, and any
+    ///   publisher satisfies it (F-01). `UpdateChecker` is already inert for
+    ///   such a build; this is the same rule at the trust layer.
     /// - Apple Development builds retain Team ID continuity.
     nonisolated static func evaluateTrust(updateApp: URL, runningApp: URL,
                                           officialRelease: Bool) throws -> TrustOutcome {
@@ -765,9 +828,11 @@ final class UpdateChecker: ObservableObject {
             }
         } else {
             // An ad-hoc signature proves only that the archive was internally
-            // consistent; anybody can create one. A source/ad-hoc installation
-            // may therefore update only to a notarized Developer ID build.
+            // consistent; anybody can create one. And an ad-hoc *installation*
+            // has nothing to compare a Developer ID against, so even a
+            // notarized one is refused: there is no publisher to match.
             guard developerID else { throw UpdateError.notDeveloperID }
+            throw UpdateError.unsignedInstall
         }
 
         if developerID {

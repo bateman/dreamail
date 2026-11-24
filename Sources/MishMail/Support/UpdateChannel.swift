@@ -46,20 +46,19 @@ struct UpdateChannel: Equatable, Sendable {
         UpdateChannel(infoDictionary?[infoKey] as? String)
     }
 
-    private static let alphanumerics: Set<Character> =
-        Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+    // One character-set rule per part, identical to `valid_repo` in
+    // scripts/update-mishmail.sh: OWNER is [A-Za-z0-9-]+, REPO is
+    // [A-Za-z0-9._-]+ and not "." or "..". GitHub enforces its own length and
+    // hyphen rules; these only keep the value a plain path segment.
+    private static let ownerCharacters: Set<Character> =
+        Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+    private static let repositoryCharacters = ownerCharacters.union("._")
 
-    /// GitHub logins: 1–39 ASCII alphanumerics or single inner hyphens.
     private static func isValidOwner(_ s: String) -> Bool {
-        guard (1...39).contains(s.count), !s.hasPrefix("-"), !s.hasSuffix("-"),
-              !s.contains("--") else { return false }
-        return s.allSatisfy { alphanumerics.contains($0) || $0 == "-" }
+        !s.isEmpty && s.allSatisfy(ownerCharacters.contains)
     }
 
-    /// GitHub repository names: 1–100 of ASCII alphanumerics, `-`, `_`, `.`,
-    /// and never `.` or `..`.
     private static func isValidRepository(_ s: String) -> Bool {
-        guard (1...100).contains(s.count), s != ".", s != ".." else { return false }
-        return s.allSatisfy { alphanumerics.contains($0) || "-_.".contains($0) }
+        !s.isEmpty && s != "." && s != ".." && s.allSatisfy(repositoryCharacters.contains)
     }
 }

@@ -27,9 +27,11 @@ usage() {
   printf 'usage: %s --repo OWNER/REPO [--allow-downgrade] [/path/to/MishMail.app]\n' "$0" >&2
 }
 
-# OWNER/REPO in GitHub's own alphabet, nothing else: no URL, no extra path.
+# OWNER/REPO as plain path segments, nothing else: no URL, no extra path.
+# The same rule as UpdateChannel.swift: OWNER is [A-Za-z0-9-]+, REPO is
+# [A-Za-z0-9._-]+ and not "." or "..".
 valid_repo() {
-  [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$ ]] \
+  [[ "$1" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] \
     && [[ "${1#*/}" != "." && "${1#*/}" != ".." ]]
 }
 
@@ -38,9 +40,20 @@ valid_repo() {
 # suffixed tag ("0.8.0-beta.1") or an unreadable installed version ("?") is
 # never "newer", so the caller refuses rather than guesses.
 version_is_newer() {
+  [ "$(version_order "$1" "$2")" = newer ]
+}
+
+# Exit 0 when $1 and $2 are the same dotted-number version (0.7 == 0.7.0).
+version_is_same() {
+  [ "$(version_order "$1" "$2")" = same ]
+}
+
+# Prints "newer", "same" or "older" for $1 against $2, or nothing when either
+# is not digits and dots only.
+version_order() {
   local candidate="$1" current="$2"
-  [[ "$candidate" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
-  [[ "$current" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+  [[ "$candidate" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 0
+  [[ "$current" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 0
   local -a a b
   IFS=. read -r -a a <<<"$candidate"
   IFS=. read -r -a b <<<"$current"
@@ -50,10 +63,15 @@ version_is_newer() {
     # 10# forces base ten: a component like "08" is not octal.
     x=$(( 10#${a[i]:-0} ))
     y=$(( 10#${b[i]:-0} ))
-    (( x > y )) && return 0
-    (( x < y )) && return 1
+    if (( x > y )); then echo newer; return 0; fi
+    if (( x < y )); then echo older; return 0; fi
   done
-  return 1
+  echo same
+}
+
+# HTTPS only, including every redirect.
+fetch() {
+  curl -fsSL --proto '=https' --proto-redir '=https' "$@"
 }
 
 main() {
@@ -92,12 +110,23 @@ team_of() {
 INSTALLED_TEAM="$(team_of "$TARGET")"
 [ -n "$INSTALLED_TEAM" ] && [ "$INSTALLED_TEAM" != "not set" ] \
   || die "$TARGET is ad-hoc signed (built from source) — update it with 'make install'"
+# Both go into the code-signing requirement below, so they must be the plain
+# tokens they claim to be.
+[[ "$INSTALLED_TEAM" =~ ^[A-Z0-9]{10}$ ]] \
+  || die "unexpected Team ID '$INSTALLED_TEAM' on $TARGET"
+
+bundle_id_of() {
+  plutil -extract CFBundleIdentifier raw -o - "$1/Contents/Info.plist" 2>/dev/null
+}
+INSTALLED_ID="$(bundle_id_of "$TARGET" || true)"
+[[ "$INSTALLED_ID" =~ ^[A-Za-z0-9.-]+$ ]] \
+  || die "couldn't read a bundle identifier from $TARGET"
 
 command -v curl >/dev/null || die "curl not found"
 
 printf 'Looking up the latest release…\n'
 API="https://api.github.com/repos/$REPO/releases/latest"
-RELEASE_JSON="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API")" \
+RELEASE_JSON="$(fetch -H 'Accept: application/vnd.github+json' "$API")" \
   || die "couldn't reach the GitHub releases API"
 # Ask python for the fields rather than grepping the JSON: asset names carry
 # the version, so a regex over the whole payload picks up the wrong URLs.
@@ -115,6 +144,15 @@ print(rel["tag_name"], zip_url, sums)
 ')" || die "couldn'\''t read the latest release"
 read -r TAG ZIP_URL SUMS_URL <<<"$FIELDS"
 
+# Assets come from this repository's own release downloads, nowhere else.
+ASSET_PREFIX="https://github.com/$REPO/releases/download/"
+for url in "$ZIP_URL" "$SUMS_URL"; do
+  [[ "$url" == "$ASSET_PREFIX"* ]] \
+    || die "release asset $url is not under $ASSET_PREFIX"
+done
+ZIP_NAME="${ZIP_URL##*/}"
+[[ "$ZIP_NAME" =~ ^[A-Za-z0-9._-]+\.zip$ ]] || die "unexpected asset name '$ZIP_NAME'"
+
 version_of() {
   plutil -extract CFBundleShortVersionString raw -o - "$1/Contents/Info.plist" 2>/dev/null
 }
@@ -126,7 +164,7 @@ if ! version_is_newer "$VERSION" "$CURRENT"; then
   if [ "$ALLOW_DOWNGRADE" -eq 1 ]; then
     printf 'warning: %s is not newer than the installed %s; continuing because of --allow-downgrade\n' \
       "$VERSION" "$CURRENT" >&2
-  elif [ "$VERSION" = "$CURRENT" ]; then
+  elif version_is_same "$VERSION" "$CURRENT"; then
     printf 'Already on %s.\n' "$CURRENT"
     exit 0
   else
@@ -139,22 +177,29 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
 
-ZIP_NAME="$(basename "$ZIP_URL")"
-curl -fsSL -o "$ZIP_NAME" "$ZIP_URL"
-curl -fsSL -o SHA256SUMS "$SUMS_URL"
+# Fixed local names: nothing the release chose reaches ditto as a path.
+fetch -o release.zip "$ZIP_URL"
+fetch -o SHA256SUMS "$SUMS_URL"
 
 printf 'Verifying checksum…\n'
-# --ignore-missing: SHA256SUMS may list assets we didn't download.
-shasum -a 256 -c --ignore-missing SHA256SUMS >/dev/null \
-  || die "SHA-256 did not match the published checksum"
+# SHA256SUMS may list assets we didn't download; take the line for ours.
+EXPECTED_SUM="$(awk -v name="$ZIP_NAME" \
+  '{ file = $2; sub(/^\*/, "", file); if (file == name) { print tolower($1); exit } }' SHA256SUMS)"
+[[ "$EXPECTED_SUM" =~ ^[0-9a-f]{64}$ ]] || die "SHA256SUMS does not list $ZIP_NAME"
+ACTUAL_SUM="$(shasum -a 256 release.zip | awk '{ print $1 }')"
+[ "$ACTUAL_SUM" = "$EXPECTED_SUM" ] || die "SHA-256 did not match the published checksum"
 
-ditto -x -k "$ZIP_NAME" extract
+ditto -x -k release.zip extract
 NEW_APP="$(find extract -maxdepth 2 -name '*.app' -print -quit)"
 [ -n "$NEW_APP" ] || die "release archive contained no .app"
 
 printf 'Verifying signature…\n'
-codesign --verify --deep --strict "$NEW_APP" 2>/dev/null \
-  || die "code signature on the downloaded app is invalid"
+# Anchored like the in-app updater: chains to Apple, carries the installed
+# app's Team ID in the leaf certificate, and is the same app. Comparing the
+# TeamIdentifier text below alone would trust whatever the signature claims.
+REQUIREMENT="anchor apple generic and identifier \"$INSTALLED_ID\" and certificate leaf[subject.OU] = \"$INSTALLED_TEAM\""
+codesign --verify --deep --strict -R="$REQUIREMENT" "$NEW_APP" 2>/dev/null \
+  || die "the downloaded app is not validly signed by team $INSTALLED_TEAM as $INSTALLED_ID"
 
 NEW_TEAM="$(team_of "$NEW_APP")"
 [ "$NEW_TEAM" = "$INSTALLED_TEAM" ] \
@@ -171,12 +216,8 @@ if [ "$ALLOW_DOWNGRADE" -ne 1 ] && ! version_is_newer "$NEW_VERSION" "$CURRENT";
   die "refusing to install $NEW_VERSION over $CURRENT: not a newer version"
 fi
 
-bundle_id_of() {
-  plutil -extract CFBundleIdentifier raw -o - "$1/Contents/Info.plist" 2>/dev/null
-}
-INSTALLED_ID="$(bundle_id_of "$TARGET" || true)"
 NEW_ID="$(bundle_id_of "$NEW_APP" || true)"
-[ -n "$INSTALLED_ID" ] && [ "$NEW_ID" = "$INSTALLED_ID" ] \
+[ "$NEW_ID" = "$INSTALLED_ID" ] \
   || die "bundle identifier mismatch (installed ${INSTALLED_ID:-unknown}, download ${NEW_ID:-unknown})"
 
 # Every item, not just the bundle root: ditto stamps the attribute onto
@@ -206,7 +247,11 @@ printf 'Installed MishMail %s. Launching…\n' "$VERSION"
 open "$TARGET"
 }
 
-# Sourcing the file (the unit tests do) defines the helpers without running.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+# Run as a file: main. Sourced (the unit tests do): only the helpers above.
+# Piped into bash there is no source file at all, and the guard would
+# silently do nothing and exit 0 — refuse that loudly instead.
+if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
+  die "run this as a file (scripts/update-mishmail.sh --repo OWNER/REPO), not piped into a shell"
+elif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   main "$@"
 fi

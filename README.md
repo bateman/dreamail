@@ -188,9 +188,11 @@ build; choose **Always Allow**. Subsequent rebuilds keep the same identity and
 do not ask again.
 
 Paid membership is only needed to distribute a Developer ID signed and
-notarized build to other Macs. An ad-hoc/source installation will only accept
-in-app executable updates that are Developer ID signed and notarized;
-otherwise it opens the GitHub release page. `make release` explicitly rejects
+notarized build to other Macs. An ad-hoc/source installation never updates
+itself in place, even with a release channel configured: with no Team ID of
+its own there is no publisher to check an update against, and "any notarized
+Developer ID" is something any publisher can provide. Update it with
+`make install`. `make release` explicitly rejects
 free Personal Team and ad-hoc identities so they cannot accidentally be
 published as updates for other users.
 
@@ -203,7 +205,8 @@ tracked value is empty: the app makes no release checks, never contacts a
 releases API, and never replaces itself; Settings → Updates says updates are
 disabled. Update a source build with `make install`. The rest of this section
 describes the updater as it behaves once a channel you publish and sign is
-configured in `Config/Local.xcconfig`.
+configured in `Config/Local.xcconfig` **and** the build is signed with a Team
+ID; an ad-hoc build stays inert even with a channel.
 
 With a channel configured, the
 app checks once a day; when a newer version exists, an **Update app** button
@@ -335,8 +338,31 @@ before a hosted chat.
 
 ## Where things live
 
+This fork's bundle identifier is `io.github.bateman.MishMail` (Debug:
+`io.github.bateman.MishMail.debug`), so it has its own sandbox container,
+defaults domain and Keychain items:
+
 - Mail cache (SQLCipher-encrypted): `~/Library/Containers/io.github.bateman.MishMail/Data/Library/Application Support/MishMail/mail.sqlite`
 - OAuth refresh tokens, client secret, and the DB key: macOS Keychain (`io.github.bateman.MishMail`)
+
+### Coming from an upstream (`dev.ronboger.MishMail`) install
+
+Nothing is migrated: the first launch of this fork starts fresh, so sign in
+to Google again and let it resync. The old install's data stays where it was
+until you remove it. Quit both apps first, then:
+
+```sh
+# Old mail cache, attachments and preferences (Release and Debug)
+rm -rf ~/Library/Containers/dev.ronboger.MishMail ~/Library/Containers/dev.ronboger.MishMail.debug
+# Old Google refresh tokens, client secret and database key. Each command
+# deletes one item; repeat until it reports that none was found.
+security delete-generic-password -s dev.ronboger.MishMail
+security delete-generic-password -s dev.ronboger.MishMail.debug
+```
+
+Then revoke the old app's access in your Google Account (Security → Your
+connections to third-party apps & services), unless this fork uses the same
+OAuth client and you want to keep the grant.
 
 ## Security
 

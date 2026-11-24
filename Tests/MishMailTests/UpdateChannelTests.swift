@@ -1,7 +1,8 @@
 import XCTest
 
 /// The release channel is explicit configuration with no default, and without
-/// one the updater is inert: no request, no schedule, no download, no install.
+/// one — or on an ad-hoc signed copy, even with one — the updater is inert:
+/// no request, no schedule, no download, no install.
 final class UpdateChannelTests: XCTestCase {
 
     // MARK: - Parsing
@@ -14,6 +15,8 @@ final class UpdateChannelTests: XCTestCase {
         XCTAssertEqual(channel.latestReleaseURL.absoluteString,
                        "https://api.github.com/repos/bateman/mishmail/releases/latest")
         XCTAssertEqual(UpdateChannel(" some-org/repo.name_2 \n")?.slug, "some-org/repo.name_2")
+        // Same rule as the script's valid_repo: character sets only.
+        XCTAssertEqual(UpdateChannel("a--b/-")?.slug, "a--b/-")
     }
 
     func testAnythingButOwnerSlashRepositoryIsNoChannel() {
@@ -23,11 +26,9 @@ final class UpdateChannelTests: XCTestCase {
             "$(MISHMAIL_UPDATE_CHANNEL)",
             "ronboger", "a/b/c", "/repo", "owner/",
             "https://github.com/owner/repo", "github.com/owner/repo",
-            "-owner/repo", "owner-/repo", "ow--ner/repo",
             "owner/.", "owner/..", "own er/repo", "owner/re po",
-            "owner/repo?x=1", "owner/repo#x", "ówner/repo",
-            String(repeating: "a", count: 40) + "/repo",
-            "owner/" + String(repeating: "r", count: 101),
+            "own.er/repo", "own_er/repo", "owner/repo?x=1", "owner/repo#x",
+            "ówner/repo", "owner/repó", "owner\\x/repo",
         ] {
             XCTAssertNil(UpdateChannel(raw), "\(raw ?? "nil") must not parse as a channel")
         }
@@ -48,21 +49,23 @@ final class UpdateChannelTests: XCTestCase {
     @MainActor
     func testExplicitCheckWithoutChannelMakesNoRequestAndSaysDisabled() async {
         let recorder = FetchRecorder()
-        let checker = UpdateChecker(channel: nil, fetch: recorder.fetch)
+        let checker = UpdateChecker(channel: nil, runningTeamID: "ABCDE12345",
+                                    fetch: recorder.fetch)
         XCTAssertFalse(checker.isEnabled)
 
         await checker.check(quietly: false)
 
         XCTAssertEqual(recorder.count, 0, "no channel must mean no network request")
         XCTAssertNil(checker.available)
-        XCTAssertEqual(checker.status, UpdateChecker.disabledStatus)
+        XCTAssertEqual(checker.status, UpdateChecker.noChannelStatus)
         XCTAssertEqual(checker.activity, .idle)
     }
 
     @MainActor
     func testQuietCheckWithoutChannelMakesNoRequest() async {
         let recorder = FetchRecorder()
-        let checker = UpdateChecker(channel: nil, fetch: recorder.fetch)
+        let checker = UpdateChecker(channel: nil, runningTeamID: "ABCDE12345",
+                                    fetch: recorder.fetch)
         await checker.check(quietly: true)
         XCTAssertEqual(recorder.count, 0)
         XCTAssertNil(checker.available)
@@ -72,7 +75,8 @@ final class UpdateChannelTests: XCTestCase {
     @MainActor
     func testStartPeriodicChecksWithoutChannelSchedulesNothing() async {
         let recorder = FetchRecorder()
-        let checker = UpdateChecker(channel: nil, fetch: recorder.fetch)
+        let checker = UpdateChecker(channel: nil, runningTeamID: "ABCDE12345",
+                                    fetch: recorder.fetch)
 
         checker.startPeriodicChecks()
         // Give any task it might have spawned a chance to run.
@@ -85,7 +89,8 @@ final class UpdateChannelTests: XCTestCase {
 
     @MainActor
     func testOpenUpdateWithoutChannelNeverStartsAnInstall() {
-        let checker = UpdateChecker(channel: nil, fetch: FetchRecorder().fetch)
+        let checker = UpdateChecker(channel: nil, runningTeamID: "ABCDE12345",
+                                    fetch: FetchRecorder().fetch)
         // However a release got here, the install path must refuse it.
         checker.available = UpdateChecker.Release(
             version: "99.0.0",
@@ -98,7 +103,63 @@ final class UpdateChannelTests: XCTestCase {
 
         XCTAssertNil(checker.available)
         XCTAssertEqual(checker.activity, .idle)
-        XCTAssertEqual(checker.status, UpdateChecker.disabledStatus)
+        XCTAssertEqual(checker.status, UpdateChecker.noChannelStatus)
+    }
+
+    // MARK: - Ad-hoc signed copy (F-01): a channel alone is not enough
+
+    @MainActor
+    func testAdHocCopyWithAChannelStaysInert() async {
+        let recorder = FetchRecorder()
+        let checker = UpdateChecker(channel: UpdateChannel("bateman/mishmail"),
+                                    runningTeamID: nil, fetch: recorder.fetch)
+        XCTAssertEqual(checker.availability, .unsignedInstall)
+        XCTAssertFalse(checker.isEnabled)
+        XCTAssertNil(checker.channel)
+
+        checker.startPeriodicChecks()
+        await checker.check(quietly: true)
+        await checker.check(quietly: false)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(recorder.count, 0, "an ad-hoc copy must never ask for a release")
+        XCTAssertFalse(checker.isCheckingPeriodically)
+        XCTAssertNil(checker.available)
+        XCTAssertEqual(checker.status, UpdateChecker.unsignedInstallStatus)
+        XCTAssertEqual(checker.disabledStatus, UpdateChecker.unsignedInstallStatus)
+    }
+
+    @MainActor
+    func testAdHocCopyNeverStartsAnInstall() {
+        let checker = UpdateChecker(channel: UpdateChannel("bateman/mishmail"),
+                                    runningTeamID: nil, fetch: FetchRecorder().fetch)
+        checker.available = UpdateChecker.Release(
+            version: "99.0.0",
+            htmlURL: URL(string: "https://example.invalid/release")!,
+            assetURL: URL(string: "https://example.invalid/MishMail-99.0.0.zip")!,
+            checksumURL: nil, notes: "")
+
+        checker.openUpdate()
+
+        XCTAssertNil(checker.available)
+        XCTAssertEqual(checker.activity, .idle)
+        XCTAssertEqual(checker.status, UpdateChecker.unsignedInstallStatus)
+    }
+
+    @MainActor
+    func testAvailabilityNeedsBothAChannelAndATeam() {
+        let channel = UpdateChannel("bateman/mishmail")!
+        let cases: [(UpdateChannel?, String?, UpdateChecker.Availability)] = [
+            (nil, nil, .noChannel),
+            (nil, "ABCDE12345", .noChannel),
+            (channel, nil, .unsignedInstall),
+            (channel, "ABCDE12345", .enabled(channel)),
+        ]
+        for (channel, team, expected) in cases {
+            let checker = UpdateChecker(channel: channel, runningTeamID: team,
+                                        fetch: FetchRecorder().fetch)
+            XCTAssertEqual(checker.availability, expected)
+        }
     }
 
     // MARK: - Updater with a channel
@@ -112,7 +173,7 @@ final class UpdateChannelTests: XCTestCase {
                {"name": "SHA256SUMS", "browser_download_url": "https://example.invalid/SHA256SUMS"}]}
             """)
         let checker = UpdateChecker(channel: UpdateChannel("bateman/mishmail"),
-                                    fetch: recorder.fetch)
+                                    runningTeamID: "ABCDE12345", fetch: recorder.fetch)
         XCTAssertTrue(checker.isEnabled)
 
         await checker.check(quietly: false)

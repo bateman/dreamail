@@ -240,22 +240,32 @@ struct UpdatesSettings: View {
         }
     }
 
-    /// No release channel configured (the tracked default): say so, and offer
-    /// nothing that would check, download, or install.
+    /// Updates off — no channel (the tracked default) or an ad-hoc signed
+    /// copy: say which, and offer nothing that would check, download, or
+    /// install.
     private var disabledBody: some View {
         PaneScaffold(title: "Updates", subtitle: "Automatic updates are disabled") {
             Form {
                 Section {
                     LabeledContent("Current version", value: updates.currentVersion)
-                    Text(UpdateChecker.disabledStatus)
+                    Text(updates.disabledStatus ?? UpdateChecker.noChannelStatus)
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .accessibilityIdentifier("updatesDisabledNotice")
                 } footer: {
-                    Text("This build has no release channel, so MishMail never contacts a releases server and never replaces itself. A channel is set at build time with MISHMAIL_UPDATE_CHANNEL (owner/repo) in Config/Local.xcconfig.")
+                    Text(disabledFooter)
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
+        }
+    }
+
+    private var disabledFooter: String {
+        switch updates.availability {
+        case .unsignedInstall:
+            return "A release channel is configured, but an ad-hoc signed app has no Team ID to match an update's publisher against, so MishMail never contacts the releases server and never replaces itself. Sign the build with your team (Config/Local.xcconfig) to use the channel."
+        case .noChannel, .enabled:
+            return "This build has no release channel, so MishMail never contacts a releases server and never replaces itself. A channel is set at build time with MISHMAIL_UPDATE_CHANNEL (owner/repo) in Config/Local.xcconfig, and is used only by a build signed with a Team ID."
         }
     }
 

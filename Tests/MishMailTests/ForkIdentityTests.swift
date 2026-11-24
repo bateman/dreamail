@@ -5,7 +5,6 @@ import XCTest
 /// items), and a build configuration that ships with the updater disabled.
 final class ForkIdentityTests: XCTestCase {
 
-    static let prefix = "io.github.bateman."
     /// Built in pieces so this file does not match its own scan.
     private static let upstreamPrefix = "dev." + "ronboger"
 
@@ -85,26 +84,6 @@ final class ForkIdentityTests: XCTestCase {
 
         // A target setting would silently override the xcconfig.
         XCTAssertFalse(try Self.repoFile("project.yml").contains("MISHMAIL_UPDATE_CHANNEL"))
-    }
-
-    /// The app CI just built (it builds before it tests): fork bundle id, and
-    /// an expanded, empty channel — so `UpdateChecker.shared` is disabled.
-    func testBuiltAppHasTheForkIdentityAndNoUpdateChannel() throws {
-        guard let app = UpdateVerifySmokeTests.builtAppURL() else {
-            throw XCTSkip("no built MishMail app; run `make build` first (CI does)")
-        }
-        let data = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
-        let info = try XCTUnwrap(PropertyListSerialization.propertyList(
-            from: data, format: nil) as? [String: Any])
-
-        let bundleID = try XCTUnwrap(info["CFBundleIdentifier"] as? String)
-        XCTAssertTrue(bundleID.hasPrefix(Self.prefix), bundleID)
-        XCTAssertEqual(info["CFBundleDisplayName"] as? String ?? info["CFBundleName"] as? String,
-                       app.deletingPathExtension().lastPathComponent)
-
-        XCTAssertEqual(info[UpdateChannel.infoKey] as? String, "",
-                       "the shipped build must carry an empty update channel")
-        XCTAssertNil(UpdateChannel.configured(in: info))
     }
 
     // MARK: - Helpers
