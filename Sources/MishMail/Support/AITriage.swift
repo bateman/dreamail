@@ -16,7 +16,6 @@ enum AITriage {
         defaults.object(forKey: autoClassifyKey) == nil
             || defaults.bool(forKey: autoClassifyKey)
     }
-
     /// Silent auto-sort must not upload inbox snippets to a cloud host.
     /// `nil` config means no provider resolved — do not skip; the classify
     /// pass runs and fails locally, same as before.

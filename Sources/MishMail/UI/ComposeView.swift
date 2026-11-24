@@ -1676,8 +1676,10 @@ struct ComposeView: View {
         }
     }
 
+    /// `.ai` also gates suggested replies, drafting and inline AI edits.
     private func composeToolVisible(_ item: ComposeToolbarItem) -> Bool {
-        ComposeToolbarVisibility.isVisible(item, hiddenRaw: composeToolbarHidden)
+        ComposeToolbarVisibility.isOffered(item, aiFeatures: AIFeatures.isEnabled)
+            && ComposeToolbarVisibility.isVisible(item, hiddenRaw: composeToolbarHidden)
     }
 
     private func footerButton(_ item: ComposeToolbarItem,

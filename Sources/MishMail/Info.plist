@@ -34,5 +34,10 @@
 	     updater is disabled. -->
 	<key>MishMailUpdateChannel</key>
 	<string>$(MISHMAIL_UPDATE_CHANNEL)</string>
+	<!-- AI features and the local MCP server. Empty unless the build sets
+	     MISHMAIL_AI_FEATURES = YES (see Config/Signing.xcconfig); empty means
+	     both are off. -->
+	<key>MishMailAIFeatures</key>
+	<string>$(MISHMAIL_AI_FEATURES)</string>
 </dict>
 </plist>

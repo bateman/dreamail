@@ -436,7 +436,7 @@ final class MailStore {
     /// "Handle with Mish": open the panel and let the agent work the open
     /// thread on the Handle-with-Mish model.
     func handleSelectedThreadWithMish() {
-        guard selectedThread != nil else { return }
+        guard AIFeatures.isEnabled, selectedThread != nil else { return }
         showAskMish = true
         askMishControllerCreatingIfNeeded().handleSelectedThread()
     }
@@ -1755,7 +1755,7 @@ struct ComposeRequest: Identifiable {
 
     // MARK: - MCP server
 
-    static let mcpEnabledKey = "mcp.enabled"
+    static let mcpEnabledKey = MCPSwitchedOff.enabledKey
     static let mcpTokenKey = "mcp.token"
     static let mcpPortKey = "mcp.port"
 
@@ -1775,10 +1775,24 @@ struct ComposeRequest: Identifiable {
     }
 
     var isMCPEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.mcpEnabledKey) }
+        get {
+            AIFeatures.isEnabled && UserDefaults.standard.bool(forKey: Self.mcpEnabledKey)
+        }
         set {
+            // A build without AI features stores nothing and runs nothing.
+            guard AIFeatures.isEnabled else {
+                stopMCPServer()
+                return
+            }
             UserDefaults.standard.set(newValue, forKey: Self.mcpEnabledKey)
             if newValue {
+                // First opt-in after a build without AI features: the old
+                // token may still be posted by a helper (launchd) to a port
+                // anyone could have bound meanwhile, so mint a new one.
+                if MCPSwitchedOff.takeTokenRotation(defaults: .standard) {
+                    Keychain.delete(Self.mcpTokenKey)
+                    mcpToken = nil
+                }
                 startMCPServer()
             } else {
                 stopMCPServer()
@@ -1817,7 +1831,13 @@ struct ComposeRequest: Identifiable {
         return token
     }
 
+    /// The only place a server is created. Refuses, before the token read,
+    /// the bind and the discovery file, in a build without AI features.
+    /// The only place a server is created and `mcp.json` written. With the
+    /// AI features off it returns before the token read, the bind and the
+    /// file, whatever `mcp.enabled` says (MCPServerGateTests checks this).
     func startMCPServer() {
+        guard AIFeatures.isEnabled else { return }
         stopMCPServer()
         do {
             let token = try ensureMCPToken()
@@ -1880,7 +1900,12 @@ struct ComposeRequest: Identifiable {
         // before the first frame despite the intent. Here it is past the
         // first suspension point, so the window has had a chance to draw;
         // a bind failure still only surfaces as a notice.
-        if isMCPEnabled, !isShuttingDown {
+        // The build switch wins over the stored opt-in. Without it, an
+        // earlier build's state goes: the stale mcp.json, and the opt-in
+        // itself, so turning AI back on needs a fresh choice (and token).
+        if !AIFeatures.isEnabled {
+            MCPSwitchedOff.cleanUp(defaults: .standard, discoveryURL: mcpDiscoveryURL)
+        } else if isMCPEnabled, !isShuttingDown {
             startMCPServer()
         }
         // Contacts first: recipient autocomplete is the first deferred
