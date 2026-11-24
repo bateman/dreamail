@@ -2761,8 +2761,9 @@ final class AppDatabase: @unchecked Sendable {
                 arguments: StatementArguments(swatches))
         }
 
-        // v53 (v52 is the account label colour): each account's own Google profile photo (downscaled PNG),
-        // kept with the account and deleted with it (`AccountPhotoRecord`).
+        // v53 (after v52, the account label colour): each account's own
+        // Google profile photo (downscaled PNG), kept with the account and
+        // deleted with it (`AccountPhotoRecord`).
         m.registerMigration("v53") { db in
             try db.create(table: "accountPhoto") { t in
                 t.primaryKey("accountId", .text)
