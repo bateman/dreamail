@@ -144,7 +144,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Button { store.moveSelection(-1, intent: .explicitOpen) } label: {
                             Label("Previous", systemImage: "chevron.up")
                         }
-                        .help("Previous conversation (\(store.keyBindings.key(for: .prev)))")
+                        .help("Previous conversation (\(store.keyBindings.displayKey(for: .prev)))")
                         .focusable(false)
                         .focusEffectDisabled()
                     }
@@ -153,7 +153,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Button { store.moveSelection(1, intent: .explicitOpen) } label: {
                             Label("Next", systemImage: "chevron.down")
                         }
-                        .help("Next conversation (\(store.keyBindings.key(for: .next)))")
+                        .help("Next conversation (\(store.keyBindings.displayKey(for: .next)))")
                         .focusable(false)
                         .focusEffectDisabled()
                     }
@@ -166,23 +166,23 @@ struct ThreadDetailToolbar: ViewModifier {
                     Button { store.archive(thread) } label: {
                         Label("Archive", systemImage: "archivebox")
                     }
-                    .help("Archive (\(store.keyBindings.key(for: .archive)))")
+                    .help("Archive (\(store.keyBindings.displayKey(for: .archive)))")
                     Button { store.toggleStar(thread) } label: {
                         Label(thread.isStarred ? "Unstar" : "Star",
                               systemImage: thread.isStarred ? "star.fill" : "star")
                             .foregroundStyle(thread.isStarred ? .yellow : .primary)
                     }
                     .help(thread.isStarred
-                          ? "Unstar (\(store.keyBindings.key(for: .toggleStar)))"
-                          : "Star (\(store.keyBindings.key(for: .toggleStar)))")
+                          ? "Unstar (\(store.keyBindings.displayKey(for: .toggleStar)))"
+                          : "Star (\(store.keyBindings.displayKey(for: .toggleStar)))")
                     Button { store.openLabelPicker() } label: {
                         Label("Label", systemImage: "tag")
                     }
-                    .help("Labels (\(store.keyBindings.key(for: .label)))")
+                    .help("Labels (\(store.keyBindings.displayKey(for: .label)))")
                     Button(role: .destructive) { store.trash(thread) } label: {
                         Label("Trash", systemImage: "trash")
                     }
-                    .help("Move to Trash (\(store.keyBindings.key(for: .trash)))")
+                    .help("Move to Trash (\(store.keyBindings.displayKey(for: .trash)))")
                     // Reply/forward target the newest *sent* message — never a draft
                     // (shared ForwardComposer.newestSentMessage; drafts open via
                     // Continue / editDraft, not Reply).
@@ -192,7 +192,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Button { onReply(last) } label: {
                             Label("Reply", systemImage: "arrowshape.turn.up.left")
                         }
-                        .help("Reply (\(store.keyBindings.key(for: .reply)))")
+                        .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
                         .disabled(!loaded)
                         if AIFeatures.isEnabled {
                             Button { store.handleSelectedThreadWithMish() } label: {
@@ -207,7 +207,7 @@ struct ThreadDetailToolbar: ViewModifier {
                             } label: {
                                 Label("Reply all", systemImage: "arrowshape.turn.up.left.2")
                             }
-                            .help("Reply all (\(store.keyBindings.key(for: .replyAll)))")
+                            .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
                             .disabled(!loaded)
                         }
                         Button {
@@ -215,7 +215,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         } label: {
                             Label("Forward", systemImage: "arrowshape.turn.up.right")
                         }
-                        .help("Forward newest message (\(store.keyBindings.key(for: .forward))) · starts a new conversation")
+                        .help("Forward newest message (\(store.keyBindings.displayKey(for: .forward))) · starts a new conversation")
                         .disabled(!loaded)
                     }
                     // Overflow holds secondary actions that already exist via
@@ -270,14 +270,14 @@ struct ThreadDetailToolbar: ViewModifier {
                             } label: {
                                 Label("Not spam", systemImage: "tray")
                             }
-                            .help("Not spam (\(store.keyBindings.key(for: .markSpam)))")
+                            .help("Not spam (\(store.keyBindings.displayKey(for: .markSpam)))")
                         } else {
                             Button {
                                 store.markSpam(thread)
                             } label: {
                                 Label("Mark as spam", systemImage: "exclamationmark.octagon")
                             }
-                            .help("Mark as spam (\(store.keyBindings.key(for: .markSpam)))")
+                            .help("Mark as spam (\(store.keyBindings.displayKey(for: .markSpam)))")
                         }
                         // Report phishing deferred — public Gmail API has no
                         // phishing endpoint (other clients may soft-map to spam). See

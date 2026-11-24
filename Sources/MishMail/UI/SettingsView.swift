@@ -1063,7 +1063,7 @@ struct AppearanceSettings: View {
     /// Cap on Priority section size; 0 = no limit. Default 10.
     @AppStorage("priorityMaxCount") private var priorityMaxCount = 10
     @AppStorage(ThreadOpenStyle.storageKey) private var threadOpenStyleRaw =
-        ThreadOpenStyle.fullWindow.rawValue
+        ThreadOpenStyle.defaultStyle.rawValue
     /// Default `.ask` preserves privacy (no open-tracking until opt-in).
     @AppStorage(RemoteImagePolicy.defaultsKey) private var remoteImagePolicyRaw =
         RemoteImagePolicy.ask.rawValue
@@ -1105,7 +1105,7 @@ struct AppearanceSettings: View {
                         Text("Opens in a centered card").tag(ThreadOpenStyle.centerPeek.rawValue)
                     }
                 } footer: {
-                    Text("Fills the window is Superhuman-style: click a conversation (or press ↩) and it takes over the window; Esc or g i (any go-to) returns to the list. The reading pane shows conversations beside the message list instead. The centered card (center peek) floats the conversation over the list; Esc or clicking outside it returns to the list.")
+                    Text("The reading pane (the default, as in Gmail) shows the conversation beside the message list; a narrow window swaps between the two. Fills the window: click a conversation (or press o or ↩) and it takes over the window; Esc, u or g i (any go-to) returns to the list. The centered card (center peek) floats the conversation over the list; Esc, u or clicking outside it returns to the list.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 

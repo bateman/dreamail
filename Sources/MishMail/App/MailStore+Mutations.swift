@@ -528,7 +528,8 @@ extension MailStore {
             in: selectionOrder,
             removing: removing,
             selected: selectedThreadId,
-            opened: openedThreadId)
+            opened: openedThreadId,
+            preferPrevious: advancePrefersPrevious)
         guard destinations.selectedWasRemoved || destinations.openedWasRemoved
         else { return }
 
@@ -704,6 +705,17 @@ extension MailStore {
             guard checked.contains(id) else { return nil }
             return byId[id]
         }
+    }
+
+    /// Gmail `]` / `[`: archive the open conversation, then show the next
+    /// (older) or previous (newer) one. The caller checks that a
+    /// conversation is on screen; on the list these keys do nothing.
+    func archiveOpenConversation(goToPrevious: Bool) {
+        guard let id = openedThreadId,
+              let thread = threads.first(where: { $0.id == id }) else { return }
+        advancePrefersPrevious = goToPrevious
+        defer { advancePrefersPrevious = false }
+        archive(thread)
     }
 
     func archive(_ thread: MailThread) {
@@ -993,19 +1005,21 @@ extension MailStore {
         }
     }
 
-    /// Gmail Shift+I / Shift+U with state-aware Shift+I (already-read → unread).
-    /// Targets the checked set when multi-select is active, else the focused row.
+    /// Gmail Shift+I (mark read) / Shift+U (mark unread). Targets the
+    /// checked set when multi-select is active, else the focused row.
     func applyGmailMarkReadChord(_ chord: GmailMarkReadKeys.Chord) {
-        let targets: [MailThread]
-        if !checkedThreadIds.isEmpty {
-            targets = checkedThreadsInOrder
-        } else if let t = selectedThread {
-            targets = [t]
-        } else {
-            return
-        }
-        let anyUnread = targets.contains { $0.isUnread }
-        let read = GmailMarkReadKeys.desiredRead(chord: chord, anyUnread: anyUnread)
+        guard let targets = readTargets else { return }
+        setReadState(targets, read: GmailMarkReadKeys.desiredRead(chord: chord))
+    }
+
+    /// The checked set when multi-select is active, else the focused row.
+    private var readTargets: [MailThread]? {
+        if !checkedThreadIds.isEmpty { return checkedThreadsInOrder }
+        return selectedThread.map { [$0] }
+    }
+
+    private func setReadState(_ targets: [MailThread], read: Bool) {
+        guard !targets.isEmpty else { return }
         guard targets.count > 1 else {
             setRead(targets[0], read: read)
             return
@@ -1022,8 +1036,8 @@ extension MailStore {
     /// Bulk read toggle: if any checked is unread, mark all read; else unread.
     func toggleReadChecked() {
         guard !checkedThreadIds.isEmpty else { return }
-        // Same state rule as Shift+I on a multi-select.
-        applyGmailMarkReadChord(.shiftI)
+        let targets = checkedThreadsInOrder
+        setReadState(targets, read: targets.contains { $0.isUnread })
     }
 
     /// Drop the snooze overlay immediately. Archive/trash are single-key and

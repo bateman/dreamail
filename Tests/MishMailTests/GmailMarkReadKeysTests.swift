@@ -21,21 +21,22 @@ final class GmailMarkReadKeysTests: XCTestCase {
         XCTAssertNil(GmailMarkReadKeys.chord(key: "ii", shiftOnly: true))
     }
 
-    func testShiftIMarksReadWhenAnyUnread() {
-        XCTAssertEqual(
-            GmailMarkReadKeys.desiredRead(chord: .shiftI, anyUnread: true), true)
-    }
-
-    func testShiftIMarksUnreadWhenAllAlreadyRead() {
-        // Fully-read selection: Shift+I flips to unread instead of no-op.
-        XCTAssertEqual(
-            GmailMarkReadKeys.desiredRead(chord: .shiftI, anyUnread: false), false)
+    /// Gmail's Shift+I only ever marks read. It used to mark an already-read
+    /// selection unread; that flip is now the separate `toggleRead` command.
+    func testShiftIAlwaysMarksRead() {
+        XCTAssertTrue(GmailMarkReadKeys.desiredRead(chord: .shiftI))
     }
 
     func testShiftUAlwaysMarksUnread() {
-        XCTAssertEqual(
-            GmailMarkReadKeys.desiredRead(chord: .shiftU, anyUnread: true), false)
-        XCTAssertEqual(
-            GmailMarkReadKeys.desiredRead(chord: .shiftU, anyUnread: false), false)
+        XCTAssertFalse(GmailMarkReadKeys.desiredRead(chord: .shiftU))
+    }
+
+    /// Shift+N is Gmail's "update conversation" (MishMail: sync all).
+    func testShiftNIsTheRefreshKey() {
+        XCTAssertTrue(GmailRefreshKey.matches(key: "N", shiftOnly: true))
+        XCTAssertTrue(GmailRefreshKey.matches(key: "n", shiftOnly: true))  // Caps Lock off quirks
+        XCTAssertFalse(GmailRefreshKey.matches(key: "n", shiftOnly: false))
+        XCTAssertFalse(GmailRefreshKey.matches(key: "m", shiftOnly: true))
+        XCTAssertNil(GmailMarkReadKeys.chord(key: "N", shiftOnly: true))
     }
 }

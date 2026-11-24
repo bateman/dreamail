@@ -56,8 +56,11 @@ struct CommandPalette: View {
                                         Image(systemName: cmd.icon).frame(width: 20)
                                         Text(cmd.title)
                                         Spacer()
-                                        if let shortcut = cmd.shortcut {
-                                            Text(store.keyBindings.key(for: shortcut))
+                                        // An unbound command (e.g. the read
+                                        // toggle) shows no key at all.
+                                        if let shortcut = cmd.shortcut,
+                                           let key = store.keyBindings.key(for: shortcut) {
+                                            Text(key)
                                                 .font(.system(size: 11, design: .monospaced))
                                                 .foregroundStyle(.secondary)
                                         }

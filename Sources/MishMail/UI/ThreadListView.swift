@@ -462,10 +462,10 @@ struct ThreadListView: View {
             Spacer(minLength: 8)
             Button("Archive") { store.archiveChecked() }
                 .buttonStyle(.borderless)
-                .help("Archive selected (\(store.keyBindings.key(for: .archive)))")
+                .help("Archive selected (\(store.keyBindings.displayKey(for: .archive)))")
             Button("Trash", role: .destructive) { store.trashChecked() }
                 .buttonStyle(.borderless)
-                .help("Trash selected (\(store.keyBindings.key(for: .trash)))")
+                .help("Trash selected (\(store.keyBindings.displayKey(for: .trash)))")
             Button("Star") { store.toggleStarChecked() }
                 .buttonStyle(.borderless)
             Button("Read/Unread") { store.toggleReadChecked() }

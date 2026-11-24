@@ -6,6 +6,17 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Default shortcuts and layout follow Gmail on the web.** `u` now goes back to
+  the conversation list (it was mark read/unread: use Shift-I / Shift-U, which
+  now only mark read / unread, or bind the toggle again in Settings), `o` opens,
+  `]` / `[` archive the open conversation and move on, Shift-N refreshes, `g b`
+  and `g l` go to Snoozed and Labels, `*` then a / n / r / u / s / t selects,
+  and ⌘⇧C / ⌘⇧B / ⌘⇧F / ⌘⇧9 work in compose. The default for opening a
+  conversation is now the reading pane beside the list, also on installs that
+  never chose a style (a stored choice is kept); browsing with j/k therefore
+  opens each conversation, which marks it read sooner (remote images stay
+  blocked). Custom keys are kept; a new default that collides with one is left
+  unbound.
 - **AI features and the local MCP server are off.** A build setting
   (`MISHMAIL_AI_FEATURES`, empty in the tracked configuration) decides it, not
   a preference. Off means no Ask Mish, summaries, AI drafting, suggested

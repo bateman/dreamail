@@ -6,13 +6,13 @@ struct ShortcutsHelpView: View {
     @ObservedObject var bindings: KeyBindings
     @Environment(\.dismiss) private var dismiss
 
-    /// Fixed (non-rebindable) shortcuts, shown for reference.
+    /// Fixed (non-rebindable) shortcuts, shown for reference. The sequences
+    /// come from the same tables `MailStore.handleKey` runs.
     private static let fixed: [(section: String, rows: [(key: String, title: String)])] = [
-        ("Go to (press g, then…)", [
-            ("g i", "Inbox (also exits full-window conversation)"),
-            ("g s", "Starred"), ("g t", "Sent"),
-            ("g d", "Drafts"), ("g a", "All mail"), ("g p", "Promotions"),
-        ]),
+        ("Go to (press g, then…)",
+         ShortcutSequences.goTo.map { (key: "g \($0.key)", title: $0.title) }),
+        ("Select (press *, then…)",
+         ShortcutSequences.select.map { (key: "* \($0.key)", title: $0.title) }),
         ("Other", [
             ("↑ / ↓", "Browse conversations"),
             ("⇧↑ / ⇧↓", "Select a range of conversations (also ⇧J / ⇧K)"),
@@ -20,11 +20,11 @@ struct ShortcutsHelpView: View {
             ("Space / ⇧Space", "Page the conversation down / up (Space opens it when closed)"),
             ("← / →", "Hide / show sidebar"),
             ("Return", "Open conversation"),
-            ("⇧I", "Mark as read (unread if already read)"),
+            ("⇧I", "Mark as read"),
             ("⇧U", "Mark as unread"),
+            ("⇧N", "Refresh (sync all accounts)"),
             ("⌘↩", "Focus conversation full-app (Send while composing)"),
             ("⇧⌘↩", "Compose side by side with the conversation"),
-            ("x", "Select / deselect (multi-select)"),
             ("Shift-click checkbox", "Select a range"),
             ("⌘A", "Select all (multi-select)"),
             ("⌘L", "Copy Gmail link to conversation"),
@@ -57,7 +57,7 @@ struct ShortcutsHelpView: View {
                     ForEach(KeyBindings.Category.allCases, id: \.self) { category in
                         section(category.rawValue,
                                 rows: KeyBindings.catalog.filter { $0.category == category }
-                                    .map { (bindings.key(for: $0.command), $0.title) })
+                                    .map { (bindings.displayKey(for: $0.command), $0.title) })
                     }
                     ForEach(Self.fixed, id: \.section) { group in
                         section(group.section, rows: group.rows)

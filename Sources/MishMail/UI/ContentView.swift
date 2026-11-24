@@ -48,10 +48,11 @@ struct ContentView: View {
     @State private var layoutMode: MailLayoutMode = .list
     // Persisted so the layout survives relaunch, like the sidebar state.
     @AppStorage("readingPaneHidden") private var readingPaneHidden = false
-    // Superhuman-style (default): opening a conversation fills the window.
-    // Settings → Appearance can switch back to the reading-pane layout.
+    // Gmail-style (default): the conversation shows in a reading pane
+    // beside the list. Settings → Appearance can switch to full-window or
+    // the centered card.
     @AppStorage(ThreadOpenStyle.storageKey) private var threadOpenStyleRaw =
-        ThreadOpenStyle.fullWindow.rawValue
+        ThreadOpenStyle.defaultStyle.rawValue
     // Sidebar starts collapsed; ← hides it, → brings it back (persisted).
     @AppStorage("sidebarHidden") private var sidebarHidden = true
     /// Measured frames for PreferenceKey-aligned inline compose.
@@ -71,11 +72,11 @@ struct ContentView: View {
         // Center peek shares the whole open/close flow with full-window
         // (threadFocusMode, Esc ladder, compose placement) — only the
         // rendering differs (overlay card instead of a takeover).
-        ThreadOpenStyle(rawValue: threadOpenStyleRaw) != .readingPane
+        ThreadOpenStyle.resolved(storedRaw: threadOpenStyleRaw) != .readingPane
     }
 
     private var centerPeekThreads: Bool {
-        ThreadOpenStyle(rawValue: threadOpenStyleRaw) == .centerPeek
+        ThreadOpenStyle.resolved(storedRaw: threadOpenStyleRaw) == .centerPeek
     }
 
     /// What "the reading pane is hidden" means for compose placement and
@@ -308,6 +309,7 @@ struct ContentView: View {
         .onDisappear {
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
+            store.viewCommandHandler = nil
             detailSelectionTask?.cancel()
             detailSelectionTask = nil
         }
@@ -411,14 +413,14 @@ struct ContentView: View {
                                 Text("Undo")
                                 // Rebindable single-key (default `z`); ⌘Z is also
                                 // wired in the key monitor for the standard chord.
-                                Text(store.keyBindings.key(for: .undo))
+                                Text(store.keyBindings.displayKey(for: .undo))
                                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                     .opacity(0.75)
                             }
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .help("Undo (\(store.keyBindings.key(for: .undo)) or ⌘Z)")
+                        .help("Undo (\(store.keyBindings.displayKey(for: .undo)) or ⌘Z)")
                     }
                     .padding(.horizontal, 22).padding(.vertical, 13)
                     .background(.regularMaterial, in: Capsule())
@@ -1059,6 +1061,20 @@ private extension ContentView {
     /// text field, the search bar, or a sheet has focus.
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
+        store.viewCommandHandler = { command in
+            switch command {
+            case .open: openSelectedFromKeyboard()
+            case .backToList: backToList()
+            case .archiveNext, .archivePrevious:
+                // Gmail's `[` / `]` act on the open conversation only.
+                guard BackToList.conversationOnScreen(
+                    layoutMode: layoutMode,
+                    openedThread: store.openedThreadId != nil) else { return }
+                store.archiveOpenConversation(
+                    goToPrevious: command == .archivePrevious)
+            default: break
+            }
+        }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak store] event in
             guard let store else { return event }
             // Settings is capturing a key for rebinding — don't run shortcuts.
@@ -1448,30 +1464,35 @@ private extension ContentView {
             }
             let finishingCompose = store.composeFinishing
             let textEditing = TextFocus.isEditing(event.window?.firstResponder)
-            guard mods.isEmpty,
-                  // A window other than the main one (e.g. Settings) being
-                  // key must not let these shortcuts act on the invisible
-                  // main-window thread list behind it.
-                  event.window == NSApp.mainWindow,
-                  !store.showCommandPalette,
-                  !store.showLabelPicker,
-                  ComposeKeyOwnership.allowsMailboxKeys(
-                      hasRequest: store.composeRequest != nil,
-                      minimized: store.composeMinimized,
-                      finishing: finishingCompose),
-                  store.editingView == nil,
-                  // Only *editable* text stands the shortcuts down. Selectable
-                  // read-only text (the whole conversation) must not — see
-                  // TextFocus. Mid-finish bypasses this (see
-                  // textFocusBlocksMailboxKeys).
-                  !(textEditing
-                    && ComposeKeyOwnership.textFocusBlocksMailboxKeys(
-                        finishing: finishingCompose))
+            // A window other than the main one (e.g. Settings) being key
+            // must not let these shortcuts act on the invisible main-window
+            // thread list behind it, and no single key fires while an
+            // editable field owns the keyboard (MailboxKeyGate).
+            guard MailboxKeyGate.allowsSingleKeys(.init(
+                unmodified: mods.isEmpty,
+                isMainWindow: event.window == NSApp.mainWindow,
+                commandPaletteOpen: store.showCommandPalette,
+                labelPickerOpen: store.showLabelPicker,
+                viewEditorOpen: store.editingView != nil,
+                hasComposeRequest: store.composeRequest != nil,
+                composeMinimized: store.composeMinimized,
+                composeFinishing: finishingCompose,
+                textEditing: textEditing))
             else { return event }
             // After the guards: mid-finish with a lagging body focus — resign
             // so the key is not also typed into a finishing draft.
             if finishingCompose, textEditing {
                 event.window?.makeFirstResponder(nil)
+            }
+            // After `g` or `*`, the next key belongs to the sequence whatever
+            // it is: ahead of `/`, the arrows and the Shift chords, so `* u`
+            // typed with Shift still down selects unread instead of marking
+            // the focused conversation unread, and `g` then an unknown key
+            // is eaten rather than run (ShortcutKeyRouter).
+            if store.hasPendingShortcutPrefix,
+               let chars = event.charactersIgnoringModifiers, !chars.isEmpty {
+                _ = store.handleKey(chars)
+                return nil
             }
             // Gmail's `/`: jump focus to the sidebar search field. A
             // collapsed sidebar has no field to focus — reveal it first and
@@ -1520,21 +1541,8 @@ private extension ContentView {
                     store.moveSelection(-1, intent: .browse)
                 }
                 return nil
-            case 36:   // return
-                if let thread = store.selectedThread {
-                    if store.isDraftOnly(thread) {
-                        store.editDraft(inThread: thread)
-                        store.clearSelection()
-                    } else {
-                        detailSelectionTask?.cancel()
-                        store.openDetail(thread.id)
-                        if fullWindowThreads {
-                            store.threadFocusMode = true
-                        } else {
-                            readingPaneHidden = false
-                        }
-                    }
-                }
+            case 36:   // return (Gmail's other open key is the rebindable `o`)
+                openSelectedFromKeyboard()
                 return nil
             case 115:  // home — first conversation
                 browseKeyIsRepeat = false
@@ -1567,20 +1575,22 @@ private extension ContentView {
                 break
             }
             guard let chars = event.charactersIgnoringModifiers else { return event }
-            // Gmail Shift+I / Shift+U mark read / unread. Fixed chords (not in
-            // KeyBindings): charactersIgnoringModifiers keeps Shift on letters
-            // ("I"/"U"), so they must be handled before single-key lookup.
-            // Shift+I is state-aware: already-read selection → mark unread.
-            // Drop auto-repeat: a held Shift+I would otherwise oscillate
-            // read↔unread (state is re-read after each mutation).
+            // Gmail Shift+I / Shift+U mark read / unread, Shift+N refreshes.
+            // Fixed chords (not in KeyBindings): charactersIgnoringModifiers
+            // keeps Shift on letters ("I"/"U"/"N"), so they must be handled
+            // before the single-key lookup lowercases them. Drop auto-repeat:
+            // a held chord must not fire again on every repeat.
             let shiftOnly = event.modifierFlags
                 .intersection([.command, .option, .control, .shift]) == [.shift]
             if let chord = GmailMarkReadKeys.chord(key: chars, shiftOnly: shiftOnly) {
-                // Don't leave an armed `g` prefix: Shift+I after `g` must not
-                // keep the next key as a go-to chord target for 1.5s.
-                store.clearPendingGoKey()
                 if !event.isARepeat {
                     store.applyGmailMarkReadChord(chord)
+                }
+                return nil
+            }
+            if GmailRefreshKey.matches(key: chars, shiftOnly: shiftOnly) {
+                if !event.isARepeat {
+                    Task { await store.syncAll() }
                 }
                 return nil
             }
@@ -1610,6 +1620,38 @@ private extension ContentView {
                 return nil
             }
             return event
+        }
+    }
+
+    /// Return / Gmail `o`: open the focused conversation (a draft-only
+    /// thread opens its draft in compose instead).
+    private func openSelectedFromKeyboard() {
+        guard let thread = store.selectedThread else { return }
+        if store.isDraftOnly(thread) {
+            store.editDraft(inThread: thread)
+            store.clearSelection()
+            return
+        }
+        detailSelectionTask?.cancel()
+        store.openDetail(thread.id)
+        if fullWindowThreads {
+            store.threadFocusMode = true
+        } else {
+            readingPaneHidden = false
+        }
+    }
+
+    /// Gmail `u`: back to the conversation list. The selection stays on the
+    /// conversation just read, so j/k carry on from it (Gmail keeps its
+    /// cursor). In a narrow window only the mounted conversation closes.
+    private func backToList() {
+        switch BackToList.action(layoutMode: layoutMode,
+                                 threadFocus: store.threadFocusMode) {
+        case .exitThreadFocus: store.threadFocusMode = false
+        case .closeConversation:
+            detailSelectionTask?.cancel()
+            store.openDetail(nil)
+        case .stay: break
         }
     }
 
@@ -1767,7 +1809,7 @@ struct Sidebar: View {
                 }
                 .buttonStyle(.borderless)
                 .keyboardShortcut("n", modifiers: .command)
-                .help("Compose (⌘N or \(store.keyBindings.key(for: .compose)))")
+                .help("Compose (⌘N or \(store.keyBindings.displayKey(for: .compose)))")
                 .accessibilityLabel("Compose")
                 .accessibilityIdentifier("composeButton")
             }
