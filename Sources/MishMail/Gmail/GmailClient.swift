@@ -114,13 +114,57 @@ enum GmailError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .http(let code, let body): return "Gmail API error \(code): \(body.prefix(600))"
+        case .http(let code, let body): return Self.httpDescription(code: code, body: body)
         case .historyExpired: return "Sync history expired; a full resync is needed."
         case .noRefreshToken(let email): return "No saved sign-in for \(email). Reauthorize the account in Settings → Accounts."
         case .keychainUnavailable(let email, let status):
             return "MishMail couldn't read the saved sign-in for \(email) (Keychain error \(status)). Unlock your Mac and try syncing again."
         case .partialFetch(let n):
             return "Sync incomplete (\(n) messages still pending); will retry next pass."
+        }
+    }
+
+    /// Longest Google message an HTTP error shows.
+    static let maxMessageChars = 160
+
+    /// What a banner, a compose error and an MCP or Ask Mish tool result show
+    /// for an HTTP failure: the status, Google's reason token and its one-line
+    /// human message, clipped. Never the raw body: its JSON repeats the
+    /// request (ids, a search query, header values) and runs to kilobytes.
+    static func httpDescription(code: Int, body: String) -> String {
+        var reason: String?
+        var message: String?
+        let json = body.range(of: "\nRetry-After:").map { String(body[..<$0.lowerBound]) } ?? body
+        if let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] {
+            if let err = object["error"] as? [String: Any] {
+                message = err["message"] as? String
+                let items = (err["errors"] as? [[String: Any]] ?? []) + (err["details"] as? [[String: Any]] ?? [])
+                reason = items.lazy.compactMap { ($0["reason"] as? String).flatMap(DiagnosticLog.token) }.first
+                    ?? (err["status"] as? String).flatMap(DiagnosticLog.token)
+            } else if let err = object["error"] as? String {
+                reason = DiagnosticLog.token(err)
+                message = object["error_description"] as? String
+            }
+        }
+        var text = "Gmail API error \(code)"
+        if let reason { text += " (\(reason))" }
+        let flat = (message ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        if !flat.isEmpty {
+            text += ": " + (flat.count > maxMessageChars ? String(flat.prefix(maxMessageChars)) + "…" : flat)
+        } else if let hint = statusHint(code) {
+            text += ": " + hint
+        }
+        return text
+    }
+
+    private static func statusHint(_ code: Int) -> String? {
+        switch code {
+        case 401: return "the sign-in was rejected."
+        case 403: return "Gmail refused the request."
+        case 404: return "not found."
+        case 429: return "too many requests; MishMail will retry."
+        case 500...599: return "Google's servers had a problem. Try again shortly."
+        default: return nil
         }
     }
 
