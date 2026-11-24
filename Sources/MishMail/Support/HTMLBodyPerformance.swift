@@ -210,9 +210,15 @@ enum HTMLBodyPrerenderSelection {
 
     /// Prefer the authored head when present and under the automatic byte
     /// budget; otherwise the full body. Oversized markup is skipped entirely.
-    static func candidate(messageId: String, bodyHTML: String?) -> Candidate? {
+    ///
+    /// `cidInlined`: `bodyHTML` is the session copy with `cid:` images
+    /// rewritten to `data:`; the content id then matches the one the card
+    /// mounts (`…:cid`).
+    static func candidate(messageId: String, bodyHTML: String?,
+                          cidInlined: Bool = false) -> Candidate? {
         guard let html = bodyHTML, !html.isEmpty else { return nil }
         let fullBytes = html.utf8.count
+        let suffix = cidInlined ? ":cid" : ""
 
         if fullBytes <= HTMLBodyRenderPolicy.maximumAutomaticBytes,
            let head = QuotedReply.authoredHTMLHead(html) {
@@ -220,7 +226,7 @@ enum HTMLBodyPrerenderSelection {
             if !HTMLBodyRenderPolicy.requiresExplicitLoad(
                 byteCount: headBytes, userApproved: false) {
                 return Candidate(
-                    contentID: messageId + ":authored",
+                    contentID: messageId + ":authored" + suffix,
                     html: head,
                     byteCount: headBytes)
             }
@@ -231,7 +237,7 @@ enum HTMLBodyPrerenderSelection {
             return nil
         }
         return Candidate(
-            contentID: messageId + ":full",
+            contentID: messageId + ":full" + suffix,
             html: html,
             byteCount: fullBytes)
     }

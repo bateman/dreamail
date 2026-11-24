@@ -465,6 +465,205 @@ final class ThreadDetailCacheTests: XCTestCase {
         XCTAssertEqual(payload.messages.map(\.replyToHeader), ["desk@help.example"])
     }
 
+    // MARK: - Unsubscribe back-fill
+
+    /// The reading pane back-fills List-Unsubscribe for rows where it reads
+    /// nil. When the open query did not project the column, every row read
+    /// nil, so every open paid three extra row reads and three whole-thread
+    /// re-renders. A parsed row stores "" for an absent header: it must reach
+    /// the pane as "", which leaves the back-fill nothing to do.
+    func testFetchPayloadProjectsListUnsubscribeSoOpenSkipsTheBackfill() async throws {
+        let pool = try makeMailPool()
+        try await pool.write { db in
+            var withHeader = self.fixtureMessage(id: "m1", labels: "INBOX")
+            withHeader.listUnsubscribe = "<https://list.example/u>"
+            withHeader.listUnsubscribePost = "List-Unsubscribe=One-Click"
+            var without = self.fixtureMessage(id: "m2", labels: "INBOX")
+            without.listUnsubscribe = ""
+            without.listUnsubscribePost = ""
+            _ = try SyncEngine.upsertPending(
+                db, items: [.init(message: withHeader, attachments: []),
+                            .init(message: without, attachments: [])])
+        }
+        let payload = try await pool.read { db in
+            try ThreadDetailRepository.fetchPayload(threadId: "thread", db: db)
+        }
+        XCTAssertEqual(payload.messages.map(\.listUnsubscribe),
+                       ["<https://list.example/u>", ""])
+        XCTAssertEqual(payload.messages.map(\.listUnsubscribePost),
+                       ["List-Unsubscribe=One-Click", ""])
+        // What `backfillUnsubscribeHeaders` selects.
+        XCTAssertTrue(payload.messages.filter { $0.listUnsubscribe == nil }.isEmpty)
+    }
+
+    // MARK: - Resolved cid: images
+
+    private func cidBody(_ marker: String = "img") -> CIDInlinedBody {
+        let html = "<p>Logo <img src=\"data:image/png;base64,\(marker)\"></p>"
+        return CIDInlinedBody(
+            html: html,
+            prep: MessageHTMLPrepBuilder.cidInlinedPrep(
+                inlinedHTML: html, preInlineBytes: 40, fontScale: 1.0),
+            attachments: [fixtureAttachment(messageId: "m1")])
+    }
+
+    private func seededRepository() async throws
+        -> (ThreadDetailRepository, ThreadContentRevisions) {
+        let pool = try makeMailPool()
+        try await pool.write { db in
+            _ = try SyncEngine.upsertPending(
+                db, items: [.init(message: self.fixtureMessage(
+                    id: "m1", labels: "INBOX", bodyText: "Logo",
+                    bodyHTML: "<p>Logo <img src=\"cid:logo\"></p>"),
+                                  attachments: [])])
+        }
+        let repository = ThreadDetailRepository(db: pool)
+        let revisions = ThreadContentRevisions()
+        _ = await repository.payload(
+            threadId: "thread", suppressingDrafts: [],
+            revision: revisions.revision(of: "thread"))
+        return (repository, revisions)
+    }
+
+    /// The re-open path: a resolved body rides on the cached payload, and
+    /// seeding the pane from it marks the message attempted — which is the
+    /// guard that keeps `resolveCIDImagesIfNeeded` off the network.
+    func testReopenServesResolvedCIDBodyAndMakesNoAttachmentRequest() async throws {
+        let (repository, revisions) = try await seededRepository()
+        let revision = revisions.revision(of: "thread")
+        let stored = await repository.rememberCIDInline(
+            cidBody(), messageId: "m1", threadId: "thread",
+            revision: revision, fontScale: 1.0)
+        XCTAssertTrue(stored)
+
+        let reopened = await repository.payload(
+            threadId: "thread", suppressingDrafts: [], revision: revision)
+        XCTAssertTrue(reopened.cacheHit, "no database read on re-open")
+        XCTAssertEqual(reopened.payload.cidInlineByMessageId["m1"], cidBody())
+
+        let seed = CIDInlineSeed.seed(from: reopened.payload)
+        XCTAssertEqual(seed.resolvedIds, ["m1"],
+                       "attempted before the card asks: zero getAttachment calls")
+        XCTAssertEqual(seed.htmlById["m1"], cidBody().html)
+        XCTAssertNotNil(seed.prepById["m1"]?.documents?.fullBlocked,
+                        "documents prebuilt: no re-assembly on the main actor")
+        XCTAssertEqual(seed.attachmentsById["m1"]?.count, 1)
+    }
+
+    func testSeedIgnoresBodiesOfMessagesNotInThePayload() {
+        var payload = ThreadDetailPayload(
+            messages: [fixtureMessage(id: "m1", labels: "INBOX")],
+            attachmentsByMessageId: [:], bodyPrepByMessageId: [:])
+        payload.cidInlineByMessageId["gone"] = cidBody()
+        XCTAssertTrue(CIDInlineSeed.seed(from: payload).resolvedIds.isEmpty)
+    }
+
+    func testResolvedCIDBodyIsNotStoredAgainstAStaleRevisionOrScale() async throws {
+        let (repository, revisions) = try await seededRepository()
+        var moved = revisions
+        moved.apply(.threads(["thread"]))
+        let staleRevision = await repository.rememberCIDInline(
+            cidBody(), messageId: "m1", threadId: "thread",
+            revision: moved.revision(of: "thread"), fontScale: 1.0)
+        XCTAssertFalse(staleRevision)
+        let otherScale = await repository.rememberCIDInline(
+            cidBody(), messageId: "m1", threadId: "thread",
+            revision: revisions.revision(of: "thread"), fontScale: 1.25)
+        XCTAssertFalse(otherScale)
+        let unknownThread = await repository.rememberCIDInline(
+            cidBody(), messageId: "m1", threadId: "never-opened",
+            revision: revisions.revision(of: "never-opened"), fontScale: 1.0)
+        XCTAssertFalse(unknownThread, "never creates an entry of its own")
+    }
+
+    func testFontScaleChangeDropsResolvedCIDBodies() async throws {
+        let (repository, revisions) = try await seededRepository()
+        let revision = revisions.revision(of: "thread")
+        await repository.rememberCIDInline(
+            cidBody(), messageId: "m1", threadId: "thread",
+            revision: revision, fontScale: 1.0)
+        let rescaled = await repository.payload(
+            threadId: "thread", suppressingDrafts: [], revision: revision,
+            fontScale: 1.25)
+        XCTAssertTrue(rescaled.payload.cidInlineByMessageId.isEmpty)
+    }
+
+    func testDraftSuppressionFiltersResolvedCIDBodies() {
+        var payload = ThreadDetailPayload(
+            messages: [fixtureMessage(id: "m1", labels: "INBOX"),
+                       fixtureMessage(id: "d1", labels: "DRAFT")],
+            attachmentsByMessageId: [:], bodyPrepByMessageId: [:])
+        payload.cidInlineByMessageId = ["m1": cidBody("a"), "d1": cidBody("b")]
+        let visible = payload.suppressingDrafts(["d1"])
+        XCTAssertEqual(Set(visible.cidInlineByMessageId.keys), ["m1"])
+    }
+
+    // MARK: - Deleted means gone (memory)
+
+    /// A content change (a delete among them) must take the stale payload,
+    /// with its decoded bodies and resolved images, out of memory — not leave
+    /// it until ten more conversations evict it.
+    func testContentChangeDiscardsTheStalePayloadFromMemory() async throws {
+        let (repository, revisions) = try await seededRepository()
+        await repository.rememberCIDInline(
+            cidBody(), messageId: "m1", threadId: "thread",
+            revision: revisions.revision(of: "thread"), fontScale: 1.0)
+        var moved = revisions
+        moved.apply(.threads(["thread"]))
+        await repository.discardStale(
+            .threads(["thread": moved.revision(of: "thread")]))
+        let cached = await repository.cachedThreadIds()
+        XCTAssertFalse(cached.contains("thread"))
+    }
+
+    /// The discard runs in a task, so a reload for the new revision may land
+    /// first. That fresh entry must survive.
+    func testDiscardKeepsAnEntryAlreadyRebuiltForTheNewRevision() async throws {
+        let (repository, revisions) = try await seededRepository()
+        var moved = revisions
+        moved.apply(.threads(["thread"]))
+        let current = moved.revision(of: "thread")
+        _ = await repository.payload(
+            threadId: "thread", suppressingDrafts: [], revision: current)
+        await repository.discardStale(.threads(["thread": current]))
+        let again = await repository.payload(
+            threadId: "thread", suppressingDrafts: [], revision: current)
+        XCTAssertTrue(again.cacheHit)
+    }
+
+    func testEpochChangeDiscardsEveryOlderPayload() async throws {
+        let (repository, revisions) = try await seededRepository()
+        var moved = revisions
+        moved.apply(.everything)
+        await repository.discardStale(.before(epoch: moved.epoch))
+        let cached = await repository.cachedThreadIds()
+        XCTAssertTrue(cached.isEmpty)
+    }
+
+    func testMirrorDropsChangedThreadsAndCarriesResolvedCIDBodies() {
+        var mirror = ThreadDetailMirror(capacity: 4)
+        let revisions = ThreadContentRevisions()
+        let payload = ThreadDetailPayload(
+            messages: [fixtureMessage(id: "m1", labels: "INBOX")],
+            attachmentsByMessageId: [:], bodyPrepByMessageId: [:])
+        let revision = revisions.revision(of: "thread")
+        mirror.store(payload, for: "thread", revision: revision, suppressing: [])
+        mirror.store(payload, for: "other", revision: revision, suppressing: [])
+
+        mirror.rememberCIDInline(cidBody(), messageId: "m1", threadId: "thread",
+                                 revision: revision)
+        XCTAssertEqual(
+            mirror.payload(for: "thread", revision: revision, suppressing: [])?
+                .cidInlineByMessageId["m1"], cidBody(),
+            "the synchronous warm open sees the resolved images too")
+
+        mirror.invalidate(.threads(["thread"]))
+        XCTAssertNil(mirror.payload(for: "thread", revision: revision, suppressing: []))
+        XCTAssertNotNil(mirror.payload(for: "other", revision: revision, suppressing: []))
+        mirror.invalidate(.everything)
+        XCTAssertNil(mirror.payload(for: "other", revision: revision, suppressing: []))
+    }
+
     private func fixtureAttachment(messageId: String) -> AttachmentRow {
         AttachmentRow(
             id: nil, messageId: messageId, gmailAttachmentId: "att",

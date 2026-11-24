@@ -10,9 +10,12 @@ struct MailLatencyProbe: NSViewRepresentable {
 
     final class Marker: NSView {
         private static var clickTime: TimeInterval?
+        /// Clicks in this process: t1, t2, then t1 again for "reopen".
+        private static var clickCount = 0
         private static var reported: Set<String> = []
         private static let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             clickTime = ProcessInfo.processInfo.systemUptime
+            clickCount += 1
             return event
         }
 
@@ -32,7 +35,10 @@ struct MailLatencyProbe: NSViewRepresentable {
         override func draw(_ dirtyRect: NSRect) {
             guard window?.isVisible == true, !visibleRect.isEmpty else { return }
             if name == "inbox" { record(name, since: 0) }
-            else if let start = Self.clickTime { record(name, since: start) }
+            else if let start = Self.clickTime {
+                // The third click re-opens the first conversation.
+                record(name == "short" && Self.clickCount >= 3 ? "reopen" : name, since: start)
+            }
             if name == "long", observedClip == nil, let clip = enclosingScrollView?.contentView {
                 observedClip = clip
                 lastY = clip.bounds.minY

@@ -59,4 +59,33 @@ struct ThreadDetailMirror {
     mutating func removeAll() {
         lru.removeAll()
     }
+
+    /// Same contract as `ThreadDetailRepository.invalidate`: a payload whose
+    /// revision moved leaves memory now, not at eviction.
+    mutating func invalidate(_ change: ThreadContentChange) {
+        switch change {
+        case .none:
+            break
+        case .threads(let ids):
+            for id in ids { lru.removeValue(for: id) }
+        case .everything:
+            lru.removeAll()
+        }
+    }
+
+    /// Record a resolved `cid:` body on the mirrored payload, when the entry
+    /// is still current and the message is in it. Never creates an entry.
+    mutating func rememberCIDInline(_ body: CIDInlinedBody, messageId: String,
+                                    threadId: String,
+                                    revision: ThreadContentRevision) {
+        guard let entry = lru.values[threadId], entry.revision == revision,
+              entry.payload.messages.contains(where: { $0.id == messageId })
+        else { return }
+        var payload = entry.payload
+        payload.cidInlineByMessageId[messageId] = body
+        lru.insert(
+            Entry(revision: entry.revision, suppressedIds: entry.suppressedIds,
+                  payload: payload),
+            for: threadId)
+    }
 }

@@ -68,9 +68,14 @@ enum HTMLBodyNeighborPrerender {
                 guard gen == generation, !Task.isCancelled else { return }
                 guard let message = ForwardComposer.newestSentMessage(
                     in: payload.messages) else { continue }
+                // A body whose `cid:` images were already resolved opens
+                // with the inlined HTML (content id suffixed ":cid"), so
+                // paint that one or the open could never claim this view.
+                let inlined = payload.cidInlineByMessageId[message.id]?.html
                 guard let candidate = HTMLBodyPrerenderSelection.candidate(
                     messageId: message.id,
-                    bodyHTML: message.bodyHTML) else { continue }
+                    bodyHTML: inlined ?? message.bodyHTML,
+                    cidInlined: inlined != nil) else { continue }
 
                 let key = HTMLBodyLoadKey(
                     contentID: candidate.contentID,

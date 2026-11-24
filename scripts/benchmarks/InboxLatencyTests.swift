@@ -82,6 +82,9 @@ final class InboxLatencyTests: XCTestCase {
                 }
             }
             XCTAssertGreaterThan(abs(body.frame.minY - origin), 1, "The message body must move")
+            // Leave and come back: the conversation's content is cached now.
+            app.typeKey(.escape, modifierFlags: [])
+            let (_, reopen) = open("t1", bodyContains: "Are the keyboard shortcuts final")
             if trial > 0 {
                 // XCTest's click and existence checks wait for quiescence.
                 // Also report the in-app first draw and first viewport move,
@@ -93,10 +96,10 @@ final class InboxLatencyTests: XCTestCase {
                           let seconds = Double(fields[1]) else { return nil }
                     return (seconds - (key == "inbox" ? launchStart : 0)) * 1000
                 }
-                for key in ["inbox", "short", "long", "scroll"] {
+                for key in ["inbox", "short", "long", "scroll", "reopen"] {
                     if let ms = native(key) { print("MAIL_NATIVE trial=\(trial) \(key)=\(ms)") }
                 }
-                print("MAIL_LATENCY trial=\(trial) inbox=\(launch) short=\(short) long=\(long) scroll=\(scroll)")
+                print("MAIL_LATENCY trial=\(trial) inbox=\(launch) short=\(short) long=\(long) scroll=\(scroll) reopen=\(reopen)")
             }
         }
     }

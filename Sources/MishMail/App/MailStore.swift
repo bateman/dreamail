@@ -2917,12 +2917,22 @@ struct ComposeRequest: Identifiable {
     func applyThreadContentChange(_ change: ThreadContentChange) {
         let epochBefore = contentRevisions.epoch
         guard contentRevisions.apply(change) else { return }
-        if contentRevisions.epoch != epochBefore {
-            // Wholesale invalidation: every mirrored payload is already
-            // unreachable by revision, so release the memory now instead of
-            // waiting for four more navigations to evict it.
-            payloadMirror.removeAll()
+        // Payloads built before this change are unreachable by revision;
+        // release them now (both copies) instead of at eviction, so content
+        // that was just deleted does not stay decoded in memory.
+        let effective: ThreadContentChange =
+            contentRevisions.epoch != epochBefore ? .everything : change
+        payloadMirror.invalidate(effective)
+        let stale: ThreadContentStaleness
+        if case .threads(let ids) = effective {
+            stale = .threads(Dictionary(uniqueKeysWithValues: ids.map {
+                ($0, contentRevisions.revision(of: $0))
+            }))
+        } else {
+            stale = .before(epoch: contentRevisions.epoch)
         }
+        let repository = threadDetailRepository
+        Task { await repository.discardStale(stale) }
         threadContentToken &+= 1
     }
 
@@ -3538,6 +3548,24 @@ struct ComposeRequest: Identifiable {
             for: threadId,
             revision: contentRevisions.revision(of: threadId),
             suppressing: suppressedDraftMessageIds)
+    }
+
+    /// Keep a resolved `cid:` body with the cached payload of its thread, so
+    /// the next open of this conversation paints the images at once and
+    /// makes no attachment request. Stored only against the revision the
+    /// thread has now; both copies drop it with the payload.
+    func rememberCIDInline(_ body: CIDInlinedBody, messageId: String,
+                           threadId: String) {
+        let revision = contentRevisions.revision(of: threadId)
+        payloadMirror.rememberCIDInline(
+            body, messageId: messageId, threadId: threadId, revision: revision)
+        let repository = threadDetailRepository
+        let scale = Self.readingPaneFontScale()
+        Task {
+            await repository.rememberCIDInline(
+                body, messageId: messageId, threadId: threadId,
+                revision: revision, fontScale: scale)
+        }
     }
 
     /// Off-main body hydration for an expanded reading-pane card, including

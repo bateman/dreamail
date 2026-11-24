@@ -921,6 +921,10 @@ struct ThreadDetailView: View {
                         (message: m, attachment: $0)
                     }
                 }
+                store.rememberCIDInline(
+                    CIDInlinedBody(html: result.html, prep: cidPrep,
+                                   attachments: result.attachments),
+                    messageId: id, threadId: thread.id)
             }
         }
     }
@@ -936,6 +940,18 @@ struct ThreadDetailView: View {
         messages = loaded
         attachmentsByMessageId = payload.attachmentsByMessageId
         bodyPrepByMessageId = payload.bodyPrepByMessageId
+        // `cid:` images this session already resolved: paint them in the
+        // first frame and mark them attempted, so the open makes no
+        // attachment request and does not load the body a second time.
+        let cidSeed = CIDInlineSeed.seed(from: payload)
+        if !cidSeed.resolvedIds.isEmpty {
+            cidInlinedHTMLById = cidSeed.htmlById
+            cidPrepByMessageId = cidSeed.prepById
+            cidResolveAttempted.formUnion(cidSeed.resolvedIds)
+            for (id, rows) in cidSeed.attachmentsById {
+                attachmentsByMessageId[id] = rows
+            }
+        }
         threadAttachments = ThreadRefresh.threadAttachments(in: payload)
         // Anchor on newest sent when multi-message; draft-only falls back to
         // the last row so a pure-draft pane still positions.
