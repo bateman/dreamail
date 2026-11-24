@@ -41,8 +41,6 @@ final class ForkIdentityTests: XCTestCase {
     /// subsystems, pasteboard names, container paths in scripts, launchd
     /// label) follows the fork's prefix.
     func testNoUpstreamBundleIdentifierLeftInCodeOrScripts() throws {
-        // Owned by a parallel change; it moves to the fork prefix there.
-        let pendingElsewhere: Set<String> = ["Sources/MishMail/Support/DiagnosticLog.swift"]
         let root = Self.repoRoot
         var offenders: [String] = []
         for dir in ["Sources", "Tests", "scripts", "Config"] {
@@ -53,7 +51,6 @@ final class ForkIdentityTests: XCTestCase {
                 guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
                 else { continue }
                 let rel = String(url.path.dropFirst(root.path.count + 1))
-                if pendingElsewhere.contains(rel) { continue }
                 if url.lastPathComponent.contains(Self.upstreamPrefix) { offenders.append(rel) }
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
                 if text.contains(Self.upstreamPrefix) { offenders.append(rel) }
