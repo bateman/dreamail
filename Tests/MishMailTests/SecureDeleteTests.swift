@@ -202,6 +202,41 @@ final class SecureDeleteTests: XCTestCase {
         try pool.close()
     }
 
+    /// What an earlier build left in the index: terms of messages deleted
+    /// before secure-delete existed. The migration that turns it on must
+    /// clear them too.
+    func testUpgradeClearsTermsOfMessagesDeletedBefore() throws {
+        let pool = try DatabasePool(
+            path: path,
+            configuration: AppDatabase.connectionConfiguration(keyString: nil, readonly: false))
+        try AppDatabase.migrator.migrate(pool, upTo: "v48")
+        let term = marker("qxjolder")
+        let tail = String(term.dropFirst(3))
+        try pool.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertFiller(db, account: "me@example.com", range: 0..<30)
+            try insertMessage(db, account: "me@example.com", gmailId: "secret",
+                              subject: "Earlier \(term) mail", body: "body")
+            try insertFiller(db, account: "me@example.com", range: 30..<60)
+        }
+        try pool.write { db in
+            _ = try Message.deleteOne(db, key: "me@example.com:secret")
+        }
+        try pool.read { db in
+            XCTAssertTrue(try inSearchIndex(db, tail), "fixture: the old index keeps deleted terms")
+        }
+        try AppDatabase.migrator.migrate(pool)
+        try pool.read { db in
+            XCTAssertFalse(try inSearchIndex(db, tail), "the upgrade must clear it")
+            XCTAssertEqual(try Int.fetchOne(db, sql: """
+                SELECT count(*) FROM message_fts WHERE message_fts MATCH 'routine'
+                """), 60)
+        }
+        XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: AppDatabase.freePagesPerCheckpoint))
+        XCTAssertFalse(try onDisk(tail), "deleted term still on disk after the upgrade")
+        try pool.close()
+    }
+
     func testBulkPathOnlyWhenTheRebuildIsCheaper() {
         let threshold = SearchIndexDeletes.bulkThreshold
         XCTAssertFalse(SearchIndexDeletes.usesBulkPath(deleting: 20, of: 1_000))

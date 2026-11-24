@@ -2440,15 +2440,16 @@ final class AppDatabase: @unchecked Sendable {
         // the index's own config table.
         // WARNING: a migration that rebuilds `message_fts` must set it again
         // (SecureDeleteTests pins it on the current schema).
-        // `optimize` then merges every segment once, dropping what earlier
-        // deletes left behind; the freed blocks are zeroed (secure_delete).
-        // A one-time cost at the first launch of this build, over an index
-        // of subjects and headers only.
+        // `rebuild` then drops every index block (zeroed, secure_delete) and
+        // indexes the current messages afresh, so nothing earlier deletes
+        // left behind survives. Not `optimize`: it can keep deleted terms
+        // (see SearchIndexDeletes). A one-time cost at the first launch of
+        // this build, over an index of subjects and headers only.
         m.registerMigration("v49") { db in
             try db.execute(sql: """
                 INSERT INTO message_fts(message_fts, rank) VALUES('secure-delete', 1)
                 """)
-            try db.execute(sql: "INSERT INTO message_fts(message_fts) VALUES('optimize')")
+            try db.execute(sql: "INSERT INTO message_fts(message_fts) VALUES('rebuild')")
         }
         return m
     }
