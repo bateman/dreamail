@@ -268,8 +268,8 @@ final class SecureDeleteMaintenanceTests: XCTestCase {
         XCTAssertEqual(try queue.read { db in try DeletedMessageResidue.pending(db) }, [])
     }
 
-    /// The scrub hands the queue to the app, then empties it.
-    func testScrubHandsDeletedMessagesToTheApp() throws {
+    /// The scrub hands what is gone to the app, then empties the queue.
+    func testScrubHandsDeletedMailToTheApp() throws {
         let database = try AppDatabase(path: path, key: key, allowConversion: true,
                                        timing: .init(scrubDelay: 3_600))
         defer { database.close() }
@@ -283,15 +283,122 @@ final class SecureDeleteMaintenanceTests: XCTestCase {
             _ = try Message.deleteOne(db, key: "me@example.com:g1")
         }
         database.runScheduledScrub()
-        XCTAssertEqual(seen.items.map(\.gmailId), ["g1"])
+        XCTAssertEqual(seen.removals, [DeletedMessageResidue.Removal(
+            messages: [.init(accountId: "me@example.com", gmailId: "g1")],
+            threads: [.init(accountId: "me@example.com", threadId: "me@example.com:t-g1")])])
         XCTAssertEqual(try database.dbPool.read { db in try DeletedMessageResidue.pending(db) }, [])
     }
 
     private final class Seen: @unchecked Sendable {
         private let lock = NSLock()
-        private var stored: [DeletedMessageResidue.Item] = []
-        func add(_ items: [DeletedMessageResidue.Item]) { lock.lock(); stored += items; lock.unlock() }
-        var items: [DeletedMessageResidue.Item] { lock.lock(); defer { lock.unlock() }; return stored }
+        private var stored: [DeletedMessageResidue.Removal] = []
+        func add(_ removal: DeletedMessageResidue.Removal) { lock.lock(); stored.append(removal); lock.unlock() }
+        var removals: [DeletedMessageResidue.Removal] { lock.lock(); defer { lock.unlock() }; return stored }
+    }
+
+    private func message(_ account: String, _ gmailId: String, thread: String) -> Message {
+        Message(id: "\(account):\(gmailId)", accountId: account, gmailId: gmailId,
+                threadId: "\(account):\(thread)", fromHeader: "a@example.com", toHeader: account,
+                ccHeader: "", subject: "S", date: Date(), snippet: "", bodyText: "",
+                bodyHTML: nil, messageIdHeader: "", referencesHeader: "", labelIds: "INBOX",
+                isUnread: false, hasAttachment: true)
+    }
+
+    private func removal(_ queue: DatabaseQueue) throws -> DeletedMessageResidue.Removal {
+        try queue.read { db in
+            try DeletedMessageResidue.removal(db, for: try DeletedMessageResidue.pending(db))
+        }
+    }
+
+    /// A draft autosave replaces the draft's row; the thread (with its new
+    /// mail notification) is still there, and so is everything else in it.
+    func testDraftSwapInALiveThreadRemovesNothingOfTheThread() throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue)
+        try queue.write { db in
+            try insertAccount(db, "me@example.com")
+            try message("me@example.com", "incoming", thread: "t1").insert(db)
+            try message("me@example.com", "draft-1", thread: "t1").insert(db)
+            // The autosave: the new draft row in, the old one out.
+            try message("me@example.com", "draft-2", thread: "t1").insert(db)
+            _ = try Message.deleteOne(db, key: "me@example.com:draft-1")
+        }
+        let result = try removal(queue)
+        XCTAssertEqual(result.threads, [], "the thread's notification must stay")
+        XCTAssertEqual(result.messages, [.init(accountId: "me@example.com", gmailId: "draft-1")],
+                       "only the replaced draft's copies go")
+    }
+
+    /// One message of a multi-message thread: its copies go, the thread's
+    /// notifications stay.
+    func testOneMessageOfAThreadKeepsTheThreadsNotifications() throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue)
+        try queue.write { db in
+            try insertAccount(db, "me@example.com")
+            try message("me@example.com", "a", thread: "t1").insert(db)
+            try message("me@example.com", "b", thread: "t1").insert(db)
+            _ = try Message.deleteOne(db, key: "me@example.com:a")
+        }
+        let result = try removal(queue)
+        XCTAssertEqual(result.messages, [.init(accountId: "me@example.com", gmailId: "a")])
+        XCTAssertEqual(result.threads, [])
+    }
+
+    /// Pruned, then synced again before the drain: the message is back, and
+    /// its attachment copy (perhaps open) must stay.
+    func testMessageSyncedAgainBeforeTheDrainKeepsItsCopies() throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue)
+        try queue.write { db in
+            try insertAccount(db, "me@example.com")
+            try message("me@example.com", "g1", thread: "t1").insert(db)
+            try SyncEngine.pruneMessages(db, accountId: "me@example.com", olderThan: nil)
+            try message("me@example.com", "g1", thread: "t1").insert(db)
+        }
+        XCTAssertTrue(try removal(queue).isEmpty)
+    }
+
+    /// The removal of an account clears its queued ids (it deletes its
+    /// copies wholesale); orphans of earlier removals go at launch.
+    func testAccountRemovalAndLaunchSweepClearTheQueue() throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue)
+        try queue.write { db in
+            try insertAccount(db, "gone@example.com")
+            try insertAccount(db, "kept@example.com")
+            try message("gone@example.com", "g1", thread: "t1").insert(db)
+            try message("kept@example.com", "k1", thread: "t1").insert(db)
+            _ = try Message.deleteOne(db, key: "kept@example.com:k1")
+            try AccountLifecycle.purgeAccount(db, id: "gone@example.com")
+            // A row an earlier build's removal left behind.
+            try db.execute(sql: """
+                INSERT INTO deletedMessage (accountId, gmailId, threadId)
+                VALUES ('old@example.com', 'o1', 'old@example.com:t1')
+                """)
+            try AccountLifecycle.purgeOrphanRows(db)
+        }
+        let left = try queue.read { db in try DeletedMessageResidue.pending(db) }
+        XCTAssertEqual(left.map(\.accountId), ["kept@example.com"])
+    }
+
+    /// The quit path drains during shutdown; a scrub firing then does not.
+    func testOnlyTheQuitPathDrainsDuringShutdown() throws {
+        let database = try AppDatabase(path: path, key: key, allowConversion: true,
+                                       timing: .init(scrubDelay: 3_600))
+        defer { database.close() }
+        let seen = Seen()
+        database.deletedMessageHandler = { seen.add($0) }
+        try database.dbPool.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertMessage(db, account: "me@example.com", gmailId: "g1", subject: "S")
+        }
+        try database.dbPool.write { db in _ = try Message.deleteOne(db, key: "me@example.com:g1") }
+        database.beginShutdown()
+        database.runScheduledScrub()
+        XCTAssertEqual(seen.removals, [], "no drain while the pool shuts down")
+        database.drainDeletedMessages(force: true)
+        XCTAssertEqual(seen.removals.count, 1, "the quit path drains")
     }
 
     func testDeletedMessageCopiesAreRemovedOneByOne() throws {

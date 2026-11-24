@@ -712,6 +712,8 @@ final class AppDatabase: @unchecked Sendable {
     }
 
     private let timing: MaintenanceTiming
+    /// For `encryptSetAsideIfPlaintext`. The pool's connections hold it too.
+    private let key: String
 
     /// Opens the cache at `path`. Visible to the hostless tests, which
     /// drive it with fixture files and keys instead of the Keychain.
@@ -722,11 +724,11 @@ final class AppDatabase: @unchecked Sendable {
          beforeSwap: (String) throws -> Void = { _ in }) throws {
         self.path = path
         self.timing = timing
+        self.key = key
         // Runs on the main thread at launch (`AppDatabase.shared`), before
         // the pool opens and before migrations. Usually one cheap probe; the
         // one-time plaintext or passphrase→raw-key conversion copies the whole
         // file (a few seconds for a ~400 MB mailbox), exactly once.
-        Self.encryptPlaintextSetAside(path: path, key: key)
         let scheme = try Self.prepareDatabaseFile(
             path: path, key: key, allowConversion: allowConversion, beforeSwap: beforeSwap)
         do {
@@ -748,7 +750,7 @@ final class AppDatabase: @unchecked Sendable {
             // them would be worse than failing this launch. Everything else,
             // including a migration that throws, still resets.
             NSLog("MishMail: mail cache unreadable (%@); resetting", DiagnosticLog.describe(error))
-            try Self.setAsideUnreadable(path: path, key: key)
+            try Self.setAsideUnreadable(path: path)
             dbPool = try Self.openAndMigrate(path: path, key: key, scheme: .raw)
             storageState = .writable
         }
@@ -762,6 +764,7 @@ final class AppDatabase: @unchecked Sendable {
             // pre-delete page images in the log; nothing else would truncate
             // it before the next deletion, 16 MiB or a clean quit.
             scheduleScrub()
+            scheduleStaleLogCheck()
         }
     }
 
@@ -1021,10 +1024,12 @@ final class AppDatabase: @unchecked Sendable {
         }.value
     }
 
-    /// The deferred one-time maintenance (`rebuildSearchIndexIfPending`,
-    /// then `reclaimSpaceIfNeeded`) for callers on the main actor.
+    /// The deferred one-time maintenance (`encryptSetAsideIfPlaintext`,
+    /// `rebuildSearchIndexIfPending`, then `reclaimSpaceIfNeeded`) for
+    /// callers on the main actor.
     func reclaimSpaceOffMain() async {
         await Task.detached(priority: .background) { [self] in
+            encryptSetAsideIfPlaintext()
             rebuildSearchIndexIfPending()
             reclaimSpaceIfNeeded()
         }.value
@@ -1142,11 +1147,11 @@ final class AppDatabase: @unchecked Sendable {
     /// remove what it keeps of them outside the database (attachment
     /// copies, delivered notifications). Set by the app at launch; while it
     /// is nil the queue (`DeletedMessageResidue`) waits.
-    var deletedMessageHandler: (([DeletedMessageResidue.Item]) -> Void)? {
+    var deletedMessageHandler: ((DeletedMessageResidue.Removal) -> Void)? {
         get { scrubLock.lock(); defer { scrubLock.unlock() }; return handlerStorage }
         set { scrubLock.lock(); handlerStorage = newValue; scrubLock.unlock() }
     }
-    private var handlerStorage: (([DeletedMessageResidue.Item]) -> Void)?
+    private var handlerStorage: ((DeletedMessageResidue.Removal) -> Void)?
 
     /// True while a scrub is scheduled. For the tests.
     var scrubIsPending: Bool {
@@ -1206,16 +1211,28 @@ final class AppDatabase: @unchecked Sendable {
         enqueueScrub(after: min(backoff, timing.maxRetryDelay))
     }
 
-    /// Hands the queued deleted messages to `deletedMessageHandler`, then
-    /// forgets them. In that order: a crash in between repeats the removal
-    /// (harmless) instead of losing it.
-    private func drainDeletedMessages() {
+    /// Hands what the queued deletions left outside the database to
+    /// `deletedMessageHandler`, then forgets the queue. In that order: a
+    /// crash in between repeats the removal (harmless) instead of losing it.
+    /// Only what is really gone is handed over (`DeletedMessageResidue.removal`).
+    ///
+    /// - Parameter force: Also during shutdown, before the final checkpoint
+    ///   (the quit path), so a deletion just before quitting does not leave
+    ///   its copies until the next launch.
+    func drainDeletedMessages(force: Bool = false) {
+        closeLock.lock()
+        let current = phase
+        closeLock.unlock()
+        guard current != .closed, force || current == .open else { return }
         guard allowsWrites, let handler = deletedMessageHandler else { return }
         do {
             while true {
-                let items = try dbPool.read { db in try DeletedMessageResidue.pending(db) }
+                let (items, removal) = try dbPool.read { db in
+                    let items = try DeletedMessageResidue.pending(db)
+                    return (items, try DeletedMessageResidue.removal(db, for: items))
+                }
                 guard !items.isEmpty else { return }
-                handler(items)
+                if !removal.isEmpty { handler(removal) }
                 try dbPool.write { db in try DeletedMessageResidue.forget(db, items) }
                 if items.count < DeletedMessageResidue.batchSize { return }
             }
@@ -1224,56 +1241,83 @@ final class AppDatabase: @unchecked Sendable {
         }
     }
 
+    /// Checks the log every `staleLogInterval` even without a sync pass
+    /// (offline, or no account), so an updated row's earlier page images do
+    /// not wait for a deletion or quit. Stops once the pool shuts down.
+    private func scheduleStaleLogCheck() {
+        let interval = timing.staleLogInterval
+        guard interval > 0 else { return }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + interval) { [weak self] in
+            guard let self else { return }
+            self.closeLock.lock()
+            let open = self.phase == .open
+            self.closeLock.unlock()
+            guard open else { return }
+            self.checkpointIfNeeded()
+            self.scheduleStaleLogCheck()
+        }
+    }
+
     /// Moves an unreadable database out of the way (kept as .unreadable for
     /// post-mortems and for what only lived there: drafts, scheduled sends,
     /// queued edits, snippets), replacing any previous one, along with its
-    /// WAL sidecars.
-    ///
-    /// An encrypted file is moved as it is. A plaintext one (a damaged
-    /// pre-encryption cache) is kept encrypted instead when it can be: every
-    /// table that can still be read is copied into an encrypted
-    /// `.unreadable`, and the plaintext is deleted only once that copy is
-    /// complete. When it cannot be (the file does not open, or a table does
-    /// not read), the plaintext is kept as before, because it may be the only
-    /// copy of the user's drafts.
-    private static func setAsideUnreadable(path: String, key: String) throws {
+    /// WAL sidecars. A plaintext one is encrypted later, off the launch path
+    /// (`encryptSetAsideIfPlaintext`).
+    private static func setAsideUnreadable(path: String) throws {
         let fm = FileManager.default
         let aside = path + ".unreadable"
         try? fm.removeItem(atPath: aside)
-        if isPlaintext(path), salvagePlaintext(from: path, into: aside, key: key) {
-            try fm.removeItem(atPath: path)
-        } else {
-            try fm.moveItem(atPath: path, toPath: aside)
-        }
+        try? fm.removeItem(atPath: aside + salvageFailedSuffix)
+        try fm.moveItem(atPath: path, toPath: aside)
         for sidecar in ["-wal", "-shm"] {
             try? fm.removeItem(atPath: path + sidecar)
         }
     }
 
-    /// Encrypts a plaintext `.unreadable` copy an earlier build set aside,
-    /// the same way (`salvagePlaintext`). The copy is never opened by a
+    /// Marks a plaintext `.unreadable` whose copy failed, so it is tried
+    /// once, not at every launch. Removed with the file it describes.
+    static let salvageFailedSuffix = ".salvage-failed"
+
+    /// Encrypts a plaintext `.unreadable` (a damaged pre-encryption cache
+    /// set aside by the reset path, now or by an earlier build): every table
+    /// is copied into an encrypted file that replaces it (`salvagePlaintext`).
+    /// When the copy cannot be made complete, the plaintext is kept as it
+    /// was, because it may be the only copy of the user's drafts, and the
+    /// attempt is recorded so it is not repeated. Part of the deferred
+    /// startup work: it copies the whole file. The file is never opened by a
     /// running instance, so this is safe while another one runs.
-    private static func encryptPlaintextSetAside(path: String, key: String) {
+    func encryptSetAsideIfPlaintext() {
+        closeLock.lock()
+        let open = phase == .open
+        closeLock.unlock()
+        guard open else { return }
+        let fm = FileManager.default
         let aside = path + ".unreadable"
-        guard isPlaintext(aside) else { return }
+        let failed = aside + Self.salvageFailedSuffix
+        guard Self.isPlaintext(aside), !fm.fileExists(atPath: failed) else { return }
         let tmp = aside + ".encrypting"
-        guard salvagePlaintext(from: aside, into: tmp, key: key) else { return }
+        guard Self.salvagePlaintext(from: aside, into: tmp, key: key) else {
+            fm.createFile(atPath: failed, contents: nil)
+            return
+        }
         for sidecar in ["-wal", "-shm"] {
-            try? FileManager.default.removeItem(atPath: aside + sidecar)
+            try? fm.removeItem(atPath: aside + sidecar)
         }
         // rename(2) replaces the plaintext in one step.
         if rename(tmp, aside) != 0 {
-            try? FileManager.default.removeItem(atPath: tmp)
+            try? fm.removeItem(atPath: tmp)
         }
     }
 
-    /// Copies every table that can be read from the plaintext file `source`
-    /// into a new raw-keyed file `target`. True only when every table was
-    /// copied and the copy opens with the key; otherwise `target` is removed.
-    /// Rows only, no indexes or triggers: this is a copy to recover from,
-    /// not a cache to open. Full-text tables are skipped (their content is
-    /// in `message`); their shadow tables are plain tables and come along.
-    /// Visible to the hostless tests.
+    /// Copies every table of the plaintext file `source` into a new
+    /// raw-keyed file `target`, and reports whether the copy is complete.
+    /// The source is opened read-only, so nothing (not even WAL recovery)
+    /// changes it. Complete means: the source passes `quick_check`, it has
+    /// at least one table, and every table has as many rows in the copy as
+    /// in the source. Otherwise `target` is removed. Rows only, no indexes or
+    /// triggers: this is a copy to recover from, not a cache to open.
+    /// Full-text tables are skipped (their content is in `message`); their
+    /// shadow tables are plain tables and come along. Visible to the tests.
     static func salvagePlaintext(from source: String, into target: String, key: String) -> Bool {
         let fm = FileManager.default
         func discard() {
@@ -1283,46 +1327,69 @@ final class AppDatabase: @unchecked Sendable {
         }
         discard()
         do {
-            let plain = try DatabaseQueue(path: source)
+            var readOnly = Configuration()
+            readOnly.readonly = true
+            let plain = try DatabaseQueue(path: source, configuration: readOnly)
             defer { try? plain.close() }
-            let copied: Int = try plain.inDatabase { db in
-                try db.execute(sql: "ATTACH DATABASE ? AS salvage KEY ?",
-                               arguments: [target, rawKeyLiteral(key)])
-                defer { try? db.execute(sql: "DETACH DATABASE salvage") }
-                let tables = try Row.fetchAll(db, sql: """
-                    SELECT name, sql FROM main.sqlite_master
+            let tables: [(name: String, columns: [String], rows: Int)] = try plain.read { db in
+                guard try String.fetchOne(db, sql: "PRAGMA quick_check") == "ok" else {
+                    throw RekeyError.verificationFailed("quick_check")
+                }
+                return try Row.fetchAll(db, sql: """
+                    SELECT name, sql FROM sqlite_master
                     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-                    """)
-                var count = 0
-                for table in tables {
+                    """).compactMap { table in
                     let name: String = table["name"]
                     let sql = (table["sql"] as String?) ?? ""
-                    if sql.uppercased().hasPrefix("CREATE VIRTUAL") { continue }
-                    // A name from the file's own schema, quoted as an
-                    // identifier; nothing user-typed reaches this SQL.
-                    let quoted = "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
-                    try db.execute(sql: "CREATE TABLE salvage.\(quoted) AS SELECT * FROM main.\(quoted)")
-                    count += 1
+                    if sql.uppercased().hasPrefix("CREATE VIRTUAL") { return nil }
+                    let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(\(quotedIdentifier(name)))")
+                        .map { $0["name"] as String }
+                    let rows = try Int.fetchOne(
+                        db, sql: "SELECT count(*) FROM \(quotedIdentifier(name))") ?? 0
+                    return (name, columns, rows)
                 }
-                return count
             }
-            var config = Configuration()
+            guard !tables.isEmpty else { throw RekeyError.verificationFailed("empty") }
+
+            var keyed = Configuration()
             let rawKey = rawKeyLiteral(key)
-            config.prepareDatabase { db in try db.usePassphrase(rawKey) }
-            let check = try DatabaseQueue(path: target, configuration: config)
-            defer { try? check.close() }
-            let found = try check.read { db in
-                try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master WHERE type = 'table'") ?? 0
+            keyed.prepareDatabase { db in try db.usePassphrase(rawKey) }
+            let copy = try DatabaseQueue(path: target, configuration: keyed)
+            defer { try? copy.close() }
+            try copy.inTransaction { cdb in
+                for table in tables {
+                    let name = quotedIdentifier(table.name)
+                    let columns = table.columns.map(quotedIdentifier).joined(separator: ", ")
+                    try cdb.execute(sql: "CREATE TABLE \(name) (\(columns))")
+                    let marks = Array(repeating: "?", count: table.columns.count).joined(separator: ", ")
+                    let insert = try cdb.makeStatement(sql: "INSERT INTO \(name) VALUES (\(marks))")
+                    try plain.read { db in
+                        let rows = try Row.fetchCursor(db, sql: "SELECT * FROM \(name)")
+                        while let row = try rows.next() {
+                            try insert.execute(arguments: StatementArguments(Array(row.databaseValues)))
+                        }
+                    }
+                }
+                return .commit
             }
-            guard found == copied else {
-                discard()
-                return false
+            let complete = try copy.read { db in
+                try tables.allSatisfy { table in
+                    try Int.fetchOne(db, sql: "SELECT count(*) FROM \(quotedIdentifier(table.name))")
+                        == table.rows
+                }
             }
+            guard complete else { throw RekeyError.verificationFailed("row count") }
             return true
         } catch {
             discard()
             return false
         }
+    }
+
+    /// `name` as an SQL identifier. Names here come from a file's own
+    /// schema, never from anything the user typed.
+    private static func quotedIdentifier(_ name: String) -> String {
+        "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
     /// True for disposable, non-secret databases that must not touch a
@@ -1513,11 +1580,12 @@ final class AppDatabase: @unchecked Sendable {
             } catch RekeyError.busy {
                 NSLog("MishMail: plaintext cache busy; encryption deferred")
                 return .plaintext
-            } catch RekeyError.swapFailed {
+            } catch RekeyError.swapFailed(let code) {
                 // The encrypted copy was made and verified, and only the
                 // rename failed: nothing is wrong with the file. Stay
                 // read-only (F-02) and retry next launch, as for busy;
                 // `.raw` would send a healthy cache to the reset path.
+                NSLog("MishMail: plaintext cache encryption deferred (rename errno %d)", code)
                 return .plaintext
             } catch where !isTransientOpenError(error) {
                 // Damaged plaintext file: the raw open fails and resets.

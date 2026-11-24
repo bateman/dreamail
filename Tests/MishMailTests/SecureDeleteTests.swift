@@ -513,8 +513,8 @@ final class SecureDeleteTests: XCTestCase {
 
     /// A plaintext cache that reaches the reset path while it can still be
     /// read (here: its one-time encryption fails after the export) is the
-    /// only copy of the unsent draft: it is kept, encrypted, and only then
-    /// is the plaintext deleted.
+    /// only copy of the unsent draft: it is set aside at once, encrypted in
+    /// the deferred startup work, and only then is the plaintext deleted.
     func testRecoverablePlaintextOnTheResetPathIsKeptEncrypted() throws {
         let secret = marker("plainsecret")
         try makePlaintextCache(at: path, marker: secret)
@@ -522,9 +522,11 @@ final class SecureDeleteTests: XCTestCase {
         let database = try AppDatabase(path: path, key: key, allowConversion: true,
                                        beforeSwap: { _ in throw ExportFailed() })
         XCTAssertEqual(database.storageState, .writable, "a fresh cache")
+        let aside = path + ".unreadable"
+        XCTAssertTrue(AppDatabase.isPlaintext(aside), "set aside as it was, off the launch path")
+        database.encryptSetAsideIfPlaintext()
         database.close()
 
-        let aside = path + ".unreadable"
         XCTAssertFalse(AppDatabase.isPlaintext(aside), "kept aside encrypted")
         XCTAssertEqual(try encryptedRows(aside, table: "localDraft"), 1, "the draft survives")
         XCTAssertEqual(try encryptedRows(aside, table: "message_body"), 1)
@@ -564,19 +566,63 @@ final class SecureDeleteTests: XCTestCase {
 
         let database = try AppDatabase(path: path, key: key, allowConversion: true)
         XCTAssertEqual(database.storageState, .writable)
+        database.encryptSetAsideIfPlaintext()
+        let aside = path + ".unreadable"
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: aside)), bytes)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: aside + AppDatabase.salvageFailedSuffix), "tried once, and recorded")
+        database.encryptSetAsideIfPlaintext()
         database.close()
-        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path + ".unreadable")), bytes)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: aside)), bytes)
     }
 
-    /// What an earlier build kept aside in plaintext is encrypted at the
-    /// next open; an encrypted copy (kept for post-mortems) is left alone.
-    func testPlaintextLeftoverFromAnEarlierBuildIsEncryptedAtOpen() throws {
+    /// The salvage keeps the plaintext unless the copy is provably complete:
+    /// a source that fails its integrity check, or has nothing to copy, is
+    /// left alone.
+    func testSalvageRefusesADamagedOrEmptySource() throws {
+        let fm = FileManager.default
+        let target = dir.appendingPathComponent("copy.sqlite").path
+
+        let empty = dir.appendingPathComponent("empty.sqlite").path
+        let emptyQueue = try DatabaseQueue(path: empty)
+        try emptyQueue.write { db in try db.execute(sql: "PRAGMA user_version = 1") }
+        try emptyQueue.close()
+        XCTAssertFalse(AppDatabase.salvagePlaintext(from: empty, into: target, key: key))
+        XCTAssertFalse(fm.fileExists(atPath: target))
+
+        let damaged = dir.appendingPathComponent("damaged.sqlite").path
+        let queue = try DatabaseQueue(path: damaged)
+        try queue.write { db in
+            try db.execute(sql: "CREATE TABLE t (id INTEGER PRIMARY KEY, body TEXT)")
+            for i in 0..<2_000 {
+                try db.execute(sql: "INSERT INTO t (body) VALUES (?)",
+                               arguments: [String(repeating: "row \(i) ", count: 20)])
+            }
+        }
+        try queue.close()
+        // Overwrite a page in the middle of the table's b-tree.
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: damaged))
+        try handle.seek(toOffset: 4096 * 20)
+        try handle.write(contentsOf: Data((0..<4096).map { _ in UInt8.random(in: 0...255) }))
+        try handle.close()
+        let before = try Data(contentsOf: URL(fileURLWithPath: damaged))
+
+        XCTAssertFalse(AppDatabase.salvagePlaintext(from: damaged, into: target, key: key))
+        XCTAssertFalse(fm.fileExists(atPath: target))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: damaged)), before,
+                       "the source is read-only")
+    }
+
+    /// What an earlier build kept aside in plaintext is encrypted in the
+    /// deferred startup work; an encrypted copy (post-mortems) is left alone.
+    func testPlaintextLeftoverFromAnEarlierBuildIsEncryptedLater() throws {
         let secret = marker("plainsecret")
         let aside = path + ".unreadable"
         try makePlaintextCache(at: aside, marker: secret)
         XCTAssertTrue(AppDatabase.isPlaintext(aside))
 
         var database = try AppDatabase(path: path, key: key, allowConversion: true)
+        database.encryptSetAsideIfPlaintext()
         database.close()
         XCTAssertFalse(AppDatabase.isPlaintext(aside))
         XCTAssertEqual(try encryptedRows(aside, table: "localDraft"), 1)
@@ -585,6 +631,7 @@ final class SecureDeleteTests: XCTestCase {
         let cipherLike = Data((0..<4096).map { _ in UInt8.random(in: 0...255) })
         try cipherLike.write(to: URL(fileURLWithPath: aside))
         database = try AppDatabase(path: path, key: key, allowConversion: true)
+        database.encryptSetAsideIfPlaintext()
         database.close()
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: aside)), cipherLike,
                        "an encrypted post-mortem copy is left alone")

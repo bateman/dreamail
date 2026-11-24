@@ -73,12 +73,9 @@ enum AttachmentCache {
     @discardableResult
     static func removeMessage(accountId: String, gmailMessageId: String,
                               root: URL = defaultRoot) -> Bool {
-        let accountURL = root.appendingPathComponent(accountFolderName(accountId), isDirectory: true)
-        guard isContained(accountURL, in: root) else { return true }
-        let accountFD = open(accountURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard accountFD >= 0 else { return errno == ENOENT }
-        defer { close(accountFD) }
-        return removeEntry(named: MessageParser.safeFilename(gmailMessageId), in: accountFD)
+        withAccountFolder(accountId, root: root) { accountFD in
+            removeEntry(named: MessageParser.safeFilename(gmailMessageId), in: accountFD)
+        }
     }
 
     /// For each of `accounts`, the folder names of its messages that may
@@ -102,16 +99,30 @@ enum AttachmentCache {
     @discardableResult
     static func removeMessages(ofAccount accountId: String, keeping keep: Set<String>,
                                root: URL = defaultRoot) -> Bool {
-        let accountURL = root.appendingPathComponent(accountFolderName(accountId), isDirectory: true)
-        guard isContained(accountURL, in: root) else { return true }
-        let accountFD = open(accountURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        withAccountFolder(accountId, root: root) { accountFD in
+            var ok = true
+            for name in entries(of: accountFD) where !keep.contains(name) {
+                if !removeEntry(named: name, in: accountFD) { ok = false }
+            }
+            return ok
+        }
+    }
+
+    /// Runs `body` on the account's folder, opened through the root's own
+    /// handle with `O_NOFOLLOW` at each step, as `removeAccount` does: a link
+    /// in place of the root or the account folder is never followed. True
+    /// when there is nothing to do (no root, no folder); false when either is
+    /// a link or not a directory.
+    private static func withAccountFolder(_ accountId: String, root: URL,
+                                          _ body: (Int32) -> Bool) -> Bool {
+        let rootFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard rootFD >= 0 else { return errno == ENOENT }
+        defer { close(rootFD) }
+        let accountFD = openat(rootFD, accountFolderName(accountId),
+                               O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard accountFD >= 0 else { return errno == ENOENT }
         defer { close(accountFD) }
-        var ok = true
-        for name in entries(of: accountFD) where !keep.contains(name) {
-            if !removeEntry(named: name, in: accountFD) { ok = false }
-        }
-        return ok
+        return body(accountFD)
     }
 
     /// Whether a downloaded copy may still be written. A download that

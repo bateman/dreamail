@@ -2428,6 +2428,9 @@ struct ComposeRequest: Identifiable {
                 // a TRUNCATE checkpoint needs to succeed. force: true —
                 // beginShutdown already closed the gate that refuses idle
                 // maintenance, but the quit path must still checkpoint.
+                // A deletion just before quitting: its attachment copies and
+                // notifications go now, not at the next launch.
+                AppDatabase.shared.drainDeletedMessages(force: true)
                 AppDatabase.shared.checkpoint(force: true)
                 AppDatabase.shared.close()
             }

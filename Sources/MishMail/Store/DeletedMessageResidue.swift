@@ -47,6 +47,61 @@ enum DeletedMessageResidue {
         }
     }
 
+    /// What the app may remove outside the database for `items`: only what
+    /// is really gone. A deleted row is not always gone mail: a draft
+    /// autosave replaces its row, one message of a thread goes while the
+    /// thread stays, a pruned message can be synced again before the drain.
+    struct MessageKey: Hashable {
+        var accountId: String
+        var gmailId: String
+    }
+
+    struct ThreadKey: Hashable {
+        var accountId: String
+        var threadId: String
+    }
+
+    struct Removal: Equatable {
+        /// Messages no longer in the cache: their attachment copies go.
+        var messages: [MessageKey]
+        /// Threads with no message left: their notifications go.
+        var threads: [ThreadKey]
+
+        var isEmpty: Bool { messages.isEmpty && threads.isEmpty }
+    }
+
+    static func removal(_ db: Database, for items: [Item]) throws -> Removal {
+        var messages: [MessageKey] = []
+        var threads: [ThreadKey] = []
+        var seenMessages = Set<MessageKey>()
+        var seenThreads = Set<ThreadKey>()
+        for item in items {
+            let message = MessageKey(accountId: item.accountId, gmailId: item.gmailId)
+            if seenMessages.insert(message).inserted,
+               // `id` is "<account>:<gmail id>": the primary key, not a scan.
+               try !exists(db, "SELECT 1 FROM message WHERE id = ?",
+                           ["\(item.accountId):\(item.gmailId)"]) {
+                messages.append(message)
+            }
+            let thread = ThreadKey(accountId: item.accountId, threadId: item.threadId)
+            if seenThreads.insert(thread).inserted,
+               try !exists(db, "SELECT 1 FROM message WHERE threadId = ?", [item.threadId]) {
+                threads.append(thread)
+            }
+        }
+        return Removal(messages: messages, threads: threads)
+    }
+
+    private static func exists(_ db: Database, _ sql: String, _ arguments: StatementArguments) throws -> Bool {
+        try Bool.fetchOne(db, sql: sql + " LIMIT 1", arguments: arguments) ?? false
+    }
+
+    /// Drops the queued rows of a removed account: the removal deletes its
+    /// copies and notifications wholesale, and its address must not stay.
+    static func forget(_ db: Database, account accountId: String) throws {
+        try db.execute(sql: "DELETE FROM deletedMessage WHERE accountId = ?", arguments: [accountId])
+    }
+
     static func forget(_ db: Database, _ items: [Item]) throws {
         guard let last = items.map(\.queueId).max() else { return }
         try db.execute(sql: "DELETE FROM deletedMessage WHERE id <= ?", arguments: [last])

@@ -155,7 +155,7 @@ extension MailStore {
         LegacyHTTPCache.retire()
         // From here on, a deleted message's copies outside the database go
         // with it (the scrub after each deletion drains the queue).
-        AppDatabase.shared.deletedMessageHandler = Self.removeOutsideDatabase(deletedMessages:)
+        AppDatabase.shared.deletedMessageHandler = Self.removeOutsideDatabase(deletedMail:)
         guard cacheAcceptsWrites(silent: true) else { return }
         AppDatabase.shared.scheduleScrub()
         let pool = db
@@ -184,17 +184,17 @@ extension MailStore {
         }
     }
 
-    /// The copies of deleted messages kept outside the database: their
-    /// attachment copies and their threads' notifications.
+    /// The copies kept outside the database of what was deleted from it:
+    /// the attachment copies of messages that are gone, and the
+    /// notifications of threads with no message left.
     nonisolated private static func removeOutsideDatabase(
-        deletedMessages items: [DeletedMessageResidue.Item]
+        deletedMail removal: DeletedMessageResidue.Removal
     ) {
-        for item in items {
-            AttachmentCache.removeMessage(accountId: item.accountId, gmailMessageId: item.gmailId)
+        for message in removal.messages {
+            AttachmentCache.removeMessage(accountId: message.accountId, gmailMessageId: message.gmailId)
         }
-        let threads = Set(items.map { [$0.accountId, $0.threadId] })
-        Notifier.removeNotifications(withIdentifiers: threads.flatMap {
-            NotificationContent.threadIdentifiers(accountId: $0[0], threadId: $0[1])
+        Notifier.removeNotifications(withIdentifiers: removal.threads.flatMap {
+            NotificationContent.threadIdentifiers(accountId: $0.accountId, threadId: $0.threadId)
         })
     }
 

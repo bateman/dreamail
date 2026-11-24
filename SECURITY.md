@@ -38,27 +38,29 @@ month (SEC-004–007, all fixed) lives in
 
 When mail leaves MishMail's local cache (a message deleted or trashed and
 purged, local mail pruned, a draft discarded, a chat or summary cleared, an
-account removed), the content is overwritten, not just unlinked, in every
-file MishMail keeps:
+account removed), this is what happens to it:
 
-- **The database file.** SQLite's `secure_delete` is on for every
-  connection (SQLCipher also forces it on every keyed connection), so a
+- **The database file: overwritten.** SQLite's `secure_delete` is on for
+  every connection (SQLCipher also forces it on every keyed connection), so a
   deleted row is zeroed in its page and a freed page is zeroed before it
   joins the freelist. Freed pages are then truncated off the end of the file
   in batches (`auto_vacuum = INCREMENTAL`).
-- **The full-text index.** FTS5's `secure-delete` removes a deleted
-  message's terms from the index at delete time. A bulk delete rebuilds the
-  index from the remaining messages instead, which leaves no deleted term
-  either.
-- **The write-ahead log.** Page images from before a delete stay in the
-  `-wal` file until a checkpoint truncates it. A truncating checkpoint runs
-  about five seconds after any committed deletion, at every open, after a
-  sync pass when the log has not been truncated for five minutes, and at
-  quit.
-- **Outside the database.** Attachment copies opened from a deleted
-  message, and the notifications of its thread, are removed after the
-  deletion; Google API responses are never written to the on-disk HTTP
-  cache.
+- **The full-text index: overwritten.** FTS5's `secure-delete` removes a
+  deleted message's terms from the index at delete time. A bulk delete
+  rebuilds the index from the remaining messages instead, which leaves no
+  deleted term either.
+- **The write-ahead log: truncated.** Page images from before a delete stay
+  in the `-wal` file until a checkpoint truncates it. A truncating
+  checkpoint runs about five seconds after any committed deletion, at every
+  open, every five minutes when the log has not been truncated meanwhile,
+  and at quit.
+- **Outside the database: deleted (unlinked), not overwritten.** The
+  attachment copies of a message that is gone, and the notifications of a
+  thread with no message left, are removed when the deletion is processed:
+  a few seconds after it, or at quit. The ids of deleted messages wait in a
+  small queue inside the encrypted database until then. Google API
+  responses are never written to the on-disk HTTP cache, and the cache file
+  earlier builds wrote is deleted.
 
 The limits, stated plainly:
 
@@ -66,17 +68,21 @@ The limits, stated plainly:
   not guarantee that the old physical blocks are erased. APFS is
   copy-on-write and SSD controllers remap blocks (wear levelling), so old
   blocks can remain on the device until reused. MishMail does not attempt
-  "secure erase" loops, which cannot work there. FileVault protects those
-  blocks; the database's are also encrypted with the SQLCipher key.
+  "secure erase" loops, which cannot work there. Those blocks are protected
+  only if FileVault is on; the database's blocks are also encrypted with the
+  SQLCipher key, the attachment copies' and notifications' are not.
 - **Snapshots and backups.** Local APFS snapshots, Time Machine and any
   other backup of the app's container keep what the files held when they
   were taken. The database in them is encrypted under the key in the
-  Keychain; attachment copies in the temporary folder, and any cache from
-  before encryption, are not.
-- **Memory and the system.** Swap, crash reports, and the system's unified
-  log can hold what the app had in memory or logged. MishMail logs no mail
-  content, and its diagnostic log redacts it, but it cannot reach what the
-  operating system keeps.
+  Keychain; attachment copies in the temporary folder are not.
+- **Copies outside MishMail's files.** Swap, crash reports and the system's
+  unified log can hold what the app had in memory or logged; MishMail logs
+  no mail content, and its diagnostic log redacts it, but it cannot reach
+  what the operating system keeps. Quick Look thumbnails, and any file
+  handed to or saved by another app, are outside MishMail's reach.
+- **Attachment copies of mail that is not deleted** stay in the temporary
+  folder, unencrypted, until their message or account goes (or the system
+  clears the temporary folder).
 - **Short residue in the database.** A cell that SQLite moves during a
   b-tree rebalance is not zeroed at its old position until that page is
   rewritten. FTS5's segment index (`message_fts_idx`) can keep a short
@@ -85,17 +91,22 @@ The limits, stated plainly:
 - **The time window.** Deleted content can stay in the WAL for about five
   seconds, longer while a reader holds the log (the scrub retries, then
   waits for readers), and until the next open after a crash. An updated
-  row's earlier versions (text cleared from a draft) stay in the WAL until
-  the next truncation: a deletion, the five-minute check after a sync pass,
-  or quit.
+  row's earlier versions (text cleared from a draft) stay in the WAL for up
+  to about five minutes. Attachment copies and notifications stay until the
+  deletion is processed (seconds), or until the next launch if the app is
+  killed first.
 - **Recent searches** are kept apart from the mail and cleared only when an
   account is removed.
+- **A cache still waiting for encryption.** While a cache from before
+  encryption waits for its one-time conversion (another copy of MishMail
+  holds it), the whole cache is unencrypted and read-only: nothing in it can
+  be deleted until it is converted.
 - **Files kept on purpose.** When the cache cannot be opened and is reset,
-  the old file is kept aside as `mail.sqlite.unreadable`, encrypted, because
-  it may be the only copy of unsent drafts or scheduled sends. A damaged
-  cache from before encryption that cannot be read at all is kept as it
-  was, unencrypted, for the same reason.
+  the old file is kept aside as `mail.sqlite.unreadable`, because it may be
+  the only copy of unsent drafts or scheduled sends. An encrypted one is
+  kept as it is. An unencrypted one (a damaged cache from before
+  encryption) is copied into an encrypted file and then deleted, but only
+  when the copy is provably complete: if the file fails its integrity check,
+  or any table cannot be read, it is kept as it was, unencrypted.
 - **Before this version.** The pre-encryption plaintext file was replaced
-  by `rename(2)`, which frees its blocks without overwriting them, and
-  earlier builds could leave Gmail responses in the HTTP cache file, which
-  is now deleted.
+  by `rename(2)`, which frees its blocks without overwriting them.
