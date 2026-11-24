@@ -332,12 +332,13 @@ struct AccountPhotoRefresher: Sendable {
         // Quit or account removal cancels the task: write nothing then.
         guard !Task.isCancelled else { return Result(outcome: .cancelled, nextDue: nil) }
         let stamp = now()
+        let attemptFailed = failed
         let record = AccountPhotoRecord(accountId: accountId, imageData: image,
-                                        fetchedAt: stamp, lastAttemptFailed: failed)
+                                        fetchedAt: stamp, lastAttemptFailed: attemptFailed)
         do {
             try await db.write { db in
                 try AccountLifecycle.requireLiveAccount(db, id: accountId)
-                if failed {
+                if attemptFailed {
                     // Only the attempt is recorded: the stored image is never
                     // rewritten from what was read before the fetch.
                     try db.execute(
@@ -359,7 +360,7 @@ struct AccountPhotoRefresher: Sendable {
         let after = try? await db.read { db in
             try AccountPhotoRecord.fetchOne(db, key: accountId)
         }
-        return Result(outcome: failed ? .failed : .stored(hasPhoto: image != nil),
+        return Result(outcome: attemptFailed ? .failed : .stored(hasPhoto: image != nil),
                       nextDue: AccountPhotoPolicy.nextDue(after: after ?? record))
     }
 
