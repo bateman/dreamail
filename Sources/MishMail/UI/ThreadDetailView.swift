@@ -202,28 +202,47 @@ struct ThreadDetailView: View {
                 in: initialPayload.messages)))
     }
 
-    /// Spacing of the pane's stack (subject, chips, summary, messages).
-    static let stackSpacing: CGFloat = 12
+    /// Space below each block above the messages (subject, chips, summary,
+    /// draft banner). Messages themselves are split by a hairline only.
+    static let headerBlockSpacing: CGFloat = 12
+
+    /// The first message the pane actually draws: a live draft hidden while
+    /// its compose editor is open does not count, so no hairline sits on top
+    /// of the first row.
+    private var firstRenderedMessageId: String? {
+        messages.first { message in
+            !(messageRoles.isLiveDraft(message.id)
+              && ComposingDraftVisibility.hidesDraftCard(
+                  messageId: message.id,
+                  composingDraftIds: store.composingDraftMessageIds))
+        }?.id
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // Message cards are cheap while collapsed and only expanded cards
+                // Message rows are cheap while collapsed and only expanded rows
                 // mount WKWebView. An eager stack avoids LazyVStack's geometry
                 // cache repeatedly invalidating around dynamically sized WebViews.
-                VStack(alignment: .leading, spacing: Self.stackSpacing) {
+                // No stack spacing: the blocks above the messages carry their
+                // own bottom padding, and message rows touch (hairline only),
+                // so each row's id sits on its real top edge.
+                VStack(alignment: .leading, spacing: 0) {
                     Text(thread.subject.isEmpty ? "(no subject)" : thread.subject)
                         .font(.system(size: 19 * fontScale, weight: .semibold))
                         .textSelection(.enabled)
                         .padding(.horizontal)
                         .accessibilityIdentifier("threadSubject")
                         .id(ComposePlacement.threadTopScrollId)
+                        .padding(.bottom, Self.headerBlockSpacing)
 
                     threadMetaRow
+                        .padding(.bottom, Self.headerBlockSpacing)
 
                     // Its .task is the auto-summary: gone with the section.
                     if AIFeatures.isEnabled {
                         summarySection
+                            .padding(.bottom, Self.headerBlockSpacing)
                     }
 
                     // Slim cue for long threads only: on short threads the draft
@@ -267,13 +286,13 @@ struct ThreadDetailView: View {
                         .buttonStyle(.plain)
                         .help("Continue editing the unsent draft")
                         .padding(.horizontal)
+                        .padding(.bottom, Self.headerBlockSpacing)
                     }
 
-                    // Flat rows split by a hairline (Gmail on the web): each
-                    // row after the first starts with the hairline and cancels
-                    // the stack's 12 pt spacing, so rows touch it with no gap.
-                    // Rows stay direct children of this stack: they are the
-                    // scroll position's targets.
+                    // Flat rows split by a hairline (Gmail on the web), drawn
+                    // over the top edge of every row but the first. Rows stay
+                    // direct children of this stack: they are the scroll
+                    // position's targets.
                     ForEach(messages) { message in
                         if messageRoles.isLiveDraft(message.id) {
                             // Live unsent drafts only — DRAFT+TRASH (discarded)
@@ -289,14 +308,14 @@ struct ThreadDetailView: View {
                                     onNeedBody: { loadBodyIfNeeded(id: message.id) })
                                     .padding(.horizontal)
                                     .padding(.vertical, 12)
-                                    .messageRowSeparator(isFirst: message.id == messages.first?.id)
+                                    .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
                                     .id(message.id)
                                     .background { pinnedHeightReader(id: message.id, proxy: proxy) }
                             }
                         } else {
                             messageCard(for: message,
                                         lastNonDraftId: messageRoles.lastNonDraftId)
-                                .messageRowSeparator(isFirst: message.id == messages.first?.id)
+                                .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
                                 .id(message.id)
                                 .background { pinnedHeightReader(id: message.id, proxy: proxy) }
                         }
@@ -1867,12 +1886,12 @@ struct MessageCard: View {
 
     /// The name line's date: full, absolute or compact by the row's width
     /// (`MessageRowDateStyle`). Absolute until the row has been measured.
-    private var dateText: String {
+    private func dateText(now: Date) -> String {
         let style = rowWidth.map {
             MessageRowDateStyle.forTextColumn(
                 width: metrics.textColumnWidth(rowWidth: $0), fontScale: fontScale)
         } ?? .absolute
-        return MessageRowDate.text(message.date, style: style)
+        return MessageRowDate.text(message.date, style: style, now: now)
     }
 
     /// The account's photo for the user's own mail, else an initial disc.
@@ -1881,9 +1900,17 @@ struct MessageCard: View {
         let choice = MessageAvatar.resolve(
             senderEmail: MessageParser.emailAddress(message.fromHeader),
             senderName: senderName,
-            messageAccountId: message.accountId,
-            accountIds: store.accounts.map(\.id),
-            ownAddresses: store.ownEmailAddresses,
+            labelIds: message.labelIds,
+            owners: MessageAvatar.ownerMap(
+                accountIds: store.accounts.map(\.id),
+                aliases: store.sendIdentities.map { (email: $0.email, accountId: $0.accountId) }),
+            // The account's own name, so the initial matches the sidebar.
+            accountNames: Dictionary(
+                store.accounts.map { account in
+                    (account.id, account.senderName.isEmpty
+                        ? account.displayName : account.senderName)
+                },
+                uniquingKeysWith: { first, _ in first }),
             accountsWithPhoto: Set(store.accountPhotos.keys))
         switch choice {
         case .accountPhoto(let accountId):
@@ -1923,13 +1950,16 @@ struct MessageCard: View {
                     }
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("messageSender")
-                    Text(dateText)
-                        .font(.system(size: metrics.dateFontSize).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .help(message.date.formatted(date: .complete, time: .shortened))
-                        .accessibilityIdentifier("messageHeaderDate")
+                    // Redrawn every minute so "(12 hours ago)" stays true.
+                    TimelineView(.everyMinute) { context in
+                        Text(dateText(now: context.date))
+                            .font(.system(size: metrics.dateFontSize).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .help(message.date.formatted(date: .complete, time: .shortened))
+                            .accessibilityIdentifier("messageHeaderDate")
+                    }
                 }
                 if expanded {
                     expandedHeaderDetails
@@ -1953,8 +1983,25 @@ struct MessageCard: View {
             if width != rowWidth { rowWidth = width }
         }
         .contentShape(Rectangle())
+        // Open: a click on the header collapses it (not the only message).
         .onTapGesture {
-            toggleExpanded()
+            if expanded { toggleExpanded() }
+        }
+        .overlay {
+            // Collapsed: the whole row is one plain button, focusable from
+            // the keyboard and announced by VoiceOver. An overlay rather than
+            // a Button around the header, so the name, date and snippet stay
+            // separate accessibility elements.
+            if !expanded {
+                Button {
+                    expandCard()
+                } label: {
+                    Color.clear.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open message from \(senderName)")
+                .accessibilityIdentifier("messageRowExpand")
+            }
         }
         .pmPointingHandCursor(enabled: isCollapsible || !expanded)
     }
@@ -2076,21 +2123,7 @@ struct MessageCard: View {
             }
         }
         .coordinateSpace(.named(Self.cardSpace))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !expanded {
-                expandCard()
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("messageRow")
-        // The collapsed row has no chevron any more: VoiceOver opens it here.
-        .accessibilityAction(named: Text("Expand")) {
-            expandCard()
-        }
-        // Collapsed cards are clickable everywhere, so show the pointing hand
-        // over the whole card (the header row handles its own cursor when expanded).
-        .pmPointingHandCursor(enabled: !expanded)
+        // A collapsed row is all header, and its header is a button.
         .onAppear {
             // Parent seeds the open set on payload apply. Cards that land
             // already expanded (or the single last-card default before seed)
@@ -2178,9 +2211,10 @@ struct MessageCard: View {
                         : fillsPaneHeight.flatMap {
                             MessageBodyHeight.paneReserve(
                                 viewportHeight: $0,
-                                // Header above the body + the card's
+                                // Header above the body + the row's
                                 // bottom padding.
-                                chromeHeight: bodyTopInCard + 16)
+                                chromeHeight: bodyTopInCard
+                                    + metrics.verticalPadding)
                         })
                 HTMLBodyView(
                     contentID: bodyContentID,
@@ -3503,16 +3537,14 @@ struct HTMLBodyView: NSViewRepresentable {
 }
 
 private extension View {
-    /// A message row in the conversation: a full-width hairline above every
-    /// row but the first, which also takes back the enclosing stack's 12 pt
-    /// spacing so consecutive rows are split by the hairline alone.
+    /// A message row in the conversation: a full-width hairline over the top
+    /// edge of every row but the first. An overlay, so the row's frame (and
+    /// its scroll id) starts at the hairline and rows touch.
     func messageRowSeparator(isFirst: Bool) -> some View {
-        VStack(spacing: 0) {
+        overlay(alignment: .top) {
             if !isFirst {
                 Divider()
             }
-            self
         }
-        .padding(.top, isFirst ? 0 : -ThreadDetailView.stackSpacing)
     }
 }

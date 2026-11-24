@@ -50,6 +50,11 @@ final class ThreadMessageRowsUITests: XCTestCase {
         return last
     }
 
+    private func readingPane(_ app: XCUIApplication) -> XCUIElement {
+        app.scrollViews.containing(
+            NSPredicate(format: "identifier == 'threadSubject'")).firstMatch
+    }
+
     private func openConversation(_ app: XCUIApplication) {
         let row = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t2").firstMatch
@@ -57,11 +62,58 @@ final class ThreadMessageRowsUITests: XCTestCase {
         row.click()
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
         XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        _ = settled("messageRowFrame", in: app) { $0.count == 4 }
         // The pane anchors the newest message at its top; bring the older
         // rows into view.
-        let pane = app.scrollViews.containing(
-            NSPredicate(format: "identifier == 'threadSubject'")).firstMatch
+        let pane = readingPane(app)
         if pane.exists { pane.scroll(byDeltaX: 0, deltaY: 2000) }
+    }
+
+    /// Clicks the window at a point given in screen coordinates.
+    private func click(_ app: XCUIApplication, x: CGFloat, y: CGFloat) {
+        let window = app.windows.firstMatch
+        let origin = window.frame.origin
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: x - origin.x, dy: y - origin.y))
+            .click()
+    }
+
+    /// Opening the conversation scrolls its newest message to the top of
+    /// the pane: the whole row must be visible, with its top padding, not
+    /// clipped by the pane's edge.
+    func testNewestRowOpensUnclippedAtThePaneTop() {
+        let app = launchReadingPane()
+        let row = app.descendants(matching: .any)
+            .matching(identifier: "threadRow.you@example.com:t2").firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+        let rows = settled("messageRowFrame", in: app) { $0.count == 4 }
+        guard rows.count == 4 else { return }
+        let pane = readingPane(app)
+        XCTAssertTrue(pane.exists)
+        let senders = settled("messageSender", in: app) { $0.count == 4 }
+        guard let newestName = senders.last else { return }
+        let paneTop = pane.frame.minY
+        print("ThreadMessageRows: pane top \(paneTop), newest row top \(rows[3].minY), its name top \(newestName.minY)")
+        XCTAssertGreaterThanOrEqual(rows[3].minY, paneTop - 0.5,
+                                    "the newest row must not start above the pane")
+        // Name top = avatar top (both sit at the row's 20 pt top padding).
+        XCTAssertGreaterThanOrEqual(newestName.minY - paneTop, 18,
+                                    "the newest row's header must keep its top padding")
+    }
+
+    func testClickNearTheTopEdgeOfACollapsedRowOpensIt() {
+        let app = launchReadingPane()
+        openConversation(app)
+        let rows = settled("messageRowFrame", in: app) { $0.count == 4 }
+        guard rows.count == 4 else { return }
+        let target = rows[1]
+        click(app, x: target.midX, y: target.minY + 3)
+        let after = settled("messageRowFrame", in: app) {
+            $0.count == 4 && $0[1].height > target.height + 40
+        }
+        XCTAssertGreaterThan(after.count == 4 ? after[1].height : 0, target.height + 40,
+                             "a click on the row's top edge must open it")
     }
 
     func testCollapsedRowsAreEvenAndSplitByAHairline() {
@@ -105,12 +157,12 @@ final class ThreadMessageRowsUITests: XCTestCase {
         XCTAssertFalse(senders.isEmpty, "the header names must be exposed")
         guard let nameBefore = senders.first else { return }
 
-        // Click the first (collapsed) row's snippet line.
-        let snippet = app.descendants(matching: .any)
-            .matching(identifier: "messageSnippet").allElementsBoundByIndex
+        // The first (collapsed) row's button: the whole header.
+        let open = app.buttons.matching(identifier: "messageRowExpand")
+            .allElementsBoundByIndex
             .min { $0.frame.minY < $1.frame.minY }
-        XCTAssertNotNil(snippet)
-        snippet?.click()
+        XCTAssertNotNil(open, "a collapsed row must be a button")
+        open?.click()
 
         // Open: the first row grows to its body, the newest collapses.
         let after = settled("messageRowFrame", in: app) {

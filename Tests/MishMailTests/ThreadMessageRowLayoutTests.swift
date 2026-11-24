@@ -99,43 +99,56 @@ final class ThreadMessageRowLayoutTests: XCTestCase {
 
     // MARK: Avatar
 
-    private let accounts = ["alex@example.com", "work@corp.example"]
-    private let own: Set<String> = ["alex@example.com", "work@corp.example", "alex@alias.example"]
+    private let owners = MessageAvatar.ownerMap(
+        accountIds: ["alex@example.com", "work@corp.example"],
+        aliases: [(email: "Alex@Alias.example", accountId: "work@corp.example"),
+                  (email: "alex@example.com", accountId: "alex@example.com")])
 
     private func avatar(_ email: String, name: String = "Someone",
-                        mailbox: String = "alex@example.com",
+                        labels: String = "SENT",
+                        names: [String: String] = [:],
                         photos: Set<String> = []) -> MessageAvatar {
         MessageAvatar.resolve(senderEmail: email, senderName: name,
-                              messageAccountId: mailbox, accountIds: accounts,
-                              ownAddresses: own, accountsWithPhoto: photos)
+                              labelIds: labels, owners: owners,
+                              accountNames: names, accountsWithPhoto: photos)
     }
 
-    func testOwnAccountWithPhotoShowsThePhoto() {
+    func testOwnSentMailWithPhotoShowsThePhoto() {
         XCTAssertEqual(avatar("Work@Corp.example", photos: ["work@corp.example"]),
                        .accountPhoto(accountId: "work@corp.example"))
     }
 
-    func testOwnAccountWithoutPhotoShowsItsInitialInTheAccountColour() {
-        XCTAssertEqual(avatar("alex@example.com", name: "Alex", photos: ["work@corp.example"]),
+    func testForgedOwnAddressWithoutSentGetsNoPhoto() {
+        // An incoming message whose From claims the user's address.
+        XCTAssertEqual(avatar("alex@example.com", name: "Alex", labels: "INBOX UNREAD",
+                              photos: ["alex@example.com"]),
                        .initial(name: "Alex", key: "alex@example.com"))
     }
 
-    func testSendAsAliasUsesTheMailboxThatHoldsTheMessage() {
-        XCTAssertEqual(avatar("alex@alias.example", mailbox: "work@corp.example",
+    func testOwnSentMailWithoutPhotoShowsTheAccountInitial() {
+        XCTAssertEqual(avatar("alex@example.com", name: "Alex R.",
+                              names: ["alex@example.com": "Personal"],
                               photos: ["work@corp.example"]),
+                       .initial(name: "Personal", key: "alex@example.com"))
+        // No account name: the sender's name.
+        XCTAssertEqual(avatar("alex@example.com", name: "Alex R."),
+                       .initial(name: "Alex R.", key: "alex@example.com"))
+    }
+
+    func testAliasResolvesToTheAccountThatOwnsIt() {
+        // The alias belongs to the work account, whichever mailbox holds the copy.
+        XCTAssertEqual(avatar("alex@alias.EXAMPLE", photos: ["work@corp.example"]),
                        .accountPhoto(accountId: "work@corp.example"))
     }
 
     func testOtherSendersNeverGetAPhoto() {
-        // Even when every account has a photo, a stranger gets a disc keyed
-        // by their own address (a stable hue per sender).
         XCTAssertEqual(avatar("Priya@Example.edu", name: "Priya Raman",
-                              photos: Set(accounts)),
+                              photos: ["alex@example.com", "work@corp.example"]),
                        .initial(name: "Priya Raman", key: "priya@example.edu"))
     }
 
     func testSenderWithoutNameUsesTheAddressForTheInitial() {
-        XCTAssertEqual(avatar("noreply@x.example", name: "  "),
+        XCTAssertEqual(avatar("noreply@x.example", name: "  ", labels: "INBOX"),
                        .initial(name: "noreply@x.example", key: "noreply@x.example"))
     }
 }

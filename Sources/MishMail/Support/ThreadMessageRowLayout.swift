@@ -7,7 +7,7 @@ import CoreGraphics
 /// (the snippet when collapsed, the recipients when open). Rows are split by
 /// a hairline, not by card spacing. Every length scales with the reading
 /// pane's font scale.
-struct ThreadMessageRowMetrics: Equatable {
+struct ThreadMessageRowMetrics {
     let fontScale: Double
 
     init(fontScale: Double) {
@@ -98,55 +98,79 @@ enum MessageRowDate {
 
     /// "12 hours ago", "1 day ago"; "now" under a minute or in the future.
     static func relative(_ date: Date, now: Date = Date()) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
         if now.timeIntervalSince(date) < 60 {
-            formatter.dateTimeStyle = .named
-            return formatter.localizedString(fromTimeInterval: 0)
+            return namedFormatter.localizedString(fromTimeInterval: 0)
         }
-        formatter.dateTimeStyle = .numeric
-        return formatter.localizedString(for: date, relativeTo: now)
+        return numericFormatter.localizedString(for: date, relativeTo: now)
     }
+
+    // Built once: the name line redraws every minute in every row.
+    private static let numericFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        f.dateTimeStyle = .numeric
+        return f
+    }()
+    private static let namedFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        f.dateTimeStyle = .named
+        return f
+    }()
 }
 
-/// Which avatar a message row shows. Mail sent from one of the user's own
-/// accounts (or one of its send-as aliases) shows that account's avatar:
-/// its stored Google photo when there is one, else its initial disc in the
-/// account's colour. Everyone else gets an initial disc in a stable colour
-/// keyed by their address. No photo is ever fetched for other senders.
+/// Which avatar a message row shows. A message counts as the user's own
+/// only when Gmail filed it as SENT *and* its From address belongs to one
+/// of the user's accounts or send-as aliases: a forged From alone must not
+/// borrow the user's photo. Own mail shows the owning account's stored
+/// Google photo when there is one, else that account's initial disc.
+/// Everyone else gets an initial disc in a stable colour keyed by their
+/// address. No photo is ever fetched for other senders.
 enum MessageAvatar: Equatable {
     /// The stored profile photo of this account.
     case accountPhoto(accountId: String)
     /// An initial disc: `name`'s first letter on `Color.stable(for: key)`.
     case initial(name: String, key: String)
 
+    /// Lowercased address → the account that owns it: every account's own
+    /// address, then each send-as alias (`SendIdentity.accountId`).
+    static func ownerMap(accountIds: [String],
+                         aliases: [(email: String, accountId: String)]) -> [String: String] {
+        var map: [String: String] = [:]
+        for alias in aliases {
+            let key = alias.email.trimmingCharacters(in: .whitespaces).lowercased()
+            if !key.isEmpty { map[key] = alias.accountId }
+        }
+        // An account's own address always maps to itself.
+        for id in accountIds { map[id.lowercased()] = id }
+        return map
+    }
+
     /// - Parameters:
     ///   - senderEmail: the From address.
     ///   - senderName: the display name shown in the row.
-    ///   - messageAccountId: the mailbox the message belongs to.
-    ///   - accountIds: every signed-in account (their ids are addresses).
-    ///   - ownAddresses: accounts and their send-as aliases.
+    ///   - labelIds: the message's Gmail labels, space-separated.
+    ///   - owners: `ownerMap(accountIds:aliases:)`.
+    ///   - accountNames: the name each account shows elsewhere (switcher),
+    ///     so its initial matches; falls back to `senderName`.
     ///   - accountsWithPhoto: accounts that have a stored photo.
     static func resolve(senderEmail: String, senderName: String,
-                        messageAccountId: String, accountIds: [String],
-                        ownAddresses: Set<String>,
+                        labelIds: String,
+                        owners: [String: String],
+                        accountNames: [String: String] = [:],
                         accountsWithPhoto: Set<String>) -> MessageAvatar {
         let email = senderEmail.trimmingCharacters(in: .whitespaces).lowercased()
         let name = senderName.trimmingCharacters(in: .whitespaces)
         let shownName = name.isEmpty ? email : name
-        let ownAccount: String? = {
-            if let exact = accountIds.first(where: { $0.lowercased() == email }) {
-                return exact
+        let isSent = labelIds.split(separator: " ").contains("SENT")
+        if isSent, !email.isEmpty, let account = owners[email] {
+            if accountsWithPhoto.contains(account) {
+                return .accountPhoto(accountId: account)
             }
-            // A send-as alias belongs to the mailbox that holds the message.
-            let isAlias = ownAddresses.contains { $0.lowercased() == email }
-            return isAlias && !email.isEmpty ? messageAccountId : nil
-        }()
-        if let ownAccount {
-            if accountsWithPhoto.contains(ownAccount) {
-                return .accountPhoto(accountId: ownAccount)
-            }
-            return .initial(name: shownName, key: ownAccount)
+            let accountName = accountNames[account]?
+                .trimmingCharacters(in: .whitespaces) ?? ""
+            return .initial(name: accountName.isEmpty ? shownName : accountName,
+                            key: account)
         }
         return .initial(name: shownName, key: email.isEmpty ? shownName : email)
     }
