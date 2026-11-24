@@ -1,9 +1,11 @@
 import XCTest
 import GRDB
 
-/// What overwriting deleted content costs on a realistic delete: pruning
-/// 2,000 of 3,000 messages (bodies, full-text rows) from a raw-keyed
-/// SQLCipher file, as `SyncEngine.pruneLocalMail` does. Each configuration
+/// What overwriting deleted content costs on realistic deletes from a
+/// raw-keyed SQLCipher file of 3,000 messages (bodies, full-text rows):
+/// a prune of 2,000, as `SyncEngine.pruneLocalMail` does, and a sync-sized
+/// batch of 20, each with the protections off, on per row, and on as
+/// shipped (`SearchIndexDeletes` picks the bulk path). Each configuration
 /// runs on a fresh copy of the same file; the median of three runs goes to
 /// the log as `SECURE-DELETE-COST` lines. Nothing here asserts a time, so a
 /// slow runner cannot fail it; it asserts only that each run deleted what it
@@ -67,36 +69,57 @@ final class SecureDeleteCostTests: XCTestCase {
     }
 
     private struct Sample {
-        var prune: Double
+        var delete: Double
         var scrub: Double
     }
 
-    private func run(template: String, pragma: Bool, searchIndex: Bool, index: Int) throws -> Sample {
-        let path = dir.appendingPathComponent("run-\(pragma)-\(searchIndex)-\(index).sqlite").path
+    /// How a run deletes and what it measures.
+    private struct Scenario {
+        var label: String
+        var pragma: Bool
+        var searchIndex: Bool
+        /// Delete through the app's own entry point (bulk path above the
+        /// threshold) rather than one plain DELETE.
+        var appPath: Bool
+        /// Messages deleted: the prune (2,000) or a sync-sized batch.
+        var messages: Int
+    }
+
+    private func run(template: String, _ config: Scenario, index: Int) throws -> Sample {
+        let path = dir.appendingPathComponent("run-\(UUID().uuidString)-\(index).sqlite").path
         try FileManager.default.copyItem(atPath: template, toPath: path)
         let pool = try AppDatabase.openAndMigrate(path: path, key: key, scheme: .raw)
         defer { try? pool.close() }
         try pool.writeWithoutTransaction { db in
-            // On the writer, which is the connection the prune runs on.
-            try db.execute(sql: "PRAGMA secure_delete = \(pragma ? "ON" : "OFF")")
+            // On the writer, which is the connection the delete runs on.
+            try db.execute(sql: "PRAGMA secure_delete = \(config.pragma ? "ON" : "OFF")")
             try db.execute(sql: "INSERT INTO message_fts(message_fts, rank) VALUES('secure-delete', ?)",
-                           arguments: [searchIndex ? 1 : 0])
+                           arguments: [config.searchIndex ? 1 : 0])
             _ = try AppDatabase.foldAndTruncateLog(db, freePageLimit: nil)
         }
-        let cutoff = Date().addingTimeInterval(-90 * 86_400)
+        let ids = (0..<config.messages).map { "\(account):m\($0)" }
         let start = Date()
         try pool.write { db in
-            try SyncEngine.pruneMessages(db, accountId: account, olderThan: cutoff)
+            if config.appPath {
+                _ = try SyncEngine.deleteMessages(db, localIds: ids)
+            } else {
+                for chunk in stride(from: 0, to: ids.count, by: 500) {
+                    let part = Array(ids[chunk..<min(chunk + 500, ids.count)])
+                    let marks = Array(repeating: "?", count: part.count).joined(separator: ",")
+                    try db.execute(sql: "DELETE FROM message WHERE id IN (\(marks))",
+                                   arguments: StatementArguments(part))
+                }
+            }
         }
-        let prune = Date().timeIntervalSince(start)
+        let delete = Date().timeIntervalSince(start)
         let scrubStart = Date()
         _ = try pool.writeWithoutTransaction { db in
             try AppDatabase.foldAndTruncateLog(db, freePageLimit: AppDatabase.freePagesPerCheckpoint)
         }
         let scrub = Date().timeIntervalSince(scrubStart)
-        XCTAssertEqual(try pool.read { db in try Message.fetchCount(db) }, total - pruned)
-        XCTAssertEqual(try pool.read { db in try MessageBody.fetchCount(db) }, total - pruned)
-        return Sample(prune: prune * 1_000, scrub: scrub * 1_000)
+        XCTAssertEqual(try pool.read { db in try Message.fetchCount(db) }, total - config.messages)
+        XCTAssertEqual(try pool.read { db in try MessageBody.fetchCount(db) }, total - config.messages)
+        return Sample(delete: delete * 1_000, scrub: scrub * 1_000)
     }
 
     func testCostOfOverwritingDeletedContent() throws {
@@ -104,26 +127,33 @@ final class SecureDeleteCostTests: XCTestCase {
         try makeTemplate(at: template)
         let size = (try FileManager.default.attributesOfItem(atPath: template)[.size] as? NSNumber)?
             .intValue ?? 0
-        print("SECURE-DELETE-COST file=\(size / 1024) KiB messages=\(total) pruned=\(pruned)")
+        print("SECURE-DELETE-COST file=\(size / 1024) KiB messages=\(total)")
 
         func median(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }
-        let configurations: [(String, Bool, Bool)] = [
-            ("pragma=off fts=off", false, false),
-            ("pragma=on  fts=off", true, false),
-            ("pragma=off fts=on ", false, true),
-            ("pragma=on  fts=on ", true, true),
+        let sync = 20
+        let configurations = [
+            Scenario(label: "prune baseline (pragma off, fts per-row off)",
+                          pragma: false, searchIndex: false, appPath: false, messages: pruned),
+            Scenario(label: "prune pragma on",
+                          pragma: true, searchIndex: false, appPath: false, messages: pruned),
+            Scenario(label: "prune pragma on + fts secure-delete per row",
+                          pragma: true, searchIndex: true, appPath: false, messages: pruned),
+            Scenario(label: "prune as shipped (pragma on, bulk: fts optimize)",
+                          pragma: true, searchIndex: true, appPath: true, messages: pruned),
+            Scenario(label: "sync batch baseline",
+                          pragma: false, searchIndex: false, appPath: false, messages: sync),
+            Scenario(label: "sync batch as shipped (pragma on, fts per row)",
+                          pragma: true, searchIndex: true, appPath: true, messages: sync),
         ]
-        for (label, pragma, searchIndex) in configurations {
+        for config in configurations {
             var samples: [Sample] = []
             for index in 0..<3 {
-                samples.append(try run(template: template, pragma: pragma,
-                                       searchIndex: searchIndex, index: index))
+                samples.append(try run(template: template, config, index: index))
             }
-            let prune = median(samples.map(\.prune))
-            let scrub = median(samples.map(\.scrub))
-            print(String(format: "SECURE-DELETE-COST %@ prune_ms=%.1f scrub_ms=%.1f runs=%@",
-                         label, prune, scrub,
-                         samples.map { String(format: "%.0f", $0.prune) }.joined(separator: "/")))
+            print(String(format: "SECURE-DELETE-COST %@ deleted=%ld delete_ms=%.1f scrub_ms=%.1f runs=%@",
+                         config.label, config.messages,
+                         median(samples.map(\.delete)), median(samples.map(\.scrub)),
+                         samples.map { String(format: "%.0f", $0.delete) }.joined(separator: "/")))
         }
     }
 }

@@ -161,6 +161,45 @@ final class SecureDeleteTests: XCTestCase {
         try pool.close()
     }
 
+    /// A bulk delete (local prune) suspends the per-row index work and
+    /// optimizes once at the end: the deleted terms must still be gone, and
+    /// the index must delete securely again afterwards.
+    func testBulkPruneLeavesNoTermInTheSearchIndex() throws {
+        let pool = try openUnkeyedPool()
+        let term = marker("qxjbulk")
+        let tail = String(term.dropFirst(3))
+        let old = SearchIndexDeletes.bulkThreshold + 50
+        try pool.write { db in
+            try insertAccount(db, "me@example.com")
+            for i in 0..<old {
+                try insertMessage(db, account: "me@example.com", gmailId: "old-\(i)",
+                                  subject: i == old / 2 ? "Old \(term) note" : "Old note \(i)",
+                                  body: "old body \(i)", daysAgo: 400)
+            }
+            try insertFiller(db, account: "me@example.com", range: 0..<30)
+        }
+        try pool.read { db in XCTAssertTrue(try inSearchIndex(db, tail)) }
+
+        try pool.write { db in
+            try SyncEngine.pruneMessages(db, accountId: "me@example.com",
+                                         olderThan: Date().addingTimeInterval(-90 * 86_400))
+        }
+        try pool.read { db in
+            XCTAssertEqual(try Message.fetchCount(db), 30)
+            XCTAssertFalse(try inSearchIndex(db, tail), "pruned term still in the index")
+            XCTAssertEqual(try Int.fetchOne(db, sql: """
+                SELECT count(*) FROM message_fts WHERE message_fts MATCH 'routine'
+                """), 30, "the kept mail stays searchable")
+            XCTAssertEqual(try Int.fetchOne(db, sql: """
+                SELECT v FROM message_fts_config WHERE k = 'secure-delete'
+                """), 1, "secure-delete is back on after the bulk delete")
+        }
+        XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: AppDatabase.freePagesPerCheckpoint))
+        XCTAssertFalse(try onDisk(tail), "pruned term still on disk")
+        XCTAssertFalse(try onDisk("old body \(old / 2)"), "pruned body still on disk")
+        try pool.close()
+    }
+
     /// The setting lives in the index's own config table, so a migration
     /// that rebuilds `message_fts` must set it again.
     func testSearchIndexDeletesSecurelyInTheCurrentSchema() throws {
@@ -253,7 +292,7 @@ final class SecureDeleteTests: XCTestCase {
                                   subject: "Kept account \(i)",
                                   body: i == 20 ? "Text \(keptBody) end" : "kept filler \(i)")
             }
-            var draft = LocalDraft(
+            let draft = LocalDraft(
                 id: nil, accountId: "gone@example.com", fromEmail: "", toHeader: "x@example.com",
                 ccHeader: "", bccHeader: "", subject: "Draft", body: "Draft \(goneDraft)",
                 replyToMessageId: nil, forward: false, replacingDraftId: nil,

@@ -101,7 +101,12 @@ enum AccountLifecycle {
             arguments: [prefix, prefix])
         try removeFromSnippetScopes(db, id: id)
         try ChatProvenance.purgeConversations(db, drawingOn: id)
-        try db.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [id])
+        // The account's mail cascades with the account row.
+        let messages = try Int.fetchOne(
+            db, sql: "SELECT count(*) FROM message WHERE accountId = ?", arguments: [id]) ?? 0
+        try SearchIndexDeletes.deleting(db, messages: messages) {
+            try db.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [id])
+        }
     }
 
     struct AccountRemovedError: LocalizedError {
