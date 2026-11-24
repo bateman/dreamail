@@ -47,7 +47,8 @@ enum BackToList {
     enum Action: Equatable {
         /// Full-window (or centered-card) conversation: return to the list.
         case exitThreadFocus
-        /// Narrow window: the conversation covers the list; close it.
+        /// Narrow window: the conversation covers the list. Close it but keep
+        /// the selection on it, so j/k continue from that row.
         case closeConversation
         /// The list is already on screen (reading pane, or no conversation).
         case stay
@@ -60,6 +61,17 @@ enum BackToList {
         case .threadFocus: return .exitThreadFocus
         case .compactDetail: return .closeConversation
         case .list, .threePane: return .stay
+        }
+    }
+
+    /// A conversation is showing (full window, centered card, reading pane
+    /// or the narrow layout), which is when Gmail's `[` / `]` act.
+    static func conversationOnScreen(layoutMode: MailLayoutMode,
+                                     openedThread: Bool) -> Bool {
+        guard openedThread else { return false }
+        switch layoutMode {
+        case .threadFocus, .compactDetail, .threePane: return true
+        case .list: return false
         }
     }
 }

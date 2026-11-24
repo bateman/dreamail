@@ -74,4 +74,49 @@ final class GoToMailboxUITests: XCTestCase {
         XCTAssertTrue(demoThread.waitForExistence(timeout: 5),
                       "u must land back on the list")
     }
+
+    /// Gmail keeps its cursor on `u`: in the reading-pane style (three panes,
+    /// or the narrow layout that swaps list and conversation) `u` then `j`
+    /// must land on the conversation after the one just read. When `u`
+    /// dropped the selection in the narrow layout, `j` started again from
+    /// the top row, which is the conversation that was open.
+    func testUThenJContinuesFromTheConversationJustRead() {
+        let app = XCUIApplication()
+        app.launchEnvironment["MISHMAIL_DEMO"] = "1"
+        app.launchEnvironment["MISHMAIL_UI_TEST"] = "1"
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
+                                "-NSQuitAlwaysKeepsWindows", "NO",
+                                "-threadOpenStyle", "readingPane",
+                                "-readingPaneHidden", "NO"]
+        app.terminate()
+        app.launch()
+        addTeardownBlock { app.terminate() }
+
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        app.activate()
+
+        let demoThread = app.descendants(matching: .any)
+            .matching(identifier: "threadRow.you@example.com:t1").firstMatch
+        XCTAssertTrue(demoThread.waitForExistence(timeout: 10))
+        demoThread.click()
+
+        let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
+        XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        let firstSubject = subject.label
+        XCTAssertFalse(firstSubject.isEmpty)
+        subject.click()
+
+        app.typeKey("u", modifierFlags: [])
+        app.typeKey("j", modifierFlags: [])
+
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if subject.exists, subject.label != firstSubject { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(subject.waitForExistence(timeout: 2),
+                      "j must open the next conversation")
+        XCTAssertNotEqual(subject.label, firstSubject,
+                          "after u, j must continue from the conversation just read")
+    }
 }

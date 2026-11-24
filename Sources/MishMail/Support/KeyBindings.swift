@@ -16,6 +16,12 @@ enum ShortcutCommand: String, CaseIterable, Codable {
     case open
     /// Leave the open conversation for the list (Gmail `u`).
     case backToList
+    /// Archive the open conversation and go to the next (older) one
+    /// (Gmail `]`). Does nothing on the list.
+    case archiveNext
+    /// Archive the open conversation and go to the previous (newer) one
+    /// (Gmail `[`). Does nothing on the list.
+    case archivePrevious
 }
 
 struct ShortcutSpec: Identifiable {
@@ -76,6 +82,8 @@ final class KeyBindings: ObservableObject {
         .init(command: .backToList, title: "Back to conversation list", category: .navigation, defaultKey: "u"),
         .init(command: .toggleCheck, title: "Select / deselect conversation", category: .navigation, defaultKey: "x"),
         .init(command: .archive, title: "Archive", category: .actions, defaultKey: "e"),
+        .init(command: .archiveNext, title: "Archive and go to next conversation", category: .actions, defaultKey: "]"),
+        .init(command: .archivePrevious, title: "Archive and go to previous conversation", category: .actions, defaultKey: "["),
         .init(command: .trash, title: "Delete (Trash)", category: .actions, defaultKey: "#"),
         .init(command: .toggleStar, title: "Star / Unstar", category: .actions, defaultKey: "s"),
         // Gmail has no single toggle: Shift+I / Shift+U (GmailMarkReadKeys)
@@ -176,9 +184,7 @@ final class KeyBindings: ObservableObject {
 
     /// Secondary built-in keys that fire a command when the key isn't
     /// bound to anything else (a rebind to the key wins over the alias).
-    /// `]` is Gmail's "archive and go to the next conversation", which is
-    /// what archive's auto-advance already does.
-    static let aliases: [String: ShortcutCommand] = ["h": .snooze, "]": .archive]
+    static let aliases: [String: ShortcutCommand] = ["h": .snooze]
 
     func command(for key: String) -> ShortcutCommand? {
         let key = Self.normalizeKey(key)

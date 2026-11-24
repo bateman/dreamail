@@ -112,13 +112,12 @@ enum PaletteCommands {
             ? "1 Selected Conversation"
             : "\(ctx.checkedCount) Selected Conversations"
         // Bulk rules mirror the store: any unstarred → star all; any unread
-        // → mark all read (GmailMarkReadKeys, Shift+I).
+        // → mark all read, else mark all unread (`toggleReadChecked`).
         let starring = bulk
             ? ctx.checked.contains { !$0.isStarred }
             : !(ctx.focused?.isStarred ?? false)
         let markingRead = bulk
-            ? GmailMarkReadKeys.desiredRead(chord: .shiftI,
-                                            anyUnread: ctx.checked.contains { $0.isUnread })
+            ? ctx.checked.contains { $0.isUnread }
             : (ctx.focused?.isUnread ?? false)
 
         var list: [Entry] = [

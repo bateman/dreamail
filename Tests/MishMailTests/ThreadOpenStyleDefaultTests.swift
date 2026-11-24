@@ -23,20 +23,20 @@ final class ThreadOpenStyleDefaultTests: XCTestCase {
 
     func testNoStoredChoiceUsesTheReadingPane() {
         XCTAssertNil(defaults.string(forKey: ThreadOpenStyle.storageKey))
-        XCTAssertEqual(ThreadOpenStyle.current(in: defaults), .readingPane)
+        XCTAssertEqual(ThreadOpenStyle.resolved(storedRaw: defaults.string(forKey: ThreadOpenStyle.storageKey)), .readingPane)
         XCTAssertEqual(ThreadOpenStyle.resolved(storedRaw: nil), .readingPane)
     }
 
     func testStoredChoiceIsRespected() {
         for style in ThreadOpenStyle.allCases {
             defaults.set(style.rawValue, forKey: ThreadOpenStyle.storageKey)
-            XCTAssertEqual(ThreadOpenStyle.current(in: defaults), style)
+            XCTAssertEqual(ThreadOpenStyle.resolved(storedRaw: defaults.string(forKey: ThreadOpenStyle.storageKey)), style)
         }
     }
 
     func testUnknownStoredValueFallsBackToTheDefault() {
         defaults.set("someFutureStyle", forKey: ThreadOpenStyle.storageKey)
-        XCTAssertEqual(ThreadOpenStyle.current(in: defaults), .readingPane)
+        XCTAssertEqual(ThreadOpenStyle.resolved(storedRaw: defaults.string(forKey: ThreadOpenStyle.storageKey)), .readingPane)
     }
 
     /// The first window must be wide enough for the default to show as three

@@ -23,6 +23,8 @@ final class GmailShortcutReferenceTests: XCTestCase {
         .backToList: "u",      // Back to threadlist
         .toggleCheck: "x",     // Select conversation
         .archive: "e",         // Archive
+        .archiveNext: "]",     // Archive conversation and go next
+        .archivePrevious: "[", // Archive conversation and go previous
         .trash: "#",           // Delete
         .toggleStar: "s",      // Toggle star
         .snooze: "b",          // Snooze
@@ -65,31 +67,54 @@ final class GmailShortcutReferenceTests: XCTestCase {
     }
 
     func testBuiltInAliases() {
-        // `]`: Gmail's archive-and-next; archive already auto-advances.
-        XCTAssertEqual(KeyBindings.aliases, ["h": .snooze, "]": .archive])
+        XCTAssertEqual(KeyBindings.aliases, ["h": .snooze])
         let kb = KeyBindings(defaults: defaults)
-        XCTAssertEqual(kb.command(for: "]"), .archive)
-        XCTAssertNil(kb.command(for: "["), "[ (archive and go newer) is not implemented")
+        // `[` / `]` are commands of their own (open conversation only), no
+        // longer an alias of Archive.
+        XCTAssertEqual(kb.command(for: "]"), .archiveNext)
+        XCTAssertEqual(kb.command(for: "["), .archivePrevious)
     }
 
     func testGoToSequencesMatchGmail() {
         let table = ShortcutSequences.goTo.map { "\($0.key)=\($0.view.title)" }
         XCTAssertEqual(table, ["i=Inbox", "s=Starred", "b=Snoozed", "t=Sent",
-                               "d=Drafts", "a=All Mail", "p=Promotions"])
+                               "d=Drafts", "a=All Mail", "l=Labels", "p=Promotions"])
+        XCTAssertEqual(ShortcutSequences.goToTarget("l"), .labels)
         XCTAssertEqual(ShortcutSequences.goToTarget("b"), .snoozed)
         XCTAssertNil(ShortcutSequences.goToTarget("k"), "g k (Tasks) has no mailbox")
     }
 
     func testSelectSequencesMatchGmail() {
-        XCTAssertEqual(ShortcutSequences.select.map(\.key), ["a", "n"])
+        XCTAssertEqual(ShortcutSequences.select.map(\.key), ["a", "n", "r", "u", "s", "t"])
         XCTAssertEqual(ShortcutSequences.selection("a"), .selectAll)
         XCTAssertEqual(ShortcutSequences.selection("n"), .deselectAll)
-        XCTAssertNil(ShortcutSequences.selection("r"))
+        XCTAssertEqual(ShortcutSequences.selection("r"), .read)
+        XCTAssertEqual(ShortcutSequences.selection("u"), .unread)
+        XCTAssertEqual(ShortcutSequences.selection("s"), .starred)
+        XCTAssertEqual(ShortcutSequences.selection("t"), .unstarred)
+    }
+
+    func testSelectionsCheckByState() {
+        let state: [String: (isUnread: Bool, isStarred: Bool)] = [
+            "a": (true, true), "b": (false, true), "c": (true, false), "d": (false, false),
+        ]
+        let order = ["a", "b", "c", "d", "gone"]
+        func ids(_ selection: ShortcutSequences.Selection) -> [String] {
+            ShortcutSequences.checkedIds(order: order, selection: selection,
+                                         state: { state[$0] })
+        }
+        XCTAssertEqual(ids(.selectAll), ["a", "b", "c", "d"])
+        XCTAssertEqual(ids(.deselectAll), [])
+        XCTAssertEqual(ids(.read), ["b", "d"])
+        XCTAssertEqual(ids(.unread), ["a", "c"])
+        XCTAssertEqual(ids(.starred), ["a", "b"])
+        XCTAssertEqual(ids(.unstarred), ["c", "d"])
     }
 
     func testSequencePrefixesAreReservedInTheRegistry() {
-        XCTAssertEqual(Set(ShortcutSequences.Prefix.allRawValues), ["g", "*"])
-        for prefix in ShortcutSequences.Prefix.allRawValues {
+        let prefixes = ShortcutSequences.Prefix.allCases.map(\.rawValue)
+        XCTAssertEqual(Set(prefixes), ["g", "*"])
+        for prefix in prefixes {
             XCTAssertTrue(KeyBindings.reservedKeys.contains(prefix))
             let kb = KeyBindings(defaults: defaults)
             guard case .rejected = kb.rebind(.archive, to: prefix) else {
@@ -109,8 +134,8 @@ final class GmailShortcutReferenceTests: XCTestCase {
         XCTAssertEqual(GmailMarkReadKeys.chord(key: "U", shiftOnly: true), .shiftU)
         XCTAssertNil(GmailMarkReadKeys.chord(key: "u", shiftOnly: false),
                      "plain u is left to the registry")
-        XCTAssertEqual(GmailMarkReadKeys.desiredRead(chord: .shiftI, anyUnread: true), true)
-        XCTAssertEqual(GmailMarkReadKeys.desiredRead(chord: .shiftU, anyUnread: true), false)
+        XCTAssertTrue(GmailMarkReadKeys.desiredRead(chord: .shiftI))
+        XCTAssertFalse(GmailMarkReadKeys.desiredRead(chord: .shiftU))
     }
 
     /// Other Shift+letter keys are lowercased by the registry, so a held
@@ -123,8 +148,4 @@ final class GmailShortcutReferenceTests: XCTestCase {
         XCTAssertEqual(kb.command(for: "#"), .trash)
         XCTAssertNil(kb.command(for: "3"))
     }
-}
-
-private extension ShortcutSequences.Prefix {
-    static var allRawValues: [String] { [Self.goTo.rawValue, Self.select.rawValue] }
 }

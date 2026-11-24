@@ -165,7 +165,7 @@ struct MishMailApp: App {
         // Wide enough for the default reading-pane layout to open as three
         // panes (MailLayout.threePaneMinimumWidth) rather than swapping the
         // list and the conversation.
-        .defaultSize(width: MailLayout.defaultWindowWidth, height: 700)
+        .defaultSize(width: MailLayout.defaultWindowWidth, height: 640)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About MishMail") { AboutPanel.show() }

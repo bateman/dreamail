@@ -48,10 +48,11 @@ enum SelectionAdvance {
     }
 
     /// After removing a set of rows, land on the first surviving neighbor of
-    /// `focus` (down, then up). If `focus` was not removed and still exists,
-    /// keep it. Returns nil when the list is empty after the removal.
+    /// `focus` (down, then up; up first with `preferPrevious`, Gmail's `[`).
+    /// If `focus` was not removed and still exists, keep it. Returns nil when
+    /// the list is empty after the removal.
     static func neighborId(in ids: [String], removing removed: Set<String>,
-                           focus: String?) -> String? {
+                           focus: String?, preferPrevious: Bool = false) -> String? {
         guard !ids.isEmpty else { return nil }
         if let focus, !removed.contains(focus), ids.contains(focus) {
             return focus
@@ -62,35 +63,43 @@ enum SelectionAdvance {
             // first survivor (covered by the forward walk below).
             return -1
         }()
-        if focusIdx + 1 < ids.count {
+        func below() -> String? {
+            guard focusIdx + 1 < ids.count else { return nil }
             for i in (focusIdx + 1)..<ids.count where !removed.contains(ids[i]) {
                 return ids[i]
             }
+            return nil
         }
-        if focusIdx > 0 {
+        func above() -> String? {
+            guard focusIdx > 0 else { return nil }
             for i in stride(from: focusIdx - 1, through: 0, by: -1)
             where !removed.contains(ids[i]) {
                 return ids[i]
             }
+            return nil
         }
-        // focusIdx == -1 and every later id was removed, or list was all removed.
-        return nil
+        // focusIdx == -1 and every later id was removed, or list was all
+        // removed: both walks come back nil.
+        return preferPrevious ? (above() ?? below()) : (below() ?? above())
     }
 
     /// Advance list focus and mounted detail independently. During keyboard
     /// browsing they can intentionally differ, so removing one must not steal
     /// or blank the other.
     static func destinations(in ids: [String], removing removed: Set<String>,
-                             selected: String?, opened: String?)
+                             selected: String?, opened: String?,
+                             preferPrevious: Bool = false)
         -> RemovalDestinations {
         let selectedWasRemoved = selected.map(removed.contains) ?? false
         let openedWasRemoved = opened.map(removed.contains) ?? false
         return RemovalDestinations(
             selectedId: selectedWasRemoved
-                ? neighborId(in: ids, removing: removed, focus: selected)
+                ? neighborId(in: ids, removing: removed, focus: selected,
+                             preferPrevious: preferPrevious)
                 : selected,
             openedId: openedWasRemoved
-                ? neighborId(in: ids, removing: removed, focus: opened)
+                ? neighborId(in: ids, removing: removed, focus: opened,
+                             preferPrevious: preferPrevious)
                 : opened,
             selectedWasRemoved: selectedWasRemoved,
             openedWasRemoved: openedWasRemoved)

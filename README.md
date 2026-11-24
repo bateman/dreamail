@@ -248,7 +248,8 @@ The defaults are Gmail's:
 | o | Open thread (Return also opens) | | a | Reply all |
 | u | Back to the thread list | | f | Forward newest message (new conversation; use thread ⋮ → Forward all for the whole thread) |
 | x | Select / deselect (multi-select) | | l | Label… |
-| e | Archive (] also archives and moves on) | | c | Compose |
+| e | Archive | | c | Compose |
+| ] / [ | Archive the open conversation, go to the next / previous | | | |
 | # | Trash | | z | Undo last action |
 | s | Star / unstar | | ! | Report spam / not spam |
 | b or h | Snooze… (picker) | | — | Toggle read / unread (no default key; Gmail uses Shift-I / Shift-U) |
@@ -261,9 +262,10 @@ Fixed shortcuts (not customizable):
 
 | Key | Action |
 |---|---|
-| Shift-I / Shift-U | Mark as read (or unread if already read) / Mark as unread (Gmail) |
-| g then i / s / b / t / d / a / p | Go to Inbox / Starred / Snoozed / Sent / Drafts / All mail / Promotions |
-| * then a / n | Select all / deselect all threads |
+| Shift-I / Shift-U | Mark as read / Mark as unread (Gmail) |
+| Shift-N | Refresh (sync all accounts) |
+| g then i / s / b / t / d / a / l / p | Go to Inbox / Starred / Snoozed / Sent / Drafts / All mail / Labels / Promotions |
+| * then a / n / r / u / s / t | Select all / none / read / unread / starred / unstarred threads |
 | ↑ / ↓ | Browse threads (without opening the reading pane) |
 | Return | Open selected thread · Esc closes the reading pane |
 | / | Search |
@@ -272,7 +274,7 @@ Fixed shortcuts (not customizable):
 | Cmd-L | Copy Gmail link to the selected thread |
 | Ctrl-F | Filter menu |
 | Cmd-N | Compose · Cmd-Enter send |
-| Cmd-Shift-C / Cmd-Shift-B (in compose) | Show the Cc and Bcc fields |
+| Cmd-Shift-C / Cmd-Shift-B / Cmd-Shift-F (in compose) | Add Cc / add Bcc / choose the From address |
 | / (in compose body) | Snippet picker — type `/name` to filter, Return inserts |
 | Cmd-/ (in compose) | Toggle the snippets panel |
 | ⌘B / ⌘I / ⌘⇧X / ⌘E | Bold / italic / strikethrough / code (compose body) |

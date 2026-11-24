@@ -22,6 +22,9 @@ struct FromIdentityPicker: View {
     /// are titled so the closed and open forms agree).
     let closedLabel: String
     let rowTitle: (SendIdentity) -> String
+    /// Bumped by the owner to focus the picker and open its list (Gmail
+    /// ⌘⇧F, "access custom from").
+    var openRequest = 0
 
     @FocusState private var focused: Bool
     private var isOpen: Bool { highlighted != nil }
@@ -98,6 +101,11 @@ struct FromIdentityPicker: View {
             if store.composeRequest?.id == requestID { store.fromPickerOpen = isOpen }
         }
         .onChange(of: store.fromPickerDismissToken) { if isOpen { close() } }
+        .onChange(of: openRequest) {
+            guard canChoose else { return }
+            focused = true
+            open()
+        }
         .onDisappear {
             if store.composeRequest?.id == requestID { store.fromPickerOpen = false }
         }

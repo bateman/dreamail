@@ -1065,6 +1065,13 @@ private extension ContentView {
             switch command {
             case .open: openSelectedFromKeyboard()
             case .backToList: backToList()
+            case .archiveNext, .archivePrevious:
+                // Gmail's `[` / `]` act on the open conversation only.
+                guard BackToList.conversationOnScreen(
+                    layoutMode: layoutMode,
+                    openedThread: store.openedThreadId != nil) else { return }
+                store.archiveOpenConversation(
+                    goToPrevious: command == .archivePrevious)
             default: break
             }
         }
@@ -1477,6 +1484,16 @@ private extension ContentView {
             if finishingCompose, textEditing {
                 event.window?.makeFirstResponder(nil)
             }
+            // After `g` or `*`, the next key belongs to the sequence whatever
+            // it is: ahead of `/`, the arrows and the Shift chords, so `* u`
+            // typed with Shift still down selects unread instead of marking
+            // the focused conversation unread, and `g` then an unknown key
+            // is eaten rather than run (ShortcutKeyRouter).
+            if store.hasPendingShortcutPrefix,
+               let chars = event.charactersIgnoringModifiers, !chars.isEmpty {
+                _ = store.handleKey(chars)
+                return nil
+            }
             // Gmail's `/`: jump focus to the sidebar search field. A
             // collapsed sidebar has no field to focus — reveal it first and
             // focus once the column is installed.
@@ -1558,20 +1575,22 @@ private extension ContentView {
                 break
             }
             guard let chars = event.charactersIgnoringModifiers else { return event }
-            // Gmail Shift+I / Shift+U mark read / unread. Fixed chords (not in
-            // KeyBindings): charactersIgnoringModifiers keeps Shift on letters
-            // ("I"/"U"), so they must be handled before single-key lookup.
-            // Shift+I is state-aware: already-read selection → mark unread.
-            // Drop auto-repeat: a held Shift+I would otherwise oscillate
-            // read↔unread (state is re-read after each mutation).
+            // Gmail Shift+I / Shift+U mark read / unread, Shift+N refreshes.
+            // Fixed chords (not in KeyBindings): charactersIgnoringModifiers
+            // keeps Shift on letters ("I"/"U"/"N"), so they must be handled
+            // before the single-key lookup lowercases them. Drop auto-repeat:
+            // a held chord must not fire again on every repeat.
             let shiftOnly = event.modifierFlags
                 .intersection([.command, .option, .control, .shift]) == [.shift]
             if let chord = GmailMarkReadKeys.chord(key: chars, shiftOnly: shiftOnly) {
-                // Don't leave an armed `g` prefix: Shift+I after `g` must not
-                // keep the next key as a go-to chord target for 1.5s.
-                store.clearPendingGoKey()
                 if !event.isARepeat {
                     store.applyGmailMarkReadChord(chord)
+                }
+                return nil
+            }
+            if GmailRefreshKey.matches(key: chars, shiftOnly: shiftOnly) {
+                if !event.isARepeat {
+                    Task { await store.syncAll() }
                 }
                 return nil
             }
@@ -1622,14 +1641,16 @@ private extension ContentView {
         }
     }
 
-    /// Gmail `u`: back to the conversation list. Leaving a full-window
-    /// conversation keeps the selection, so j/k carry on from it; in a
-    /// narrow window the conversation closes, as Esc does.
+    /// Gmail `u`: back to the conversation list. The selection stays on the
+    /// conversation just read, so j/k carry on from it (Gmail keeps its
+    /// cursor). In a narrow window only the mounted conversation closes.
     private func backToList() {
         switch BackToList.action(layoutMode: layoutMode,
                                  threadFocus: store.threadFocusMode) {
         case .exitThreadFocus: store.threadFocusMode = false
-        case .closeConversation: store.clearSelection()
+        case .closeConversation:
+            detailSelectionTask?.cancel()
+            store.openDetail(nil)
         case .stay: break
         }
     }

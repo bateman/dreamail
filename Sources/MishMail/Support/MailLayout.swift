@@ -1,5 +1,4 @@
 import CoreGraphics
-import Foundation
 
 /// How a conversation opens from the list (Settings → Appearance).
 enum ThreadOpenStyle: String, CaseIterable {
@@ -23,11 +22,6 @@ enum ThreadOpenStyle: String, CaseIterable {
     /// newer or older build) falls back to `defaultStyle`.
     static func resolved(storedRaw: String?) -> ThreadOpenStyle {
         storedRaw.flatMap(ThreadOpenStyle.init(rawValue:)) ?? defaultStyle
-    }
-
-    /// The effective style read from `defaults` (what `@AppStorage` sees).
-    static func current(in defaults: UserDefaults = .standard) -> ThreadOpenStyle {
-        resolved(storedRaw: defaults.string(forKey: storageKey))
     }
 }
 

@@ -7,9 +7,8 @@ import Foundation
 /// command. ContentView consults this before the single-key registry so a
 /// held Shift is not lowercased into a no-op (or a wrong command).
 ///
-/// Shift+I is state-aware: Gmail's chord marks read, but when every target is
-/// already read, Shift+I marks unread so the chord always changes state
-/// (read → unread). Shift+U always marks unread.
+/// As in Gmail, Shift+I always marks read and Shift+U always marks unread.
+/// The read / unread toggle is the separate `toggleRead` command.
 enum GmailMarkReadKeys {
     enum Chord: Equatable {
         /// Shift+I — mark read, or mark unread when already fully read.
@@ -31,16 +30,20 @@ enum GmailMarkReadKeys {
         }
     }
 
-    /// Desired `read` flag for `setRead` given the chord and whether any
-    /// target thread is currently unread.
-    ///
-    /// - Shift+I: if any target is unread → mark all read; if all are already
-    ///   read → mark all unread.
-    /// - Shift+U: always mark unread.
-    static func desiredRead(chord: Chord, anyUnread: Bool) -> Bool {
+    /// Desired `read` flag for `setRead` given the chord.
+    static func desiredRead(chord: Chord) -> Bool {
         switch chord {
-        case .shiftI: return anyUnread
+        case .shiftI: return true
         case .shiftU: return false
         }
+    }
+}
+
+/// Gmail's Shift+N, "update conversation": MishMail syncs every account
+/// (the same action as ⌘⇧R). Fixed, consulted before the single-key
+/// registry like the read chords (which would lowercase it to `n`).
+enum GmailRefreshKey {
+    static func matches(key: String, shiftOnly: Bool) -> Bool {
+        shiftOnly && key.count == 1 && key.lowercased() == "n"
     }
 }

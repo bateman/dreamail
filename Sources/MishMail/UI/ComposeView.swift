@@ -32,6 +32,10 @@ struct ComposeView: View {
     @State private var bccTokens: [String] = []
     @State private var bccDraft = ""
     @State private var showBcc = false
+    /// Gmail ⌘⇧C / ⌘⇧B / ⌘⇧F: bumped to move focus into Cc, Bcc or From.
+    @State private var ccFocusRequest = 0
+    @State private var bccFocusRequest = 0
+    @State private var fromOpenRequest = 0
     @State private var subject: String = ""
     @State private var body_: String = ""
     /// The quoted original (reply quote or forward block), kept out of the
@@ -1077,7 +1081,8 @@ struct ComposeView: View {
                 FromIdentityPicker(requestID: request.id, identities: availableFromIdentities,
                                    selectedId: fromIdentityBinding,
                                    closedLabel: fromClosedLabel,
-                                   rowTitle: { menuTitle($0) })
+                                   rowTitle: { menuTitle($0) },
+                                   openRequest: fromOpenRequest)
                 Spacer()
             }
             .padding(.vertical, 4)
@@ -1112,11 +1117,13 @@ struct ComposeView: View {
                 }
                 .zIndex(3)
             if showCc || !ccTokens.isEmpty {
-                TokenAddressField(label: "Cc", tokens: $ccTokens, draft: $ccDraft)
+                TokenAddressField(label: "Cc", tokens: $ccTokens, draft: $ccDraft,
+                                  focusRequest: ccFocusRequest)
                     .zIndex(2)
             }
             if showBcc || !bccTokens.isEmpty {
-                TokenAddressField(label: "Bcc", tokens: $bccTokens, draft: $bccDraft)
+                TokenAddressField(label: "Bcc", tokens: $bccTokens, draft: $bccDraft,
+                                  focusRequest: bccFocusRequest)
                     .zIndex(1)
             }
 
@@ -2433,18 +2440,30 @@ struct ComposeView: View {
                 openLinkSheet()
                 return nil
             }
-            // Gmail's ⌘⇧C / ⌘⇧B: add Cc / Bcc recipients. Like the Cc and
-            // Bcc buttons, either one reveals both fields. Only for this
-            // expanded compose, in the main window (Settings keeps its keys).
+            // Gmail's ⌘⇧C / ⌘⇧B: add Cc / Bcc recipients — reveal the fields
+            // (like the Cc and Bcc buttons, either one shows both) and put
+            // the caret in the one asked for. ⌘⇧F: open the From picker.
+            // Only for this expanded compose, in the main window (Settings
+            // keeps its keys).
             if mods == .command,
                event.modifierFlags.contains(.shift),
                !isMinimized,
                store.composeRequest?.id == request.id,
                event.window == NSApp.mainWindow,
                let key = event.charactersIgnoringModifiers?.lowercased(),
-               key == "c" || key == "b" {
+               key == "c" || key == "b" || key == "f" {
+                if key == "f" {
+                    fromOpenRequest &+= 1
+                    return nil
+                }
+                let mounted = showCc && showBcc
                 showCc = true
                 showBcc = true
+                // A field that is only now being shown must be mounted
+                // before its focus request can be observed.
+                DispatchQueue.main.asyncAfter(deadline: .now() + (mounted ? 0 : 0.05)) {
+                    if key == "c" { ccFocusRequest &+= 1 } else { bccFocusRequest &+= 1 }
+                }
                 return nil
             }
             guard mods.isEmpty else { return event }
