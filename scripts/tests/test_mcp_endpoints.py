@@ -229,3 +229,10 @@ class CleanExitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TemporaryGateProbe(unittest.TestCase):
+    """TEMPORARY (reverted): proves the script-tests gate fails."""
+
+    def test_fails_on_purpose(self):
+        self.fail("deliberate failure: script-tests gate probe")

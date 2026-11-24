@@ -47,3 +47,8 @@ final class ScriptEndpointTests: XCTestCase {
         return (proc.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 }
+
+// TEMPORARY (reverted): proves the CI warning gate fails on a test warning.
+func ciWarningGateTestProbe() {
+    let unusedTestProbe = 1
+}
