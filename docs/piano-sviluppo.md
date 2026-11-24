@@ -1,6 +1,6 @@
 # Piano di sviluppo a step
 
-Ultimo aggiornamento: 23 novembre 2026
+Ultimo aggiornamento: 24 novembre 2026
 Riferimento: [Registro delle decisioni](registro-decisioni.md) v0.7 (finding F-xx, decisioni DEC-xxx).
 
 Decisioni prese per questo piano:
@@ -38,20 +38,49 @@ Limiti noti: la CI non copre Keychain, firma, notarizzazione, Gmail reale né i 
 | 1E | CI: permessi minimi, action fissate a SHA | F-10 | `.github/workflows/ci.yml` |
 | 1F | Rendere deterministico il test instabile dello scorrimento del cursore in composizione, senza saltarlo né disattivarlo | — | `Tests/MishMailTests/ComposeBodyCaretScrollTests.swift` |
 
-## Ondata 2 — in parallelo, dopo il merge dell'ondata 1
+## Ondata 1 — esito
+
+Chiusa il 24 novembre 2026: sei PR unite su `main` (#2–#7), ciascuna dopo CI verde, due review (`ponytail-review` ultra e `security-audit`) e un giro di correzioni. Nessuna review ha trovato difetti bloccanti; ogni PR ha ricevuto correzioni obbligatorie prima del merge.
+
+| Finding | Stato dopo l'ondata 1 |
+|---|---|
+| F-01 | Mitigato e applicato nel codice: updater inerte senza canale, e comunque spento su una copia senza Team ID. La regola di fiducia originale va riprogettata prima di configurare un canale di rilascio. |
+| F-02 | Chiuso per la riservatezza. Il comportamento con un vero database legacy va provato su Mac. |
+| F-03 | Chiuso per `DiagnosticLog`. Restano altri punti di log (step 2D). |
+| F-07 | Chiuso. |
+| F-09 | Chiuso. Residuo dichiarato: una raffica di connessioni locali può ritardare l'accesso, non intercettarlo. |
+| F-10 | Chiuso per la CI. Resta il pin della dipendenza GRDB (step 2C). |
+
+Decisioni prese dall'orchestratore senza consultare il proprietario, ribaltabili:
+
+- Prefisso del bundle ID `io.github.bateman`; nome dell'app invariato.
+- Nessuna migrazione dei dati da un'installazione `dev.ronboger.MishMail`.
+- Nessuna modalità diagnostica dettagliata nei log (F-03 ne suggeriva una opzionale).
+- Lo script di controllo dei workflow resta come allarme, non come barriera: la protezione vera è l'impostazione del repository "Require actions to be pinned to a full-length commit SHA", che spetta al proprietario attivare.
+
+## Ondata 2 — in parallelo
 
 | Step | Contenuto | Finding | File principali |
 |---|---|---|---|
 | 2A | AI e server MCP spenti dietro un interruttore | F-05, F-06, F-12 e parte AI di F-04 | `UI/SettingsView.swift`, `App/MailStore+AI.swift`, `MCP/` |
 | 2B | Cancellazione completa dell'account e anteprime notifiche | F-04, F-11 | `App/MailStore+Accounts.swift`, `Support/Notifier.swift` |
+| 2C | Pin di GRDB per revisione, `Package.resolved` o verifica del checksum del binario in CI | F-10 (parte restante) | `project.yml`, `.github/` |
+| 2D | Log residui fuori da `DiagnosticLog`: errori del database con testo SQL e percorsi, eccezione di layout del testo, identificativo di thread nelle metriche | F-03 (parte restante) | `Store/Database.swift`, `Support/SafeTextLayout.m`, `UI/ThreadDetailView.swift` |
 
-2A viene dopo 1A perché entrambi toccano `SettingsView.swift` e `MishMailApp.swift`.
+2C e 2D sono emersi dalle review dell'ondata 1.
 
 F-08 (limiti sull'estrazione degli update) è rimandato alla distribuzione: con l'updater spento non è raggiungibile.
+
+Altri seguiti annotati, non ancora pianificati:
+
+- `make release` e il README usano lo xcodegen presente sulla macchina del maintainer, non quello fissato in CI.
+- Dopo la conversione, il vecchio file in chiaro viene scollegato ma non sovrascritto; il percorso di reset conserva `mail.sqlite.unreadable`.
+- Le voci già scritte nel log di sistema da versioni precedenti non si possono eliminare.
 
 ## Cancello — prova su Mac del proprietario
 
 ☐ Build locale, test e uso della demo.
+☐ Verifiche che la CI non copre, emerse dall'ondata 1: pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub; nuovo accesso a Google con il listener limitato (Safari e Chrome); avvio con un vecchio database in chiaro e una seconda copia aperta (striscia di sola lettura, schermata "Finish encrypting your mail"); eliminazione del vecchio file di log all'avvio.
 ☐ Solo dopo, collegamento di un account Gmail reale.
 
 ## Ondata 3 — parità Gmail
@@ -69,10 +98,11 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 
 | Step | Branch | PR | Stato |
 |---|---|---|---|
-| 0 | `docs/registro-decisioni-v0.7` | — | Completato |
-| 1A | `security/fork-identity-updater-off` | — | Avviato |
-| 1B | `security/database-fail-closed` | — | Avviato |
-| 1C | `security/diagnostic-log-privacy` | — | Avviato |
-| 1D | `security/oauth-listener-limits` | — | Avviato |
-| 1E | `ci/least-privilege-pinning` | — | Avviato |
-| 1F | `tests/caret-scroll-deterministic` | — | Avviato |
+| 0 | `docs/registro-decisioni-v0.7` | #1 | Unito |
+| 1A | `security/fork-identity-updater-off` | #7 | Unito |
+| 1B | `security/database-fail-closed` | #2 | Unito |
+| 1C | `security/diagnostic-log-privacy` | #4 | Unito |
+| 1D | `security/oauth-listener-limits` | #6 | Unito |
+| 1E | `ci/least-privilege-pinning` | #5 | Unito |
+| 1F | `tests/caret-scroll-deterministic` | #3 | Unito |
+| 2A–2D | — | — | Da avviare |

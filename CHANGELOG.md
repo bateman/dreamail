@@ -6,6 +6,43 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **This fork has its own identity and its updater is off.** Bundle
+  identifiers are now `io.github.bateman.*`, so the app keeps its own
+  container, settings and Keychain items and starts fresh: nothing is migrated
+  from a `dev.ronboger.MishMail` install (the README lists the cleanup steps).
+  The in-app updater does nothing unless a release channel is configured at
+  build time, and stays off on any copy without a Team ID even then. An update
+  must carry the installed app's bundle identifier.
+  `scripts/update-mishmail.sh` needs `--repo`, refuses anything not strictly
+  newer unless `--allow-downgrade` is passed, checks the signature against the
+  installed app's identifier and Team ID, and downloads over HTTPS from that
+  repository's releases only.
+- **An old unencrypted mail cache is never written to again.** When a legacy
+  plaintext cache cannot be encrypted at launch (another copy is running, or
+  the file is busy), MishMail opens it read-only: sync, queued edits,
+  scheduled sends and draft saves pause, a strip that cannot be dismissed says
+  so, and account or settings changes are refused with a notice. A cache too
+  old to read without migrating shows "Finish encrypting your mail" instead of
+  an empty mailbox. The next launch retries the encryption.
+- **The diagnostic log no longer holds addresses or server replies.** It
+  records a per-install account tag, the request path without identifiers, the
+  status and Google's reason codes. The file is private to your user, rotates
+  at 512 KiB or 7 days, and a log from an earlier version is deleted at
+  launch. Entries already in the macOS unified log from earlier versions
+  cannot be removed and age out with the system's retention.
+- **Sign-in can no longer be stalled by idle local connections.** The
+  temporary sign-in listener allows 16 connections, closes each after 10
+  seconds, makes room for a new one by closing the oldest that has sent
+  nothing, and closes them all when sign-in ends.
+- **CI runs with a read-only token and pinned tools.** Actions are pinned to
+  commit SHAs (Dependabot keeps them current), XcodeGen is a checksummed
+  2.46.0 release, a skipped test that is not on the allowlist fails the job,
+  and a check fails the build if a workflow loses its pins or its
+  `permissions` block.
+- **The compose caret-scroll tests no longer fail on a slow runner.** They
+  waited a fixed 150 ms for a scroll the editor defers by 50 ms; they now wait
+  for the deferred scroll itself.
+
 - **A draft no longer disappears from Drafts while you write it.** Each
   autosave removed the old draft from the local mailbox and wrote nothing new
   until compose closed. A new-message draft vanished from the Drafts list, and
