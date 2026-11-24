@@ -137,7 +137,7 @@ Seguiti annotati:
 | Colori delle label presi da Gmail, con testo sempre leggibile | #25 |
 | Spaziatura compatta tra le sezioni della lista | #26 |
 
-Il proprietario ha unito fuori flusso le nuove icone dell'app in `Design/` e la PR #27 (rigenerazione dei PNG dell'icona).
+Il proprietario ha unito fuori flusso le nuove icone dell'app e le PR #27–#29 (rigenerazione dei PNG dell'icona, svuotamento della cache delle icone di macOS, nuova icona).
 
 Esiti da ricordare:
 
