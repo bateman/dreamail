@@ -36,8 +36,24 @@ final class ComposeBodyCaretScrollTests: XCTestCase {
         return (scroll, textView, window)
     }
 
-    private func wait(_ seconds: TimeInterval) {
-        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    /// Returns once every caret scroll the editor deferred before the call
+    /// has run. A fixed `RunLoop.run(until:)` was not enough: when the main
+    /// thread stalled past its deadline (busy CI runner), the run loop
+    /// returned before draining the main queue, the deferred scroll had not
+    /// run yet, and the assertions read a stale origin. Instead, queue a
+    /// marker on the main queue with a later deadline than the editor's
+    /// settle timer and wait for it: main queue blocks run in deadline
+    /// order, so once the marker has run the deferred scroll has run too,
+    /// however slow the machine.
+    private func waitForDeferredCaretScroll() {
+        let marker = expectation(description: "deferred caret scroll ran")
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + ComposeCaretSettlingTextView.caretScrollSettleDelay * 2
+        ) {
+            marker.fulfill()
+        }
+        // The timeout is a safety net against a hang, not the expected wait.
+        wait(for: [marker], timeout: 10)
     }
 
     /// Height of `lines` lines of body text, plus a few points of slack.
@@ -57,7 +73,7 @@ final class ComposeBodyCaretScrollTests: XCTestCase {
         // SwiftUI applies the reported height.
         scroll.setFrameSize(NSSize(width: 400, height: fittingHeight(lines: 6)))
         XCTAssertEqual(scroll.contentView.bounds.origin.y, 0, accuracy: 0.5)
-        wait(ComposeCaretSettlingTextView.caretScrollSettleDelay * 3)
+        waitForDeferredCaretScroll()
         XCTAssertEqual(scroll.contentView.bounds.origin.y, 0, accuracy: 0.5)
     }
 
@@ -68,7 +84,7 @@ final class ComposeBodyCaretScrollTests: XCTestCase {
         textView.insertNewline(nil)
         XCTAssertEqual(scroll.contentView.bounds.origin.y, 0, accuracy: 0.5)
         // No resize comes: the caret is followed after the settle delay.
-        wait(ComposeCaretSettlingTextView.caretScrollSettleDelay * 3)
+        waitForDeferredCaretScroll()
         XCTAssertGreaterThan(scroll.contentView.bounds.origin.y, 1)
     }
 
@@ -77,7 +93,7 @@ final class ComposeBodyCaretScrollTests: XCTestCase {
             height: fittingHeight(lines: 5), lines: 12)
         _ = window
         textView.scrollRangeToVisible(textView.selectedRange())
-        wait(ComposeCaretSettlingTextView.caretScrollSettleDelay * 3)
+        waitForDeferredCaretScroll()
         let scrolled = scroll.contentView.bounds.origin.y
         XCTAssertGreaterThan(scrolled, 1)
         textView.insertNewline(nil)
