@@ -6,6 +6,14 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **CI fails on compiler warnings and checks the scripts.** A Swift or C/ObjC
+  warning in the app, relauncher or unit tests fails the CI build (the UI-test
+  target is not gated; local builds are unchanged). Release binaries are
+  still built without the flag, but the CI run that `make release` waits for
+  fails on warnings, for example a new deprecation after an Xcode update on
+  the runner. The Python tests of the helper scripts run on every push, and
+  shellcheck covers every shell script. `make checks` runs the Linux checks
+  locally.
 - **Choose the colour of each account's label.** "Edit Account Labels…" now
   has a colour per account: the system colour picker, the label organizer's
   swatches for one click, and "Default" (the avatar's hue). The account pill in
