@@ -243,6 +243,16 @@ final class AccountPhotoTests: XCTestCase {
         try q.read { try AccountPhotoRecord.fetchOne($0, key: id) }
     }
 
+    // Synchronous on purpose: inside an async test, `q.read` resolves to
+    // GRDB's async overload, which an XCTAssert autoclosure cannot await.
+    private func storedPhotos(_ q: DatabaseQueue) throws -> [String: Data] {
+        try q.read { try AccountPhotoRefresher.loadAll($0) }
+    }
+
+    private func photoCount(_ q: DatabaseQueue) throws -> Int {
+        try q.read { try AccountPhotoRecord.fetchCount($0) }
+    }
+
     func testSignInStoresThePhotoWithTheAccount() async throws {
         let q = try makeDB()
         try insertAccount(q, "a@x.com")
@@ -252,7 +262,7 @@ final class AccountPhotoTests: XCTestCase {
         XCTAssertEqual(outcome, .stored(hasPhoto: true))
         let row = try XCTUnwrap(stored(q, "a@x.com"))
         XCTAssertNotNil(row.imageData)
-        XCTAssertEqual(try q.read { try AccountPhotoRefresher.loadAll($0) }.keys.sorted(), ["a@x.com"])
+        XCTAssertEqual(try storedPhotos(q).keys.sorted(), ["a@x.com"])
     }
 
     func testRefreshIsAtMostOnceADayUnlessForced() async throws {
@@ -320,7 +330,7 @@ final class AccountPhotoTests: XCTestCase {
             XCTAssertEqual(outcome, .failed)
         }
         XCTAssertNil(try stored(q, "a@x.com")?.imageData)
-        XCTAssertTrue(try q.read { try AccountPhotoRefresher.loadAll($0) }.isEmpty)
+        XCTAssertTrue(try storedPhotos(q).isEmpty)
         // The failed attempt still counts for the interval.
         do {
             let outcome = await refresher(q, failing, clock: clock)
@@ -398,15 +408,13 @@ final class AccountPhotoTests: XCTestCase {
             _ = await refresher(q, mock).refresh(accountId: id, force: true) { url }
         }
         try await q.write { db in try AccountLifecycle.purgeAccount(db, id: "a@x.com") }
-        try q.read { db in
-            XCTAssertNil(try AccountPhotoRecord.fetchOne(db, key: "a@x.com"))
-            XCTAssertNotNil(try AccountPhotoRecord.fetchOne(db, key: "b@x.com")?.imageData)
-        }
+        XCTAssertNil(try stored(q, "a@x.com"))
+        XCTAssertNotNil(try stored(q, "b@x.com")?.imageData)
         // The foreign key alone also takes it.
         try await q.write { db in
             try db.execute(sql: "DELETE FROM account WHERE id = 'b@x.com'")
         }
-        XCTAssertEqual(try q.read { try AccountPhotoRecord.fetchCount($0) }, 0)
+        XCTAssertEqual(try photoCount(q), 0)
     }
 
     func testAccountRemovedDuringFetchIsNotRecreated() async throws {
@@ -419,7 +427,7 @@ final class AccountPhotoTests: XCTestCase {
             return url
         }
         XCTAssertEqual(outcome, .accountGone)
-        XCTAssertEqual(try q.read { try AccountPhotoRecord.fetchCount($0) }, 0)
+        XCTAssertEqual(try photoCount(q), 0)
     }
 
     /// The photo path writes nowhere but the database, and logs nothing.
@@ -471,7 +479,7 @@ final class MockPhotoTransport: @unchecked Sendable {
 
     var transport: AccountPhotoTransport {
         AccountPhotoTransport { [self] request, maxBytes in
-            lock.lock(); recorded.append(request); caps.append(maxBytes); lock.unlock()
+            lock.withLock { recorded.append(request); caps.append(maxBytes) }
             if let error { throw error }
             let response = HTTPURLResponse(url: responseURL ?? request.url!, statusCode: status,
                                            httpVersion: "HTTP/1.1", headerFields: headers)!
