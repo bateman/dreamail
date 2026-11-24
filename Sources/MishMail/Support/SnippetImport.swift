@@ -1,10 +1,11 @@
 import Foundation
 
-/// JSON / CSV snippet import (Settings → Snippets and Moving from Notion Mail).
+/// JSON / CSV snippet import (Settings → Snippets → Import).
 ///
-/// Accepts MishMail's own array (`[{"name","body",…}]`) and the shapes a
-/// Notion Mail snippet export commonly lands in: a `{ "snippets": […] }`
-/// wrapper, alternate keys (`shortcut`/`content`), and CSV with a header row.
+/// Accepts MishMail's own array (`[{"name","body",…}]`) or a single such
+/// object, alternate keys (`shortcut`/`content`, …), and CSV with a header
+/// row. Bodies are stored verbatim: compose expands `{name}` and `{{name}}`
+/// placeholders itself.
 enum SnippetImport {
     struct Item: Codable, Equatable {
         var name: String
@@ -45,23 +46,6 @@ enum SnippetImport {
         }
     }
 
-    /// Map Notion Mail `{{First Name}}` / `{{Your Name}}` tokens onto the
-    /// placeholders MishMail expands. Only known variable names rewrite.
-    /// Code braces and custom prompts stay verbatim.
-    static func rewriteNotionVariables(_ body: String) -> String {
-        guard let regex = placeholderRegex else { return body }
-        let ns = body as NSString
-        var result = body
-        let matches = regex.matches(in: body, range: NSRange(location: 0, length: ns.length))
-        for match in matches.reversed() {
-            let inner = ns.substring(with: match.range(at: 1))
-            guard let token = canonicalVariable(inner) else { continue }
-            guard let range = Range(match.range, in: result) else { continue }
-            result.replaceSubrange(range, with: "{\(token)}")
-        }
-        return result
-    }
-
     // MARK: - JSON
 
     private static func decodeJSON(_ data: Data) -> [Item]? {
@@ -78,11 +62,6 @@ enum SnippetImport {
             return arr.compactMap { $0 as? [String: Any] }
         }
         guard let dict = obj as? [String: Any] else { return [] }
-        for key in ["snippets", "items", "data", "records", "templates"] {
-            if let arr = dict[key] as? [Any] {
-                return arr.compactMap { $0 as? [String: Any] }
-            }
-        }
         if hasSnippetKeys(dict) { return [dict] }
         return []
     }
@@ -96,7 +75,7 @@ enum SnippetImport {
               let body = string(dict, keys: bodyKeys) else { return nil }
         return Item(
             name: name,
-            body: rewriteNotionVariables(body),
+            body: body,
             movesToBcc: bool(dict, keys: ["movesToBcc", "moveToBcc", "moves_to_bcc", "bcc"]),
             accountIds: stringArray(dict, keys: ["accountIds", "account_ids", "accounts"]))
     }
@@ -130,41 +109,10 @@ enum SnippetImport {
             if let bccIdx, bccIdx < row.count {
                 moves = parseBool(row[bccIdx])
             }
-            items.append(Item(name: name, body: rewriteNotionVariables(body),
+            items.append(Item(name: name, body: body,
                               movesToBcc: moves, accountIds: nil))
         }
         return items.isEmpty ? nil : items
-    }
-
-    // MARK: - Placeholders
-
-    private static let placeholderRegex = try? NSRegularExpression(
-        pattern: #"\{{1,2}\s*([A-Za-z][A-Za-z0-9 _-]*?)\s*\}{1,2}"#)
-
-    private static let variableAliases: [String: String] = [
-        "first_name": "first_name", "firstname": "first_name", "first": "first_name",
-        "last_name": "last_name", "lastname": "last_name", "last": "last_name",
-        "name": "name", "full_name": "name", "fullname": "name",
-        "recipient": "name", "recipient_name": "name",
-        "email": "email", "recipient_email": "email",
-        "date": "date", "today": "date",
-        "my_name": "my_name", "myname": "my_name",
-        "your_name": "my_name", "yourname": "my_name",
-        "sender": "my_name", "sender_name": "my_name",
-        "my_first_name": "my_first_name", "myfirstname": "my_first_name",
-        "your_first_name": "my_first_name", "yourfirstname": "my_first_name",
-        "bcc_first_name": "bcc_first_name", "bccfirstname": "bcc_first_name",
-        "bcc_name": "bcc_name", "bccname": "bcc_name",
-        "bcc_email": "bcc_email", "bccemail": "bcc_email",
-        "introducer": "bcc_name",
-    ]
-
-    private static func canonicalVariable(_ raw: String) -> String? {
-        let key = raw.lowercased()
-            .replacingOccurrences(of: "-", with: " ")
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: "_")
-        return variableAliases[key]
     }
 
     // MARK: - Dict helpers

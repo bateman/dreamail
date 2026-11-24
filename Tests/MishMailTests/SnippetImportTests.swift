@@ -46,7 +46,7 @@ final class SnippetImportTests: XCTestCase {
         for item in items {
             XCTAssertFalse(item.name.trimmingCharacters(in: .whitespaces).isEmpty)
             XCTAssertFalse(item.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            XCTAssertFalse(item.body.contains("notion.so"),
+            XCTAssertFalse(item.body.contains("://"),
                            "defaults must not ship personal calendar links")
             XCTAssertFalse(item.body.lowercased().contains("rboger"),
                            "defaults must not ship identifying names")
@@ -56,12 +56,10 @@ final class SnippetImportTests: XCTestCase {
         XCTAssertEqual(SnippetImport.plan(items, existingNames: items.map(\.name)).count, 0)
     }
 
-    func testNotionWrappedJSONUsesShortcutAndContent() throws {
+    func testArrayAcceptsAlternateKeys() throws {
         let json = """
-        {"snippets": [
-          {"shortcut": "intro", "content": "Hi {{First Name}},\\n\\nBest,\\n{{Your Name}}"},
-          {"title": "cal", "text": "Link: {date}"}
-        ]}
+        [{"shortcut": "intro", "content": "Hi {first_name},\\n\\nBest,\\n{my_name}"},
+         {"title": "cal", "text": "Link: {date}"}]
         """
         let items = try SnippetImport.decode(Data(json.utf8))
         XCTAssertEqual(items.map(\.name), ["intro", "cal"])
@@ -69,17 +67,26 @@ final class SnippetImportTests: XCTestCase {
         XCTAssertEqual(items[1].body, "Link: {date}")
     }
 
+    /// Only an array or a single snippet object is read; an object wrapping
+    /// a list under some key is not a MishMail format.
+    func testWrappedJSONIsUnrecognized() {
+        let json = #"{"snippets": [{"name": "intro", "body": "Hi"}]}"#
+        XCTAssertThrowsError(try SnippetImport.decode(Data(json.utf8))) { error in
+            XCTAssertTrue(error is SnippetImport.ImportError)
+        }
+    }
+
     func testSingleObjectJSONImports() throws {
         let json = #"{"name": "thanks", "body": "Thanks {{first_name}}!"}"#
         let items = try SnippetImport.decode(Data(json.utf8))
         XCTAssertEqual(items.map(\.name), ["thanks"])
-        XCTAssertEqual(items[0].body, "Thanks {first_name}!")
+        XCTAssertEqual(items[0].body, "Thanks {{first_name}}!")
     }
 
     func testCSVImportMapsShortcutContentHeader() throws {
         let csv = """
         shortcut,content,bcc
-        intro,"Hi {{First Name}}",true
+        intro,"Hi {first_name}",true
         cal,See you {date},false
         """
         let items = try SnippetImport.decode(Data(csv.utf8))
@@ -110,17 +117,13 @@ final class SnippetImportTests: XCTestCase {
         }
     }
 
-    func testRewriteMapsNotionAliasesAndLeavesCustomPrompts() {
-        XCTAssertEqual(
-            SnippetImport.rewriteNotionVariables("Hi {{First Name}} from {{Your First Name}} — {{key_point_1}}"),
-            "Hi {first_name} from {my_first_name} — {{key_point_1}}")
-    }
-
-    func testRewriteLeavesCodeBracesAndUnknownTokens() {
-        let body = "struct X { let a = 1 } and {{Company Name}}"
-        XCTAssertEqual(SnippetImport.rewriteNotionVariables(body), body)
-        XCTAssertEqual(
-            SnippetImport.rewriteNotionVariables("See you {date}"),
-            "See you {date}")
+    /// Bodies are stored as written: placeholders, unknown tokens and code
+    /// braces all survive import for compose to expand (or leave) later.
+    func testBodiesImportVerbatim() throws {
+        let body = "Hi {{First Name}} / {{first_name}} / {date} — struct X { let a = 1 }"
+        let json = try JSONSerialization.data(withJSONObject: [["name": "raw", "body": body]])
+        XCTAssertEqual(try SnippetImport.decode(json).map(\.body), [body])
+        let csv = "name,body\nraw,\"\(body)\"\n"
+        XCTAssertEqual(try SnippetImport.decode(Data(csv.utf8)).map(\.body), [body])
     }
 }

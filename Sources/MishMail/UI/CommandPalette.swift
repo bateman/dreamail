@@ -3,7 +3,6 @@ import SwiftUI
 /// Cmd-K palette: jump to views, compose, sync.
 struct CommandPalette: View {
     @Environment(MailStore.self) var store
-    @Environment(\.openSettings) private var openSettings
     // `commands` reads `store.selectedThread`; selection publishes through
     // ListFocusState (not MailStore), so observe it to keep the context
     // actions fresh. Cheap: the palette is mounted only while open.
@@ -65,7 +64,7 @@ struct CommandPalette: View {
                                     }
                                     .padding(.horizontal, 10).padding(.vertical, 7)
                                     .background(
-                                        idx == highlighted ? Color.notionAccent.opacity(0.2) : .clear,
+                                        idx == highlighted ? Color.mailAccent.opacity(0.2) : .clear,
                                         in: RoundedRectangle(cornerRadius: PMRadius.sm)
                                     )
                                     .contentShape(Rectangle())
@@ -124,14 +123,13 @@ struct CommandPalette: View {
             savedViews: store.savedViews.map { .init(id: $0.id ?? -1, name: $0.name) })
         return PaletteCommands.entries(context).map { entry in
             Command(id: entry.id, title: entry.title, icon: entry.icon,
-                    shortcut: entry.shortcut) { [openSettings] store in
-                Self.run(entry.action, on: store, openSettings: openSettings)
+                    shortcut: entry.shortcut) { store in
+                Self.run(entry.action, on: store)
             }
         }
     }
 
-    private static func run(_ action: PaletteCommands.Action, on store: MailStore,
-                            openSettings: OpenSettingsAction) {
+    private static func run(_ action: PaletteCommands.Action, on store: MailStore) {
         switch action {
         case .compose:
             store.openCompose(.init(replyTo: nil))
@@ -143,11 +141,6 @@ struct CommandPalette: View {
             store.classifyInbox()
         case .addView:
             store.editingView = SavedView.empty()
-        case .notionMailSettings:
-            UserDefaults.standard.set(SettingsView.Pane.notionMail.rawValue,
-                                      forKey: "settingsPane")
-            openSettings()
-            store.mailboxOverlay = nil
         case .perform(let command):
             store.perform(command)
         case .snoozeTomorrow:
