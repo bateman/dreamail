@@ -2527,16 +2527,10 @@ struct AccountSwitcher: View {
             .frame(width: size, height: size)
     }
 
-    /// Colored circle with the first initial.
+    /// The account's Google photo, or the colored circle with the first initial.
     private func avatar(for name: String, key: String, size: CGFloat) -> some View {
-        Circle()
-            .fill(Color.stable(for: key))
-            .frame(width: size, height: size)
-            .overlay {
-                Text(String(name.prefix(1)).uppercased())
-                    .font(.system(size: size * 0.48, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
+        AccountAvatarView(name: name, key: key, size: size, photo: store.accountPhotos[key],
+                          decorative: true)
     }
 
     private var activeAccount: Account? {

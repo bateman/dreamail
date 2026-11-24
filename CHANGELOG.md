@@ -12,6 +12,16 @@ minor versions may still change behavior.
   row's icon is the filled glyph in the text colour (white on the accent
   selection of a focused sidebar), no longer tinted with the accent colour, in
   active and inactive windows and with any accent colour.
+- **Account photos.** The account switcher and the Accounts settings show each
+  account's own Google profile photo instead of the initial disc. The photo
+  URL comes from the profile MishMail already reads (no new permission, no
+  new sign-in); the image is fetched only from Google's photo hosts, without
+  the account's token, at sign-in and then at most once a day, and kept
+  downscaled in the encrypted database with the account. Removing the account
+  deletes it. For an account without a photo Google usually returns a
+  generated letter image, and that is what is shown. The initial disc stays
+  until a first photo is stored (so also while fetches fail), when Google
+  gives no usable photo, and in demo mode.
 - **CI fails on compiler warnings and checks the scripts.** A Swift or C/ObjC
   warning in the app, relauncher or unit tests fails the CI build (the UI-test
   target is not gated; local builds are unchanged). Release binaries are

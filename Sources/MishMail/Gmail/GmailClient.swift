@@ -459,7 +459,12 @@ actor GmailClient {
 
     /// The account's display name from the Google profile.
     func userName() async throws -> String? {
-        struct Info: Decodable { let name: String? }
+        try await userInfo().name
+    }
+
+    /// The account's Google profile (`userinfo.profile` scope): display name
+    /// and photo URL.
+    func userInfo() async throws -> GoogleUserInfo {
         var didRefreshAfter401 = false
         while true {
             var req = URLRequest(url: URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!)
@@ -478,7 +483,7 @@ actor GmailClient {
                                         path: "/oauth2/v2/userinfo", code: code, body: body)
                 throw GmailError.http(code, body)
             }
-            return try JSONDecoder().decode(Info.self, from: data).name
+            return try GoogleUserInfo.decode(data)
         }
     }
 

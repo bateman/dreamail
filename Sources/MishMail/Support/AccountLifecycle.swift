@@ -101,6 +101,9 @@ enum AccountLifecycle {
             arguments: [prefix, prefix])
         try removeFromSnippetScopes(db, id: id)
         try ChatProvenance.purgeConversations(db, drawingOn: id)
+        // Also cascades with the account row; deleted by name so the purge
+        // does not depend on the foreign key alone.
+        try db.execute(sql: "DELETE FROM accountPhoto WHERE accountId = ?", arguments: [id])
         // The account's mail cascades with the account row.
         let messages = try Int.fetchOne(
             db, sql: "SELECT count(*) FROM message WHERE accountId = ?", arguments: [id]) ?? 0

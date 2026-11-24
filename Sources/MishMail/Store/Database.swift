@@ -2771,6 +2771,19 @@ final class AppDatabase: @unchecked Sendable {
                 t.add(column: "labelColor", .text)
             }
         }
+
+        // v53 (after v52, the account label colour): each account's own
+        // Google profile photo (downscaled PNG), kept with the account and
+        // deleted with it (`AccountPhotoRecord`).
+        m.registerMigration("v53") { db in
+            try db.create(table: "accountPhoto") { t in
+                t.primaryKey("accountId", .text)
+                    .references("account", onDelete: .cascade)
+                t.column("imageData", .blob)
+                t.column("fetchedAt", .datetime).notNull()
+                t.column("lastAttemptFailed", .boolean).notNull().defaults(to: false)
+            }
+        }
         return m
     }
 }
