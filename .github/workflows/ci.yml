@@ -8,22 +8,46 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Least privilege: every job gets a read-only GITHUB_TOKEN. A job that needs
+# more raises it in its own `permissions:` block. The cache actions use the
+# runner's cache token, not GITHUB_TOKEN, so they need nothing here.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  workflow-hardening:
+    name: Workflow hardening
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Every action pinned to a full commit SHA, a read-only top-level
+      # permissions block, no unpinned `brew install` (finding F-10).
+      - name: Check workflow pinning and permissions
+        run: python3 .github/scripts/check-workflows.py
+
+      - name: Test the CI checks
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
   test:
     name: Unit tests & build
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           # Full history: the build cache needs commit times (see below).
           fetch-depth: 0
 
+      # A fixed, checksummed release; the log and job summary record it.
       - name: Install xcodegen
-        run: brew install xcodegen
+        run: bash .github/scripts/install-xcodegen.sh
 
       - name: Prepare the build cache
         id: cache-key
@@ -38,7 +62,7 @@ jobs:
       # DerivedData and the GRDB package checkout. Runs read the newest cache
       # for this Xcode and project file; only main (and manual runs) write one.
       - name: Restore the build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: build/dd.noindex
           key: dd-${{ runner.os }}-${{ steps.cache-key.outputs.xcode }}-${{ hashFiles('project.yml') }}-${{ github.sha }}
@@ -52,11 +76,18 @@ jobs:
         run: make build
 
       - name: Run unit tests
-        run: make test
+        run: |
+          set -o pipefail
+          make test 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
+
+      # A skipped test passes, so a missing app would pass the signature
+      # tests silently. Only the runner-dependent skips in the allowlist pass.
+      - name: Check that no test skipped unexpectedly
+        run: python3 .github/scripts/check-test-skips.py "$RUNNER_TEMP/unit-tests.log"
 
       - name: Save the build cache
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: build/dd.noindex
           key: dd-${{ runner.os }}-${{ steps.cache-key.outputs.xcode }}-${{ hashFiles('project.yml') }}-${{ github.sha }}
@@ -70,10 +101,18 @@ jobs:
     runs-on: macos-26
     # Separate job so a UI hang or desktop hijack cannot hide unit-test results.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
+      # A fixed, checksummed release; the log and job summary record it.
       - name: Install xcodegen
-        run: brew install xcodegen
+        run: bash .github/scripts/install-xcodegen.sh
 
       - name: Run UI smoke test
-        run: make ui-test
+        run: |
+          set -o pipefail
+          make ui-test 2>&1 | tee "$RUNNER_TEMP/ui-tests.log"
+
+      - name: Check that no UI test skipped unexpectedly
+        run: python3 .github/scripts/check-test-skips.py "$RUNNER_TEMP/ui-tests.log"
