@@ -42,6 +42,11 @@ minor versions may still change behavior.
 - **The compose caret-scroll tests no longer fail on a slow runner.** They
   waited a fixed 150 ms for a scroll the editor defers by 50 ms; they now wait
   for the deferred scroll itself.
+- **Notion Mail is gone from the app.** The "Moving from Notion Mail" pane,
+  its Cmd-K entry and the onboarding callout are removed. Snippet import reads
+  a JSON array (or one snippet object) or CSV and keeps bodies as written: it
+  no longer unwraps `{"snippets": […]}` files or rewrites `{{First Name}}`-style
+  variables. Compose still expands `{first_name}` and `{{first_name}}`.
 
 - **A draft no longer disappears from Drafts while you write it.** Each
   autosave removed the old draft from the local mailbox and wrote nothing new
