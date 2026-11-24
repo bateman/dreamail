@@ -5,7 +5,7 @@ import Foundation
 /// 4 pt corner radius, 5.5 pt side padding and 6 pt between chips.
 /// Everything is proportional to the chip's font size, so a chip drawn at
 /// the list's font scale keeps the same shape.
-struct LabelChipMetrics: Equatable, Sendable {
+struct LabelChipMetrics {
     /// Text size in points (already multiplied by any font scale).
     let fontSize: Double
 
@@ -20,4 +20,16 @@ struct LabelChipMetrics: Equatable, Sendable {
     var height: Double { 17.5 * ratio }
     /// Gap between two chips side by side.
     var spacing: Double { 6 * ratio }
+}
+
+/// Label chips in a thread-list row, at font scale 1 (multiply by it).
+enum ThreadRowChipLayout {
+    /// Gmail's 13 pt chip text.
+    static let fontSize = 13.0
+    /// Height of the row's trailing strip (chips, icons, date); the chip
+    /// must fit in it.
+    static let trailingStripHeight = 18.0
+    /// Widest a chip gets; a longer name is truncated, so two chips never
+    /// take more than about 250 pt from the subject.
+    static let maxWidth = 120.0
 }

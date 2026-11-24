@@ -165,7 +165,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH 'threadSectionHeader.' AND NOT (identifier IN %@)",
                                   inboxSections)).firstMatch
         XCTAssertTrue(pill.waitForExistence(timeout: 5), "Labels view must show section headers")
-        // The pill is 4 pt taller than a plain title.
+        // The chip is about 2 pt taller than a plain title.
         assertCompactSectionBreaks(app, baseline: inbox, maxHeaderShare: 0.95)
     }
 }

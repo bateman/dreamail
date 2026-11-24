@@ -130,24 +130,44 @@ struct LabelPillStyle: Equatable, Sendable {
 
     /// WCAG AA for normal-size text.
     static let minimumTextContrast = 4.5
-    /// Below this fill-to-surface difference (CIE76) the chip gets an
+    /// What is drawn: a chip carries text that outlines it; a dot is a
+    /// small swatch with nothing else to carry its edge.
+    enum Shape: Sendable { case chip, dot }
+
+    /// Below this fill-to-surface difference (CIE76) a chip gets an
     /// outline. Measured as a color difference, not a WCAG ratio: Gmail's
     /// pale colors are as light as the read-row wash (#fef1d1 is 1.00:1 on
     /// it) and still stand out by hue (difference 17). At 5 only the
-    /// near-white greys get an outline on light rows: #ffffff on white (0)
-    /// and on the wash (4.5), #f3f3f3 (4.2 / 0.3), #efefef and #e7e7e7 on
-    /// the wash (1.0, 3.8). Every other Gmail color is at least 5.6 away on
-    /// white and 9.0 on the wash; on dark rows the closest is black (8.8).
+    /// near-white greys get an outline on light rows: #ffffff (0) and
+    /// #f3f3f3 (4.2) on white; on the wash also #efefef (1.1) and #e7e7e7
+    /// (3.9). Every other Gmail color is at least 5.5 away on white and 9.1
+    /// on the wash; on dark rows the closest is black (8.8).
     static let minimumEdgeDifference = 5.0
+    /// The same for dots (filter list, picker, organizer): an 8-9 pt pale
+    /// swatch needs its outline. 25 keeps it for Gmail's pastel row
+    /// (#fef1d1 17.7, #e4d7f5 20.4, #c9daf8 21.2 …) and the light greys.
+    static let minimumDotEdgeDifference = 25.0
+    /// On the selection highlight a chip also needs this WCAG ratio:
+    /// CIE76 overstates differences between saturated blues (#285bac on the
+    /// dark highlight #0058D0 is 23.8 apart but 1.04:1, same lightness and
+    /// hue). The owner's "no outline" is about normal rows.
+    static let minimumSelectionContrast = 1.5
 
-    /// Whether `fill` is visible on `surface` without an outline.
-    static func fillStandsOut(_ fill: LabelRGB, on surface: LabelRGB) -> Bool {
-        fill.difference(from: surface) >= minimumEdgeDifference
+    static func minimumEdgeDifference(_ shape: Shape) -> Double {
+        shape == .chip ? minimumEdgeDifference : minimumDotEdgeDifference
+    }
+
+    /// Whether `fill` is visible on `color` (one color of `surface`)
+    /// without an outline.
+    static func fillStandsOut(_ fill: LabelRGB, on color: LabelRGB,
+                              surface: Surface = .content, shape: Shape = .chip) -> Bool {
+        guard fill.difference(from: color) >= minimumEdgeDifference(shape) else { return false }
+        return surface != .selection || fill.contrast(with: color) >= minimumSelectionContrast
     }
 
     /// Neutral fill for labels without a color: Gmail's light grey chip,
-    /// and a matching dark grey. #dddddd is 11.9 from white and 7.4 from the
-    /// light read-row wash; #3c3c3c is 16.6 from the dark content and 11.1
+    /// and a matching dark grey. #dddddd is 11.9 from white and 7.5 from the
+    /// light read-row wash; #3c3c3c is 16.6 from the dark content and 10.9
     /// from the dark wash: no outline on any row except the selection.
     static func neutralFill(_ appearance: Appearance) -> LabelRGB {
         appearance == .light ? LabelRGB(hex: 0xDDDDDD) : LabelRGB(hex: 0x3C3C3C)
@@ -198,12 +218,13 @@ struct LabelPillStyle: Equatable, Sendable {
     ///   fill, else black or white, whichever contrasts more (one of the
     ///   two always reaches 4.58:1). The neutral chip uses `neutralText`.
     /// - Border: only when the fill is practically invisible on the
-    ///   surface (difference below `minimumEdgeDifference` from any of its
-    ///   colors), a neutral outline that contrasts with every color of the
-    ///   surface by at least 3:1.
+    ///   surface (`fillStandsOut` fails for any of its colors), a neutral
+    ///   outline that contrasts with every color of the surface by at
+    ///   least 3:1.
     static func resolve(_ colors: LabelColors,
                         appearance: Appearance,
-                        surface: Surface = .content) -> LabelPillStyle {
+                        surface: Surface = .content,
+                        shape: Shape = .chip) -> LabelPillStyle {
         let ownFill = LabelRGB(hexString: colors.background)
         let fill = ownFill ?? neutralFill(appearance)
         let text: LabelRGB
@@ -217,7 +238,9 @@ struct LabelPillStyle: Equatable, Sendable {
             text = fill.contrast(with: .black) >= fill.contrast(with: .white) ? .black : .white
         }
         let behind = surfaceColors(surface, appearance)
-        let needsBorder = behind.contains { !fillStandsOut(fill, on: $0) }
+        let needsBorder = behind.contains {
+            !fillStandsOut(fill, on: $0, surface: surface, shape: shape)
+        }
         return LabelPillStyle(fill: fill, text: text, needsBorder: needsBorder,
                               border: borderColor(on: behind))
     }

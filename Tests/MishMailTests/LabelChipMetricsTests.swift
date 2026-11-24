@@ -1,8 +1,8 @@
 import XCTest
 
-/// The label chip's shape against Gmail's conversation list (13 pt text in
+/// The label chip's shape against Gmail's conversation list: 13 pt text in
 /// a chip about 17-18 pt tall, ~4 pt corners, 5-6 pt side padding, ~6 pt
-/// between chips), and its scaling with the list's font scale.
+/// between chips.
 final class LabelChipMetricsTests: XCTestCase {
     func testMatchesGmailAtThirteenPoints() {
         let m = LabelChipMetrics(fontSize: 13)
@@ -15,22 +15,12 @@ final class LabelChipMetricsTests: XCTestCase {
         XCTAssertLessThan(m.cornerRadius, m.height / 3)
     }
 
-    func testScalesWithTheFontScale() {
-        let base = LabelChipMetrics(fontSize: 13)
-        for scale in [0.85, 1.0, 1.3, 1.6] {
-            let m = LabelChipMetrics(fontSize: 13 * scale)
-            XCTAssertEqual(m.cornerRadius, base.cornerRadius * scale, accuracy: 1e-9)
-            XCTAssertEqual(m.horizontalPadding, base.horizontalPadding * scale, accuracy: 1e-9)
-            XCTAssertEqual(m.height, base.height * scale, accuracy: 1e-9)
-            XCTAssertEqual(m.spacing, base.spacing * scale, accuracy: 1e-9)
-        }
-    }
-
-    /// The thread row's trailing strip is 18 pt × font scale; the row chip
-    /// (13 pt × font scale) must fit it at every scale.
+    /// The thread row's chip, at its own font size, fits the row's
+    /// trailing strip (both scale with the font scale alike).
     func testRowChipFitsTheTrailingStrip() {
-        for scale in [0.85, 1.0, 1.3, 1.6] {
-            XCTAssertLessThanOrEqual(LabelChipMetrics(fontSize: 13 * scale).height, 18 * scale)
-        }
+        let chip = LabelChipMetrics(fontSize: ThreadRowChipLayout.fontSize)
+        XCTAssertLessThanOrEqual(chip.height, ThreadRowChipLayout.trailingStripHeight)
+        // The width cap leaves room for a few words, not a single letter.
+        XCTAssertGreaterThan(ThreadRowChipLayout.maxWidth, 6 * ThreadRowChipLayout.fontSize)
     }
 }

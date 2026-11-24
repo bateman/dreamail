@@ -79,7 +79,8 @@ final class LabelColorStyleTests: XCTestCase {
                             if borderEdge < 3 {
                                 XCTFail("\(colors) \(appearance) \(surface): border contrast \(borderEdge)")
                             }
-                        } else if fillEdge < LabelPillStyle.minimumEdgeDifference {
+                        } else if !LabelPillStyle.fillStandsOut(style.fill, on: behind, surface: surface)
+                                    || fillEdge < LabelPillStyle.minimumEdgeDifference {
                             XCTFail("\(colors) \(appearance) \(surface): fill difference \(fillEdge), no border")
                         }
                     }
@@ -176,20 +177,56 @@ final class LabelColorStyleTests: XCTestCase {
     }
 
     /// The outline appears exactly when the fill is closer than the
-    /// threshold to some color of the surface, over the whole palette.
+    /// threshold to some color of the surface, over the whole palette; on
+    /// the selection also when the WCAG ratio is below 1.5:1.
     func testOutlineOnlyBelowTheThreshold() {
         for appearance in LabelPillStyle.Appearance.allCases {
             for surface in LabelPillStyle.Surface.allCases {
                 for bg in Self.gmailPalette.map(Optional.some) + [nil] {
                     let style = LabelPillStyle.resolve(LabelColors(background: bg, text: nil),
                                                        appearance: appearance, surface: surface)
-                    let closest = LabelPillStyle.surfaceColors(surface, appearance)
-                        .map { style.fill.difference(from: $0) }.min() ?? .infinity
-                    XCTAssertEqual(style.needsBorder, closest < LabelPillStyle.minimumEdgeDifference,
-                                   "\(bg ?? "none") \(appearance) \(surface): \(closest)")
+                    let behind = LabelPillStyle.surfaceColors(surface, appearance)
+                    let closest = behind.map { style.fill.difference(from: $0) }.min() ?? .infinity
+                    let lowest = behind.map { style.fill.contrast(with: $0) }.min() ?? 21
+                    var expected = closest < LabelPillStyle.minimumEdgeDifference
+                    if surface == .selection {
+                        expected = expected || lowest < LabelPillStyle.minimumSelectionContrast
+                    }
+                    XCTAssertEqual(style.needsBorder, expected,
+                                   "\(bg ?? "none") \(appearance) \(surface): \(closest), \(lowest):1")
                 }
             }
         }
+    }
+
+    // MARK: - Dots
+
+    /// Dots have no text to carry their edge: Gmail's pastel row and the
+    /// light greys keep an outline on a white popover; everything at least
+    /// 25 away does not.
+    func testDotsKeepAnOutlineForPaleColors() {
+        for appearance in LabelPillStyle.Appearance.allCases {
+            let surface = LabelPillStyle.surfaceColor(.content, appearance)
+            for bg in Self.gmailPalette.map(Optional.some) + [nil] {
+                let colors = LabelColors(background: bg, text: nil)
+                let dot = LabelPillStyle.resolve(colors, appearance: appearance, shape: .dot)
+                let difference = dot.fill.difference(from: surface)
+                XCTAssertEqual(dot.needsBorder, difference < LabelPillStyle.minimumDotEdgeDifference,
+                               "\(bg ?? "none") \(appearance): \(difference)")
+                // A dot is outlined whenever the chip is.
+                let chip = LabelPillStyle.resolve(colors, appearance: appearance)
+                XCTAssertTrue(dot.needsBorder || !chip.needsBorder, "\(bg ?? "none") \(appearance)")
+                XCTAssertEqual(dot.fill, chip.fill)
+            }
+        }
+        for bg in ["#fef1d1", "#e4d7f5", "#c9daf8", "#c6f3de", "#b9e4d0", "#ffe6c7", "#fcdee8",
+                   "#cccccc", "#ffffff"] {
+            XCTAssertTrue(LabelPillStyle.resolve(LabelColors(background: bg, text: nil),
+                                                 appearance: .light, shape: .dot).needsBorder, bg)
+        }
+        XCTAssertTrue(LabelPillStyle.resolve(.none, appearance: .light, shape: .dot).needsBorder)
+        XCTAssertFalse(LabelPillStyle.resolve(LabelColors(background: "#4a86e8", text: nil),
+                                              appearance: .light, shape: .dot).needsBorder)
     }
 
     /// Which Gmail colors still get an outline on the list's light rows:
@@ -227,12 +264,25 @@ final class LabelColorStyleTests: XCTestCase {
     func testSelectionOutlineCoversBlueAndInactiveHighlight() {
         XCTAssertEqual(LabelPillStyle.surfaceColors(.selection, .light).count, 2)
         XCTAssertEqual(LabelPillStyle.surfaceColors(.selection, .dark).count, 2)
-        // A blue close to the active highlight still differs by hue and
-        // lightness: no outline.
-        XCTAssertFalse(LabelPillStyle.resolve(LabelColors(background: "#3c78d8", text: "#ffffff"),
-                                              appearance: .light, surface: .selection).needsBorder)
-        // The neutral chip on the inactive-window highlight (#DCDCDC): an
-        // outline, though none on a white row.
+        // Blues close to the active highlight: far apart in CIE76, but the
+        // same lightness and hue.
+        let blue = LabelPillStyle.resolve(LabelColors(background: "#3c78d8", text: "#ffffff"),
+                                          appearance: .light, surface: .selection)
+        XCTAssertTrue(blue.needsBorder)
+        XCTAssertTrue(LabelPillStyle.resolve(LabelColors(background: "#285bac", text: nil),
+                                             appearance: .light, surface: .selection).needsBorder)
+        let darkBlue = LabelPillStyle.resolve(LabelColors(background: "#285bac", text: nil),
+                                              appearance: .dark, surface: .selection)
+        XCTAssertTrue(darkBlue.needsBorder)
+        // Light greys and pastels close to the inactive-window highlight
+        // (#DCDCDC): an outline there, none on a white row.
+        for bg in ["#cccccc", "#ebdbde", "#efefef"] {
+            let colors = LabelColors(background: bg, text: nil)
+            XCTAssertTrue(LabelPillStyle.resolve(colors, appearance: .light,
+                                                 surface: .selection).needsBorder, bg)
+            XCTAssertFalse(LabelPillStyle.resolve(colors, appearance: .light,
+                                                  surface: .content).needsBorder, bg)
+        }
         let grey = LabelPillStyle.resolve(.none, appearance: .light, surface: .selection)
         XCTAssertTrue(grey.needsBorder)
         XCTAssertFalse(LabelPillStyle.resolve(.none, appearance: .light, surface: .content).needsBorder)
@@ -242,7 +292,9 @@ final class LabelColorStyleTests: XCTestCase {
         XCTAssertTrue(darkGrey.needsBorder)
         // A mid grey outline would vanish on the blue highlight: black in
         // light (3.8:1 on blue, 15:1 on grey), white in dark.
+        XCTAssertEqual(blue.border, .black)
         XCTAssertEqual(grey.border, .black)
+        XCTAssertEqual(darkBlue.border, .white)
         XCTAssertEqual(darkGrey.border, .white)
     }
 
