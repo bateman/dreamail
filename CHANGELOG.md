@@ -11,6 +11,10 @@ minor versions may still change behavior.
   the first frame, fills the reading pane while it loads, and stays open. A
   message seen before, or pre-rendered while browsing, appears at its full
   height without growing.
+- **Monochrome sidebar icons, as in Gmail.** Sidebar, Settings-sidebar and
+  list-header icons are grey outline glyphs; the selected view gets the filled
+  glyph, a darker tint and a bold title. Colour stays for label colours, the
+  starred star, badges and warnings.
 - **Deleted mail is gone, not just hidden.** Deleted content is overwritten in
   the mail cache and removed from the search index when it is deleted, and old
   copies are cleared from the cache's write-ahead log within seconds of a
