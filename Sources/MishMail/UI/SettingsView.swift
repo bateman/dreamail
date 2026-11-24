@@ -508,6 +508,35 @@ struct GmailFiltersSettings: View {
 
 // MARK: - Snippets (table with search + editor sheet)
 
+/// Runs a Snippets → Import file pick and returns the status line to show.
+enum SnippetFileImport {
+    @MainActor
+    static func apply(_ result: Result<URL, Error>, store: MailStore) -> String? {
+        switch result {
+        case .success(let url):
+            do {
+                let counts = try store.importSnippets(from: url)
+                var msg = counts.skipped == 0
+                    ? "Imported \(counts.added)"
+                    : "Imported \(counts.added), skipped \(counts.skipped)"
+                if counts.unknownAccountIds > 0 {
+                    msg += "; \(counts.unknownAccountIds) unknown account id"
+                        + (counts.unknownAccountIds == 1 ? "" : "s")
+                        + " (snippet hidden until fixed)"
+                }
+                if counts.added == 0, counts.skipped == 0 {
+                    msg = "No snippets found in that file"
+                }
+                return msg
+            } catch {
+                return "Import failed: \(error.localizedDescription)"
+            }
+        case .failure:
+            return nil
+        }
+    }
+}
+
 struct SnippetsSettings: View {
     @Environment(MailStore.self) var store
     @State private var search = ""
