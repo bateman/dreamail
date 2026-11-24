@@ -8,7 +8,7 @@ BOOL MMEnsureTextLayout(NSLayoutManager *layoutManager,
         return YES;
     } @catch (NSException *exception) {
         os_log_error(OS_LOG_DEFAULT,
-                     "MishMail: text layout raised %{public}@: %{public}@",
+                     "MishMail: text layout raised %{public}@: %{private}@",
                      exception.name, exception.reason);
         return NO;
     }
