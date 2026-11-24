@@ -6,6 +6,10 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Compact section breaks in the thread list.** Between "Last 7 days",
+  "Last 30 days", "Older" and the other sections there was an empty band about
+  two rows tall. The next header now follows the last row after a small gap,
+  scaled with the list's font size, with no extra line under the last row.
 - **A single message opens at its full length.** Selecting a one-message
   conversation no longer shows a reduced card first: the message is open from
   the first frame, fills the reading pane while it loads, and stays open. A

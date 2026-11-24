@@ -520,6 +520,9 @@ private struct ThreadSelectionList<Content: View>: View {
             content
         }
         .listStyle(.plain)
+        // Headers take their own height (see `ThreadListSectionMetrics`),
+        // not the taller system minimum.
+        .environment(\.defaultMinListHeaderHeight, 1)
         .scrollContentBackground(.hidden)
         // Matching air above the first group.
         .contentMargins(.top, topMargin, for: .scrollContent)
@@ -608,6 +611,9 @@ private struct ThreadListSections: View, Equatable {
                 // Compact so the pinned (sticky) header stays a thin
                 // line while scrolling. Secondary gray adapts to the
                 // theme and sets headers clearly apart from thread text.
+                // The whole break between sections is this band: a small
+                // gap, then the title (`ThreadListSectionMetrics`).
+                Group {
                 if store.selectedView == .labels {
                     labelSectionHeader(title, count: threads.count)
                 } else {
@@ -624,11 +630,14 @@ private struct ThreadListSections: View, Equatable {
                 .font(.system(size: 12 * fontScale, weight: .semibold))
                 .foregroundStyle(.secondary)
                 }
-            } footer: {
-                // The air lives AFTER each group, so every gap between
-                // groups is this exact height.
-                Color.clear.frame(height: 40 * fontScale)
+                }
+                .frame(height: ThreadListSectionMetrics.headerTitleHeight(fontScale: fontScale))
+                .padding(.top, ThreadListSectionMetrics.sectionGap(fontScale: fontScale))
             }
+            // No footer: on macOS a footer is a row of its own (minimum
+            // height, no row background), which read as a missing white row.
+            // One line between sections at most: none under the last row.
+            .listSectionSeparator(.hidden, edges: .bottom)
         }
         if store.hasMoreThreads || store.isLoadingMore {
             Section {
