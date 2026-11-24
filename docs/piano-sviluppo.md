@@ -125,18 +125,50 @@ Seguiti annotati:
 - La sessione di rete del client AI usa ancora la configurazione predefinita, con cookie su disco; l'AI è spenta.
 - Il recupero cifrato di un vecchio database in chiaro danneggiato è la parte più voluminosa della PR #18 e serve solo a chi aggiorna da una versione precedente alla cifratura.
 
+## Dopo la prima prova su Mac — secondo giro di richieste del proprietario
+
+| Contenuto | PR |
+|---|---|
+| Icone di barra laterale, impostazioni e intestazione della lista monocromatiche, come in Gmail | #20 |
+| Apertura più rapida della prima conversazione; immagini incorporate tenute in memoria con la conversazione; contenuto cancellato tolto subito dalla memoria; query di "unsubscribe" corretta | #21 |
+| Correttore ortografico in più lingue insieme (per esempio inglese e italiano) | #22 |
+| Un'email singola si apre espansa da subito nel pannello di lettura | #23 |
+| Istruzioni di progetto (`CLAUDE.md`): stile di comunicazione conciso per tutte le sessioni | #24 |
+| Colori delle label presi da Gmail, con testo sempre leggibile | #25 |
+| Spaziatura compatta tra le sezioni della lista | #26 |
+
+Il proprietario ha unito fuori flusso le nuove icone dell'app e le PR #27–#29 (rigenerazione dei PNG dell'icona, svuotamento della cache delle icone di macOS, nuova icona).
+
+Esiti da ricordare:
+
+- PR #22: un test su AppKit reale, chiesto in review, ha trovato che dal secondo paragrafo il filtro leggeva la parola sbagliata; corretto prima del merge.
+- PR #21: la review ha trovato che un caricamento in corso durante una cancellazione rimetteva in memoria il contenuto cancellato (contro DEC-019); corretto prima del merge. Misure sulla macchina di CI, casella dimostrativa: prima apertura da 736 a 514 ms (mediana). L'obiettivo di 50 ms non è raggiunto in CI e va giudicato sul Mac.
+- PR #26: salto tra sezioni da circa 140 pt (riferito dal proprietario) a 29 pt misurati in CI.
+
+Opzione in sospeso, da decidere dopo le prove del proprietario: **cache persistente e cifrata delle immagini**. Renderebbe immediata anche la prima apertura dopo un riavvio; costa byte di immagini su disco, un database più grande e altro contenuto da sovrascrivere alla cancellazione (DEC-019). Non implementare prima della decisione.
+
+Seguiti annotati:
+
+- Selettore della lingua per singolo messaggio nella barra di composizione.
+- La pillola delle categorie AI usa ancora lo stile a tinta tenue.
+- Pulsante di composizione come pillola colorata, come in Gmail; struttura della barra laterale rispetto a Gmail (Important, Spam, Scheduled, Purchases, More/Less).
+- Gli screenshot del README mostrano ancora la barra laterale a colori.
+- Scaricare in anticipo le immagini dei messaggi vicini: non fatto, consuma quota Gmail per posta forse mai aperta.
+- Con un vecchio build aperto su un database aggiornato, i colori di Gmail verrebbero ricopiati come scelte locali: il ritorno a una versione precedente non è supportato.
+
 ## Cancello — prova su Mac del proprietario
 
 ☐ Build locale, test e uso della demo.
 ☐ Verifiche che la CI non copre, emerse dall'ondata 1: pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub; nuovo accesso a Google con il listener limitato (Safari e Chrome); avvio con un vecchio database in chiaro e una seconda copia aperta (striscia di sola lettura, schermata "Finish encrypting your mail"); eliminazione del vecchio file di log all'avvio.
 ☐ Verifiche emerse dall'ondata 2 e dalla pulizia: `make install` e il controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto); nessuna interfaccia AI visibile (impostazioni, palette, barra di composizione, vista del thread); impostazioni, onboarding e palette senza le voci Notion; finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche); interruttore "Show sender and subject in notifications" e testo delle notifiche; avviso con un errore reale di Gmail.
 ☐ Verifiche emerse dalle PR #17 e #18: shortcut su tastiera italiana (`]`, `[`, `#`, `*`), cursore nei campi Cc e Bcc e scelta del mittente in composizione, pannello di lettura su finestra stretta e su schermo da 13 pollici, lettura anticipata scorrendo con `j` e `k`; tempo della ricostruzione dell'indice di ricerca al primo avvio; ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio; nessun `Cache.db` che cresce nella cartella Caches.
+☐ Verifiche emerse dalle PR #20–#26: aspetto delle icone monocromatiche e della voce selezionata; email singola espansa (anche in "center peek" e vista compatta, e restringimento per email HTML corte); correttore con English e Italian scelti (menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta); riapertura di email con loghi senza sfarfallio, velocità della prima apertura e di `j`/`k`; colori delle label in lista, pannello di lettura e menu, riga selezionata con colore d'accento non blu e a finestra in secondo piano; intestazioni di sezione su macOS 14 e 15, intestazione fissa durante lo scorrimento, vista Labels.
 ☐ Solo dopo, collegamento di un account Gmail reale.
 
 ## Ondata 3 — parità Gmail
 
 - Creazione e modifica dei filtri server-side.
-- Gestione dei colori delle label.
+- Gestione dei colori delle label: la visualizzazione con i colori di Gmail è fatta (PR #25); resta la modifica dei colori su Gmail dall'app.
 - Verifica ICS/RSVP su inviti reali e gap analysis rispetto a Postie.
 - Snooze: richiede prima una scelta di progetto (allineamento con Gmail Web e mobile).
 
@@ -165,4 +197,11 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | — | `security/diagnostic-log-privacy` | #10 | Unito dal proprietario, fuori flusso |
 | — | `ux/gmail-default-shortcuts` | #17 | Unito |
 | — | `security/secure-delete` | #18 | Unito |
+| — | `ux/monochrome-sidebar-icons` | #20 | Unito |
+| — | `perf/message-open-latency` | #21 | Unito |
+| — | `ux/multilingual-spellcheck` | #22 | Unito |
+| — | `ux/single-message-reading-pane` | #23 | Unito |
+| — | `docs/concise-communication-style` | #24 | Unito |
+| — | `ux/readable-label-colors` | #25 | Unito |
+| — | `ux/thread-list-section-spacing` | #26 | Unito |
 | 3 | — | — | Non avviare: in attesa del proprietario |

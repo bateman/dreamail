@@ -11,6 +11,8 @@ struct Account: Codable, Identifiable, Hashable, FetchableRecord, PersistableRec
     var historyId: String?  // last synced Gmail historyId
     var lastSyncAt: Date?
     var senderName: String = ""   // real name shown to recipients on outgoing mail
+    /// Local color of the label pill, `#rrggbb`; nil = default (`AccountLabelColor`).
+    var labelColor: String? = nil
 }
 
 struct MailThread: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
@@ -2759,6 +2761,15 @@ final class AppDatabase: @unchecked Sendable {
                       AND UPPER(color) NOT IN (\(swatches.map { _ in "?" }.joined(separator: ",")))
                     """,
                 arguments: StatementArguments(swatches))
+        }
+
+        // v52: the color of an account's label pill, chosen in "Edit Account
+        // Labels…". Local only (`#rrggbb`, NULL = default); it lives on the
+        // account row, so removing the account removes it.
+        m.registerMigration("v52") { db in
+            try db.alter(table: "account") { t in
+                t.add(column: "labelColor", .text)
+            }
         }
 
         // v53 (after v52, the account label colour): each account's own

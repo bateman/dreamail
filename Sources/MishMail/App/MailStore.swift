@@ -1155,6 +1155,15 @@ final class MailStore {
         reloadAccounts()
     }
 
+    /// Local color of the account's label pill (`#rrggbb`); nil, or a
+    /// malformed value, resets it to the default. Never sent to Google.
+    func setAccountLabelColor(_ id: String, hex: String?) {
+        try? db.write { db in
+            try AccountLabelColor.set(db, accountId: id, hex: hex)
+        }
+        reloadAccounts()
+    }
+
     /// Name recipients see on outgoing mail ("Ron Boger <ron@…>").
     func setSenderName(_ id: String, name: String) {
         try? db.write { db in
