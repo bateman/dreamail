@@ -1904,12 +1904,9 @@ struct MessageCard: View {
             owners: MessageAvatar.ownerMap(
                 accountIds: store.accounts.map(\.id),
                 aliases: store.sendIdentities.map { (email: $0.email, accountId: $0.accountId) }),
-            // The account's own name, so the initial matches the sidebar.
+            // The account switcher's title, so the initial matches it.
             accountNames: Dictionary(
-                store.accounts.map { account in
-                    (account.id, account.senderName.isEmpty
-                        ? account.displayName : account.senderName)
-                },
+                store.accounts.map { ($0.id, AccountLabelColor.title($0)) },
                 uniquingKeysWith: { first, _ in first }),
             accountsWithPhoto: Set(store.accountPhotos.keys))
         switch choice {
