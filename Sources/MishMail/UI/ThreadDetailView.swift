@@ -119,6 +119,10 @@ struct ThreadDetailView: View {
     /// this to one id (`MessageExpandPolicy.single`); side-by-side compose
     /// opens every sent card so the draft can reference the full thread.
     @State private var expandedMessageIds: Set<String> = []
+    /// Visible height of the conversation's scroll view. The open card
+    /// reserves it for a body that has not measured itself yet, so the pane
+    /// never opens as a short box (see `MessageBodyHeight`).
+    @State private var paneViewportHeight: CGFloat = 0
     /// Reading position to restore when inline compose closes.
     @State private var inlineScrollRestore: InlineScrollRestore = .unset
     @State private var inlineScrollTargetId: String?
@@ -169,8 +173,17 @@ struct ThreadDetailView: View {
         self.onReply = onReply
         guard let initialPayload else { return }
         _messages = State(initialValue: initialPayload.messages)
-        _messageRoles = State(
-            initialValue: ThreadMessageRoles(messages: initialPayload.messages))
+        let initialRoles = ThreadMessageRoles(messages: initialPayload.messages)
+        _messageRoles = State(initialValue: initialRoles)
+        // Open the default card set in the first frame too. Without it the
+        // seeded conversation painted every card collapsed — a one-message
+        // conversation showed as a header-only row, like an older message in
+        // a long thread — until onAppear or the load task opened it.
+        _expandedMessageIds = State(
+            initialValue: MessageExpandPolicy.initialExpandedIds(
+                policy: splitMode ? .multiple : .single,
+                nonDraftIds: initialRoles.nonDraftIds,
+                lastNonDraftId: initialRoles.lastNonDraftId))
         _summaryFingerprint = State(initialValue: ThreadSummaryPolicy.fingerprint(
             subject: thread.subject, messages: initialPayload.messages))
         _summaryEligible = State(initialValue: ThreadSummaryPolicy.isWorthSummarizing(initialPayload.messages))
@@ -284,6 +297,12 @@ struct ThreadDetailView: View {
             // Stable top anchor for reading; inline reply uses one-shot bottom
             // scrollTo so dismiss does not flip anchors and jump the thread.
             .scrollPosition(id: scrollAnchorBinding, anchor: .top)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                // Whole points only: sub-point layout noise must not
+                // re-render every card.
+                let rounded = height.rounded()
+                if rounded != paneViewportHeight { paneViewportHeight = rounded }
+            }
             .modifier(ScrollOffsetDisarmModifier(armed: autoPinInlineScroll && inlineComposeActive) { oldY, newY in
                 noteScrollOffsetChange(from: oldY, to: newY)
             })
@@ -299,7 +318,14 @@ struct ThreadDetailView: View {
                 cidPrepByMessageId = [:]
                 cidResolveAttempted = []
                 loadRemoteImagesForThread = false
-                expandedMessageIds = []
+                // Keep the open set `init` seeded for this conversation; the
+                // payload re-seeds below. Clearing it here collapsed the card
+                // until the load returned (the whole repository round-trip
+                // when the warm mirror missed).
+                expandedMessageIds = MessageExpandPolicy.keptAtLoadStart(
+                    current: expandedMessageIds,
+                    messageThreadIds: messages.map(\.threadId),
+                    threadId: thread.id)
                 neighborPrerenderArmed = false
                 unsubscribeTarget = nil
                 blockTarget = nil
@@ -536,6 +562,14 @@ struct ThreadDetailView: View {
                     cidPrep: cidPrepByMessageId[message.id],
                     expandPolicy: messageExpandPolicy,
                     expandedMessageIds: $expandedMessageIds,
+                    isCollapsible: MessageExpandPolicy.isCollapsible(
+                        id: message.id, nonDraftIds: messageRoles.nonDraftIds),
+                    fillsPaneHeight: MessageExpandPolicy.fillsPane(
+                        id: message.id,
+                        policy: messageExpandPolicy,
+                        expanded: expandedMessageIds,
+                        lastNonDraftId: lastNonDraftId)
+                        ? paneViewportHeight : nil,
                     loadImagesForThread: $loadRemoteImagesForThread,
                     onReply: { onReply(message) },
                     onBlockSender: { email in
@@ -735,7 +769,14 @@ struct ThreadDetailView: View {
             } else {
                 // Drop ids that left the thread (send/discard renumber).
                 let live = Set(messageRoles.nonDraftIds)
-                expandedMessageIds = expandedMessageIds.intersection(live)
+                let wasOpen = expandedMessageIds
+                expandedMessageIds = MessageExpandPolicy.reconciledAfterRefresh(
+                    current: expandedMessageIds,
+                    nonDraftIds: messageRoles.nonDraftIds)
+                // A renumbered sole message (send, Gmail re-id) reopens.
+                for id in expandedMessageIds.subtracting(wasOpen) {
+                    loadBodyIfNeeded(id: id)
+                }
                 // Side-by-side: open only messages that arrived this refresh.
                 // Diff against prior message ids so a manual collapse survives
                 // background sync / draft-suppression refreshes.
@@ -776,17 +817,13 @@ struct ThreadDetailView: View {
     /// `onAppear` can race and open only the newest id before this runs, which
     /// would otherwise leave older cards collapsed in side-by-side.
     private func seedExpandedMessagesIfNeeded() {
-        let seed = MessageExpandPolicy.initialExpandedIds(
+        // Reading pane: keeps a card `init` (or the user) already opened
+        // while it is still in the thread, else opens the payload's newest.
+        expandedMessageIds = MessageExpandPolicy.applyingPayload(
+            current: expandedMessageIds,
             policy: messageExpandPolicy,
             nonDraftIds: messageRoles.nonDraftIds,
             lastNonDraftId: messageRoles.lastNonDraftId)
-        switch messageExpandPolicy {
-        case .multiple:
-            expandedMessageIds = seed
-        case .single:
-            guard expandedMessageIds.isEmpty else { return }
-            expandedMessageIds = seed
-        }
         for id in expandedMessageIds {
             loadBodyIfNeeded(id: id)
         }
@@ -1542,6 +1579,11 @@ struct MessageCard: View {
     /// Single-active reading pane vs multi-open side-by-side compose.
     let expandPolicy: MessageExpandPolicy
     @Binding var expandedMessageIds: Set<String>
+    /// False for the sole message of a conversation: always open, no chevron.
+    let isCollapsible: Bool
+    /// Pane height to fill while the HTML body has not measured itself;
+    /// nil for cards that do not fill the pane.
+    let fillsPaneHeight: CGFloat?
     /// Session-wide opt-in shared by every card in the open thread.
     @Binding var loadImagesForThread: Bool
     let onReply: () -> Void
@@ -1557,7 +1599,16 @@ struct MessageCard: View {
     let onNeedUnsubscribeHeaders: () -> Void
     // Full FROM/TO/CC rows ("Show more"); compact by default.
     @State private var recipientsExpanded = false
-    @State private var htmlHeight: CGFloat = 120
+    /// Last height the HTML body reported for this card; nil until the
+    /// first report (see `MessageBodyHeight`).
+    @State private var measuredHTMLHeight: CGFloat?
+    /// Set by the first height report. Only a body's first load reserves the
+    /// pane; a later reload (quote toggle) starts from its cached height.
+    @State private var htmlBodyEverMeasured = false
+    /// Offset of the body from the card's top (header and banners), so the
+    /// reservation makes the card, not just its body, end at the pane bottom.
+    @State private var bodyTopInCard: CGFloat = 0
+    private static let cardSpace = "messageCard"
     /// Per-message opt-in when policy is ask/vip and the sender isn't allowed.
     @State private var loadRemoteImages = false
     /// Manual escape hatch: render multipart plain text instead of HTML.
@@ -1629,6 +1680,8 @@ struct MessageCard: View {
          cidPrep: MessageHTMLPrep? = nil,
          expandPolicy: MessageExpandPolicy = .single,
          expandedMessageIds: Binding<Set<String>>,
+         isCollapsible: Bool = true,
+         fillsPaneHeight: CGFloat? = nil,
          loadImagesForThread: Binding<Bool> = .constant(false),
          onReply: @escaping () -> Void,
          onBlockSender: @escaping (String) -> Void = { _ in },
@@ -1644,6 +1697,8 @@ struct MessageCard: View {
         self.cidPrep = cidPrep
         self.expandPolicy = expandPolicy
         self._expandedMessageIds = expandedMessageIds
+        self.isCollapsible = isCollapsible
+        self.fillsPaneHeight = fillsPaneHeight
         self._loadImagesForThread = loadImagesForThread
         self.onReply = onReply
         self.onBlockSender = onBlockSender
@@ -1731,6 +1786,7 @@ struct MessageCard: View {
     }
 
     private func toggleExpanded() {
+        if expanded, !isCollapsible { return }
         let willExpand = !expanded
         withAnimation(.easeOut(duration: 0.12)) {
             expandedMessageIds = expandPolicy.applyingToggle(
@@ -1860,20 +1916,23 @@ struct MessageCard: View {
                 }
                 Text(message.date, format: message.date.messageHeaderFormat)
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                Button {
-                    toggleExpanded()
-                } label: {
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .accessibilityIdentifier("messageHeaderDate")
+                if isCollapsible || !expanded {
+                    Button {
+                        toggleExpanded()
+                    } label: {
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .help(expanded ? "Collapse" : "Expand")
+                    .accessibilityLabel(expanded ? "Collapse" : "Expand")
                 }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help(expanded ? "Collapse" : "Expand")
-                .accessibilityLabel(expanded ? "Collapse" : "Expand")
             }
             .contentShape(Rectangle())
             .onTapGesture {
                 toggleExpanded()
             }
-            .pmPointingHandCursor()
+            .pmPointingHandCursor(enabled: isCollapsible || !expanded)
 
             if expanded {
                 // Collapsed cards never mount HTMLBodyView (gated on expanded).
@@ -1919,6 +1978,33 @@ struct MessageCard: View {
                         let bodyContentID = message.id
                             + (useAuthoredHTML ? ":authored" : ":full")
                             + (cidInlinedHTML != nil ? ":cid" : "")
+                        // Read in body, not onAppear: a known height (re-open,
+                        // or a pre-rendered neighbor) must size the very first
+                        // frame. Without one, the open card reserves the pane
+                        // until the first report instead of opening as a
+                        // short box that then jumps to the body's length.
+                        // At the pane's last measured width: a height measured
+                        // at another width (pane resized, or an estimate) would
+                        // paint clipped or over-tall and then resize.
+                        let cachedHeight = measuredHTMLHeight == nil
+                            ? HTMLBodyHeightCacheStore.height(
+                                contentID: bodyContentID,
+                                fontScale: fontScale,
+                                width: HTMLBodyHeightCacheStore.lastLayoutWidth)
+                            : nil
+                        let bodyHeight = MessageBodyHeight.webViewHeight(
+                            measured: measuredHTMLHeight, cached: cachedHeight)
+                        let containerHeight = MessageBodyHeight.containerHeight(
+                            measured: measuredHTMLHeight,
+                            cached: cachedHeight,
+                            reserve: htmlBodyEverMeasured ? nil
+                                : fillsPaneHeight.flatMap {
+                                    MessageBodyHeight.paneReserve(
+                                        viewportHeight: $0,
+                                        // Header above the body + the card's
+                                        // bottom padding.
+                                        chromeHeight: bodyTopInCard + 16)
+                                })
                         HTMLBodyView(
                             contentID: bodyContentID,
                             html: renderedHTML,
@@ -1927,17 +2013,25 @@ struct MessageCard: View {
                             documentIsAuthored: useAuthoredHTML,
                             allowRemoteImages: allowRemoteImages,
                             fontScale: fontScale,
-                            height: $htmlHeight,
+                            height: Binding(
+                                get: { bodyHeight },
+                                set: {
+                                    measuredHTMLHeight = $0
+                                    htmlBodyEverMeasured = true
+                                }),
                             onSettled: onBodySettled)
-                            .frame(height: htmlHeight)
-                            .onAppear {
-                                if let cached = HTMLBodyHeightCacheStore.height(
-                                    contentID: bodyContentID,
-                                    fontScale: fontScale,
-                                    width: nil) {
-                                    htmlHeight = cached
-                                }
+                            // The web view keeps its own frame (measuring is
+                            // unchanged); only its container reserves space.
+                            .frame(height: bodyHeight)
+                            .frame(maxWidth: .infinity, minHeight: containerHeight,
+                                   maxHeight: containerHeight, alignment: .top)
+                            .onGeometryChange(for: CGFloat.self) {
+                                $0.frame(in: .named(Self.cardSpace)).minY.rounded()
+                            } action: { top in
+                                if top != bodyTopInCard { bodyTopInCard = top }
                             }
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier("messageBody")
                     }
                 } else if !message.bodyText.isEmpty {
                     // Collapsed plain-text heads are handled above; this branch
@@ -1950,10 +2044,11 @@ struct MessageCard: View {
                     Button {
                         // Collapsing shrinks the content, and a reloaded web
                         // view can't measure below its current frame — drop
-                        // back to the default height and let it grow to fit.
+                        // back to the head's cached height (or the
+                        // placeholder) and let it grow to fit.
                         // Expanding only grows, so the height stays put until
                         // the new load reports in (no visible snap).
-                        if showQuoted { htmlHeight = 120 }
+                        if showQuoted { measuredHTMLHeight = nil }
                         // Showing the full trail is itself an explicit request
                         // to load it. Keep the authored head visible instead of
                         // replacing it with another confirmation placeholder.
@@ -2043,6 +2138,7 @@ struct MessageCard: View {
                             .font(.system(size: 12.5 * fontScale))
                     }
                     .buttonStyle(.bordered)
+                    .accessibilityIdentifier("messageActionReply")
                     if ReplyComposer.hasAdditionalReplyAllRecipients(
                         message, ownAddresses: store.ownEmailAddresses) {
                         Button {
@@ -2075,6 +2171,7 @@ struct MessageCard: View {
             }
         }
         .padding(16)
+        .coordinateSpace(.named(Self.cardSpace))
         .background(RoundedRectangle(cornerRadius: PMRadius.md).fill(Color(nsColor: .controlBackgroundColor)))
         // Layered elevation reads cleaner than a hard separator ring on varied
         // backgrounds (light/dark, reading-pane chrome).
@@ -2493,6 +2590,7 @@ private struct PlainTextBody: View {
             .lineSpacing(4)
             .textSelection(.enabled)
             .tint(Color.mailAccent)
+            .accessibilityIdentifier("messageBody")
             .environment(\.openURL, OpenURLAction { url in
                 // Hand the link to the system, as the HTML body does; never
                 // navigate inside the app. Anything off the allow-list is inert.
@@ -2721,7 +2819,8 @@ struct HTMLBodyView: NSViewRepresentable {
         // no real measurement landed first — a fast paint must not be
         // overwritten by a stale placeholder.
         if let cached = HTMLBodyHeightCacheStore.height(
-            contentID: contentID, fontScale: fontScale, width: nil) {
+            contentID: contentID, fontScale: fontScale,
+            width: HTMLBodyHeightCacheStore.lastLayoutWidth) {
             let expectedContentID = contentID
             DispatchQueue.main.async { [weak coordinator = context.coordinator] in
                 guard let coordinator,
@@ -3113,24 +3212,11 @@ struct HTMLBodyView: NSViewRepresentable {
             // publish or cache heights — the outgoing view's ResizeObserver
             // would poison the new card's frame and height cache.
             if incoming != nil, webView !== incoming { return }
-            let rawHeight: CGFloat?
-            if let h = result as? CGFloat {
-                rawHeight = h
-            } else if let n = result as? NSNumber {
-                rawHeight = CGFloat(truncating: n)
-            } else if let d = result as? Double {
-                rawHeight = CGFloat(d)
-            } else if let i = result as? Int {
-                rawHeight = CGFloat(i)
-            } else {
-                rawHeight = nil
-            }
-            guard let rawHeight, rawHeight > 0 else { return }
-
             // Floor + hard ceiling (mirrors JS). Pathological markup or a
             // residual measure↔frame feedback loop must not grow the card
             // without bound (infinite scroll in the reading pane).
-            let height = HTMLBodyLayout.clampContentHeight(rawHeight)
+            guard let height = HTMLBodyLayout.measuredHeight(
+                fromScriptResult: result) else { return }
             let wasLatched = heightStability.latchedHeight != nil
             let observation = heightStability.observe(height)
             if observation.shouldPublish {

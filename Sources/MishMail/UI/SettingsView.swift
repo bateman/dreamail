@@ -81,7 +81,10 @@ struct SettingsView: View {
 
     private func row(_ p: Pane) -> some View {
         HStack {
-            Label(p.title, systemImage: p.icon)
+            // Monochrome like the main sidebar, not the accent.
+            Label { Text(p.title) } icon: {
+                Image(systemName: p.icon).foregroundStyle(.mailIcon(selected: pane == p))
+            }
             if p == .updates, updates.available != nil {
                 Spacer()
                 Circle().fill(Color.accentColor).frame(width: 7, height: 7)
@@ -1215,10 +1218,11 @@ struct AppearanceSettings: View {
                     Toggle("Check spelling while typing", isOn: $composeSpellCheck)
                     Toggle("Check grammar with spelling", isOn: $composeGrammarCheck)
                         .disabled(!composeSpellCheck)
+                    ComposeSpellLanguageSettings(enabled: composeSpellCheck)
                 } header: {
                     Text("Spelling and grammar")
                 } footer: {
-                    Text("Uses the macOS spell checker in the message body, subject, and snippets. Right-click an underlined word for suggestions, or use Edit ▸ Spelling and Grammar (⌘;).")
+                    Text("Uses the macOS spell checker on this Mac in the message body, subject, and snippets. Automatic follows System Settings ▸ Keyboard ▸ Text Input ▸ Spelling. With specific languages, each paragraph is checked in the language it is written in, and a word spelled correctly in any of them is not underlined. Grammar is checked only in languages macOS supports. Right-click an underlined word for suggestions, or use Edit ▸ Spelling and Grammar (⌘;).")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 

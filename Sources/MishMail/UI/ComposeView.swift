@@ -2804,6 +2804,7 @@ struct ComposeSubjectField: NSViewRepresentable {
     @Binding var text: String
     @AppStorage(ComposeSpellCheck.spellingKey) private var spellCheck = true
     @AppStorage(ComposeSpellCheck.grammarKey) private var grammarCheck = true
+    @AppStorage(ComposeSpellLanguages.storageKey) private var spellLanguages = ""
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
@@ -2840,7 +2841,8 @@ struct ComposeSubjectField: NSViewRepresentable {
     /// active editing session. Only on change: every keystroke updates this
     /// view, and re-applying would undo a per-field Edit menu toggle.
     private func applySpellCheck(to field: NSTextField, context: Context) {
-        let options = ComposeSpellCheck.Options(spelling: spellCheck, grammar: grammarCheck)
+        let options = ComposeSpellCheck.Options(spelling: spellCheck, grammar: grammarCheck,
+                                                languages: spellLanguages)
         guard context.coordinator.appliedSpellOptions != options,
               let cell = field.cell as? SubjectTextFieldCell else { return }
         ComposeSpellCheck.apply(options, to: cell.subjectEditor)
@@ -2910,7 +2912,7 @@ final class SubjectTextField: NSTextField {
 
 final class SubjectTextFieldCell: NSTextFieldCell {
     lazy var subjectEditor: NSTextView = {
-        let editor = NSTextView()
+        let editor = MultilingualSpellTextView()
         editor.isFieldEditor = true
         return editor
     }()

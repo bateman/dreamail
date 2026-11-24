@@ -9,9 +9,10 @@ struct TemplateTextEditor: NSViewRepresentable {
     @Binding var text: String
     @AppStorage(ComposeSpellCheck.spellingKey) private var spellCheck = true
     @AppStorage(ComposeSpellCheck.grammarKey) private var grammarCheck = true
+    @AppStorage(ComposeSpellLanguages.storageKey) private var spellLanguages = ""
 
     private var spellOptions: ComposeSpellCheck.Options {
-        .init(spelling: spellCheck, grammar: grammarCheck)
+        .init(spelling: spellCheck, grammar: grammarCheck, languages: spellLanguages)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
@@ -114,7 +115,7 @@ struct TemplateTextEditor: NSViewRepresentable {
 
 /// NSTextView whose completion token starts at the `{` being typed, so the
 /// native completion popup (usually word-based) can offer `{first_name}`.
-final class TemplateTextView: NSTextView {
+final class TemplateTextView: MultilingualSpellTextView {
     override var rangeForUserCompletion: NSRange {
         activePlaceholderRange() ?? super.rangeForUserCompletion
     }

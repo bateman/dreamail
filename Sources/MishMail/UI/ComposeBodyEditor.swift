@@ -41,9 +41,10 @@ struct ComposeBodyEditor: NSViewRepresentable {
     /// System spelling / grammar checks (Settings ▸ Appearance ▸ Spelling).
     @AppStorage(ComposeSpellCheck.spellingKey) private var spellCheck = true
     @AppStorage(ComposeSpellCheck.grammarKey) private var grammarCheck = true
+    @AppStorage(ComposeSpellLanguages.storageKey) private var spellLanguages = ""
 
     private var spellOptions: ComposeSpellCheck.Options {
-        .init(spelling: spellCheck, grammar: grammarCheck)
+        .init(spelling: spellCheck, grammar: grammarCheck, languages: spellLanguages)
     }
 
     func makeCoordinator() -> Coordinator {

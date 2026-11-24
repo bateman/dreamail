@@ -285,7 +285,8 @@ enum DemoSeed {
                  attachment: Bool = false, extraLabels: [String] = [],
                  listUnsubscribe: String? = nil,
                  listUnsubscribePost: String? = nil,
-                 to: String? = nil, deliveredTo: String? = nil) {
+                 to: String? = nil, deliveredTo: String? = nil,
+                 html: String? = nil) {
             var labels = ["INBOX"] + extraLabels
             if starred { labels.append("STARRED") }
             if unread { labels.append("UNREAD") }
@@ -301,7 +302,7 @@ enum DemoSeed {
                 date: date(hoursAgo),
                 snippet: snippet,
                 bodyText: body,
-                bodyHTML: nil,
+                bodyHTML: html,
                 messageIdHeader: "<\(t)-\(out.count)@example.com>",
                 referencesHeader: "",
                 labelIds: labels.joined(separator: " "),
@@ -328,7 +329,7 @@ enum DemoSeed {
             subject: "[mishmail] CI passed on main",
             snippet: "All checks have passed for the latest push to main. 142 tests, 0 failures.",
             body: "All checks have passed for the latest push to main.\n\n142 tests, 0 failures.\n\nView the run on GitHub.",
-            hoursAgo: 5, unread: false)
+            hoursAgo: 5, unread: false, html: ciReportHTML)
 
         add("t4", from: "Stripe <receipts@stripe.com>",
             subject: "Your receipt from Anthropic",
@@ -381,4 +382,37 @@ enum DemoSeed {
 
         return out
     }
+
+    /// The demo inbox's one HTML message: a CI report taller than any
+    /// window, so the reading pane's HTML path (WebKit load, height report)
+    /// is exercised. Self-contained: inline styles only, no images or other
+    /// remote resources.
+    static let ciReportHTML: String = {
+        let suites = [
+            "Parsing", "Threading", "Search", "Sync engine", "Compose",
+            "Attachments", "Calendar invites", "Snooze", "Labels",
+            "Keyboard shortcuts", "Reading pane", "Drafts", "Outbox",
+            "Settings", "Accessibility", "Dark mode", "Database", "Launch",
+        ]
+        var rows = ""
+        for (i, suite) in suites.enumerated() {
+            rows += """
+            <tr><td style="padding:12px 0;border-bottom:1px solid #ddd">
+            <h3 style="margin:0 0 6px 0;font-size:16px">&#10003; \(suite)</h3>
+            <p style="margin:0;line-height:1.5">\(6 + i % 5) tests passed in \
+            \(1 + i % 3).\(i % 10) s. No new warnings since the previous run \
+            on main.</p>
+            </td></tr>
+            """
+        }
+        return """
+        <html><body style="font-family:-apple-system,Helvetica,sans-serif">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px">
+        <tr><td><h1 style="font-size:22px;margin:0 0 4px 0">All checks have passed</h1>
+        <p style="margin:0 0 16px 0;color:#666">142 tests, 0 failures on the \
+        latest push to main.</p></td></tr>
+        \(rows)
+        </table></body></html>
+        """
+    }()
 }
