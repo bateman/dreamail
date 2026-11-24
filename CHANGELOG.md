@@ -6,6 +6,14 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Faster first open, and inline images are not downloaded twice.** The first
+  conversation you open is ready sooner, and re-opening a conversation with
+  inline images no longer downloads the images again. Deleted mail leaves the
+  in-memory reading cache at once.
+- **Spell check in several languages at once.** Settings ▸ Spelling and
+  grammar ▸ Check spelling in ▸ Specific languages (for example English and
+  Italian). Each paragraph is checked in its own language, and a word spelled
+  correctly in any chosen language is not underlined.
 - **Compact section breaks in the thread list.** Between "Last 7 days",
   "Last 30 days", "Older" and the other sections there was an empty band about
   two rows tall. The next header now follows the last row after a small gap,
@@ -26,7 +34,7 @@ minor versions may still change behavior.
   height without growing.
 - **Monochrome sidebar icons, as in Gmail.** Sidebar, Settings-sidebar and
   list-header icons are grey outline glyphs; the selected view gets the filled
-  glyph, a darker tint and a bold title. Colour stays for label colours, the
+  glyph, a darker tint and a semibold title. Colour stays for label colours, the
   starred star, badges and warnings.
 - **Deleted mail is gone, not just hidden.** Deleted content is overwritten in
   the mail cache and removed from the search index when it is deleted, and old
