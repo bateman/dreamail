@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+<title id="title">Busta chiusa viola satinata</title>
+<defs>
+  <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#FAF9FD"/>
+  </linearGradient>
+  <linearGradient id="body" x1="0.1" y1="0" x2="0.9" y2="1">
+    <stop stop-color="#7133AD"/><stop offset="0.55" stop-color="#51208C"/><stop offset="1" stop-color="#351264"/>
+  </linearGradient>
+  <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+    <stop stop-color="#9654CB"/><stop offset="1" stop-color="#592195"/>
+  </linearGradient>
+  <linearGradient id="right" x1="1" y1="0" x2="0" y2="1">
+    <stop stop-color="#7838B2"/><stop offset="1" stop-color="#461779"/>
+  </linearGradient>
+  <linearGradient id="flap" x1="0" y1="0" x2="0.85" y2="1">
+    <stop stop-color="#E1BEFF"/><stop offset="0.4" stop-color="#C29AF6"/><stop offset="1" stop-color="#A371EC"/>
+  </linearGradient>
+  <linearGradient id="rear" x1="0" y1="0" x2="0.6" y2="1">
+    <stop stop-color="#C29AF0"/><stop offset="1" stop-color="#7A43B3"/>
+  </linearGradient>
+  <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+    <stop stop-color="#F7EEFF"/><stop offset="1" stop-color="#E5D5F7"/>
+  </linearGradient>
+  <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#F0DFFF" stop-opacity="0.85"/><stop offset="1" stop-color="#D9B7FF" stop-opacity="0.7"/>
+  </linearGradient>
+  <filter id="foldShadow" x="-15%" y="-20%" width="130%" height="155%" color-interpolation-filters="sRGB">
+    <feDropShadow dx="0" dy="9" stdDeviation="9" flood-color="#210A42" flood-opacity="0.3"/>
+  </filter>
+  <filter id="paperShadow" x="-20%" y="-15%" width="140%" height="140%" color-interpolation-filters="sRGB">
+    <feDropShadow dx="0" dy="5" stdDeviation="9" flood-color="#32134D" flood-opacity="0.25"/>
+  </filter>
+</defs>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+<defs><clipPath id="envelopeClip"><rect x="220" y="330" width="584" height="380" rx="57"/></clipPath></defs>
+<g clip-path="url(#envelopeClip)">
+  <rect x="220" y="330" width="584" height="380" fill="url(#body)"/>
+  <path d="M220 370 L515 559 L220 690Z" fill="url(#left)"/>
+  <path d="M804 370 L509 559 L804 690Z" fill="url(#right)"/>
+  <path d="M220 710 L484 502 Q512 480 540 502 L804 710Z" fill="url(#body)"/>
+  <path d="M220 330 H804 V374 Q804 386 792 397 L537 578 Q512 597 487 578 L232 397 Q220 386 220 374Z" fill="url(#flap)" filter="url(#foldShadow)"/>
+  <path d="M222 376 Q224 387 235 396 L487 576 Q512 595 537 576 L789 396 Q800 387 802 376" fill="none" stroke="url(#edge)" stroke-width="3" stroke-linecap="round"/>
+</g>
+</svg>

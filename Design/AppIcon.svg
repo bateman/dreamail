@@ -1,83 +1,57 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <!-- MishMail: mishmish (apricot) + mail. Warm coral tile, peach in envelope. -->
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FF8A65"/>
-      <stop offset="0.55" stop-color="#F4511E"/>
-      <stop offset="1" stop-color="#D84315"/>
-    </linearGradient>
-    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
-      <stop offset="0.4" stop-color="#ffffff" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="envelope" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFE0B2"/>
-      <stop offset="1" stop-color="#FFCC80"/>
-    </linearGradient>
-    <linearGradient id="flap" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFECB3"/>
-      <stop offset="1" stop-color="#FFB74D"/>
-    </linearGradient>
-    <linearGradient id="fruit" x1="0.2" y1="0" x2="0.8" y2="1">
-      <stop offset="0" stop-color="#FFB74D"/>
-      <stop offset="0.45" stop-color="#FF9800"/>
-      <stop offset="1" stop-color="#EF6C00"/>
-    </linearGradient>
-    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#AED581"/>
-      <stop offset="1" stop-color="#7CB342"/>
-    </linearGradient>
-    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#BF360C" flood-opacity="0.28"/>
-    </filter>
-  </defs>
-
-  <!-- Squircle app tile -->
-  <g>
-    <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#bg)"/>
-    <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#sheen)"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+<title id="title">Busta aperta viola con lettera</title>
+<defs>
+  <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#FAF9FD"/>
+  </linearGradient>
+  <linearGradient id="body" x1="0.1" y1="0" x2="0.9" y2="1">
+    <stop stop-color="#7133AD"/><stop offset="0.55" stop-color="#51208C"/><stop offset="1" stop-color="#351264"/>
+  </linearGradient>
+  <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+    <stop stop-color="#9654CB"/><stop offset="1" stop-color="#592195"/>
+  </linearGradient>
+  <linearGradient id="right" x1="1" y1="0" x2="0" y2="1">
+    <stop stop-color="#7838B2"/><stop offset="1" stop-color="#461779"/>
+  </linearGradient>
+  <linearGradient id="flap" x1="0" y1="0" x2="0.85" y2="1">
+    <stop stop-color="#E1BEFF"/><stop offset="0.4" stop-color="#C29AF6"/><stop offset="1" stop-color="#A371EC"/>
+  </linearGradient>
+  <linearGradient id="rear" x1="0" y1="0" x2="0.6" y2="1">
+    <stop stop-color="#C29AF0"/><stop offset="1" stop-color="#7A43B3"/>
+  </linearGradient>
+  <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+    <stop stop-color="#F7EEFF"/><stop offset="1" stop-color="#E5D5F7"/>
+  </linearGradient>
+  <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#F0DFFF" stop-opacity="0.85"/><stop offset="1" stop-color="#D9B7FF" stop-opacity="0.7"/>
+  </linearGradient>
+  <filter id="foldShadow" x="-15%" y="-20%" width="130%" height="155%" color-interpolation-filters="sRGB">
+    <feDropShadow dx="0" dy="9" stdDeviation="9" flood-color="#210A42" flood-opacity="0.3"/>
+  </filter>
+  <filter id="paperShadow" x="-20%" y="-15%" width="140%" height="140%" color-interpolation-filters="sRGB">
+    <feDropShadow dx="0" dy="5" stdDeviation="9" flood-color="#32134D" flood-opacity="0.25"/>
+  </filter>
+</defs>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+<path d="M230 465 Q230 440 251 423 L482 249 Q512 226 542 249 L773 423 Q794 440 794 465 V724 Q794 780 738 780 H286 Q230 780 230 724Z" fill="url(#rear)"/>
+<path d="M233 460 Q233 443 254 426 L483 253 Q512 230 541 253 L770 426 Q791 443 791 460" fill="none" stroke="url(#edge)" stroke-width="3"/>
+<g filter="url(#paperShadow)">
+  <rect x="310" y="365" width="404" height="342" rx="29" fill="url(#paper)"/>
+  <path d="M339 367 H685 Q712 367 712 394" fill="none" stroke="#FFFFFF" stroke-opacity="0.75" stroke-width="2"/>
+  <g fill="none" stroke="#AC81D7" stroke-width="14" stroke-linecap="round">
+    <path d="M375 429 H650"/>
+    <path d="M375 471 H608"/>
+    <path d="M375 513 H546"/>
   </g>
+</g>
+<defs><clipPath id="pocket"><path d="M230 465 L489 639 Q512 655 535 639 L794 465 V733 Q794 790 737 790 H287 Q230 790 230 733Z"/></clipPath></defs>
+<g clip-path="url(#pocket)">
+  <rect x="230" y="465" width="564" height="325" fill="url(#body)"/>
+  <path d="M230 465 L515 652 L230 772Z" fill="url(#left)"/>
+  <path d="M794 465 L509 652 L794 772Z" fill="url(#right)"/>
+  <path d="M230 790 L485 590 Q512 569 539 590 L794 790Z" fill="url(#body)"/>
+</g>
+<path d="M232 467 L489 639 Q512 655 535 639 L792 467" fill="none" stroke="url(#edge)" stroke-width="3" stroke-linecap="round"/>
 
-  <!-- Open envelope -->
-  <g filter="url(#softShadow)">
-    <path d="M 220 430
-             L 512 250
-             L 804 430
-             L 804 720
-             C 804 760 772 790 732 790
-             L 292 790
-             C 252 790 220 760 220 720
-             Z"
-          fill="url(#envelope)"/>
-    <!-- Flap crease -->
-    <path d="M 240 430 L 512 600 L 784 430"
-          fill="none" stroke="#E65100" stroke-width="10"
-          stroke-linecap="round" stroke-linejoin="round" opacity="0.25"/>
-    <!-- Front flap fold -->
-    <path d="M 220 430 L 512 620 L 804 430 L 804 460
-             C 700 560 600 610 512 610
-             C 424 610 324 560 220 460 Z"
-          fill="url(#flap)" opacity="0.95"/>
-  </g>
-
-  <!-- Apricot / peach nestled in the envelope -->
-  <g filter="url(#softShadow)">
-    <ellipse cx="512" cy="430" rx="168" ry="158" fill="url(#fruit)"/>
-    <!-- Highlight -->
-    <ellipse cx="450" cy="370" rx="54" ry="40" fill="#ffffff" opacity="0.28"/>
-    <!-- Cleft -->
-    <path d="M 512 300 C 500 380 500 460 512 540"
-          fill="none" stroke="#E65100" stroke-width="8"
-          stroke-linecap="round" opacity="0.35"/>
-    <!-- Leaf -->
-    <path d="M 545 300
-             C 590 250 660 255 680 300
-             C 640 310 590 320 545 300 Z"
-          fill="url(#leaf)"/>
-    <!-- Stem -->
-    <path d="M 520 295 L 545 270"
-          fill="none" stroke="#6D4C41" stroke-width="12"
-          stroke-linecap="round"/>
-  </g>
 </svg>
