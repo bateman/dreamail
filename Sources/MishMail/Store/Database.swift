@@ -693,24 +693,42 @@ final class AppDatabase: @unchecked Sendable {
                       allowConversion: !AppDatabase.anotherInstanceIsRunning())
     }
 
-    /// How long after a committed row deletion the log is scrubbed (see
-    /// `scheduleScrub`).
-    private let scrubDelay: TimeInterval
-    static let defaultScrubDelay: TimeInterval = 5
+    /// When the maintenance that keeps deleted content out of the files
+    /// runs (see `scheduleScrub`). The tests inject their own.
+    struct MaintenanceTiming {
+        /// From a committed deletion (or the open) to the scrub of the log.
+        var scrubDelay: TimeInterval = 5
+        /// A log not truncated for this long is truncated at the next
+        /// post-sync check even without a deletion: an update's earlier page
+        /// images (text cleared from a draft) are in it too.
+        var staleLogInterval: TimeInterval = 300
+        /// Busy scrubs after which the next one waits for the readers
+        /// (a barrier) instead of trying again behind them.
+        var retriesBeforeBarrier = 3
+        /// Longest wait between busy retries.
+        var maxRetryDelay: TimeInterval = 60
+
+        static let standard = MaintenanceTiming()
+    }
+
+    private let timing: MaintenanceTiming
 
     /// Opens the cache at `path`. Visible to the hostless tests, which
     /// drive it with fixture files and keys instead of the Keychain.
+    ///
+    /// - Parameter beforeSwap: Test seam passed to `prepareDatabaseFile`.
     init(path: String, key: String, allowConversion: Bool,
-         scrubDelay: TimeInterval = AppDatabase.defaultScrubDelay) throws {
+         timing: MaintenanceTiming = .standard,
+         beforeSwap: (String) throws -> Void = { _ in }) throws {
         self.path = path
-        self.scrubDelay = scrubDelay
+        self.timing = timing
         // Runs on the main thread at launch (`AppDatabase.shared`), before
         // the pool opens and before migrations. Usually one cheap probe; the
         // one-time plaintext or passphrase→raw-key conversion copies the whole
         // file (a few seconds for a ~400 MB mailbox), exactly once.
-        Self.removePlaintextSetAside(path: path)
+        Self.encryptPlaintextSetAside(path: path, key: key)
         let scheme = try Self.prepareDatabaseFile(
-            path: path, key: key, allowConversion: allowConversion)
+            path: path, key: key, allowConversion: allowConversion, beforeSwap: beforeSwap)
         do {
             let pool = try Self.openAndMigrate(path: path, key: key, scheme: scheme)
             dbPool = pool
@@ -721,15 +739,16 @@ final class AppDatabase: @unchecked Sendable {
             }
         } catch where !Self.isTransientOpenError(error) {
             // The cache can't be opened — wrong key (keychain item lost or
-            // rotated, e.g. a backup restore) or a corrupt file. Everything in
-            // it resyncs from Gmail, so set it aside and start fresh instead
-            // of crashing at launch. The fresh file is always raw-keyed.
+            // rotated, e.g. a backup restore) or a corrupt file. Mail resyncs
+            // from Gmail, so set it aside and start fresh instead of crashing
+            // at launch; what only lived here (drafts, scheduled sends, queued
+            // edits) stays in the set-aside copy. The fresh file is raw-keyed.
             // Transient failures (disk full, I/O, busy) are excluded: they say
             // nothing about the file, and wiping a healthy 400 MB cache for
             // them would be worse than failing this launch. Everything else,
             // including a migration that throws, still resets.
             NSLog("MishMail: mail cache unreadable (%@); resetting", DiagnosticLog.describe(error))
-            try Self.setAsideUnreadable(path: path)
+            try Self.setAsideUnreadable(path: path, key: key)
             dbPool = try Self.openAndMigrate(path: path, key: key, scheme: .raw)
             storageState = .writable
         }
@@ -739,6 +758,10 @@ final class AppDatabase: @unchecked Sendable {
             dbPool.add(
                 transactionObserver: DeletionObserver { [weak self] in self?.scheduleScrub() },
                 extent: .databaseLifetime)
+            // A crash, a force-quit or a busy quit checkpoint can leave
+            // pre-delete page images in the log; nothing else would truncate
+            // it before the next deletion, 16 MiB or a clean quit.
+            scheduleScrub()
         }
     }
 
@@ -839,6 +862,9 @@ final class AppDatabase: @unchecked Sendable {
         let pool = try DatabasePool(path: path, configuration: config)
         if scheme.allowsWrites {
             try migrator.migrate(pool)
+            // Restores the index's secure-delete if anything left it off
+            // (see SearchIndexDeletes). A read when it is on, as it should be.
+            try pool.write { db in try SearchIndexDeletes.ensureSecureDelete(db) }
         }
         return pool
     }
@@ -961,8 +987,30 @@ final class AppDatabase: @unchecked Sendable {
         let blocked = phase != .open || !allowsWrites
         closeLock.unlock()
         guard !blocked else { return }
-        guard walSizeBytes >= Self.checkpointThresholdBytes else { return }
+        guard Self.checkpointIsDue(walBytes: walSizeBytes,
+                                   sinceLastTruncation: Date().timeIntervalSince(lastTruncation),
+                                   staleAfter: timing.staleLogInterval) else { return }
         checkpoint()
+    }
+
+    /// A large log, or any log not truncated for `staleAfter`: an updated
+    /// row's earlier page images stay in it until a truncation, and updates
+    /// do not schedule a scrub (they come with every sync write). Watching
+    /// updates of the content tables instead would checkpoint after every
+    /// draft autosave; this costs one `stat` per sync pass and at most one
+    /// small checkpoint per interval. Pure, for the tests.
+    static func checkpointIsDue(walBytes: Int, sinceLastTruncation: TimeInterval,
+                                staleAfter: TimeInterval) -> Bool {
+        walBytes >= checkpointThresholdBytes
+            || (walBytes > 0 && sinceLastTruncation >= staleAfter)
+    }
+
+    /// When the log was last truncated (or the pool opened), under scrubLock.
+    private var lastTruncationStorage = Date()
+    private var lastTruncation: Date {
+        scrubLock.lock()
+        defer { scrubLock.unlock() }
+        return lastTruncationStorage
     }
 
     /// `checkpointIfNeeded` for callers on the main actor. The checkpoint
@@ -973,11 +1021,34 @@ final class AppDatabase: @unchecked Sendable {
         }.value
     }
 
-    /// `reclaimSpaceIfNeeded` for callers on the main actor.
+    /// The deferred one-time maintenance (`rebuildSearchIndexIfPending`,
+    /// then `reclaimSpaceIfNeeded`) for callers on the main actor.
     func reclaimSpaceOffMain() async {
         await Task.detached(priority: .background) { [self] in
+            rebuildSearchIndexIfPending()
             reclaimSpaceIfNeeded()
         }.value
+    }
+
+    /// The one-time rebuild of the full-text index that migration v49 asks
+    /// for: it clears the terms that deletes made before secure-delete left
+    /// in older segments. Deferred like the VACUUM above, for the same
+    /// reason: at about 0.1 ms per message it would be seconds of launch
+    /// with no window on a large mailbox. The rebuild and the removal of the
+    /// request commit together, so an interrupted one runs again next time.
+    func rebuildSearchIndexIfPending() {
+        closeLock.lock()
+        let blocked = phase != .open || !allowsWrites
+        closeLock.unlock()
+        guard !blocked else { return }
+        do {
+            try dbPool.write { db in
+                try SearchIndexDeletes.rebuildIfPending(db)
+            }
+        } catch {
+            // Not fatal: the request stays, and the next launch retries.
+            NSLog("MishMail: search index rebuild failed: %@", DiagnosticLog.describe(error))
+        }
     }
 
     /// Checkpoint the write-ahead log and truncate it back to nothing.
@@ -995,11 +1066,12 @@ final class AppDatabase: @unchecked Sendable {
     /// - Parameters:
     ///   - force: Allow the final checkpoint during shutdown, after the
     ///     tracked tasks finish and before the pool closes.
-    ///   - reclaimAllFreePages: Free every page on the freelist instead of
-    ///     the usual bounded batch (account removal).
+    ///   - waitForReaders: Run behind a barrier: wait for the readers in
+    ///     flight and hold new ones off until the log is truncated, so a
+    ///     steady stream of reads cannot keep it from completing.
     /// - Returns: True when the log was checkpointed in full and truncated.
     @discardableResult
-    func checkpoint(force: Bool = false, reclaimAllFreePages: Bool = false) -> Bool {
+    func checkpoint(force: Bool = false, waitForReaders: Bool = false) -> Bool {
         // Check-then-act deliberately releases closeLock before the write.
         // Holding closeLock across the write would deadlock against
         // interrupt(), which also acquires closeLock — a lock-holding
@@ -1013,10 +1085,18 @@ final class AppDatabase: @unchecked Sendable {
         // A read-only (still plaintext) cache has nothing to checkpoint.
         guard allowsWrites else { return false }
         do {
-            return try dbPool.writeWithoutTransaction { db in
-                try Self.foldAndTruncateLog(
-                    db, freePageLimit: reclaimAllFreePages ? nil : Self.freePagesPerCheckpoint)
+            let fold = { (db: Database) in
+                try Self.foldAndTruncateLog(db, freePageLimit: Self.freePagesPerCheckpoint)
             }
+            let truncated = waitForReaders
+                ? try dbPool.barrierWriteWithoutTransaction(fold)
+                : try dbPool.writeWithoutTransaction(fold)
+            if truncated {
+                scrubLock.lock()
+                lastTruncationStorage = Date()
+                scrubLock.unlock()
+            }
+            return truncated
         } catch {
             // A checkpoint that loses a race with a reader is normal and
             // harmless — the next idle pass gets it.
@@ -1032,21 +1112,20 @@ final class AppDatabase: @unchecked Sendable {
     /// The body of `checkpoint`, on a connection the caller already holds.
     /// Visible to the hostless tests, which run it on unkeyed files.
     ///
-    /// - Parameter freePageLimit: Pages to release from the freelist, or nil
-    ///   for all of them.
+    /// Freed pages are already zeroed (`secure_delete`), so releasing them
+    /// only shrinks the file: a bounded batch per call is enough, and keeps a
+    /// large deletion from holding the writer.
+    ///
+    /// - Parameter freePageLimit: Pages to release from the freelist.
     /// - Returns: True when every WAL frame reached the database file and the
     ///   log was truncated to zero bytes. False when a reader still needed
     ///   part of the log (SQLite reports that as a row, not an error).
-    static func foldAndTruncateLog(_ db: Database, freePageLimit: Int?) throws -> Bool {
+    static func foldAndTruncateLog(_ db: Database, freePageLimit: Int) throws -> Bool {
         // Order matters: `incremental_vacuum` is itself a write, so running
         // it after the truncate would immediately re-grow the log we just
         // emptied. Freeing first lets the checkpoint fold those pages in
         // too, and the WAL ends at zero.
-        if let freePageLimit {
-            try db.execute(sql: "PRAGMA incremental_vacuum(\(freePageLimit))")
-        } else {
-            try db.execute(sql: "PRAGMA incremental_vacuum")
-        }
+        try db.execute(sql: "PRAGMA incremental_vacuum(\(freePageLimit))")
         let result = try Row.fetchOne(db, sql: "PRAGMA wal_checkpoint(TRUNCATE)")
         let busy: Int = result?[0] ?? 1
         return busy == 0
@@ -1058,8 +1137,23 @@ final class AppDatabase: @unchecked Sendable {
     private let scrubLock = NSLock()
     private var scrubScheduled = false
     private var scrubRetries = 0
-    /// Longest wait between retries while readers keep the log busy.
-    static let maxScrubRetryDelay: TimeInterval = 60
+
+    /// Receives the messages deleted since the last scrub, so the app can
+    /// remove what it keeps of them outside the database (attachment
+    /// copies, delivered notifications). Set by the app at launch; while it
+    /// is nil the queue (`DeletedMessageResidue`) waits.
+    var deletedMessageHandler: (([DeletedMessageResidue.Item]) -> Void)? {
+        get { scrubLock.lock(); defer { scrubLock.unlock() }; return handlerStorage }
+        set { scrubLock.lock(); handlerStorage = newValue; scrubLock.unlock() }
+    }
+    private var handlerStorage: (([DeletedMessageResidue.Item]) -> Void)?
+
+    /// True while a scrub is scheduled. For the tests.
+    var scrubIsPending: Bool {
+        scrubLock.lock()
+        defer { scrubLock.unlock() }
+        return scrubScheduled
+    }
 
     /// Called after every committed transaction that deleted a row
     /// (`DeletionObserver`). `secure_delete` zeroes the deleted content in
@@ -1074,7 +1168,7 @@ final class AppDatabase: @unchecked Sendable {
         defer { scrubLock.unlock() }
         guard !scrubScheduled else { return }
         scrubScheduled = true
-        enqueueScrub(after: scrubDelay)
+        enqueueScrub(after: timing.scrubDelay)
     }
 
     private func enqueueScrub(after delay: TimeInterval) {
@@ -1083,13 +1177,17 @@ final class AppDatabase: @unchecked Sendable {
         }
     }
 
-    private func runScheduledScrub() {
+    /// Runs the scrub now. Called when the scheduled delay elapses; the
+    /// tests call it directly instead of waiting.
+    func runScheduledScrub() {
         // Cleared before the checkpoint: a delete committed while it runs
         // schedules the next one.
         scrubLock.lock()
         scrubScheduled = false
+        let barrier = scrubRetries >= timing.retriesBeforeBarrier
         scrubLock.unlock()
-        let truncated = checkpoint()
+        drainDeletedMessages()
+        let truncated = checkpoint(waitForReaders: barrier)
         closeLock.lock()
         let open = phase == .open
         closeLock.unlock()
@@ -1099,42 +1197,132 @@ final class AppDatabase: @unchecked Sendable {
             scrubRetries = 0
             return
         }
-        // A reader still needed part of the log. Try again, backing off; the
-        // quit-path checkpoint is the last resort.
+        // A reader still needed part of the log. Try again, backing off;
+        // after `retriesBeforeBarrier` the next try waits for the readers.
         guard !scrubScheduled else { return }
         scrubScheduled = true
         scrubRetries += 1
-        let backoff = scrubDelay * pow(2, Double(min(scrubRetries, 6)))
-        enqueueScrub(after: min(backoff, Self.maxScrubRetryDelay))
+        let backoff = timing.scrubDelay * pow(2, Double(min(scrubRetries, 6)))
+        enqueueScrub(after: min(backoff, timing.maxRetryDelay))
+    }
+
+    /// Hands the queued deleted messages to `deletedMessageHandler`, then
+    /// forgets them. In that order: a crash in between repeats the removal
+    /// (harmless) instead of losing it.
+    private func drainDeletedMessages() {
+        guard allowsWrites, let handler = deletedMessageHandler else { return }
+        do {
+            while true {
+                let items = try dbPool.read { db in try DeletedMessageResidue.pending(db) }
+                guard !items.isEmpty else { return }
+                handler(items)
+                try dbPool.write { db in try DeletedMessageResidue.forget(db, items) }
+                if items.count < DeletedMessageResidue.batchSize { return }
+            }
+        } catch {
+            // The queue stays; the next scrub retries.
+        }
     }
 
     /// Moves an unreadable database out of the way (kept as .unreadable for
-    /// post-mortems, replacing any previous one) along with its WAL sidecars.
+    /// post-mortems and for what only lived there: drafts, scheduled sends,
+    /// queued edits, snippets), replacing any previous one, along with its
+    /// WAL sidecars.
     ///
-    /// An encrypted file is kept: it is as unreadable without the key as the
-    /// live cache. A plaintext one (a damaged pre-encryption cache) is
-    /// deleted instead: it is unencrypted mail the app will never read
-    /// again, and everything in it resyncs from Gmail.
-    private static func setAsideUnreadable(path: String) throws {
+    /// An encrypted file is moved as it is. A plaintext one (a damaged
+    /// pre-encryption cache) is kept encrypted instead when it can be: every
+    /// table that can still be read is copied into an encrypted
+    /// `.unreadable`, and the plaintext is deleted only once that copy is
+    /// complete. When it cannot be (the file does not open, or a table does
+    /// not read), the plaintext is kept as before, because it may be the only
+    /// copy of the user's drafts.
+    private static func setAsideUnreadable(path: String, key: String) throws {
         let fm = FileManager.default
-        try? fm.removeItem(atPath: path + ".unreadable")
-        if isPlaintext(path) {
+        let aside = path + ".unreadable"
+        try? fm.removeItem(atPath: aside)
+        if isPlaintext(path), salvagePlaintext(from: path, into: aside, key: key) {
             try fm.removeItem(atPath: path)
         } else {
-            try fm.moveItem(atPath: path, toPath: path + ".unreadable")
+            try fm.moveItem(atPath: path, toPath: aside)
         }
         for sidecar in ["-wal", "-shm"] {
             try? fm.removeItem(atPath: path + sidecar)
         }
     }
 
-    /// Deletes a plaintext `.unreadable` copy an earlier build set aside.
-    /// The file is never opened, so this is safe while another instance
-    /// runs.
-    private static func removePlaintextSetAside(path: String) {
+    /// Encrypts a plaintext `.unreadable` copy an earlier build set aside,
+    /// the same way (`salvagePlaintext`). The copy is never opened by a
+    /// running instance, so this is safe while another one runs.
+    private static func encryptPlaintextSetAside(path: String, key: String) {
         let aside = path + ".unreadable"
         guard isPlaintext(aside) else { return }
-        try? FileManager.default.removeItem(atPath: aside)
+        let tmp = aside + ".encrypting"
+        guard salvagePlaintext(from: aside, into: tmp, key: key) else { return }
+        for sidecar in ["-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: aside + sidecar)
+        }
+        // rename(2) replaces the plaintext in one step.
+        if rename(tmp, aside) != 0 {
+            try? FileManager.default.removeItem(atPath: tmp)
+        }
+    }
+
+    /// Copies every table that can be read from the plaintext file `source`
+    /// into a new raw-keyed file `target`. True only when every table was
+    /// copied and the copy opens with the key; otherwise `target` is removed.
+    /// Rows only, no indexes or triggers: this is a copy to recover from,
+    /// not a cache to open. Full-text tables are skipped (their content is
+    /// in `message`); their shadow tables are plain tables and come along.
+    /// Visible to the hostless tests.
+    static func salvagePlaintext(from source: String, into target: String, key: String) -> Bool {
+        let fm = FileManager.default
+        func discard() {
+            for suffix in ["", "-journal", "-wal", "-shm"] {
+                try? fm.removeItem(atPath: target + suffix)
+            }
+        }
+        discard()
+        do {
+            let plain = try DatabaseQueue(path: source)
+            defer { try? plain.close() }
+            let copied: Int = try plain.inDatabase { db in
+                try db.execute(sql: "ATTACH DATABASE ? AS salvage KEY ?",
+                               arguments: [target, rawKeyLiteral(key)])
+                defer { try? db.execute(sql: "DETACH DATABASE salvage") }
+                let tables = try Row.fetchAll(db, sql: """
+                    SELECT name, sql FROM main.sqlite_master
+                    WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                    """)
+                var count = 0
+                for table in tables {
+                    let name: String = table["name"]
+                    let sql = (table["sql"] as String?) ?? ""
+                    if sql.uppercased().hasPrefix("CREATE VIRTUAL") { continue }
+                    // A name from the file's own schema, quoted as an
+                    // identifier; nothing user-typed reaches this SQL.
+                    let quoted = "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+                    try db.execute(sql: "CREATE TABLE salvage.\(quoted) AS SELECT * FROM main.\(quoted)")
+                    count += 1
+                }
+                return count
+            }
+            var config = Configuration()
+            let rawKey = rawKeyLiteral(key)
+            config.prepareDatabase { db in try db.usePassphrase(rawKey) }
+            let check = try DatabaseQueue(path: target, configuration: config)
+            defer { try? check.close() }
+            let found = try check.read { db in
+                try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master WHERE type = 'table'") ?? 0
+            }
+            guard found == copied else {
+                discard()
+                return false
+            }
+            return true
+        } catch {
+            discard()
+            return false
+        }
     }
 
     /// True for disposable, non-secret databases that must not touch a
@@ -1321,9 +1509,15 @@ final class AppDatabase: @unchecked Sendable {
         if isPlaintext(path) {
             guard allowConversion else { return .plaintext }
             do {
-                try encryptInPlace(path: path, key: key)
+                try encryptInPlace(path: path, key: key, beforeSwap: beforeSwap)
             } catch RekeyError.busy {
                 NSLog("MishMail: plaintext cache busy; encryption deferred")
+                return .plaintext
+            } catch RekeyError.swapFailed {
+                // The encrypted copy was made and verified, and only the
+                // rename failed: nothing is wrong with the file. Stay
+                // read-only (F-02) and retry next launch, as for busy;
+                // `.raw` would send a healthy cache to the reset path.
                 return .plaintext
             } catch where !isTransientOpenError(error) {
                 // Damaged plaintext file: the raw open fails and resets.
@@ -1376,7 +1570,8 @@ final class AppDatabase: @unchecked Sendable {
 
     /// One-time migration: exports the plaintext database into a raw-key
     /// encrypted copy (sqlcipher_export) and swaps it into place.
-    private static func encryptInPlace(path: String, key: String) throws {
+    private static func encryptInPlace(path: String, key: String,
+                                       beforeSwap: (String) throws -> Void) throws {
         let tmp = path + ".encrypting"
         try? FileManager.default.removeItem(atPath: tmp)
         let plain = try DatabaseQueue(path: path)
@@ -1404,6 +1599,7 @@ final class AppDatabase: @unchecked Sendable {
             try db.execute(sql: "DETACH DATABASE encrypted")
         }
         try plain.close()
+        try beforeSwap(tmp)
         for sidecar in ["-wal", "-shm"] {
             try? FileManager.default.removeItem(atPath: path + sidecar)
         }
@@ -2440,16 +2636,26 @@ final class AppDatabase: @unchecked Sendable {
         // the index's own config table.
         // WARNING: a migration that rebuilds `message_fts` must set it again
         // (SecureDeleteTests pins it on the current schema).
-        // `rebuild` then drops every index block (zeroed, secure_delete) and
-        // indexes the current messages afresh, so nothing earlier deletes
+        // A `rebuild` then drops every index block (zeroed, secure_delete)
+        // and indexes the current messages afresh, so nothing earlier deletes
         // left behind survives. Not `optimize`: it can keep deleted terms
-        // (see SearchIndexDeletes). A one-time cost at the first launch of
-        // this build, over an index of subjects and headers only.
+        // (see SearchIndexDeletes). The rebuild is only requested here and
+        // runs in the deferred startup work (`rebuildSearchIndexIfPending`):
+        // on a large mailbox it takes seconds, and migrations run before the
+        // first window.
         m.registerMigration("v49") { db in
             try db.execute(sql: """
                 INSERT INTO message_fts(message_fts, rank) VALUES('secure-delete', 1)
                 """)
-            try db.execute(sql: "INSERT INTO message_fts(message_fts) VALUES('rebuild')")
+            try SearchIndexDeletes.requestRebuild(db)
+        }
+
+        // v50: deleted messages are queued (ids only) so the copies kept
+        // outside the database go too: attachment copies and delivered
+        // notifications (`DeletedMessageResidue`). A trigger, so every way a
+        // message row goes (sync, prune, discard, account cascade) is seen.
+        m.registerMigration("v50") { db in
+            try DeletedMessageResidue.createQueue(db)
         }
         return m
     }

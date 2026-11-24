@@ -203,8 +203,8 @@ final class SecureDeleteTests: XCTestCase {
     }
 
     /// What an earlier build left in the index: terms of messages deleted
-    /// before secure-delete existed. The migration that turns it on must
-    /// clear them too.
+    /// before secure-delete existed. The migration only requests the
+    /// rebuild (it would block the launch); the deferred rebuild clears them.
     func testUpgradeClearsTermsOfMessagesDeletedBefore() throws {
         let pool = try DatabasePool(
             path: path,
@@ -227,6 +227,11 @@ final class SecureDeleteTests: XCTestCase {
         }
         try AppDatabase.migrator.migrate(pool)
         try pool.read { db in
+            XCTAssertTrue(try SearchIndexDeletes.rebuildIsPending(db), "v49 requests the rebuild")
+        }
+        try pool.write { db in try SearchIndexDeletes.rebuildIfPending(db) }
+        try pool.read { db in
+            XCTAssertFalse(try SearchIndexDeletes.rebuildIsPending(db), "and it runs once")
             XCTAssertFalse(try inSearchIndex(db, tail), "the upgrade must clear it")
             XCTAssertEqual(try Int.fetchOne(db, sql: """
                 SELECT count(*) FROM message_fts WHERE message_fts MATCH 'routine'
@@ -356,7 +361,7 @@ final class SecureDeleteTests: XCTestCase {
             try AccountLifecycle.purgeAccount(db, id: "gone@example.com")
         }
         // What account removal runs right after the purge.
-        XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: nil))
+        XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: AppDatabase.freePagesPerCheckpoint))
         XCTAssertEqual(walSize(), 0)
         for text in [goneBody, String(goneTerm.dropFirst(3)), goneDraft] {
             XCTAssertFalse(try onDisk(text), "removed account's \(text) still on disk")
@@ -368,30 +373,47 @@ final class SecureDeleteTests: XCTestCase {
     // MARK: Automatic scrub after a delete
 
     /// The app's own database: a committed delete schedules the scrub by
-    /// itself, with no caller having to ask, and the log ends empty.
-    func testCommittedDeleteTruncatesTheLogWithoutBeingAsked() throws {
-        let database = try AppDatabase(path: path, key: key, allowConversion: true, scrubDelay: 0.2)
+    /// itself, with no caller having to ask, and the scrub empties the log.
+    /// The delay is an hour, so nothing fires on its own; the test runs the
+    /// scrub at the point the timer would.
+    func testCommittedDeleteSchedulesTheScrubThatTruncatesTheLog() throws {
+        let database = try AppDatabase(path: path, key: key, allowConversion: true,
+                                       timing: .init(scrubDelay: 3_600))
         defer { database.close() }
+        XCTAssertTrue(database.scrubIsPending, "the open schedules one (crash leftovers)")
+        database.runScheduledScrub()
+        XCTAssertFalse(database.scrubIsPending)
+
         try database.dbPool.write { db in
             try insertAccount(db, "me@example.com")
             try insertFiller(db, account: "me@example.com", range: 0..<20)
         }
-        XCTAssertTrue(database.checkpoint())
-        try database.dbPool.write { db in
-            try insertFiller(db, account: "me@example.com", range: 20..<40)
-        }
-        // Inserts alone schedule nothing.
-        Thread.sleep(forTimeInterval: 1)
-        XCTAssertGreaterThan(database.walSizeBytes, 0, "an insert must not trigger the scrub")
+        XCTAssertGreaterThan(database.walSizeBytes, 0)
+        XCTAssertFalse(database.scrubIsPending, "an insert must not schedule the scrub")
 
         try database.dbPool.write { db in
             _ = try Message.deleteOne(db, key: "me@example.com:filler-5")
         }
-        let deadline = Date().addingTimeInterval(15)
-        while database.walSizeBytes > 0, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
-        }
+        XCTAssertTrue(database.scrubIsPending, "the commit of a delete schedules it")
+        database.runScheduledScrub()
         XCTAssertEqual(database.walSizeBytes, 0, "the delete must be folded out of the log")
+    }
+
+    /// The timer itself, end to end, with a short delay.
+    func testScheduledScrubFiresOnItsOwn() throws {
+        let database = try AppDatabase(path: path, key: key, allowConversion: true,
+                                       timing: .init(scrubDelay: 0.05))
+        defer { database.close() }
+        try database.dbPool.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertFiller(db, account: "me@example.com", range: 0..<20)
+            _ = try Message.deleteOne(db, key: "me@example.com:filler-5")
+        }
+        let deadline = Date().addingTimeInterval(30)
+        while database.walSizeBytes > 0, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertEqual(database.walSizeBytes, 0)
     }
 
     // MARK: Read-only cache
@@ -410,12 +432,15 @@ final class SecureDeleteTests: XCTestCase {
         try plain.close()
         let before = try Data(contentsOf: URL(fileURLWithPath: path))
 
-        let database = try AppDatabase(path: path, key: key, allowConversion: false, scrubDelay: 0.05)
+        let database = try AppDatabase(path: path, key: key, allowConversion: false,
+                                       timing: .init(scrubDelay: 0.05))
         XCTAssertFalse(database.allowsWrites)
         XCTAssertEqual(try database.dbPool.read(secureDelete), 1)
         XCTAssertFalse(database.checkpoint())
-        XCTAssertFalse(database.checkpoint(force: true, reclaimAllFreePages: true))
+        XCTAssertFalse(database.checkpoint(force: true, waitForReaders: true))
+        XCTAssertFalse(database.scrubIsPending, "no scrub on a read-only cache")
         database.scheduleScrub()
+        database.rebuildSearchIndexIfPending()
         Thread.sleep(forTimeInterval: 0.5)
         database.close()
 
@@ -450,42 +475,112 @@ final class SecureDeleteTests: XCTestCase {
 
     // MARK: Files set aside
 
-    /// A damaged plaintext cache is reset; its unencrypted mail must not be
-    /// kept next to the new file.
-    func testDamagedPlaintextCacheIsNotKeptAside() throws {
+    private func makePlaintextCache(at file: String, marker secret: String) throws {
+        let plain = try DatabaseQueue(path: file)
+        try AppDatabase.migrator.migrate(plain)
+        try plain.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertMessage(db, account: "me@example.com", gmailId: "kept",
+                              subject: "Subject", body: "Only copy \(secret)")
+            let draft = LocalDraft(
+                id: nil, accountId: "me@example.com", fromEmail: "", toHeader: "x@example.com",
+                ccHeader: "", bccHeader: "", subject: "Draft", body: "Unsent \(secret)",
+                replyToMessageId: nil, forward: false, replacingDraftId: nil,
+                attachmentsJSON: Data("[]".utf8), createdAt: Date(), updatedAt: Date())
+            try draft.insert(db)
+        }
+        try plain.close()
+    }
+
+    private func encryptedRows(_ file: String, table: String) throws -> Int {
+        var config = Configuration()
+        let raw = AppDatabase.rawKeyLiteral(key)
+        config.prepareDatabase { db in try db.usePassphrase(raw) }
+        let queue = try DatabaseQueue(path: file, configuration: config)
+        defer { try? queue.close() }
+        return try queue.read { db in
+            try Int.fetchOne(db, sql: "SELECT count(*) FROM \"\(table)\"") ?? 0
+        }
+    }
+
+    private func noFileHolds(_ text: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        for name in try FileManager.default.contentsOfDirectory(atPath: dir.path) {
+            let data = try Data(contentsOf: dir.appendingPathComponent(name))
+            XCTAssertNil(data.range(of: Data(text.utf8)), "\(name) holds it in plaintext",
+                         file: file, line: line)
+        }
+    }
+
+    /// A plaintext cache that reaches the reset path while it can still be
+    /// read (here: its one-time encryption fails after the export) is the
+    /// only copy of the unsent draft: it is kept, encrypted, and only then
+    /// is the plaintext deleted.
+    func testRecoverablePlaintextOnTheResetPathIsKeptEncrypted() throws {
         let secret = marker("plainsecret")
+        try makePlaintextCache(at: path, marker: secret)
+        struct ExportFailed: Error {}
+        let database = try AppDatabase(path: path, key: key, allowConversion: true,
+                                       beforeSwap: { _ in throw ExportFailed() })
+        XCTAssertEqual(database.storageState, .writable, "a fresh cache")
+        database.close()
+
+        let aside = path + ".unreadable"
+        XCTAssertFalse(AppDatabase.isPlaintext(aside), "kept aside encrypted")
+        XCTAssertEqual(try encryptedRows(aside, table: "localDraft"), 1, "the draft survives")
+        XCTAssertEqual(try encryptedRows(aside, table: "message_body"), 1)
+        try noFileHolds(secret)
+    }
+
+    /// A rename that fails after a good export says nothing about the file:
+    /// it stays as it was, read-only (F-02), and nothing is set aside.
+    func testFailedSwapDefersTheEncryptionInsteadOfResetting() throws {
+        let secret = marker("plainsecret")
+        try makePlaintextCache(at: path, marker: secret)
+        let before = try Data(contentsOf: URL(fileURLWithPath: path))
+        let database = try AppDatabase(path: path, key: key, allowConversion: true,
+                                       beforeSwap: { _ in throw AppDatabase.RekeyError.swapFailed(EXDEV) })
+        XCTAssertFalse(database.allowsWrites, "deferred, as when busy")
+        database.close()
+        XCTAssertTrue(AppDatabase.isPlaintext(path))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), before)
+        let fm = FileManager.default
+        XCTAssertFalse(fm.fileExists(atPath: path + ".unreadable"))
+        XCTAssertFalse(fm.fileExists(atPath: path + ".encrypting"), "no partial copy left")
+
+        // The next launch converts it.
+        let next = try AppDatabase(path: path, key: key, allowConversion: true)
+        XCTAssertEqual(next.storageState, .writable)
+        next.close()
+        XCTAssertEqual(try encryptedRows(path, table: "localDraft"), 1)
+    }
+
+    /// A plaintext file that cannot be read at all cannot be copied: it is
+    /// kept aside as it was rather than destroyed.
+    func testUnreadablePlaintextIsKeptAsItWas() throws {
         var bytes = Data("SQLite format 3\u{0}".utf8)
         bytes.append(contentsOf: [0x00, 0x03])   // an impossible page size
-        bytes.append(Data(String(repeating: "mail \(secret) ", count: 200).utf8))
+        bytes.append(Data(String(repeating: "mail ", count: 200).utf8))
         try bytes.write(to: URL(fileURLWithPath: path))
 
         let database = try AppDatabase(path: path, key: key, allowConversion: true)
         XCTAssertEqual(database.storageState, .writable)
         database.close()
-        let fm = FileManager.default
-        XCTAssertFalse(fm.fileExists(atPath: path + ".unreadable"),
-                       "a plaintext cache must not be kept aside")
-        let names = try fm.contentsOfDirectory(atPath: dir.path)
-        for name in names {
-            let data = try Data(contentsOf: dir.appendingPathComponent(name))
-            XCTAssertNil(data.range(of: Data(secret.utf8)), "\(name) keeps the plaintext mail")
-        }
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path + ".unreadable")), bytes)
     }
 
-    /// What an earlier build kept aside: a plaintext copy goes at the next
-    /// open; an encrypted one (unreadable without the key, kept for
-    /// post-mortems) stays.
-    func testPlaintextLeftoverFromAnEarlierBuildIsRemovedAtOpen() throws {
-        let fm = FileManager.default
+    /// What an earlier build kept aside in plaintext is encrypted at the
+    /// next open; an encrypted copy (kept for post-mortems) is left alone.
+    func testPlaintextLeftoverFromAnEarlierBuildIsEncryptedAtOpen() throws {
+        let secret = marker("plainsecret")
         let aside = path + ".unreadable"
-        let legacy = try DatabaseQueue(path: aside)
-        try legacy.write { db in try db.execute(sql: "CREATE TABLE t (body TEXT)") }
-        try legacy.close()
+        try makePlaintextCache(at: aside, marker: secret)
         XCTAssertTrue(AppDatabase.isPlaintext(aside))
 
         var database = try AppDatabase(path: path, key: key, allowConversion: true)
         database.close()
-        XCTAssertFalse(fm.fileExists(atPath: aside), "plaintext leftover must go")
+        XCTAssertFalse(AppDatabase.isPlaintext(aside))
+        XCTAssertEqual(try encryptedRows(aside, table: "localDraft"), 1)
+        try noFileHolds(secret)
 
         let cipherLike = Data((0..<4096).map { _ in UInt8.random(in: 0...255) })
         try cipherLike.write(to: URL(fileURLWithPath: aside))

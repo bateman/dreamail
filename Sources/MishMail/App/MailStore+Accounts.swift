@@ -108,12 +108,11 @@ extension MailStore {
             // refresh token and fails, instead of reusing the cached one.
             await GmailClient.shared(accountEmail: id).forgetAccessToken()
             // The purge zeroed the account's rows in their pages
-            // (secure_delete); fold those pages out of the WAL, truncate it,
-            // and release every freed page now rather than at the next idle
-            // pass. A reader holding the log makes this a partial pass; the
-            // scrub the purge scheduled retries until it completes.
+            // (secure_delete); fold those pages out of the WAL and truncate it
+            // now rather than in a few seconds. A reader holding the log makes
+            // this a partial pass; the scrub the purge scheduled retries.
             _ = await Task.detached(priority: .utility) {
-                AppDatabase.shared.checkpoint(reclaimAllFreePages: true)
+                AppDatabase.shared.checkpoint()
             }.value
             guard let self, !self.isShuttingDown else { return }
             // Recent searches are not tagged by account; any of them may be
@@ -152,27 +151,51 @@ extension MailStore {
     func sweepRemovedAccountResidueOnce() {
         guard !Self.residueSwept else { return }
         Self.residueSwept = true
+        // Not a database write, so also on a read-only cache.
+        LegacyHTTPCache.retire()
+        // From here on, a deleted message's copies outside the database go
+        // with it (the scrub after each deletion drains the queue).
+        AppDatabase.shared.deletedMessageHandler = Self.removeOutsideDatabase(deletedMessages:)
         guard cacheAcceptsWrites(silent: true) else { return }
+        AppDatabase.shared.scheduleScrub()
         let pool = db
         let pending = AccountLifecycle.pendingRemovals()
         Task { @MainActor in
-            typealias Sweep = (live: [String], removals: (finish: [String], stale: [String]))
+            typealias Sweep = (live: [String], removals: (finish: [String], stale: [String]),
+                               cached: [String: Set<String>])
             guard let result = try? await pool.write({ db -> Sweep in
                 try AccountLifecycle.purgeOrphanRows(db)
-                return (live: try AccountLifecycle.liveAccountIds(db),
-                        removals: try AccountLifecycle.removalsToFinish(db, pending: pending))
+                let live = try AccountLifecycle.liveAccountIds(db)
+                return (live: live,
+                        removals: try AccountLifecycle.removalsToFinish(db, pending: pending),
+                        cached: try AttachmentCache.cachedMessageFolders(db, accounts: live))
             }) else { return }
             for id in result.removals.stale { AccountLifecycle.clearRemovalPending(id) }
             for id in result.removals.finish { await Self.removeOutsideDatabase(accountId: id) }
-            let live = result.live
+            let (live, cached) = (result.live, result.cached)
             _ = await Task.detached(priority: .utility) {
                 AttachmentCache.removeOrphans(liveAccounts: live)
+                // Copies of messages deleted before the queue existed, or
+                // while the handler was not set yet.
+                for (account, keep) in cached {
+                    AttachmentCache.removeMessages(ofAccount: account, keeping: keep)
+                }
             }.value
-            // Google responses no longer go to the on-disk HTTP cache
-            // (`GoogleHTTP`); earlier builds put them there. Unlinks their
-            // rows; it cannot scrub what the cache file already freed.
-            URLCache.shared.removeAllCachedResponses()
         }
+    }
+
+    /// The copies of deleted messages kept outside the database: their
+    /// attachment copies and their threads' notifications.
+    nonisolated private static func removeOutsideDatabase(
+        deletedMessages items: [DeletedMessageResidue.Item]
+    ) {
+        for item in items {
+            AttachmentCache.removeMessage(accountId: item.accountId, gmailMessageId: item.gmailId)
+        }
+        let threads = Set(items.map { [$0.accountId, $0.threadId] })
+        Notifier.removeNotifications(withIdentifiers: threads.flatMap {
+            NotificationContent.threadIdentifiers(accountId: $0[0], threadId: $0[1])
+        })
     }
 
     private static var residueSwept = false

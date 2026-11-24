@@ -63,7 +63,7 @@ final class SecureDeleteCostTests: XCTestCase {
             }
         }
         try pool.writeWithoutTransaction { db in
-            _ = try AppDatabase.foldAndTruncateLog(db, freePageLimit: nil)
+            _ = try AppDatabase.foldAndTruncateLog(db, freePageLimit: AppDatabase.freePagesPerCheckpoint)
         }
         try pool.close()
     }
@@ -95,7 +95,7 @@ final class SecureDeleteCostTests: XCTestCase {
             try db.execute(sql: "PRAGMA secure_delete = \(config.pragma ? "ON" : "OFF")")
             try db.execute(sql: "INSERT INTO message_fts(message_fts, rank) VALUES('secure-delete', ?)",
                            arguments: [config.searchIndex ? 1 : 0])
-            _ = try AppDatabase.foldAndTruncateLog(db, freePageLimit: nil)
+            _ = try AppDatabase.foldAndTruncateLog(db, freePageLimit: AppDatabase.freePagesPerCheckpoint)
         }
         let ids = (0..<config.messages).map { "\(account):m\($0)" }
         let start = Date()
@@ -155,5 +155,57 @@ final class SecureDeleteCostTests: XCTestCase {
                          median(samples.map(\.delete)), median(samples.map(\.scrub)),
                          samples.map { String(format: "%.0f", $0.delete) }.joined(separator: "/")))
         }
+    }
+
+    // MARK: At mailbox scale
+
+    /// The two costs the bulk path weighs, at a realistic size: deleting one
+    /// message securely from the index, and reindexing one remaining message
+    /// in a rebuild. Their ratio is `SearchIndexDeletes.rebuildCostRatio`.
+    func testBulkPathCostRatioAtMailboxScale() throws {
+        let size = 50_000
+        let deleted = 500
+        let path = dir.appendingPathComponent("large.sqlite").path
+        XCTAssertEqual(try AppDatabase.prepareDatabaseFile(path: path, key: key), .raw)
+        let pool = try AppDatabase.openAndMigrate(path: path, key: key, scheme: .raw)
+        defer { try? pool.close() }
+        try pool.write { db in
+            try Account(id: account, displayName: "Bench", historyId: nil,
+                        lastSyncAt: nil, senderName: "").insert(db)
+            var rng = SystemRandomNumberGenerator()
+            for i in 0..<size {
+                let subject = (0..<6).map { _ in Self.words.randomElement(using: &rng)! }
+                    .joined(separator: " ")
+                try Message(
+                    id: "\(account):m\(i)", accountId: account, gmailId: "m\(i)",
+                    threadId: "\(account):t\(i / 3)",
+                    fromHeader: "Person \(i % 997) <person\(i % 997)@example.com>",
+                    toHeader: account, ccHeader: i % 5 == 0 ? "team@example.com" : "",
+                    subject: subject + " \(i)", date: Date(), snippet: "", bodyText: "",
+                    bodyHTML: nil, messageIdHeader: "<m\(i)@example.com>", referencesHeader: "",
+                    labelIds: "INBOX", isUnread: false, hasAttachment: false).insert(db)
+            }
+        }
+        try pool.writeWithoutTransaction { db in
+            _ = try AppDatabase.foldAndTruncateLog(db, freePageLimit: AppDatabase.freePagesPerCheckpoint)
+        }
+        let ids = (0..<deleted).map { "\(account):m\($0 * (size / deleted))" }
+        let marks = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        var start = Date()
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM message WHERE id IN (\(marks))",
+                           arguments: StatementArguments(ids))
+        }
+        let perRow = Date().timeIntervalSince(start) * 1_000 / Double(deleted)
+        start = Date()
+        try pool.write { db in
+            try db.execute(sql: "INSERT INTO message_fts(message_fts) VALUES('rebuild')")
+        }
+        let perRebuilt = Date().timeIntervalSince(start) * 1_000 / Double(size - deleted)
+        print(String(format: """
+            SECURE-DELETE-COST scale=%ld secure_delete_ms_per_deleted=%.4f \
+            rebuild_ms_per_remaining=%.4f ratio=%.1f
+            """, size, perRow, perRebuilt, perRow / perRebuilt))
+        XCTAssertEqual(try pool.read { db in try Message.fetchCount(db) }, size - deleted)
     }
 }

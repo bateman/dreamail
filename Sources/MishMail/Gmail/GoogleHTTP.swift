@@ -23,7 +23,6 @@ enum GoogleHTTP {
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never
-        config.urlCredentialStorage = nil
         return config
     }
 }
