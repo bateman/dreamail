@@ -507,3 +507,8 @@ struct TokenAddressField: View {
         DispatchQueue.main.async { focused = true }
     }
 }
+
+// TEMPORARY (reverted): proves the CI warning gate fails on an app warning.
+func ciWarningGateProbe() {
+    let unusedProbe = 1
+}
