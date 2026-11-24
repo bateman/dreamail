@@ -166,6 +166,78 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         XCTAssertTrue(checker.lookups.allSatisfy { $0.2 == 42 })
     }
 
+    func testTheLanguageAppKitCheckedInIsNotAskedAgain() {
+        let text = "zorp" as NSString
+        let checker = FakeChecker()
+        _ = ComposeSpellLanguages.filter([spelling(text, "zorp")], in: text, languages: enIt,
+                                         checkedLanguage: "it", documentTag: 0, checker: checker)
+        XCTAssertEqual(checker.lookups.map(\.1), ["en"])
+    }
+
+    func testARepeatedWordIsLookedUpOncePerLanguage() {
+        let text = "zorp zorp zorp" as NSString
+        let checker = FakeChecker()
+        let cache = SpellLookupCache()
+        let results = [NSRange(location: 0, length: 4), NSRange(location: 5, length: 4),
+                       NSRange(location: 10, length: 4)].map(NSTextCheckingResult.spellCheckingResult(range:))
+        for _ in 0..<2 {
+            let kept = ComposeSpellLanguages.filter(results, in: text, languages: enIt,
+                                                    documentTag: 0, checker: checker, cache: cache)
+            XCTAssertEqual(kept.count, 3)
+        }
+        XCTAssertEqual(checker.lookups.count, 2)
+    }
+
+    func testTheViewCacheEmptiesWhenTheLanguagesChange() {
+        let view = MultilingualSpellTextView()
+        view.spellLanguageChecker = FakeChecker()
+        view.spellLanguages = enIt
+        view.string = "zorp"
+        _ = view.filteredCheckingResults([.spellCheckingResult(range: NSRange(location: 0, length: 4))])
+        XCTAssertEqual(view.spellLookups.count, 2)
+        view.spellLanguages = ["it"]
+        XCTAssertEqual(view.spellLookups.count, 0)
+    }
+
+    /// Stands in for AppKit's Learn Spelling: the item's original target.
+    final class LearnTarget: NSObject {
+        var learned: [NSMenuItem] = []
+        @objc func learnSpellingFromMenu(_ sender: NSMenuItem) { learned.append(sender) }
+    }
+
+    func testLearnSpellingStillRunsAndEmptiesTheCache() {
+        let view = MultilingualSpellTextView()
+        let checker = FakeChecker()
+        view.spellLanguageChecker = checker
+        view.spellLanguages = enIt
+        view.string = "zorp"
+        _ = view.filteredCheckingResults([.spellCheckingResult(range: NSRange(location: 0, length: 4))])
+        XCTAssertEqual(view.spellLookups.count, 2)
+
+        let target = LearnTarget()
+        let menu = NSMenu()
+        let learn = NSMenuItem(title: "Learn Spelling",
+                               action: #selector(LearnTarget.learnSpellingFromMenu(_:)), keyEquivalent: "")
+        learn.target = target
+        let copy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
+        menu.addItem(learn)
+        menu.addItem(copy)
+        view.routeLearnAndIgnore(in: menu)
+        XCTAssertTrue(learn.target === view)
+        XCTAssertEqual(copy.action, #selector(NSText.copy(_:)), "other items are untouched")
+
+        view.runSpellingMenuAction(learn)
+        XCTAssertEqual(target.learned.count, 1)
+        XCTAssertTrue(target.learned.first === learn, "the original action gets the same sender")
+        XCTAssertEqual(view.spellLookups.count, 0)
+
+        // After Learn the word is correct in English and the next check
+        // asks again instead of trusting the old answer.
+        checker.dictionary["en"] = ["zorp"]
+        XCTAssertEqual(view.filteredCheckingResults(
+            [.spellCheckingResult(range: NSRange(location: 0, length: 4))]).count, 0)
+    }
+
     func testGrammarAndUnreadableResultsPassThrough() {
         let text = "ciao" as NSString
         let checker = FakeChecker(dictionary: ["it": ["ciao"]])
@@ -253,6 +325,48 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         let result = runs(text)
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result.first?.range, NSRange(location: 0, length: (text as NSString).length))
+        XCTAssertEqual(result.first?.isCapped, true)
+        XCTAssertEqual(runs("Ciao\nHello").map(\.isCapped), [false, false])
+    }
+
+    final class CountingIdentifier: SpellLanguageIdentifying {
+        var calls = 0
+        func dominantLanguage(of text: String, among languages: [String]) -> String? {
+            calls += 1
+            return FakeIdentifier().dominantLanguage(of: text, among: languages)
+        }
+    }
+
+    func testAVeryLongCheckIsNotIdentifiedParagraphByParagraph() {
+        let text = Array(repeating: "Ciao", count: 10 * ComposeSpellLanguages.maxRunsPerCheck)
+            .joined(separator: "\n") as NSString
+        let identifier = CountingIdentifier()
+        let result = ComposeSpellLanguages.runs(in: text, range: NSRange(location: 0, length: text.length),
+                                                languages: enIt, identifier: identifier)
+        XCTAssertEqual(result.map(\.language), ["it"])
+        XCTAssertEqual(identifier.calls, 1)
+
+        // At the cap, one identification per paragraph and no more.
+        let atCap = Array(repeating: "Ciao", count: ComposeSpellLanguages.maxRunsPerCheck)
+            .joined(separator: "\n") as NSString
+        let counted = CountingIdentifier()
+        let capped = ComposeSpellLanguages.runs(in: atCap, range: NSRange(location: 0, length: atCap.length),
+                                                languages: enIt, identifier: counted)
+        XCTAssertEqual(capped.map(\.isCapped), [false])
+        XCTAssertEqual(counted.calls, ComposeSpellLanguages.maxRunsPerCheck)
+    }
+
+    func testACappedRunIsNotGrammarChecked() {
+        let view = RecordingView()
+        view.spellLanguageIdentifier = FakeIdentifier()
+        view.spellLanguages = enIt
+        view.string = Array(repeating: "Hello", count: ComposeSpellLanguages.maxRunsPerCheck + 1)
+            .joined(separator: "\n")
+        view.forwarded.removeAll()
+        view.checkText(in: NSRange(location: 0, length: (view.string as NSString).length),
+                       types: spellingAndGrammar, options: [:])
+        XCTAssertEqual(view.forwarded.count, 1)
+        XCTAssertEqual(view.forwarded.first?.types, NSTextCheckingResult.CheckingType.spelling.rawValue)
     }
 
     func testTheSystemRecognizerTellsItalianFromEnglish() {
@@ -426,6 +540,31 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         XCTAssertEqual(other.items.first?.title, "x")
     }
 
+    func testAVeryLongWordKeepsAppKitsMenu() {
+        let view = MultilingualSpellTextView()
+        let checker = FakeChecker()
+        checker.suggestions = ["en": [String(repeating: "q", count: 150): ["q"]]]
+        view.spellLanguageChecker = checker
+        view.spellLanguageIdentifier = FakeIdentifier()
+        view.spellLanguages = enIt
+        view.string = "Hello " + String(repeating: "q", count: 150)
+        let menu = appKitLikeMenu(guesses: ["x"])
+        XCTAssertNil(view.clickedWordRange(atCharacterIndex: 20))
+        XCTAssertFalse(view.replaceSpellingGuesses(in: menu, atCharacterIndex: 20))
+        XCTAssertEqual(menu.items.first?.title, "x")
+    }
+
+    func testTheSelectionAppKitMadeOnRightClickIsTheWord() {
+        let view = MultilingualSpellTextView()
+        view.string = "Ciao, grazei mille"
+        let word = (view.string as NSString).range(of: "grazei mille")
+        view.setSelectedRange(word)
+        XCTAssertEqual(view.clickedWordRange(atCharacterIndex: word.location + 1), word)
+        // A selection elsewhere does not decide: the clicked word does.
+        XCTAssertEqual(view.clickedWordRange(atCharacterIndex: 1),
+                       NSRange(location: 0, length: 4))
+    }
+
     func testAStaleSuggestionDoesNothing() {
         let view = MultilingualSpellTextView()
         view.string = "Ciao grazei"
@@ -443,6 +582,8 @@ final class ComposeSpellLanguagesTests: XCTestCase {
     final class ProbeView: MultilingualSpellTextView {
         var checkedLanguages: [String?] = []
         var handled = 0
+        /// The text at each spelling result's range, read as the filter does.
+        var spellingWords: [String] = []
         override func forwardCheck(in range: NSRange, types: NSTextCheckingTypes,
                                    options: [NSSpellChecker.OptionKey: Any]) {
             checkedLanguages.append((options[.orthography] as? NSOrthography)?.dominantLanguage)
@@ -454,12 +595,30 @@ final class ComposeSpellLanguagesTests: XCTestCase {
                                                 options: [NSSpellChecker.OptionKey: Any] = [:],
                                                 orthography: NSOrthography, wordCount: Int) {
             handled += 1
+            let text = string as NSString
+            for result in results where result.resultType == .spelling
+                && NSMaxRange(result.range) <= text.length {
+                spellingWords.append(text.substring(with: result.range))
+            }
             super.handleTextCheckingResults(results, forRange: range, types: checkingTypes,
                                             options: options, orthography: orthography,
                                             wordCount: wordCount)
         }
     }
 
+    /// English for the paragraph saying "hello", British English for the
+    /// rest: two runs whose dictionaries every macOS install has.
+    struct EnglishVariantsIdentifier: SpellLanguageIdentifying {
+        func dominantLanguage(of text: String, among languages: [String]) -> String? {
+            text.lowercased().contains("hello") ? "en" : "en_GB"
+        }
+    }
+
+    /// Real AppKit, real NSSpellChecker: each run is checked and its results
+    /// come back, and a spelling result's range is a position in the whole
+    /// text (the filter reads the word there). The nonsense word is
+    /// misspelled in any dictionary, so the test does not depend on which
+    /// languages the runner has.
     func testContinuousCheckingGoesThroughTheLanguageHooks() {
         let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 400, height: 200),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -467,24 +626,27 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         window.isReleasedWhenClosed = false
         let view = ProbeView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         window.contentView?.addSubview(view)
-        view.spellLanguageIdentifier = FakeIdentifier()
-        view.spellLanguageChecker = FakeChecker()
-        view.spellLanguages = enIt
+        view.spellLanguageIdentifier = EnglishVariantsIdentifier()
+        view.spellLanguageChecker = FakeChecker()  // nothing is correct: every mark stays
+        view.spellLanguages = ["en", "en_GB"]
         view.isContinuousSpellCheckingEnabled = true
         window.makeFirstResponder(view)
         view.checkedLanguages.removeAll()
         view.handled = 0
-        view.insertText("Hello there, thanks for the notes. ",
+        view.spellingWords.removeAll()
+        let nonsense = "qzxwvbnkj"
+        view.insertText("Hello there, thanks for the notes.\nAnother line with \(nonsense) inside.\n",
                         replacementRange: NSRange(location: NSNotFound, length: 0))
-        let deadline = Date().addingTimeInterval(5)
-        while view.handled == 0, Date() < deadline {
+        let deadline = Date().addingTimeInterval(10)
+        while (view.handled < 2 || !view.spellingWords.contains(nonsense)), Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
-        XCTAssertFalse(view.checkedLanguages.isEmpty,
-                       "checkText(in:types:options:) not reached; handled=\(view.handled)")
-        XCTAssertGreaterThan(view.handled, 0,
-                             "handleTextCheckingResults not reached; checks=\(view.checkedLanguages)")
-        XCTAssertEqual(view.checkedLanguages.first ?? nil, "en")
+        XCTAssertEqual(Set(view.checkedLanguages.compactMap { $0 }), ["en", "en_GB"],
+                       "one run per paragraph language")
+        XCTAssertGreaterThanOrEqual(view.handled, 2, "every run's check delivers its results")
+        XCTAssertTrue(view.spellingWords.contains(nonsense),
+                      "result ranges are whole-text positions; words seen: \(view.spellingWords.count)")
+        XCTAssertTrue(view.spellingWords.allSatisfy { !$0.contains(" ") && !$0.contains("\n") })
         view.removeFromSuperview()
     }
 }

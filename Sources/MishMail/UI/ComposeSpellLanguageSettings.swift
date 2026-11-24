@@ -44,6 +44,8 @@ struct ComposeSpellLanguageSettings: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 180)
+            Text("Applies while you type. Edit ▸ Spelling and Grammar ▸ Check Document Now and the Spelling panel follow the macOS language setting.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

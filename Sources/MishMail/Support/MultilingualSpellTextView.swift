@@ -11,24 +11,41 @@ import AppKit
 /// reads as, and a spelling mark is dropped when the word is correct in any
 /// chosen language. Nothing global is changed: not
 /// `NSSpellChecker.shared.language()`, not "Automatic by Language", not other
-/// apps' settings.
+/// apps' settings. Check Document Now (⌘;) and the Spelling panel are
+/// AppKit's and keep following the system language.
 class MultilingualSpellTextView: NSTextView {
     /// Nil: the system setting decides. Otherwise the resolved, non-empty
     /// set from `ComposeSpellLanguages.resolve`.
     var spellLanguages: [String]? {
         didSet {
-            guard spellLanguages != oldValue, isContinuousSpellCheckingEnabled else { return }
+            guard spellLanguages != oldValue else { return }
+            spellLookups.removeAll()
+            guard isContinuousSpellCheckingEnabled else { return }
             // Re-mark the whole text under the new rule; AppKit re-checks
             // what is visible and the rest as it scrolls into view.
             isContinuousSpellCheckingEnabled = false
             isContinuousSpellCheckingEnabled = true
         }
     }
-    var spellLanguageChecker: SpellLanguageChecking = SystemSpellLanguageChecker()
+    var spellLanguageChecker: SpellLanguageChecking = SystemSpellLanguageChecker() {
+        didSet { spellLookups.removeAll() }
+    }
     var spellLanguageIdentifier: SpellLanguageIdentifying = NaturalLanguageSpellIdentifier()
+    /// Per-view answers of the "correct in another chosen language" lookups.
+    let spellLookups = SpellLookupCache()
+
+    /// The longest word the right-click suggestions are computed for; past
+    /// it (a pasted token, a URL without spaces) AppKit's menu stays as is.
+    static let maxSuggestedWordLength = 100
 
     private static let spellingType = NSTextCheckingResult.CheckingType.spelling.rawValue
+    private static let grammarType = NSTextCheckingResult.CheckingType.grammar.rawValue
     private static let orthographyType = NSTextCheckingResult.CheckingType.orthography.rawValue
+
+    /// The text storage's own string: no copy per check.
+    private var currentText: NSString {
+        textStorage?.mutableString ?? (string as NSString)
+    }
 
     override func checkText(in range: NSRange, types checkingTypes: NSTextCheckingTypes,
                             options: [NSSpellChecker.OptionKey: Any] = [:]) {
@@ -39,12 +56,14 @@ class MultilingualSpellTextView: NSTextView {
         }
         // The orthography is given, so AppKit must not detect another one.
         let types = checkingTypes & ~Self.orthographyType
-        for run in ComposeSpellLanguages.runs(in: string as NSString, range: range,
+        for run in ComposeSpellLanguages.runs(in: currentText, range: range,
                                               languages: languages,
                                               identifier: spellLanguageIdentifier) {
             var runOptions = options
             runOptions[.orthography] = NSOrthography.defaultOrthography(forLanguage: run.language)
-            forwardCheck(in: run.range, types: types, options: runOptions)
+            forwardCheck(in: run.range,
+                         types: run.isCapped ? types & ~Self.grammarType : types,
+                         options: runOptions)
         }
     }
 
@@ -60,20 +79,29 @@ class MultilingualSpellTextView: NSTextView {
                                             options: [NSSpellChecker.OptionKey: Any] = [:],
                                             orthography: NSOrthography,
                                             wordCount: Int) {
-        super.handleTextCheckingResults(filteredCheckingResults(results),
-                                        forRange: range, types: checkingTypes,
-                                        options: options, orthography: orthography,
-                                        wordCount: wordCount)
+        super.handleTextCheckingResults(
+            filteredCheckingResults(results, checkedIn: orthography.dominantLanguage),
+            forRange: range, types: checkingTypes, options: options,
+            orthography: orthography, wordCount: wordCount)
     }
 
     /// The results AppKit will mark, after the "correct in any chosen
-    /// language" rule.
-    func filteredCheckingResults(_ results: [NSTextCheckingResult]) -> [NSTextCheckingResult] {
+    /// language" rule. `checkedIn` is the language AppKit says it checked
+    /// in (the orthography it hands back), which flagged the words already.
+    func filteredCheckingResults(_ results: [NSTextCheckingResult],
+                                 checkedIn: String? = nil) -> [NSTextCheckingResult] {
         guard let languages = spellLanguages, !languages.isEmpty else { return results }
-        return ComposeSpellLanguages.filter(results, in: string as NSString,
+        return ComposeSpellLanguages.filter(results, in: currentText,
                                             languages: languages,
+                                            checkedLanguage: checkedIn,
                                             documentTag: spellCheckerDocumentTag,
-                                            checker: spellLanguageChecker)
+                                            checker: spellLanguageChecker,
+                                            cache: spellLookups)
+    }
+
+    override func ignoreSpelling(_ sender: Any?) {
+        super.ignoreSpelling(sender)
+        spellLookups.removeAll()
     }
 
     // MARK: Suggestions
@@ -83,6 +111,7 @@ class MultilingualSpellTextView: NSTextView {
         guard let menu, spellLanguages != nil else { return menu }
         let index = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
         replaceSpellingGuesses(in: menu, atCharacterIndex: index)
+        routeLearnAndIgnore(in: menu)
         return menu
     }
 
@@ -94,8 +123,8 @@ class MultilingualSpellTextView: NSTextView {
     func replaceSpellingGuesses(in menu: NSMenu, atCharacterIndex index: Int) -> Bool {
         guard let languages = spellLanguages, !languages.isEmpty,
               let guessItems = ComposeSpellLanguages.spellingGuessItems(in: menu),
-              let wordRange = wordRange(atCharacterIndex: index) else { return false }
-        let text = string as NSString
+              let wordRange = clickedWordRange(atCharacterIndex: index) else { return false }
+        let text = currentText
         let word = text.substring(with: wordRange)
         let tag = spellCheckerDocumentTag
         guard !languages.contains(where: {
@@ -124,8 +153,28 @@ class MultilingualSpellTextView: NSTextView {
         return true
     }
 
+    /// The word the menu is about: AppKit's selection when the right-click
+    /// selected it (and the click is in it), else the word at the click.
+    /// Nil past `maxSuggestedWordLength`.
+    func clickedWordRange(atCharacterIndex index: Int) -> NSRange? {
+        let text = currentText
+        let selection = selectedRange()
+        let range: NSRange
+        if selection.length > 0, selection.location != NSNotFound,
+           NSMaxRange(selection) <= text.length,
+           index >= selection.location, index <= NSMaxRange(selection) {
+            range = selection
+        } else if let word = wordRange(atCharacterIndex: index) {
+            range = word
+        } else {
+            return nil
+        }
+        guard range.length <= Self.maxSuggestedWordLength else { return nil }
+        return range
+    }
+
     private func wordRange(atCharacterIndex index: Int) -> NSRange? {
-        let text = string as NSString
+        let text = currentText
         guard text.length > 0 else { return nil }
         let letters = CharacterSet.letters
         func isLetter(_ i: Int) -> Bool {
@@ -146,7 +195,7 @@ class MultilingualSpellTextView: NSTextView {
 
     @objc func applySpellingGuess(_ sender: NSMenuItem) {
         guard let choice = sender.representedObject as? SpellingGuessChoice else { return }
-        let text = string as NSString
+        let text = currentText
         // The text may have changed while the menu was open.
         guard NSMaxRange(choice.range) <= text.length,
               text.substring(with: choice.range) == choice.word,
@@ -154,6 +203,37 @@ class MultilingualSpellTextView: NSTextView {
         else { return }
         textStorage?.replaceCharacters(in: choice.range, with: choice.replacement)
         didChangeText()
+    }
+
+    // MARK: Learn / Ignore
+
+    /// AppKit's own Learn, Unlearn and Ignore items, re-pointed here so the
+    /// lookup cache is emptied around them. The original action still runs,
+    /// with the same sender. Items of any other kind are untouched.
+    private var spellingMenuActions: [ObjectIdentifier: (action: Selector, target: AnyObject?)] = [:]
+
+    func routeLearnAndIgnore(in menu: NSMenu) {
+        spellingMenuActions.removeAll()
+        for item in menu.items {
+            guard let action = item.action, action != #selector(applySpellingGuess(_:)) else { continue }
+            let name = NSStringFromSelector(action).lowercased()
+            guard name.contains("learnspelling") || name.contains("ignorespelling") else { continue }
+            spellingMenuActions[ObjectIdentifier(item)] = (action, item.target)
+            item.target = self
+            item.action = #selector(runSpellingMenuAction(_:))
+        }
+    }
+
+    @objc func runSpellingMenuAction(_ sender: NSMenuItem) {
+        guard let original = spellingMenuActions[ObjectIdentifier(sender)] else { return }
+        spellLookups.removeAll()
+        let target: AnyObject = original.target ?? self
+        if target.responds(to: original.action) {
+            _ = target.perform(original.action, with: sender)
+        } else {
+            NSApplication.shared.sendAction(original.action, to: original.target, from: sender)
+        }
+        spellLookups.removeAll()
     }
 }
 

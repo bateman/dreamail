@@ -90,10 +90,15 @@ enum ComposeSpellLanguages {
     struct CheckRun: Equatable {
         var range: NSRange
         var language: String
+        /// More paragraphs than `maxRunsPerCheck`: one run whose language
+        /// comes from its first characters only, so grammar is not checked
+        /// in it (grammar marks in the wrong language are worse than none).
+        var isCapped = false
     }
 
     /// More paragraphs than this in one check (a long quoted thread loaded
-    /// at once) are checked as one run, in the language most of them read as.
+    /// at once) are not identified one by one: they are checked as one run,
+    /// in the language of its first `identificationSample` characters.
     static let maxRunsPerCheck = 64
     /// Characters read to tell a paragraph's language; enough for the
     /// recognizer, and bounded so a huge paragraph costs nothing extra.
@@ -134,20 +139,30 @@ enum ComposeSpellLanguages {
             return [CheckRun(range: target, language: context() ?? fallback)]
         }
 
-        var paragraphs: [(range: NSRange, language: String?)] = []
+        // Ranges first, stopping past the cap, so a long check costs no
+        // more than `maxRunsPerCheck` identifications (or one, when capped).
+        var spans: [(clipped: NSRange, content: NSRange)] = []
+        var overCap = false
         text.enumerateSubstrings(in: text.paragraphRange(for: target),
                                  options: [.byParagraphs, .substringNotRequired]) {
-            _, contentRange, enclosingRange, _ in
+            _, contentRange, enclosingRange, stop in
             let clipped = NSIntersectionRange(enclosingRange, target)
             guard clipped.length > 0 else { return }
-            paragraphs.append((clipped, identify(contentRange)))
+            if spans.count == maxRunsPerCheck {
+                overCap = true
+                stop.pointee = true
+                return
+            }
+            spans.append((clipped, contentRange))
         }
-        guard !paragraphs.isEmpty else {
+        if overCap {
+            return [CheckRun(range: target, language: identify(target) ?? fallback,
+                             isCapped: true)]
+        }
+        guard !spans.isEmpty else {
             return [CheckRun(range: target, language: context() ?? fallback)]
         }
-        if paragraphs.count > maxRunsPerCheck {
-            return [CheckRun(range: target, language: identify(target) ?? fallback)]
-        }
+        let paragraphs = spans.map { (range: $0.clipped, language: identify($0.content)) }
 
         // Unknown paragraphs take the nearest known one before them, then
         // after them; with none known, the surrounding text decides.
@@ -186,19 +201,26 @@ enum ComposeSpellLanguages {
     /// Drops a spelling mark when the word is correct in any chosen
     /// language; grammar and every other result pass through untouched.
     /// `documentTag` is the text view's spell document, so words the user
-    /// chose to ignore in this message stay unmarked.
+    /// chose to ignore in this message stay unmarked. `checkedLanguage` is
+    /// the one AppKit reports having checked in: it flagged the word, so it
+    /// is not asked again. Answers are kept in `cache` between checks.
     static func filter(_ results: [NSTextCheckingResult], in text: NSString,
-                       languages: [String], documentTag: Int,
-                       checker: SpellLanguageChecking) -> [NSTextCheckingResult] {
+                       languages: [String], checkedLanguage: String? = nil,
+                       documentTag: Int, checker: SpellLanguageChecking,
+                       cache: SpellLookupCache? = nil) -> [NSTextCheckingResult] {
         guard !languages.isEmpty else { return results }
+        let others = languages.filter { $0 != checkedLanguage }
         return results.filter { result in
             guard result.resultType == .spelling else { return true }
             let r = result.range
             guard r.location != NSNotFound, r.length > 0,
                   NSMaxRange(r) <= text.length else { return true }
             let word = text.substring(with: r)
-            return !languages.contains {
-                checker.isCorrect(word, language: $0, documentTag: documentTag)
+            return !others.contains { language in
+                if let known = cache?.answer(word: word, language: language) { return known }
+                let correct = checker.isCorrect(word, language: language, documentTag: documentTag)
+                cache?.store(correct, word: word, language: language)
+                return correct
             }
         }
     }
@@ -252,6 +274,28 @@ enum ComposeSpellLanguages {
     }
 }
 
+/// "Is this word correct in this language" answers, kept per text view so a
+/// word repeated across the message is looked up once per language. Emptied
+/// when the chosen languages change and around Learn / Ignore Spelling.
+final class SpellLookupCache {
+    /// Generous for one message; past it the cache starts over.
+    static let limit = 4_096
+    private var answers: [String: Bool] = [:]
+
+    private func key(_ word: String, _ language: String) -> String {
+        language + "\u{0}" + word
+    }
+    func answer(word: String, language: String) -> Bool? {
+        answers[key(word, language)]
+    }
+    func store(_ correct: Bool, word: String, language: String) {
+        if answers.count >= Self.limit { answers.removeAll(keepingCapacity: true) }
+        answers[key(word, language)] = correct
+    }
+    func removeAll() { answers.removeAll() }
+    var count: Int { answers.count }
+}
+
 // MARK: - Seams
 
 /// The part of NSSpellChecker the language logic needs, so tests can run
@@ -290,15 +334,18 @@ protocol SpellLanguageIdentifying {
 }
 
 /// Apple's on-device language recognizer, limited to the chosen languages.
-struct NaturalLanguageSpellIdentifier: SpellLanguageIdentifying {
+/// One recognizer per text view, reset between paragraphs (main thread).
+final class NaturalLanguageSpellIdentifier: SpellLanguageIdentifying {
     /// Below this the paragraph takes a neighbour's language instead.
     var minimumConfidence = 0.6
+    private let recognizer = NLLanguageRecognizer()
 
     func dominantLanguage(of text: String, among languages: [String]) -> String? {
         guard !languages.isEmpty else { return nil }
-        let bases = Array(Set(languages.map(ComposeSpellLanguages.baseLanguage(of:))))
+        let bases = Array(Set(languages.map(ComposeSpellLanguages.baseLanguage(of:)))).sorted()
         guard bases.count > 1 else { return languages.first }
-        let recognizer = NLLanguageRecognizer()
+        // reset() may also clear the constraints, so they are set each time.
+        recognizer.reset()
         recognizer.languageConstraints = bases.map { NLLanguage(rawValue: $0) }
         recognizer.processString(text)
         guard let (best, confidence) = recognizer.languageHypotheses(withMaximum: 1)
