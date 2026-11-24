@@ -1107,21 +1107,24 @@ struct ThreadDetailView: View {
                         // User label: solid pill in its Gmail color, the
                         // remove button in the pill's own text color.
                         LabelPill(name: chip.name, colors: colors,
-                                  font: .system(size: 11.5 * fontScale, weight: .medium),
-                                  verticalPadding: 3) {
+                                  fontSize: 11.5 * fontScale) {
                             removeChipButton(chip.id, name: chip.name)
                         }
                     } else {
-                        HStack(spacing: 5) {
+                        // Same geometry as the label chips beside it.
+                        let chipMetrics = LabelChipMetrics(fontSize: 11.5 * fontScale)
+                        HStack(spacing: 4) {
                             Text(chip.name)
                                 .font(.system(size: 11.5 * fontScale, weight: .medium))
                             removeChipButton(chip.id, name: chip.name)
                                 .foregroundStyle(.secondary)
                         }
                         .foregroundStyle(Color.secondary)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .padding(.horizontal, chipMetrics.horizontalPadding)
+                        .frame(minHeight: chipMetrics.height)
                         .background(Color.secondary.opacity(0.1),
-                                    in: RoundedRectangle(cornerRadius: 5))
+                                    in: RoundedRectangle(cornerRadius: chipMetrics.cornerRadius,
+                                                         style: .continuous))
                     }
                 }
                 Button {

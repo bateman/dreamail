@@ -690,9 +690,7 @@ private struct ThreadListSections: View, Equatable {
             onToggleCollapsed(title)
         } label: {
             HStack(spacing: 6) {
-                LabelPill(name: title, colors: colors,
-                          font: .system(size: 12 * fontScale, weight: .semibold),
-                          verticalPadding: 2)
+                LabelPill(name: title, colors: colors, fontSize: 12 * fontScale)
                 Text("\(count)")
                     .font(.system(size: 11 * fontScale).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -1852,10 +1850,14 @@ struct ThreadRow: View, Equatable {
             // hover so the row never changes size.
             ZStack(alignment: .trailing) {
                 HStack(spacing: 5) {
-                    // User labels as colored pills right before the date.
-                    ForEach(model.userLabels.prefix(2), id: \.name) { chip in
-                        labelPill(chip)
+                    // User labels as Gmail-style chips right before the date.
+                    HStack(spacing: LabelChipMetrics(fontSize: ThreadRowChipLayout.fontSize * fontScale).spacing) {
+                        ForEach(model.userLabels.prefix(2), id: \.name) { chip in
+                            labelPill(chip)
+                        }
                     }
+                    // In a tight row the chips truncate before the date.
+                    .layoutPriority(-1)
                     if model.userLabels.count > 2 {
                         Text("+\(model.userLabels.count - 2)")
                             .font(.system(size: 11 * fontScale).monospacedDigit())
@@ -1892,7 +1894,7 @@ struct ThreadRow: View, Equatable {
             }
             // Match the visual icon size (~13pt + small pad). Hit expansion is
             // layout-neutral via pmHitTarget so rows stay dense.
-            .frame(height: 18 * fontScale)
+            .frame(height: ThreadRowChipLayout.trailingStripHeight * fontScale)
             .animation(.easeOut(duration: 0.12), value: hovering)
         }
         .padding(.vertical, 6 * fontScale)
@@ -1940,13 +1942,14 @@ struct ThreadRow: View, Equatable {
         return marker + Text(", ").foregroundColor(.secondary) + names
     }
 
-    /// Label pill in the label's Gmail color, solid, with readable text.
+    /// Label chip in the label's Gmail color, solid, with readable text.
     /// The surface it sits on (plain, the read-row wash, the selection
     /// highlight) decides whether it needs an outline. Never dimmed with the
     /// read row's text.
     private func labelPill(_ chip: ThreadRowLabelChip) -> some View {
         LabelPill(name: chip.name, colors: chip.colors, surface: pillSurface,
-                  font: .system(size: 10.5 * fontScale, weight: .medium))
+                  fontSize: ThreadRowChipLayout.fontSize * fontScale,
+                  maxWidth: ThreadRowChipLayout.maxWidth * fontScale)
     }
 
     /// Checked rows (a 10% accent wash) count as plain content: the wash
