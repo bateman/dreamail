@@ -123,9 +123,10 @@ private struct CappedWidth: Layout {
 
 extension LabelPill where Trailing == EmptyView {
     init(name: String, colors: LabelColors,
-         surface: LabelPillStyle.Surface = .content, fontSize: CGFloat) {
+         surface: LabelPillStyle.Surface = .content, fontSize: CGFloat,
+         maxWidth: CGFloat? = nil) {
         self.init(name: name, colors: colors, surface: surface, fontSize: fontSize,
-                  trailing: { EmptyView() })
+                  maxWidth: maxWidth, trailing: { EmptyView() })
     }
 
     init(name: String, colors: LabelColors,
