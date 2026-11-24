@@ -43,8 +43,11 @@ struct OAuthConfig {
             do {
                 return try resolveClientSecret(
                     from: Keychain.read("oauth.clientSecret"))
+            } catch KeychainError.status(let status) {
+                NSLog("MishMail: client secret unreadable (Keychain status %d)", status)
+                return ""
             } catch {
-                NSLog("MishMail: %@", error.localizedDescription)
+                NSLog("MishMail: client secret unreadable: %@", DiagnosticLog.describe(error))
                 return ""
             }
         }

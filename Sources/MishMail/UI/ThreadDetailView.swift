@@ -308,7 +308,7 @@ struct ThreadDetailView: View {
                 // it is 0 the pane painted empty until this task ran.
                 let preseeded = messages.isEmpty ? 0 : 1
                 let readyInterval = PerfMetrics.begin(
-                    .openReady, meta: "thread=\(thread.id) preseeded=\(preseeded)")
+                    .openReady, meta: "preseeded=\(preseeded)")
                 // Paint from the main-actor mirror when the payload is already
                 // known — no `await`, so the pane lands in the same frame as
                 // the row removal. This is the common case on the advance path
