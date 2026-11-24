@@ -41,6 +41,19 @@ jobs:
       - name: Test the CI checks
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
+      # Every tracked shell script (*.sh or a sh/bash shebang); the list is
+      # in the Makefile. shellcheck comes with the runner image.
+      - name: Shellcheck the shell scripts
+        run: make shellcheck
+
+      # The MCP helpers' endpoint rules (finding F-05). The macOS job runs
+      # them too, inside ScriptEndpointTests.swift; here they fail in a
+      # minute and without a build. HOME is a throwaway, as in that test.
+      - name: Test the helper scripts
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-tests-home"
+          HOME="$RUNNER_TEMP/script-tests-home" python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
   test:
     name: Unit tests & build
     runs-on: macos-26
@@ -90,13 +103,16 @@ jobs:
       # Build first: the unit suite has tests that inspect the built Debug
       # app (signature, zip round trip, embedded relauncher, ad-hoc trust).
       # With no app on disk they skip, so the old order never ran them.
+      # WARNINGS_AS_ERRORS=1: a Swift or C/ObjC warning in MishMail's own
+      # targets fails the build (project.yml). Swift packages are exempt.
+      # The cache is saved from builds with the same setting.
       - name: Build app
-        run: make build
+        run: make build WARNINGS_AS_ERRORS=1
 
       - name: Run unit tests
         run: |
           set -o pipefail
-          make test 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
+          make test WARNINGS_AS_ERRORS=1 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
 
       # A skipped test passes, so a missing app would pass the signature
       # tests silently. Only the runner-dependent skips in the allowlist pass.

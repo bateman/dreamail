@@ -6,6 +6,11 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **CI fails on compiler warnings and checks the scripts.** A Swift or C/ObjC
+  warning in MishMail's own targets fails the CI build (local builds,
+  install and release are unchanged), the Python tests of the helper scripts
+  run on every push, and shellcheck covers every shell script.
+  `make checks` runs the Linux checks locally.
 - **Faster first open, and inline images are not downloaded twice.** The first
   conversation you open is ready sooner, and re-opening a conversation with
   inline images no longer downloads the images again. Deleted mail leaves the
