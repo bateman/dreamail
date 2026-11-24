@@ -146,12 +146,22 @@ enum AccountLifecycle {
     }
 
     /// Marked removals whose account row is gone: the purge committed, the
-    /// rest may not have run. A marked account that still exists was never
-    /// purged; its mark is just dropped (`stale`).
-    static func removalsToFinish(pending: [String], live: [String])
+    /// rest may not have run. A marked account whose row still exists was
+    /// never purged (killed before the transaction committed); it keeps its
+    /// sign-in and only the mark is dropped (`stale`). Read from the account
+    /// table, in the caller's transaction.
+    static func removalsToFinish(_ db: Database, pending: [String]) throws
         -> (finish: [String], stale: [String]) {
-        let liveSet = Set(live)
-        return (pending.filter { !liveSet.contains($0) }, pending.filter { liveSet.contains($0) })
+        var finish: [String] = []
+        var stale: [String] = []
+        for id in pending {
+            if try Account.exists(db, key: id) { stale.append(id) } else { finish.append(id) }
+        }
+        return (finish, stale)
+    }
+
+    static func liveAccountIds(_ db: Database) throws -> [String] {
+        try String.fetchAll(db, sql: "SELECT id FROM account")
     }
 
     static let removalFailedMessage =

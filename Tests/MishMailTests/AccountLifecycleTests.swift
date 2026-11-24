@@ -190,9 +190,10 @@ final class AccountLifecycleTests: XCTestCase {
     }
 
     /// A quit after the purge and before the Keychain delete leaves the
-    /// removal marked; the next launch finishes it. A marked account that
-    /// still exists was never purged and keeps its sign-in.
-    func testInterruptedRemovalIsFinishedAtLaunch() throws {
+    /// removal marked; the next launch finishes it. A marked account whose
+    /// row still exists was never purged (killed before the transaction
+    /// committed) and keeps its sign-in: only the mark goes.
+    func testInterruptedRemovalIsFinishedOnlyWhenTheRowIsGone() throws {
         let suite = "AccountLifecycleTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -202,11 +203,19 @@ final class AccountLifecycleTests: XCTestCase {
         XCTAssertEqual(AccountLifecycle.pendingRemovals(defaults: defaults),
                        ["a@x.com", "b@x.com"])
 
-        let plan = AccountLifecycle.removalsToFinish(
-            pending: AccountLifecycle.pendingRemovals(defaults: defaults),
-            live: ["b@x.com", "a@x.com.au"])
+        let q = try makeDB()
+        let plan = try q.write { db -> (finish: [String], stale: [String]) in
+            // b@x.com's purge never committed; a@x.com's did.
+            try Account(id: "b@x.com", displayName: "b", historyId: nil,
+                        lastSyncAt: nil, senderName: "").insert(db)
+            try Account(id: "a@x.com.au", displayName: "c", historyId: nil,
+                        lastSyncAt: nil, senderName: "").insert(db)
+            return try AccountLifecycle.removalsToFinish(
+                db, pending: AccountLifecycle.pendingRemovals(defaults: defaults))
+        }
         XCTAssertEqual(plan.finish, ["a@x.com"])
-        XCTAssertEqual(plan.stale, ["b@x.com"])
+        XCTAssertEqual(plan.stale, ["b@x.com"],
+                       "an account that still has its row is not finished off")
 
         AccountLifecycle.clearRemovalPending("a@x.com", defaults: defaults)
         AccountLifecycle.clearRemovalPending("b@x.com", defaults: defaults)

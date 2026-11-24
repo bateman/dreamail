@@ -2584,7 +2584,9 @@ struct ComposeRequest: Identifiable {
         if nextLabels != labelsByAccount {
             labelsByAccount = nextLabels
         }
-        sweepRemovedAccountResidueOnce(live: raw.map(\.id))
+        // Its own database read: `snapshot` may be the empty fallback of a
+        // failed read, which would make every account look removed.
+        sweepRemovedAccountResidueOnce()
     }
 
     func reloadSavedViews() {

@@ -141,15 +141,34 @@ extension MailStore {
     }
 
     /// Launch-time cleanup of what an interrupted or partly failed removal
-    /// left behind (F-04): attachment folders of accounts that no longer
-    /// exist, and rows a late write (an open composer, an in-flight edit or
-    /// triage result) stored for one after its purge. `live` comes from the
-    /// account table, never from a list that may not be loaded yet.
-    /// Once per launch, on the first account list read from the database.
-    func sweepRemovedAccountResidueOnce(live: [String]) {
+    /// left behind (F-04): rows a late write (an open composer, an in-flight
+    /// edit or triage result) stored after its account's purge, removals
+    /// whose purge committed but whose sign-in, notifications or copies were
+    /// not deleted yet, and attachment folders of accounts that are gone.
+    ///
+    /// Which accounts exist is read here, in the same transaction as the row
+    /// purge, never taken from an in-memory list: a failed read sweeps
+    /// nothing, rather than taking every account for removed.
+    func sweepRemovedAccountResidueOnce() {
         guard !Self.residueSwept else { return }
         Self.residueSwept = true
-        sweepRemovedAccountResidue(live: live)
+        guard cacheAcceptsWrites(silent: true) else { return }
+        let pool = db
+        let pending = AccountLifecycle.pendingRemovals()
+        Task { @MainActor in
+            typealias Sweep = (live: [String], removals: (finish: [String], stale: [String]))
+            guard let result = try? await pool.write({ db -> Sweep in
+                try AccountLifecycle.purgeOrphanRows(db)
+                return (live: try AccountLifecycle.liveAccountIds(db),
+                        removals: try AccountLifecycle.removalsToFinish(db, pending: pending))
+            }) else { return }
+            for id in result.removals.stale { AccountLifecycle.clearRemovalPending(id) }
+            for id in result.removals.finish { await Self.removeOutsideDatabase(accountId: id) }
+            let live = result.live
+            _ = await Task.detached(priority: .utility) {
+                AttachmentCache.removeOrphans(liveAccounts: live)
+            }.value
+        }
     }
 
     private static var residueSwept = false
@@ -157,7 +176,7 @@ extension MailStore {
     /// Everything of a purged account outside the database (F-04): the
     /// sign-in, its preferences, notifications and attachment copies. Then
     /// the removal is no longer pending. A copy a failed delete leaves goes
-    /// at the next launch (`sweepRemovedAccountResidue`).
+    /// at the next launch (`sweepRemovedAccountResidueOnce`).
     private static func removeOutsideDatabase(accountId id: String) async {
         Keychain.delete("refreshToken.\(id)")
         AccountLifecycle.clearAccountDefaults(accountId: id)
@@ -166,21 +185,6 @@ extension MailStore {
             AttachmentCache.removeAccount(id)
         }.value
         AccountLifecycle.clearRemovalPending(id)
-    }
-
-    func sweepRemovedAccountResidue(live: [String]) {
-        guard cacheAcceptsWrites(silent: true) else { return }
-        let pool = db
-        let removals = AccountLifecycle.removalsToFinish(
-            pending: AccountLifecycle.pendingRemovals(), live: live)
-        for id in removals.stale { AccountLifecycle.clearRemovalPending(id) }
-        Task {
-            for id in removals.finish { await Self.removeOutsideDatabase(accountId: id) }
-        }
-        Task.detached(priority: .utility) {
-            AttachmentCache.removeOrphans(liveAccounts: live)
-            _ = try? await pool.write { db in try AccountLifecycle.purgeOrphanRows(db) }
-        }
     }
 
     /// Nothing may stay scoped to an account that no longer exists: the
