@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.9
+Versione: 0.10
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -32,6 +32,10 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-018 | **Apertura nel pannello di lettura come predefinito** | In Settings → Appearance → "Opening a conversation" il predefinito è "Shows in a reading pane"; una scelta salvata viene rispettata (PR #17). |
 | DEC-019 | **Cancellato vuol dire sparito** | Ciò che viene cancellato non deve più esistere, non solo risultare irraggiungibile: sovrascrittura nel database e nell'indice di ricerca, pulizia del file di appoggio, rimozione di allegati e notifiche con il messaggio. I limiti fisici (SSD, backup, istantanee) sono dichiarati in `SECURITY.md` (PR #18). |
 | DEC-020 | **Chat AI alla rimozione di un account: regola prudente** | Rimuovere un account cancella ogni chat che ha usato uno strumento e tutte quelle prive di tracciatura. Confermato dal proprietario. |
+| DEC-021 | **Icone monocromatiche** | Le icone di navigazione (barra laterale, impostazioni, intestazione della lista) sono in scala di grigi come in Gmail; il colore resta solo dove porta informazione: colori delle label, stella, badge, avvisi (PR #20). |
+| DEC-022 | **Correttore in più lingue insieme** | Si usano i dizionari di macOS, senza cambiare impostazioni di sistema. Con più lingue scelte una parola è sottolineata solo se sbagliata in tutte; il costo accettato è che un refuso valido in un'altra lingua scelta non viene segnalato (PR #22). |
+| DEC-023 | **Colori delle label come in Gmail** | Il colore di una label è quello di Gmail, aggiornato a ogni sincronizzazione; fondo pieno e testo sempre leggibile. Un colore scelto nell'app ha la precedenza e non viene scritto su Gmail. Le label senza colore sono grigio neutro (PR #25). |
+| DEC-024 | **Stile di comunicazione conciso** | Tutte le sessioni di lavoro sul repository comunicano in modo conciso, secondo `CLAUDE.md`; errori, passi saltati e cose non verificate si dichiarano sempre (PR #24). |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -419,7 +423,8 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-23 | 0.6 | Unificato piano di sviluppo e security audit del commit `18294fa`: 12 finding, controlli verificati in sorgente, limiti della verifica, DEC-008/009, priorità remediation e PR proposte. |
 | 2026-11-23 | 0.7 | Confronto con il codice del fork. Corretti: stato reale delle funzionalità (ICS/RSVP, unsubscribe, shortcut, colori label, snooze, undo send e multi-account già presenti), stack (Swift 5.10, GRDB/SQLCipher, login loopback al posto di `ASWebAuthenticationSession`), scope `gmail.modify` restricted, conteggio dei test. Aggiunti: updater come prerequisito per gli account reali, identità del fork, GO/NO-GO prima delle remediation, questioni aperte su AI/MCP, upstream, snooze, Calendar e PGP, riferimenti alle revisioni di sicurezza esistenti. Nessuna nuova decisione confermata. |
 | 2026-11-24 | 0.8 | Dopo le ondate 1 e 2 del piano di sviluppo: aggiunte DEC-010–016, DEC-009 segnata come implementata, chiusa la questione su AI e MCP. Lo stato di ogni finding e i seguiti sono in [piano-sviluppo.md](piano-sviluppo.md); i riferimenti di riga della sezione 12 valgono solo per il commit auditato `18294fa`. |
-| 2026-11-24 | **0.9** | Aggiunte DEC-017–020: shortcut come Gmail Web, pannello di lettura predefinito, "cancellato vuol dire sparito", regola delle chat alla rimozione di un account. L'ondata 3 non è avviata. |
+| 2026-11-24 | 0.9 | Aggiunte DEC-017–020: shortcut come Gmail Web, pannello di lettura predefinito, "cancellato vuol dire sparito", regola delle chat alla rimozione di un account. L'ondata 3 non è avviata. |
+| 2026-11-24 | **0.10** | Dopo la prima prova su Mac: aggiunte DEC-021–024 (icone monocromatiche, correttore in più lingue, colori delle label come in Gmail, stile di comunicazione conciso). La cache persistente e cifrata delle immagini resta un'opzione in attesa delle prove del proprietario, annotata in [piano-sviluppo.md](piano-sviluppo.md). L'ondata 3 non è avviata. |
 
 ---
 
