@@ -2760,6 +2760,17 @@ final class AppDatabase: @unchecked Sendable {
                     """,
                 arguments: StatementArguments(swatches))
         }
+
+        // v52: each account's own Google profile photo (downscaled PNG),
+        // kept with the account and deleted with it (`AccountPhotoRecord`).
+        m.registerMigration("v52") { db in
+            try db.create(table: "accountPhoto") { t in
+                t.primaryKey("accountId", .text)
+                    .references("account", onDelete: .cascade)
+                t.column("imageData", .blob)
+                t.column("fetchedAt", .datetime).notNull()
+            }
+        }
         return m
     }
 }

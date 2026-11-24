@@ -28,7 +28,7 @@ extension MailStore {
                 let (refresh, access) = try await OAuthService().signIn(loginHint: hint)
                 var req = URLRequest(url: URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!)
                 req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
-                struct UserInfo: Decodable { let email: String; let name: String? }
+                struct UserInfo: Decodable { let email: String; let name: String?; let picture: String? }
                 let (data, _) = try await GoogleHTTP.session.data(for: req)
                 let info = try JSONDecoder().decode(UserInfo.self, from: data)
 
@@ -54,6 +54,13 @@ extension MailStore {
                 }
                 accountsNeedingReauth.remove(info.email)
                 reloadAccounts()
+                // Sign-in already returned the photo URL; fetch it in the
+                // background, never holding up the first sync.
+                let picture = info.picture
+                Task { [weak self] in
+                    await self?.refreshAccountPhoto(
+                        accountId: info.email, force: true, knownPicture: .some(picture))
+                }
                 await refreshSendIdentities(accountId: info.email)
                 // Own addresses are filtered at rank time. The new primary is
                 // already in `ownEmailAddresses` before send-as returns, so
@@ -81,6 +88,7 @@ extension MailStore {
         // downloads for it are ignored (see `isKnownAccount`).
         let engine = engines[id]
         accounts.removeAll { $0.id == id }
+        forgetAccountPhoto(id)
         leaveScope(ofRemovedAccount: id)
         Task { @MainActor [weak self] in
             await engine?.cancelSync()
@@ -263,6 +271,59 @@ extension MailStore {
 
     /// True while `accountId` is still in `accounts`. Late results for a
     /// removed account are ignored.
+    // MARK: - Profile photos
+
+    /// Shows the photos stored in the database for the current accounts.
+    /// Runs when the account set changes and after a refresh stores one.
+    func loadAccountPhotos() async {
+        let pool = db
+        let stored = (try? await pool.read { try AccountPhotoRefresher.loadAll($0) }) ?? [:]
+        let live = Set(accounts.map(\.id))
+        let next = stored.filter { live.contains($0.key) }
+        loadedPhotoAccountIds = live
+        guard next != accountPhotoData else { return }
+        accountPhotoData = next
+        accountPhotos = next.compactMapValues { NSImage(data: $0) }
+    }
+
+    func forgetAccountPhoto(_ accountId: String) {
+        accountPhotoData[accountId] = nil
+        if accountPhotos[accountId] != nil { accountPhotos[accountId] = nil }
+        loadedPhotoAccountIds.remove(accountId)
+    }
+
+    /// Post-sync entry point: at most once a day per account
+    /// (`AccountPhotoPolicy.refreshInterval`), in the background.
+    func refreshAccountPhotoIfDue(accountId: String) {
+        guard !demoMode else { return }
+        Task(priority: .utility) { [weak self] in
+            await self?.refreshAccountPhoto(accountId: accountId, force: false)
+        }
+    }
+
+    /// Fetches the account's own Google profile photo and stores it with the
+    /// account. `force` is sign-in or an explicit refresh. `knownPicture` is
+    /// the URL sign-in already has; otherwise it comes from userinfo. Silent
+    /// on failure: the stored photo, or the initial disc, stays.
+    func refreshAccountPhoto(accountId: String, force: Bool,
+                             knownPicture: String?? = nil) async {
+        guard !demoMode, !isShuttingDown, isKnownAccount(accountId),
+              !photoRefreshesInFlight.contains(accountId) else { return }
+        photoRefreshesInFlight.insert(accountId)
+        defer { photoRefreshesInFlight.remove(accountId) }
+        let client = client(for: accountId)
+        // Fixture processes (`make run`, UI tests) never reach the network.
+        let demo = demoMode || AppDatabase.usesFixtureDatabaseKey(
+            environment: ProcessInfo.processInfo.environment)
+        let refresher = AccountPhotoRefresher(db: db, isDemo: { demo })
+        let outcome = await refresher.refresh(accountId: accountId, force: force) {
+            if let knownPicture { return knownPicture }
+            return try await client.userInfo().picture
+        }
+        guard case .stored = outcome, isKnownAccount(accountId) else { return }
+        await loadAccountPhotos()
+    }
+
     func isKnownAccount(_ accountId: String) -> Bool {
         accounts.contains { $0.id == accountId }
     }

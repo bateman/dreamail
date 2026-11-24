@@ -356,6 +356,20 @@ struct AccountsSettings: View {
                 ForEach(store.accounts) { account in
                     Section {
                         HStack {
+                            AccountAvatarView(
+                                name: account.senderName.isEmpty ? account.displayName : account.senderName,
+                                key: account.id, size: 28,
+                                photo: store.accountPhotos[account.id])
+                                .contextMenu {
+                                    if !store.demoMode {
+                                        Button("Refresh Profile Photo") {
+                                            Task {
+                                                await store.refreshAccountPhoto(
+                                                    accountId: account.id, force: true)
+                                            }
+                                        }
+                                    }
+                                }
                             VStack(alignment: .leading) {
                                 HStack {
                                     Text(account.id)

@@ -6,6 +6,14 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Account photos.** The account switcher and the Accounts settings show each
+  account's own Google profile photo instead of the initial disc. The photo
+  URL comes from the profile MishMail already reads (no new permission, no
+  new sign-in); the image is fetched only from Google's photo hosts, without
+  the account's token, at sign-in and then at most once a day, and kept
+  downscaled in the encrypted database with the account. Removing the account
+  deletes it. Accounts with no photo, demo mode, and any failure keep the
+  initial disc.
 - **Compact section breaks in the thread list.** Between "Last 7 days",
   "Last 30 days", "Older" and the other sections there was an empty band about
   two rows tall. The next header now follows the last row after a small gap,
