@@ -21,21 +21,18 @@ struct LabelPill<Trailing: View>: View {
     let colors: LabelColors
     let surface: LabelPillStyle.Surface
     let font: Font
-    let horizontalPadding: CGFloat
     let verticalPadding: CGFloat
     let trailing: () -> Trailing
     @Environment(\.colorScheme) private var colorScheme
 
     init(name: String, colors: LabelColors,
          surface: LabelPillStyle.Surface = .content,
-         font: Font = .system(size: 10.5, weight: .medium),
-         horizontalPadding: CGFloat = 8, verticalPadding: CGFloat = 2.5,
+         font: Font, verticalPadding: CGFloat = 2.5,
          @ViewBuilder trailing: @escaping () -> Trailing) {
         self.name = name
         self.colors = colors
         self.surface = surface
         self.font = font
-        self.horizontalPadding = horizontalPadding
         self.verticalPadding = verticalPadding
         self.trailing = trailing
     }
@@ -49,7 +46,7 @@ struct LabelPill<Trailing: View>: View {
             trailing()
         }
         .foregroundStyle(Color(style.text))
-        .padding(.horizontal, horizontalPadding).padding(.vertical, verticalPadding)
+        .padding(.horizontal, 8).padding(.vertical, verticalPadding)
         .background(Color(style.fill), in: Capsule())
         .overlay {
             if style.needsBorder {
@@ -62,11 +59,9 @@ struct LabelPill<Trailing: View>: View {
 extension LabelPill where Trailing == EmptyView {
     init(name: String, colors: LabelColors,
          surface: LabelPillStyle.Surface = .content,
-         font: Font = .system(size: 10.5, weight: .medium),
-         horizontalPadding: CGFloat = 8, verticalPadding: CGFloat = 2.5) {
+         font: Font, verticalPadding: CGFloat = 2.5) {
         self.init(name: name, colors: colors, surface: surface, font: font,
-                  horizontalPadding: horizontalPadding, verticalPadding: verticalPadding,
-                  trailing: { EmptyView() })
+                  verticalPadding: verticalPadding, trailing: { EmptyView() })
     }
 }
 

@@ -1927,6 +1927,8 @@ struct ThreadRow: View, Equatable {
                   font: .system(size: 10.5 * fontScale, weight: .medium))
     }
 
+    /// Checked rows (a 10% accent wash) count as plain content: the wash
+    /// is too light to change which fills need an outline.
     private var pillSurface: LabelPillStyle.Surface {
         if model.isFocused { return .selection }
         return thread.isUnread ? .content : .readRow

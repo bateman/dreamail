@@ -273,8 +273,8 @@ actor SyncEngine {
                                gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
                                color: existing?.color,
                                sortOrder: existing?.sortOrder ?? LabelRow.unsorted,
-                               gmailBackgroundColor: l.color?.backgroundColor,
-                               gmailTextColor: l.color?.textColor)
+                               gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
+                               gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor))
             // Runs every pass, and labels almost never change between
             // passes — write only rows that differ from the stored one.
             if row != existing { try row.save(db) }

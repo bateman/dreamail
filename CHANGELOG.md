@@ -11,8 +11,8 @@ minor versions may still change behavior.
   readable on it (4.5:1) and black or white otherwise. Very light labels get a
   thin grey outline on a white row, very dark ones on a dark row. Colours
   changed in Gmail now show after the next sync; a colour picked in the label
-  organizer still wins, and "Gmail color" goes back to Gmail's. Labels without
-  a colour are grey. Same rule for the reading pane, the Labels filter, the
+  organizer still wins, and "Gmail color" goes back to Gmail's. Labels with no
+  Gmail colour and no colour picked here are neutral grey, as in Gmail. Same rule for the reading pane, the Labels filter, the
   label picker and the organizer.
 - **A single message opens at its full length.** Selecting a one-message
   conversation no longer shows a reduced card first: the message is open from

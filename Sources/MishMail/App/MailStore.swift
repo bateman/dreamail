@@ -3842,8 +3842,8 @@ struct ComposeRequest: Identifiable {
                         try LabelRow(id: "\(accountId):\(l.id)", accountId: accountId,
                                      gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
                                      color: nil,
-                                     gmailBackgroundColor: l.color?.backgroundColor,
-                                     gmailTextColor: l.color?.textColor).save(db)
+                                     gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
+                                     gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor)).save(db)
                     }
                     self.reloadAccounts()
                     self.labelPicker.query = ""
@@ -3924,10 +3924,11 @@ struct ComposeRequest: Identifiable {
     /// Sets (or clears, with nil) a label's local color pick. Clearing it
     /// shows Gmail's own label color again.
     func setLabelColor(_ label: LabelRow, hex: String?) {
+        // Only the one column: the row passed in may be older than the
+        // stored one (a sync may have renamed it or changed Gmail's colors).
         try? db.write { db in
-            var row = label
-            row.color = hex
-            try row.save(db)
+            try db.execute(sql: "UPDATE label SET color = ? WHERE id = ?",
+                           arguments: [hex, label.id])
         }
         reloadAccounts()
     }

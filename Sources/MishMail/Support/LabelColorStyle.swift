@@ -24,9 +24,19 @@ struct LabelRGB: Equatable, Hashable, Sendable {
             return nil
         }
         if hex.hasPrefix("#") { hex.removeFirst() }
-        guard hex.count == 6, hex.allSatisfy(\.isHexDigit),
+        guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }),
               let value = UInt32(hex, radix: 16) else { return nil }
         self.init(hex: value)
+    }
+
+    /// `#rrggbb` (lowercase) for a valid 6-digit hex color, with or
+    /// without `#` and surrounding spaces; nil for anything else, so no
+    /// arbitrary string from the API is stored.
+    static func normalizedHex(_ string: String?) -> String? {
+        guard var hex = string?.trimmingCharacters(in: .whitespaces) else { return nil }
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
+        return "#" + hex.lowercased()
     }
 
     static let black = LabelRGB(hex: 0x000000)
@@ -99,17 +109,27 @@ struct LabelPillStyle: Equatable, Sendable {
 
     /// Approximate opaque color behind a pill. Content backgrounds match
     /// `Color.mailContent`; read rows add the list's 5% primary wash; the
-    /// selection is the system blue list highlight.
+    /// selection is the system blue list highlight (see `surfaceColors`
+    /// for the inactive-window grey).
     static func surfaceColor(_ surface: Surface, _ appearance: Appearance) -> LabelRGB {
+        surfaceColors(surface, appearance)[0]
+    }
+
+    /// Every color the surface can take. The selection highlight is blue
+    /// in a key window and grey when the window is inactive; a pill must
+    /// stand out on both.
+    static func surfaceColors(_ surface: Surface, _ appearance: Appearance) -> [LabelRGB] {
         let content = appearance == .light ? LabelRGB(hex: 0xFFFFFF) : LabelRGB(hex: 0x191919)
         switch surface {
         case .content:
-            return content
+            return [content]
         case .readRow:
             let primary = appearance == .light ? LabelRGB.black : LabelRGB.white
-            return content.composited(under: primary, alpha: readRowWashOpacity)
+            return [content.composited(under: primary, alpha: readRowWashOpacity)]
         case .selection:
-            return appearance == .light ? LabelRGB(hex: 0x0064E1) : LabelRGB(hex: 0x0058D0)
+            return appearance == .light
+                ? [LabelRGB(hex: 0x0064E1), LabelRGB(hex: 0xDCDCDC)]
+                : [LabelRGB(hex: 0x0058D0), LabelRGB(hex: 0x464646)]
         }
     }
 
@@ -123,8 +143,9 @@ struct LabelPillStyle: Equatable, Sendable {
     /// - Text: the label's own text color when it reaches 4.5:1 on the
     ///   fill, else black or white, whichever contrasts more (one of the
     ///   two always reaches 4.58:1).
-    /// - Border: when the fill is within 1.5:1 of the surface, a neutral
-    ///   outline that contrasts with the surface by at least 3:1.
+    /// - Border: when the fill is within 1.5:1 of the surface (of any of
+    ///   its colors), a neutral outline that contrasts with every color of
+    ///   the surface by at least 3:1.
     static func resolve(_ colors: LabelColors,
                         appearance: Appearance,
                         surface: Surface = .content) -> LabelPillStyle {
@@ -138,18 +159,19 @@ struct LabelPillStyle: Equatable, Sendable {
         } else {
             text = fill.contrast(with: .black) >= fill.contrast(with: .white) ? .black : .white
         }
-        let behind = surfaceColor(surface, appearance)
-        let needsBorder = fill.contrast(with: behind) < minimumEdgeContrast
+        let behind = surfaceColors(surface, appearance)
+        let needsBorder = behind.contains { fill.contrast(with: $0) < minimumEdgeContrast }
         return LabelPillStyle(fill: fill, text: text, needsBorder: needsBorder,
                               border: borderColor(on: behind))
     }
 
-    /// Mid grey where it reaches 3:1 against the surface (white, dark and
-    /// read rows); otherwise black or white, whichever contrasts more
-    /// (the blue selection highlight).
-    static func borderColor(on surface: LabelRGB) -> LabelRGB {
+    /// Mid grey where it reaches 3:1 against every surface color (white,
+    /// dark and read rows); otherwise black or white, whichever has the
+    /// larger worst-case contrast (the selection, blue or inactive grey).
+    static func borderColor(on surfaces: [LabelRGB]) -> LabelRGB {
+        func worst(_ c: LabelRGB) -> Double { surfaces.map { c.contrast(with: $0) }.min() ?? 21 }
         let grey = LabelRGB(hex: 0x808080)
-        if grey.contrast(with: surface) >= 3 { return grey }
-        return surface.contrast(with: .white) >= surface.contrast(with: .black) ? .white : .black
+        if worst(grey) >= 3 { return grey }
+        return worst(.white) >= worst(.black) ? .white : .black
     }
 }

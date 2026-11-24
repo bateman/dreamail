@@ -2741,7 +2741,8 @@ final class AppDatabase: @unchecked Sendable {
         // every sync, and `color` keeps only local picks. Up to v50 `color`
         // was also seeded from Gmail's background color (and never updated
         // after), so a value that is not one of the organizer's swatches came
-        // from Gmail: clear it, and the next label sync fills the new columns.
+        // from Gmail: move it to `gmailBackgroundColor`, so pills keep their
+        // color offline until the next label sync rewrites both columns.
         m.registerMigration("v51") { db in
             try db.alter(table: "label") { t in
                 t.add(column: "gmailBackgroundColor", .text)
@@ -2753,7 +2754,7 @@ final class AppDatabase: @unchecked Sendable {
                             "#5E6AD2", "#9B51E0", "#E255A1", "#9F6B53", "#787774"]
             try db.execute(
                 sql: """
-                    UPDATE label SET color = NULL
+                    UPDATE label SET gmailBackgroundColor = color, color = NULL
                     WHERE color IS NOT NULL
                       AND UPPER(color) NOT IN (\(swatches.map { _ in "?" }.joined(separator: ",")))
                     """,

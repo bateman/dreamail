@@ -67,18 +67,21 @@ final class LabelColorStyleTests: XCTestCase {
     func testPillIsVisibleAgainstEverySurfaceInBothAppearances() {
         for appearance in LabelPillStyle.Appearance.allCases {
             for surface in LabelPillStyle.Surface.allCases {
-                let behind = LabelPillStyle.surfaceColor(surface, appearance)
                 for colors in Self.allColorCases {
                     let style = LabelPillStyle.resolve(colors, appearance: appearance, surface: surface)
-                    let fillEdge = style.fill.contrast(with: behind)
-                    if style.needsBorder {
-                        // The outline carries the edge: WCAG non-text 3:1.
-                        let borderEdge = style.border.contrast(with: behind)
-                        if borderEdge < 3 {
-                            XCTFail("\(colors) \(appearance) \(surface): border contrast \(borderEdge)")
+                    // Every color the surface takes (the selection is blue
+                    // or, in an inactive window, grey).
+                    for behind in LabelPillStyle.surfaceColors(surface, appearance) {
+                        let fillEdge = style.fill.contrast(with: behind)
+                        if style.needsBorder {
+                            // The outline carries the edge: WCAG non-text 3:1.
+                            let borderEdge = style.border.contrast(with: behind)
+                            if borderEdge < 3 {
+                                XCTFail("\(colors) \(appearance) \(surface): border contrast \(borderEdge)")
+                            }
+                        } else if fillEdge < LabelPillStyle.minimumEdgeContrast {
+                            XCTFail("\(colors) \(appearance) \(surface): fill contrast \(fillEdge), no border")
                         }
-                    } else if fillEdge < LabelPillStyle.minimumEdgeContrast {
-                        XCTFail("\(colors) \(appearance) \(surface): fill contrast \(fillEdge), no border")
                     }
                 }
             }
@@ -158,12 +161,28 @@ final class LabelColorStyleTests: XCTestCase {
                                               appearance: .light).needsBorder)
     }
 
-    func testSelectionBorderIsLight() {
-        // On the blue highlight a mid grey outline would vanish.
-        let style = LabelPillStyle.resolve(LabelColors(background: "#3c78d8", text: "#ffffff"),
-                                           appearance: .light, surface: .selection)
-        XCTAssertTrue(style.needsBorder)
-        XCTAssertEqual(style.border, .white)
+    func testSelectionOutlineCoversBlueAndInactiveHighlight() {
+        XCTAssertEqual(LabelPillStyle.surfaceColors(.selection, .light).count, 2)
+        XCTAssertEqual(LabelPillStyle.surfaceColors(.selection, .dark).count, 2)
+        // A blue close to the active highlight.
+        let blue = LabelPillStyle.resolve(LabelColors(background: "#3c78d8", text: "#ffffff"),
+                                          appearance: .light, surface: .selection)
+        XCTAssertTrue(blue.needsBorder)
+        // A light grey close to the inactive-window highlight (#DCDCDC):
+        // readable and distinct on blue, but not on grey.
+        let grey = LabelPillStyle.resolve(LabelColors(background: "#cccccc", text: nil),
+                                          appearance: .light, surface: .selection)
+        XCTAssertTrue(grey.needsBorder)
+        XCTAssertFalse(LabelPillStyle.resolve(LabelColors(background: "#cccccc", text: nil),
+                                              appearance: .light, surface: .content).needsBorder)
+        // Dark: a grey close to the inactive #464646.
+        XCTAssertTrue(LabelPillStyle.resolve(LabelColors(background: "#434343", text: nil),
+                                             appearance: .dark, surface: .selection).needsBorder)
+        // A mid grey outline would vanish on the blue highlight: black in
+        // light (3.8:1 on blue, 15:1 on grey), white in dark.
+        XCTAssertEqual(blue.border, .black)
+        XCTAssertEqual(LabelPillStyle.resolve(LabelColors(background: "#285bac", text: nil),
+                                              appearance: .dark, surface: .selection).border, .white)
     }
 
     // MARK: - Read (dimmed) rows
@@ -244,6 +263,49 @@ final class LabelColorStyleTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(byName["plain"]).displayColors, .none)
     }
 
+    /// Colors from the API are stored only as 6-digit hex, normalized to
+    /// lowercase `#rrggbb`; anything else is stored as nil.
+    func testMalformedGmailColorIsNotStored() throws {
+        XCTAssertEqual(LabelRGB.normalizedHex(" #FAD165 "), "#fad165")
+        XCTAssertEqual(LabelRGB.normalizedHex("16a766"), "#16a766")
+        for bad in [nil, "", "#", "#fff", "#fad1655", "fad16", "#gggggg", "#ｆａｄ１６５",
+                    "red", "#fad165; DROP", String(repeating: "a", count: 10_000)] {
+            XCTAssertNil(LabelRGB.normalizedHex(bad), String(describing: bad?.prefix(20)))
+        }
+        let q = try makeDB()
+        try q.write { db in
+            try SyncEngine.applyLabels(db, accountId: "a@x.com", labels: [
+                GLabel(id: "Label_1", name: "Odd", type: "user",
+                       color: GLabel.GColor(backgroundColor: String(repeating: "f", count: 500),
+                                            textColor: "#FFFFFF")),
+            ])
+        }
+        let row = try XCTUnwrap(try q.read { db in try LabelRow.fetchOne(db, key: "a@x.com:Label_1") })
+        XCTAssertNil(row.gmailBackgroundColor)
+        XCTAssertEqual(row.gmailTextColor, "#ffffff")
+        // No usable background: neutral grey, and the text color is not
+        // used without its background.
+        let style = LabelPillStyle.resolve(row.displayColors, appearance: .light)
+        XCTAssertEqual(style.fill, LabelPillStyle.neutralFill(.light))
+        XCTAssertEqual(style.text, .black)
+    }
+
+    /// A label whose color was removed in Gmail goes back to neutral grey.
+    func testColorRemovedInGmailFallsBackToNone() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try SyncEngine.applyLabels(db, accountId: "a@x.com", labels: [
+                GLabel(id: "Label_1", name: "Work", type: "user",
+                       color: GLabel.GColor(backgroundColor: "#fad165", textColor: "#000000")),
+            ])
+            try SyncEngine.applyLabels(db, accountId: "a@x.com", labels: [
+                GLabel(id: "Label_1", name: "Work", type: "user", color: nil),
+            ])
+        }
+        let row = try XCTUnwrap(try q.read { db in try LabelRow.fetchOne(db, key: "a@x.com:Label_1") })
+        XCTAssertEqual(row.displayColors, .none)
+    }
+
     /// A color changed in Gmail shows on the next sync; a local pick from
     /// the organizer still wins, and clearing it shows Gmail's color again.
     func testGmailColorChangeIsFollowedAndLocalPickWins() throws {
@@ -277,8 +339,9 @@ final class LabelColorStyleTests: XCTestCase {
     }
 
     /// Up to v50 `color` held Gmail's background color, seeded once and
-    /// never refreshed. v51 keeps organizer picks and clears the rest, so
-    /// the next sync shows Gmail's current pair.
+    /// never refreshed. v51 keeps organizer picks and moves the rest to
+    /// `gmailBackgroundColor`, so pills keep their color until the next
+    /// sync writes Gmail's current pair.
     func testV51ClearsGmailSeededColorsAndKeepsOrganizerPicks() throws {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q, upTo: "v50")
@@ -296,8 +359,11 @@ final class LabelColorStyleTests: XCTestCase {
         let rows = try q.read { db in try LabelRow.fetchAll(db) }
         let byId = Dictionary(uniqueKeysWithValues: rows.map { ($0.gmailLabelId, $0) })
         XCTAssertNil(byId["Label_1"]?.color)
+        XCTAssertEqual(byId["Label_1"]?.gmailBackgroundColor, "#fad165")
+        XCTAssertEqual(byId["Label_1"]?.displayColors, LabelColors(background: "#fad165", text: nil))
         XCTAssertEqual(byId["Label_2"]?.color, "#eb5757")
+        XCTAssertNil(byId["Label_2"]?.gmailBackgroundColor)
         XCTAssertNil(byId["Label_3"]?.color)
-        XCTAssertNil(byId["Label_1"]?.gmailBackgroundColor)
+        XCTAssertNil(byId["Label_3"]?.gmailBackgroundColor)
     }
 }

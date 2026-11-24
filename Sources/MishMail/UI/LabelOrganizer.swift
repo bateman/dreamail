@@ -123,7 +123,7 @@ private struct LabelColorPalette: View {
                         onPick()
                     } label: {
                         Circle()
-                            .fill(Color.hexString(swatch.hex) ?? .gray)
+                            .fill(LabelRGB(hexString: swatch.hex).map(Color.init) ?? .gray)
                             .frame(width: 24, height: 24)
                             .overlay {
                                 if label.color?.caseInsensitiveCompare(swatch.hex) == .orderedSame {
