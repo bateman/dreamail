@@ -7,9 +7,10 @@ import WebKit
 /// After the open thread's body settles, previous/next newest-message HTML is
 /// loaded into parked views (JS-off, remote images always blocked — see
 /// `HTMLBodyPrerenderPolicy`). Up/down navigation can then claim a painted
-/// view instead of starting a cold `loadHTMLString`. An open that allows
-/// remote images uses a different pool key and will not reuse a blocked
-/// pre-render.
+/// view instead of starting a cold `loadHTMLString`. An open that loads
+/// remote images live uses a different pool key and will not reuse a blocked
+/// pre-render; one whose images all come from the encrypted cache
+/// (`RemoteImageRendering`) loads blocked and does.
 ///
 /// Cancelled when the user navigates before work starts or completes. Oversized
 /// bodies (`HTMLBodyRenderPolicy.requiresExplicitLoad`) are skipped.

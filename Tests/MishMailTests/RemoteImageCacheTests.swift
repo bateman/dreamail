@@ -101,9 +101,9 @@ final class RemoteImageCacheTests: XCTestCase {
     private func open(_ message: Message, store: RemoteImageStore?, server: Server,
                       allowed: Bool = true, base: String? = nil) async -> RemoteInlinedBody? {
         let html = base ?? message.bodyHTML ?? ""
-        return await MailStore.resolveRemoteImages(
-            messageId: message.id, accountId: message.accountId, baseHTML: html,
-            preInlineBytes: html.utf8.count, baseIsCIDInlined: false, allowed: allowed,
+        return await RemoteImageResolver.resolveIfAllowed(
+            allowed, messageId: message.id, accountId: message.accountId, baseHTML: html,
+            preInlineBytes: html.utf8.count, baseIsCIDInlined: false,
             fontScale: 1.0, store: store, transport: server.transport, onPartial: { _ in })
     }
 
@@ -253,9 +253,9 @@ final class RemoteImageCacheTests: XCTestCase {
         // The sender adds an image: the body now has one cached, one new.
         let both = html([a, b])
         let partials = PartialLog()
-        let final = await MailStore.resolveRemoteImages(
-            messageId: one.id, accountId: me, baseHTML: both, preInlineBytes: both.utf8.count,
-            baseIsCIDInlined: false, allowed: true, fontScale: 1, store: store,
+        let final = await RemoteImageResolver.resolveIfAllowed(
+            true, messageId: one.id, accountId: me, baseHTML: both, preInlineBytes: both.utf8.count,
+            baseIsCIDInlined: false, fontScale: 1, store: store,
             transport: sender.transport, onPartial: { partials.add($0) })
         let partial = try XCTUnwrap(partials.bodies.first)
         XCTAssertEqual(partial.phase, .partial)

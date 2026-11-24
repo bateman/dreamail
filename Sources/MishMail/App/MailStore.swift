@@ -3623,29 +3623,6 @@ struct ComposeRequest: Identifiable {
         }
     }
 
-    /// Resolves the remote images of one open message whose remote images
-    /// the card allowed (`allowed` is its `RemoteImagePolicy.autoLoads`
-    /// decision, opt-ins included): nothing at all happens otherwise. The
-    /// cache first, then the app's own fetch of the rest (`onPartial` gets
-    /// the cache-only body first when images are missing). Off the main
-    /// actor; never logs.
-    /// `preInlineBytes`: the stored body's size (the oversized-body gate
-    /// keys on it, not on the inlined one). A nonisolated async function, so
-    /// the string work runs off the main actor.
-    nonisolated static func resolveRemoteImages(
-        messageId: String, accountId: String, baseHTML: String, preInlineBytes: Int,
-        baseIsCIDInlined: Bool, allowed: Bool, fontScale: Double,
-        store: RemoteImageStore?, transport: RemoteImageTransport,
-        onPartial: @escaping @Sendable (RemoteInlinedBody) async -> Void
-    ) async -> RemoteInlinedBody? {
-        guard allowed else { return nil }
-        return await RemoteImageResolver.resolve(
-            messageId: messageId, accountId: accountId, baseHTML: baseHTML,
-            preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCIDInlined,
-            fontScale: fontScale, store: store, transport: transport,
-            onPartial: onPartial)
-    }
-
     /// Off-main body hydration for an expanded reading-pane card, including
     /// precomputed quote-trail + assembled HTML for the current font scale.
     func messageBodyForReadingPane(id: String) async -> MessageBodyLoad? {

@@ -20,7 +20,7 @@ final class RemoteImageFetchTests: XCTestCase {
         return [[93, 184, 216, 34]]
     }
 
-    private func session(timeout: TimeInterval = 5) -> URLSession {
+    private func makeSession(timeout: TimeInterval = 5) -> URLSession {
         let config = RemoteImageSession.configuration(requestTimeout: timeout,
                                                       resourceTimeout: timeout)
         config.protocolClasses = [RemoteStubProtocol.self]
@@ -28,7 +28,7 @@ final class RemoteImageFetchTests: XCTestCase {
     }
 
     private func fetch(_ raw: String, timeout: TimeInterval = 5) async throws -> FetchedRemoteImage {
-        let session = session(timeout: timeout)
+        let session = makeSession(timeout: timeout)
         defer { session.finishTasksAndInvalidate() }
         return try await RemoteImageFetcher.fetch(
             raw, transport: .streaming(session: session, resolve: Self.publicResolver))
@@ -244,7 +244,7 @@ final class RemoteImageFetchTests: XCTestCase {
         RemoteStubProtocol.state.reset([
             url: .init(status: 200, headers: ["Content-Type": "image/png"], body: body, chunked: true),
         ])
-        let session = session()
+        let session = makeSession()
         defer { session.finishTasksAndInvalidate() }
         let transport = RemoteImageTransport.streaming(session: session, resolve: Self.publicResolver)
         let (data, _) = try await transport.fetch(RemoteImageFetchPolicy.request(for: URL(string: url)!),

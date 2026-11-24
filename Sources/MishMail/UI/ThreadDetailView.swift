@@ -1080,10 +1080,10 @@ struct ThreadDetailView: View {
         let transport = store.remoteImageTransport
         let accountId = msg.accountId
         Task {
-            let final = await MailStore.resolveRemoteImages(
-                messageId: id, accountId: accountId, baseHTML: base,
+            let final = await RemoteImageResolver.resolveIfAllowed(
+                true, messageId: id, accountId: accountId, baseHTML: base,
                 preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCID,
-                allowed: true, fontScale: scale, store: imageStore, transport: transport,
+                fontScale: scale, store: imageStore, transport: transport,
                 onPartial: { partial in
                     await MainActor.run {
                         applyRemoteBody(partial, id: id, token: token, threadId: threadId,

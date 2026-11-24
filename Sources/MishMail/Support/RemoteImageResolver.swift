@@ -155,6 +155,24 @@ enum RemoteImageResolver {
                      fontScale: fontScale)
     }
 
+    /// The reading pane's entry point for one open message. `allowed` is the
+    /// card's `RemoteImagePolicy.autoLoads` decision (opt-ins included):
+    /// when false nothing at all happens (no cache read, no request).
+    /// `preInlineBytes`: the stored body's size (the oversized-body gate
+    /// keys on it, not on the inlined one).
+    static func resolveIfAllowed(
+        _ allowed: Bool, messageId: String, accountId: String, baseHTML: String,
+        preInlineBytes: Int, baseIsCIDInlined: Bool, fontScale: Double,
+        store: RemoteImageStore?, transport: RemoteImageTransport,
+        onPartial: @escaping @Sendable (RemoteInlinedBody) async -> Void
+    ) async -> RemoteInlinedBody? {
+        guard allowed else { return nil }
+        return await resolve(
+            messageId: messageId, accountId: accountId, baseHTML: baseHTML,
+            preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCIDInlined,
+            fontScale: fontScale, store: store, transport: transport, onPartial: onPartial)
+    }
+
     /// Rewrite and prep: whole-body string work, off the main actor.
     static func build(baseHTML: String, dataURLs: [String: String],
                       phase: RemoteInlinedBody.Phase, preInlineBytes: Int,
