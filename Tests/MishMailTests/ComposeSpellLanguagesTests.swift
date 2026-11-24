@@ -211,13 +211,7 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         XCTAssertEqual(view.spellLookups.count, 0)
     }
 
-    /// Stands in for AppKit's Learn Spelling: the item's original target.
-    final class LearnTarget: NSObject {
-        var learned: [NSMenuItem] = []
-        @objc func learnSpellingFromMenu(_ sender: NSMenuItem) { learned.append(sender) }
-    }
-
-    func testLearnSpellingStillRunsAndEmptiesTheCache() {
+    func testARightClickEmptiesTheCacheAndKeepsAppKitsOwnItems() {
         let view = MultilingualSpellTextView()
         let checker = FakeChecker()
         view.spellLanguageChecker = checker
@@ -226,25 +220,18 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         _ = view.filteredCheckingResults([.spellCheckingResult(range: NSRange(location: 0, length: 4))])
         XCTAssertEqual(view.spellLookups.count, 2)
 
-        let target = LearnTarget()
-        let menu = NSMenu()
-        let learn = NSMenuItem(title: "Learn Spelling",
-                               action: #selector(LearnTarget.learnSpellingFromMenu(_:)), keyEquivalent: "")
-        learn.target = target
-        let copy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
-        menu.addItem(learn)
-        menu.addItem(copy)
-        view.routeLearnAndIgnore(in: menu)
-        XCTAssertTrue(learn.target === view)
-        XCTAssertEqual(copy.action, #selector(NSText.copy(_:)), "other items are untouched")
-
-        view.runSpellingMenuAction(learn)
-        XCTAssertEqual(target.learned.count, 1)
-        XCTAssertTrue(target.learned.first === learn, "the original action gets the same sender")
+        let menu = appKitLikeMenu(guesses: ["x"])
+        let own = menu.items.filter { !$0.isSeparatorItem }.dropFirst()
+            .map { ($0, $0.action, $0.target) }
+        view.prepareContextMenu(menu, atCharacterIndex: 1)
         XCTAssertEqual(view.spellLookups.count, 0)
+        for (item, action, target) in own {
+            XCTAssertEqual(item.action, action, item.title)
+            XCTAssertTrue(item.target === target, item.title)
+        }
 
-        // After Learn the word is correct in English and the next check
-        // asks again instead of trusting the old answer.
+        // After a Learn chosen from that menu the word is correct in English,
+        // and the next check asks again instead of trusting an old answer.
         checker.dictionary["en"] = ["zorp"]
         XCTAssertEqual(view.filteredCheckingResults(
             [.spellCheckingResult(range: NSRange(location: 0, length: 4))]).count, 0)

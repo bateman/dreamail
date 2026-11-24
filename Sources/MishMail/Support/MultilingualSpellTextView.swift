@@ -114,9 +114,17 @@ class MultilingualSpellTextView: NSTextView {
         let menu = super.menu(for: event)
         guard let menu, spellLanguages != nil else { return menu }
         let index = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
-        replaceSpellingGuesses(in: menu, atCharacterIndex: index)
-        routeLearnAndIgnore(in: menu)
+        prepareContextMenu(menu, atCharacterIndex: index)
         return menu
+    }
+
+    /// Every right-click empties the lookup cache, so an answer from before a
+    /// Learn, Unlearn or Ignore made from an earlier menu is never reused.
+    /// AppKit's own items (Learn, Ignore, Look Up…) are left as AppKit built
+    /// them; only the suggestions may be replaced.
+    func prepareContextMenu(_ menu: NSMenu, atCharacterIndex index: Int) {
+        spellLookups.removeAll()
+        replaceSpellingGuesses(in: menu, atCharacterIndex: index)
     }
 
     /// Puts suggestions from the chosen languages, the paragraph's language
@@ -207,37 +215,6 @@ class MultilingualSpellTextView: NSTextView {
         else { return }
         textStorage?.replaceCharacters(in: choice.range, with: choice.replacement)
         didChangeText()
-    }
-
-    // MARK: Learn / Ignore
-
-    /// AppKit's own Learn, Unlearn and Ignore items, re-pointed here so the
-    /// lookup cache is emptied around them. The original action still runs,
-    /// with the same sender. Items of any other kind are untouched.
-    private var spellingMenuActions: [ObjectIdentifier: (action: Selector, target: AnyObject?)] = [:]
-
-    func routeLearnAndIgnore(in menu: NSMenu) {
-        spellingMenuActions.removeAll()
-        for item in menu.items {
-            guard let action = item.action, action != #selector(applySpellingGuess(_:)) else { continue }
-            let name = NSStringFromSelector(action).lowercased()
-            guard name.contains("learnspelling") || name.contains("ignorespelling") else { continue }
-            spellingMenuActions[ObjectIdentifier(item)] = (action, item.target)
-            item.target = self
-            item.action = #selector(runSpellingMenuAction(_:))
-        }
-    }
-
-    @objc func runSpellingMenuAction(_ sender: NSMenuItem) {
-        guard let original = spellingMenuActions[ObjectIdentifier(sender)] else { return }
-        spellLookups.removeAll()
-        let target: AnyObject = original.target ?? self
-        if target.responds(to: original.action) {
-            _ = target.perform(original.action, with: sender)
-        } else {
-            NSApplication.shared.sendAction(original.action, to: original.target, from: sender)
-        }
-        spellLookups.removeAll()
     }
 }
 

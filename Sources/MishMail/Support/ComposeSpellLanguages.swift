@@ -280,7 +280,8 @@ enum ComposeSpellLanguages {
 
 /// "Is this word correct in this language" answers, kept per text view so a
 /// word repeated across the message is looked up once per language. Emptied
-/// when the chosen languages change and around Learn / Ignore Spelling.
+/// when the chosen languages change, on Ignore Spelling and on every
+/// right-click (where Learn, Unlearn and Ignore are chosen).
 final class SpellLookupCache {
     /// Generous for one message; past it the cache starts over.
     static let limit = 4_096
