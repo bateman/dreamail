@@ -1958,7 +1958,14 @@ struct ComposeRequest: Identifiable {
         // Baseline before polling: every unread thread already in the cache
         // would otherwise look new and fire a notification.
         await seedUnreadBaseline()
-        Notifier.requestPermission()
+        // Once answered, repaint (a paint before the answer may not have
+        // shown) and read what the settings now allow.
+        Notifier.requestPermission { [weak self] in
+            Task { @MainActor in
+                self?.repaintDockBadge()
+                self?.refreshDockBadgeSystemStatus()
+            }
+        }
         await startPolling()
         rebuildMetadataIfNeeded()
         reloadSnippets()
@@ -2743,6 +2750,7 @@ struct ComposeRequest: Identifiable {
             : ThreadListPaging.searchWindowLimit
         let fetchLimit = ThreadListPaging.probeLimit(pageSize: windowLimit)
         let badgeAccount = DockBadge.account(for: Self.badgeScope, focused: activeAccount)
+        let badgeTicket = dockBadgeTicket(account: badgeAccount)
         // Primary badge tracks the inbox category hide set (Updates/Forums),
         // not only the fixed promo/social tab split.
         let inboxHideCategories = inboxBadgeHideCategories
@@ -2913,7 +2921,7 @@ struct ComposeRequest: Identifiable {
                 // category tabs require inInbox). Gmail's CATEGORY_* label
                 // totals include spam + archived and would disagree with the list.
                 if payload.counts != self.unreadCounts { self.unreadCounts = payload.counts }
-                self.publishDockBadge(payload.badge)
+                self.applyDockBadgeRecount(payload.badge, ticket: badgeTicket)
                 return true
             }
             // One-shot, and a pool read of its own — kept outside the
@@ -3408,6 +3416,7 @@ struct ComposeRequest: Identifiable {
         // The account the badge counts: nil = every account. "Focused"
         // follows the sidebar (unified view = every account).
         let badgeAccount = DockBadge.account(for: Self.badgeScope, focused: activeAccount)
+        let badgeTicket = dockBadgeTicket(account: badgeAccount)
         let hideCategories = inboxBadgeHideCategories
         // Off-main: the aggregate is ~8 COUNTs, and on SQLCipher every page
         // miss is an AES decrypt + HMAC. Kept as separate per-predicate
@@ -3435,7 +3444,7 @@ struct ComposeRequest: Identifiable {
             // with the list. Guarded: an Observation setter publishes even for
             // an equal value and would re-render every sidebar badge.
             if result.counts != self.unreadCounts { self.unreadCounts = result.counts }
-            self.publishDockBadge(result.badge)
+            self.applyDockBadgeRecount(result.badge, ticket: badgeTicket)
         }
     }
 
@@ -3448,17 +3457,43 @@ struct ComposeRequest: Identifiable {
         DockBadge.account(for: Self.badgeScope, focused: activeAccountId)
     }
 
-    /// Last count painted on the Dock; nil until the first recount lands.
-    @ObservationIgnored private(set) var dockBadgeCount: Int?
+    /// Dock badge count and its scope. Recounts (`reloadThreads`,
+    /// `refreshBadge`) and local actions (`applyDockBadgeDelta`) all go
+    /// through it; only what it accepts is painted.
+    @ObservationIgnored private(set) var dockBadge = DockBadge.Counter()
 
-    /// Single writer of the Dock badge. The database recounts
-    /// (`reloadThreads`, `refreshBadge`) and the optimistic delta of a local
-    /// action all land here; an unchanged count does not touch the Dock.
-    func publishDockBadge(_ count: Int) {
-        let count = max(0, count)
-        guard count != dockBadgeCount else { return }
-        dockBadgeCount = count
+    /// What macOS settings allow for the badge; shown in Settings.
+    private(set) var dockBadgeSystemStatus: DockBadge.SystemStatus = .unknown
+
+    /// Taken when a recount's read starts (see `DockBadge.Counter`).
+    func dockBadgeTicket(account: String?) -> DockBadge.Counter.Ticket {
+        dockBadge.ticket(account: account)
+    }
+
+    /// A database recount. Painted even when unchanged: a repaint is the
+    /// only retry if an earlier one was lost.
+    func applyDockBadgeRecount(_ count: Int, ticket: DockBadge.Counter.Ticket) {
+        guard dockBadge.applyRecount(count, ticket: ticket) else { return }
+        repaintDockBadge()
+    }
+
+    /// The summed delta of one local action (one or many threads).
+    func applyDockBadgeDelta(_ delta: Int) {
+        guard dockBadge.applyDelta(delta, account: dockBadgeAccount) else { return }
+        repaintDockBadge()
+    }
+
+    /// Paint the current count again (app activation, permission answered).
+    func repaintDockBadge() {
+        guard let count = dockBadge.count else { return }
         Notifier.setBadge(count)
+    }
+
+    func refreshDockBadgeSystemStatus() {
+        Notifier.readBadgeStatus { [weak self] status in
+            guard let self, self.dockBadgeSystemStatus != status else { return }
+            self.dockBadgeSystemStatus = status
+        }
     }
 
     /// Sidebar counts + dock badge. Delegates to `SidebarCounts` (shared with

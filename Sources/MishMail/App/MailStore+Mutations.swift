@@ -29,7 +29,11 @@ extension MailStore {
 
         // True optimistic ordering: publish the user-visible result before
         // SQLCipher or Gmail can delay it.
-        applyOptimisticSidebarCountDelta(from: thread, to: updated)
+        // Counts move from the row as the list shows it now: a caller's
+        // copy can predate an earlier action on the same thread.
+        let current = liveThread(thread.id) ?? thread
+        applyOptimisticSidebarCountDelta(from: current, to: updated)
+        applyDockBadgeDelta(dockBadgeDelta(from: current, to: updated))
         applyOptimisticThreadUpdate(updated)
         if !suppressThreadReload {
             scheduleThreadMutationReconciliation()
@@ -286,20 +290,23 @@ extension MailStore {
         }
     }
 
+    /// The row as the list currently holds it, if it is in the list.
+    private func liveThread(_ id: String) -> MailThread? {
+        threads.first { $0.id == id }
+    }
+
+    /// Dock badge change for one thread, in the badge's own scope (an "All
+    /// accounts" badge also moves for an account the sidebar hides).
+    private func dockBadgeDelta(from old: MailThread, to updated: MailThread) -> Int {
+        DockBadge.delta(from: old, to: updated, badgeAccount: dockBadgeAccount,
+                        hideCategories: inboxBadgeHideCategories)
+    }
+
     private func applyOptimisticSidebarCountDelta(
         from old: MailThread, to updated: MailThread
     ) {
         let now = Date()
         let hide = inboxBadgeHideCategories
-        // Dock badge first: its scope is not the sidebar's (an "All
-        // accounts" badge moves for mail of an account the sidebar hides).
-        // Without this it waited for the reconciliation recount.
-        let badgeDelta = DockBadge.delta(
-            from: old, to: updated, badgeAccount: dockBadgeAccount,
-            now: now, hideCategories: hide)
-        if badgeDelta != 0, let current = dockBadgeCount {
-            publishDockBadge(current + badgeDelta)
-        }
         if let activeAccountId, old.accountId != activeAccountId { return }
         let before = SidebarCounts.memberships(of: old, now: now, hideCategories: hide)
         let after = SidebarCounts.memberships(of: updated, now: now, hideCategories: hide)
@@ -349,13 +356,19 @@ extension MailStore {
         // SQLCipher or Gmail work can delay what the user sees.
         var edits: [(original: MailThread, updated: MailThread)] = []
         edits.reserveCapacity(targets.count)
+        let live = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var badgeDelta = 0
         for thread in targets {
             var copy = thread
             local(&copy)
-            applyOptimisticSidebarCountDelta(from: thread, to: copy)
+            let current = live[thread.id] ?? thread
+            applyOptimisticSidebarCountDelta(from: current, to: copy)
+            badgeDelta += dockBadgeDelta(from: current, to: copy)
             applyOptimisticThreadUpdate(copy)
             edits.append((thread, copy))
         }
+        // One paint for the whole action, not one per row.
+        applyDockBadgeDelta(badgeDelta)
         scheduleThreadMutationReconciliation()
 
         let persistence = enqueueBulkThreadPersistence(edits)

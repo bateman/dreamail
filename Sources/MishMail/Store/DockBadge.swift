@@ -94,4 +94,105 @@ enum DockBadge {
                            hideCategories: hideCategories)
         return (after ? 1 : 0) - (before ? 1 : 0)
     }
+
+    // MARK: - Count state
+
+    /// The count on the Dock and what it was counted for. Two writers:
+    /// database recounts (authoritative) and local actions (optimistic
+    /// deltas). `MailStore` holds one and paints whatever it accepts.
+    struct Counter: Equatable {
+        /// Last accepted count; nil until the first recount lands.
+        private(set) var count: Int?
+        /// The badge account `count` was counted for (nil = every account).
+        private(set) var account: String?
+        /// Bumped by every local action, so a recount whose read started
+        /// before it cannot undo its delta.
+        private(set) var epoch = 0
+
+        /// Taken when a recount's read starts.
+        struct Ticket: Equatable {
+            let epoch: Int
+            let account: String?
+        }
+
+        func ticket(account: String?) -> Ticket {
+            Ticket(epoch: epoch, account: account)
+        }
+
+        /// A database recount. Rejected when a local action happened after
+        /// its read started: that read may predate the action's write, and
+        /// the action's own reconciliation recount follows.
+        @discardableResult
+        mutating func applyRecount(_ value: Int, ticket: Ticket) -> Bool {
+            guard ticket.epoch == epoch else { return false }
+            count = max(0, value)
+            account = ticket.account
+            return true
+        }
+
+        /// A local action, `delta` summed over every thread it touched.
+        /// Applied only to a count of the same scope: right after a scope,
+        /// focus or account change the count belongs to the old one, and
+        /// the recount that change starts will set it.
+        @discardableResult
+        mutating func applyDelta(_ delta: Int, account: String?) -> Bool {
+            epoch += 1
+            guard delta != 0, let current = count, self.account == account else {
+                return false
+            }
+            count = max(0, current + delta)
+            return true
+        }
+    }
+
+    // MARK: - What macOS allows
+
+    /// The app's notification permission, reduced to what the badge needs.
+    enum Authorization: Equatable {
+        case notDetermined
+        case denied
+        case allowed
+    }
+
+    /// Why the badge may not be visible, from the notification settings and
+    /// the last badge call. Codes only, never mail content.
+    enum SystemStatus: Equatable {
+        case unknown
+        case notAsked
+        case allowed
+        case badgesOff
+        case notificationsOff
+        case failed(code: Int)
+    }
+
+    static func status(
+        authorization: Authorization, badgeEnabled: Bool, lastErrorCode: Int?
+    ) -> SystemStatus {
+        switch authorization {
+        case .denied: return .notificationsOff
+        case .notDetermined: return .notAsked
+        case .allowed:
+            if !badgeEnabled { return .badgesOff }
+            if let lastErrorCode { return .failed(code: lastErrorCode) }
+            return .allowed
+        }
+    }
+
+    /// One line for Settings; `problem` asks for the System Settings button.
+    static func summary(_ status: SystemStatus) -> (text: String, problem: Bool) {
+        switch status {
+        case .unknown:
+            return ("Checking…", false)
+        case .notAsked:
+            return ("Notification permission not asked yet", false)
+        case .allowed:
+            return ("Badges allowed", false)
+        case .badgesOff:
+            return ("Off in System Settings ▸ Notifications: turn on “Badge application icon”", true)
+        case .notificationsOff:
+            return ("Notifications are off in System Settings; macOS may hide the badge", true)
+        case .failed(let code):
+            return ("macOS refused the badge (error \(code))", true)
+        }
+    }
 }

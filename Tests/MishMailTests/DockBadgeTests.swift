@@ -1,13 +1,15 @@
 import XCTest
 import GRDB
 
-/// Dock badge: the label rule, the scope rule, and that the badge follows
-/// every change of the inbox (local action, new mail, account removal).
+/// Dock badge rules: the label, the scope, what counts, how the count
+/// state accepts recounts and local deltas, and what Settings says about
+/// macOS hiding it.
 ///
 /// The recount is `SidebarCounts.fetch(...).badge`, the query `MailStore`
-/// publishes after every list reload. The optimistic step is
-/// `DockBadge.delta`, which `MailStore` applies in the same frame as the
-/// row; each action test checks that both agree.
+/// recounts with. The per-thread delta is `DockBadge.delta`, which
+/// `MailStore` sums per action and feeds to `DockBadge.Counter`; the action
+/// tests check that delta and recount agree. AppKit painting and the
+/// `MailStore` wiring are not hosted here.
 final class DockBadgeTests: XCTestCase {
 
     private let a = "a@x.com"
@@ -110,7 +112,7 @@ final class DockBadgeTests: XCTestCase {
 
     // MARK: - Local actions
 
-    func testReadArchiveTrashSpamSnoozeLowerTheBadgeAtOnce() throws {
+    func testReadArchiveTrashSpamSnoozeDeltaMatchesRecount() throws {
         let now = Date()
         let actions: [(String, (inout MailThread) -> Void)] = [
             ("read", { $0.isUnread = false }),
@@ -124,7 +126,7 @@ final class DockBadgeTests: XCTestCase {
         }
     }
 
-    func testMarkUnreadAndMoveToInboxRaiseTheBadge() throws {
+    func testMarkUnreadAndMoveToInboxDeltaMatchesRecount() throws {
         let now = Date()
         try assertActionMovesBadge("mark unread", by: +1, now: now,
                                    start: { $0.isUnread = false },
@@ -134,7 +136,7 @@ final class DockBadgeTests: XCTestCase {
                                    { $0.inInbox = true })
     }
 
-    func testStarringLeavesTheBadgeAlone() throws {
+    func testStarringDeltaIsZero() throws {
         try assertActionMovesBadge("star", by: 0, now: Date(),
                                    { $0.isStarred = true })
     }
@@ -142,7 +144,7 @@ final class DockBadgeTests: XCTestCase {
     /// The badge scope is not the sidebar's: with "All accounts", reading
     /// mail of an account the sidebar does not show still lowers it, and a
     /// badge scoped to one account ignores the others.
-    func testActionOnAnotherAccountFollowsTheBadgeScope() {
+    func testDeltaFollowsTheBadgeScopeNotTheSidebar() {
         let now = Date()
         let old = thread("b1", account: b)
         var new = old
@@ -150,6 +152,117 @@ final class DockBadgeTests: XCTestCase {
         XCTAssertEqual(DockBadge.delta(from: old, to: new, badgeAccount: nil, now: now), -1)
         XCTAssertEqual(DockBadge.delta(from: old, to: new, badgeAccount: b, now: now), -1)
         XCTAssertEqual(DockBadge.delta(from: old, to: new, badgeAccount: a, now: now), 0)
+    }
+
+    // MARK: - Counter
+
+    func testDeltaBeforeTheFirstRecountIsNotApplied() {
+        var counter = DockBadge.Counter()
+        XCTAssertFalse(counter.applyDelta(-1, account: nil))
+        XCTAssertNil(counter.count, "nothing to paint before a recount")
+    }
+
+    func testRecountThenDeltaMovesTheCount() {
+        var counter = DockBadge.Counter()
+        XCTAssertTrue(counter.applyRecount(5, ticket: counter.ticket(account: nil)))
+        XCTAssertTrue(counter.applyDelta(-1, account: nil))
+        XCTAssertEqual(counter.count, 4)
+        XCTAssertTrue(counter.applyDelta(+3, account: nil))
+        XCTAssertEqual(counter.count, 7)
+    }
+
+    func testCountIsClampedAtZero() {
+        var counter = DockBadge.Counter()
+        counter.applyRecount(-4, ticket: counter.ticket(account: nil))
+        XCTAssertEqual(counter.count, 0)
+        counter.applyDelta(-2, account: nil)
+        XCTAssertEqual(counter.count, 0)
+    }
+
+    /// A recount whose read started before a local action must not undo
+    /// that action's delta (the badge would go N → N-1 → N → N-1).
+    func testRecountStartedBeforeAnActionIsRejected() {
+        var counter = DockBadge.Counter()
+        counter.applyRecount(5, ticket: counter.ticket(account: nil))
+        let stale = counter.ticket(account: nil)
+        counter.applyDelta(-1, account: nil)
+        XCTAssertFalse(counter.applyRecount(5, ticket: stale))
+        XCTAssertEqual(counter.count, 4)
+        // The action's own reconciliation starts afterwards and lands.
+        XCTAssertTrue(counter.applyRecount(4, ticket: counter.ticket(account: nil)))
+        XCTAssertEqual(counter.count, 4)
+    }
+
+    /// Any action invalidates older reads, even one that moves no badge.
+    func testActionWithoutBadgeChangeStillRejectsOlderRecounts() {
+        var counter = DockBadge.Counter()
+        counter.applyRecount(5, ticket: counter.ticket(account: nil))
+        let stale = counter.ticket(account: nil)
+        XCTAssertFalse(counter.applyDelta(0, account: nil))
+        XCTAssertFalse(counter.applyRecount(9, ticket: stale))
+        XCTAssertEqual(counter.count, 5)
+    }
+
+    /// After a scope, focus or account change the count belongs to the old
+    /// scope: a delta waits for the new recount instead of landing on it.
+    func testDeltaForAnotherScopeIsNotApplied() {
+        var counter = DockBadge.Counter()
+        counter.applyRecount(5, ticket: counter.ticket(account: a))
+        XCTAssertFalse(counter.applyDelta(-1, account: nil))
+        XCTAssertFalse(counter.applyDelta(-1, account: b))
+        XCTAssertEqual(counter.count, 5)
+        XCTAssertTrue(counter.applyDelta(-1, account: a))
+        XCTAssertEqual(counter.count, 4)
+        counter.applyRecount(2, ticket: counter.ticket(account: nil))
+        XCTAssertTrue(counter.applyDelta(-1, account: nil))
+        XCTAssertEqual(counter.count, 1)
+    }
+
+    /// A bulk action applies its summed delta once.
+    func testBulkActionSumsIntoOneDelta() throws {
+        let now = Date()
+        let rows = (0..<4).map { thread("t\($0)", account: a) }
+        let read = rows.map { row -> MailThread in
+            var copy = row
+            copy.isUnread = false
+            return copy
+        }
+        let total = zip(rows, read).reduce(0) {
+            $0 + DockBadge.delta(from: $1.0, to: $1.1, badgeAccount: nil, now: now)
+        }
+        XCTAssertEqual(total, -4)
+        var counter = DockBadge.Counter()
+        counter.applyRecount(6, ticket: counter.ticket(account: nil))
+        XCTAssertTrue(counter.applyDelta(total, account: nil))
+        XCTAssertEqual(counter.count, 2)
+        XCTAssertEqual(counter.epoch, 1, "one action, one epoch")
+    }
+
+    // MARK: - What macOS allows
+
+    func testSystemStatus() {
+        XCTAssertEqual(DockBadge.status(authorization: .denied, badgeEnabled: true,
+                                        lastErrorCode: nil), .notificationsOff)
+        XCTAssertEqual(DockBadge.status(authorization: .notDetermined, badgeEnabled: false,
+                                        lastErrorCode: nil), .notAsked)
+        XCTAssertEqual(DockBadge.status(authorization: .allowed, badgeEnabled: false,
+                                        lastErrorCode: nil), .badgesOff)
+        XCTAssertEqual(DockBadge.status(authorization: .allowed, badgeEnabled: true,
+                                        lastErrorCode: 1), .failed(code: 1))
+        XCTAssertEqual(DockBadge.status(authorization: .allowed, badgeEnabled: true,
+                                        lastErrorCode: nil), .allowed)
+    }
+
+    func testOnlyBlockingStatesOfferSystemSettings() {
+        let problems: [DockBadge.SystemStatus] = [.badgesOff, .notificationsOff, .failed(code: 3)]
+        let fine: [DockBadge.SystemStatus] = [.unknown, .notAsked, .allowed]
+        for status in problems {
+            XCTAssertTrue(DockBadge.summary(status).problem, "\(status)")
+        }
+        for status in fine {
+            XCTAssertFalse(DockBadge.summary(status).problem, "\(status)")
+        }
+        XCTAssertTrue(DockBadge.summary(.failed(code: 3)).text.contains("3"))
     }
 
     // MARK: - New mail, account removal
