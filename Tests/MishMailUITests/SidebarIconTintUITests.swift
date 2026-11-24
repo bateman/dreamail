@@ -42,10 +42,14 @@ final class SidebarIconTintUITests: XCTestCase {
         app.launch()
         addTeardownBlock { app.terminate() }
 
-        // The main window is the one listing the demo threads.
-        let main = app.windows.containing(
+        // The main window is the one listing the demo threads; pin it by its
+        // identifier, since its content changes as the test clicks around.
+        let listing = app.windows.containing(
             NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
-        XCTAssertTrue(main.waitForExistence(timeout: 10))
+        XCTAssertTrue(listing.waitForExistence(timeout: 10))
+        let mainID = listing.identifier
+        XCTAssertFalse(mainID.isEmpty, "main window needs an identifier")
+        let main = app.windows[mainID]
         app.activate()
 
         // Sidebar starts collapsed; → reveals it. Clicking Inbox gives the
