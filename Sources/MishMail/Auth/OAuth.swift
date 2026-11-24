@@ -243,9 +243,16 @@ final class OAuthService {
     /// uses `/callback/<uuid>` instead of OAuth `state`). An empty
     /// `expectedState` skips the state check for vendors that do not send one
     /// and must be paired with a unique `expectedPath`.
+    ///
+    /// `limits` bounds what local clients can hold open while the listener
+    /// waits (see `LoopbackLimits`); `onEvent` reports admissions, refusals,
+    /// deadlines and teardown so tests can synchronize on them.
     func startLoopbackListener(expectedState: String,
                                preferredPort: UInt16? = nil,
-                               expectedPath: String? = nil) throws -> (UInt16, Task<String, Error>) {
+                               expectedPath: String? = nil,
+                               limits: LoopbackLimits = .standard,
+                               onEvent: ((LoopbackListenerEvent) -> Void)? = nil)
+        throws -> (UInt16, Task<String, Error>) {
         precondition(
             !expectedState.isEmpty || !(expectedPath ?? "").isEmpty,
             "empty expectedState requires a unique expectedPath")
@@ -255,6 +262,11 @@ final class OAuthService {
         let wanted = preferredPort.flatMap { NWEndpoint.Port(rawValue: $0) } ?? .any
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: wanted)
         let listener = try NWListener(using: params)
+        // One serial queue for the listener, its connections and their
+        // deadlines, so their handlers never interleave.
+        let queue = DispatchQueue(label: "MishMail.OAuthLoopback")
+        let connections = LoopbackConnectionTracker(
+            limits: limits, queue: queue, onEvent: onEvent)
         // Serialize finish/yield so a second concurrent connection can't race
         // the stream after the first legitimate callback already completed.
         let lock = NSLock()
@@ -274,7 +286,21 @@ final class OAuthService {
                 }
             }
             listener.newConnectionHandler = { conn in
-                conn.start(queue: .global())
+                // Beyond the concurrency cap (or after teardown) the socket is
+                // closed unread, so a local process can't pile up connections
+                // while the user signs in.
+                guard connections.admit(conn) else {
+                    conn.cancel()
+                    return
+                }
+                conn.stateUpdateHandler = { state in
+                    switch state {
+                    case .failed: conn.cancel()
+                    case .cancelled: connections.release(conn)
+                    default: break
+                    }
+                }
+                conn.start(queue: queue)
                 Self.receiveRequestLine(on: conn, into: Data()) { data in
                     // Browsers open speculative connections and request
                     // /favicon.ico; ignore anything that isn't the actual
@@ -323,16 +349,25 @@ final class OAuthService {
             listener.stateUpdateHandler = { state in
                 if case .failed(let err) = state { complete(.failure(err)) }
             }
-            continuation.onTermination = { _ in listener.cancel() }
+            // Success, failure, timeout and caller cancellation all end the
+            // stream: stop accepting and close every connection still open.
+            continuation.onTermination = { _ in
+                listener.cancel()
+                connections.closeAll()
+            }
         }
-        listener.start(queue: .global())
+        listener.start(queue: queue)
         // Wait briefly for the port to be assigned.
         var port: UInt16 = 0
         for _ in 0..<100 {
             if let p = listener.port?.rawValue, p != 0 { port = p; break }
             usleep(10_000)
         }
-        guard port != 0 else { listener.cancel(); throw OAuthError.badRedirect }
+        guard port != 0 else {
+            listener.cancel()
+            connections.closeAll()
+            throw OAuthError.badRedirect
+        }
         let timeout = Self.loopbackTimeout
         let task = Task<String, Error> {
             try await withThrowingTaskGroup(of: String.self) { group in
@@ -345,7 +380,7 @@ final class OAuthService {
                     throw OAuthError.timedOut
                 }
                 // First finisher wins; cancel the other (stream termination
-                // cancels the NWListener via onTermination).
+                // cancels the NWListener and its connections via onTermination).
                 let result = try await group.next()!
                 group.cancelAll()
                 return result
@@ -423,6 +458,128 @@ final class OAuthService {
     private static func s256(_ verifier: String) -> String {
         let digest = SHA256.hash(data: Data(verifier.utf8))
         return Data(digest).base64URLEncoded()
+    }
+}
+
+/// Bounds on the loopback redirect catcher (RFC 8252 §8.3 listener). Any
+/// local process can connect to 127.0.0.1 while the user signs in; these
+/// limits stop it from holding connections open or flooding the listener.
+struct LoopbackLimits: Equatable {
+    /// Connections open at once. Browsers open a few speculative ones next
+    /// to the redirect itself; more are closed as soon as they are accepted.
+    var maxConnections: Int
+    /// How long one connection may stay open, from acceptance through the
+    /// request line (16 KiB at most) to the reply. A real redirect needs
+    /// milliseconds; a slow or idle client is closed when this runs out.
+    var connectionDeadline: Duration
+
+    static let standard = LoopbackLimits(maxConnections: 16, connectionDeadline: .seconds(10))
+}
+
+/// What the loopback listener did with local connections.
+enum LoopbackListenerEvent: Equatable {
+    /// A connection was admitted; `open` counts it.
+    case accepted(open: Int)
+    /// A connection arrived at the cap or after teardown and was closed.
+    case refused
+    /// An admitted connection ran out of time and is being closed.
+    case deadlineExpired
+    /// An admitted connection closed; `open` no longer counts it.
+    case released(open: Int)
+    /// The sign-in ended: every open connection was cancelled and no new
+    /// one will be admitted.
+    case closedAll
+}
+
+/// Tracks the loopback listener's open connections: enforces the cap, arms
+/// a deadline per connection and cancels them all when the sign-in ends.
+/// Thread-safe; events are reported outside the lock.
+final class LoopbackConnectionTracker {
+    private struct Entry {
+        let connection: NWConnection
+        let deadline: DispatchWorkItem
+    }
+
+    private let limits: LoopbackLimits
+    private let queue: DispatchQueue
+    private let onEvent: ((LoopbackListenerEvent) -> Void)?
+    private let lock = NSLock()
+    private var open: [ObjectIdentifier: Entry] = [:]
+    private var closed = false
+
+    init(limits: LoopbackLimits, queue: DispatchQueue,
+         onEvent: ((LoopbackListenerEvent) -> Void)?) {
+        self.limits = limits
+        self.queue = queue
+        self.onEvent = onEvent
+    }
+
+    /// Admits `connection` and arms its deadline, or returns false when the
+    /// cap is reached or the listener is closing (the caller cancels it).
+    func admit(_ connection: NWConnection) -> Bool {
+        let deadline = DispatchWorkItem { [weak self, weak connection] in
+            guard let self, let connection else { return }
+            self.expire(connection)
+        }
+        lock.lock()
+        let admitted = !closed && open.count < limits.maxConnections
+        if admitted {
+            open[ObjectIdentifier(connection)] = Entry(connection: connection, deadline: deadline)
+        }
+        let count = open.count
+        lock.unlock()
+        guard admitted else {
+            onEvent?(.refused)
+            return false
+        }
+        queue.asyncAfter(deadline: .now() + limits.connectionDeadline.timeInterval, execute: deadline)
+        onEvent?(.accepted(open: count))
+        return true
+    }
+
+    /// Forgets a connection that reached `.cancelled`, however it got there.
+    func release(_ connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        lock.lock()
+        let entry = open[id].flatMap { $0.connection === connection ? $0 : nil }
+        if entry != nil { open[id] = nil }
+        let count = open.count
+        lock.unlock()
+        guard let entry else { return }
+        entry.deadline.cancel()
+        onEvent?(.released(open: count))
+    }
+
+    /// Cancels every open connection and refuses any later one. Idempotent.
+    func closeAll() {
+        lock.lock()
+        guard !closed else { lock.unlock(); return }
+        closed = true
+        let entries = Array(open.values)
+        open.removeAll()
+        lock.unlock()
+        for entry in entries {
+            entry.deadline.cancel()
+            entry.connection.cancel()
+        }
+        onEvent?(.closedAll)
+    }
+
+    private func expire(_ connection: NWConnection) {
+        lock.lock()
+        let tracked = open[ObjectIdentifier(connection)]?.connection === connection
+        lock.unlock()
+        guard tracked else { return }
+        onEvent?(.deadlineExpired)
+        // `.cancelled` then releases it through the state handler.
+        connection.cancel()
+    }
+}
+
+private extension Duration {
+    var timeInterval: Double {
+        let parts = components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }
 }
 
