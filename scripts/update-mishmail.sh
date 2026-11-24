@@ -108,8 +108,9 @@ team_of() {
   codesign -dvv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p'
 }
 INSTALLED_TEAM="$(team_of "$TARGET")"
-[ -n "$INSTALLED_TEAM" ] && [ "$INSTALLED_TEAM" != "not set" ] \
-  || die "$TARGET is ad-hoc signed (built from source) — update it with 'make install'"
+if [ -z "$INSTALLED_TEAM" ] || [ "$INSTALLED_TEAM" = "not set" ]; then
+  die "$TARGET is ad-hoc signed (built from source) — update it with 'make install'"
+fi
 # Both go into the code-signing requirement below, so they must be the plain
 # tokens they claim to be.
 [[ "$INSTALLED_TEAM" =~ ^[A-Z0-9]{10}$ ]] \
