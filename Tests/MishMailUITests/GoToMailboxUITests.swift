@@ -102,8 +102,8 @@ final class GoToMailboxUITests: XCTestCase {
 
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
         XCTAssertTrue(subject.waitForExistence(timeout: 5))
-        let firstSubject = subject.label
-        XCTAssertFalse(firstSubject.isEmpty)
+        let firstSubject = text(of: subject)
+        XCTAssertFalse(firstSubject.isEmpty, "the subject text must be readable")
         subject.click()
 
         app.typeKey("u", modifierFlags: [])
@@ -111,12 +111,19 @@ final class GoToMailboxUITests: XCTestCase {
 
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
-            if subject.exists, subject.label != firstSubject { break }
+            if subject.exists, text(of: subject) != firstSubject { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(subject.waitForExistence(timeout: 2),
                       "j must open the next conversation")
-        XCTAssertNotEqual(subject.label, firstSubject,
+        XCTAssertNotEqual(text(of: subject), firstSubject,
                           "after u, j must continue from the conversation just read")
+    }
+
+    /// A selectable SwiftUI `Text` is an NSTextField: its string is the
+    /// accessibility value, and the label is often empty.
+    private func text(of element: XCUIElement) -> String {
+        if let value = element.value as? String, !value.isEmpty { return value }
+        return element.label
     }
 }
