@@ -345,7 +345,8 @@ final class ComposeSpellLanguagesTests: XCTestCase {
     }
 
     func testTheComposeEditorsAreMultilingual() {
-        XCTAssertTrue(ComposeCaretSettlingTextView() is MultilingualSpellTextView)
+        let body: NSTextView = ComposeCaretSettlingTextView()
+        XCTAssertTrue(body is MultilingualSpellTextView)
     }
 
     // MARK: Suggestions
@@ -460,12 +461,12 @@ final class ComposeSpellLanguagesTests: XCTestCase {
     }
 
     func testContinuousCheckingGoesThroughTheLanguageHooks() {
-        _ = NSApplication.shared
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 400, height: 200),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        // ARC owns the window; the default would free it again on close.
+        window.isReleasedWhenClosed = false
         let view = ProbeView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         window.contentView?.addSubview(view)
-        window.orderFront(nil)
         view.spellLanguageIdentifier = FakeIdentifier()
         view.spellLanguageChecker = FakeChecker()
         view.spellLanguages = enIt
@@ -484,6 +485,6 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         XCTAssertGreaterThan(view.handled, 0,
                              "handleTextCheckingResults not reached; checks=\(view.checkedLanguages)")
         XCTAssertEqual(view.checkedLanguages.first ?? nil, "en")
-        window.close()
+        view.removeFromSuperview()
     }
 }
