@@ -224,7 +224,7 @@ ui-test-ci:
 # takes focus, and injects keyboard/mouse events into the live desktop, so a
 # local run hijacks the machine for its duration. GitHub Actions runs unit
 # tests + build on every pull_request and push to main. The UI suite takes
-# about six minutes, so it runs only for a release: `make release` starts it
+# about eleven minutes, so it runs only for a release: `make release` starts it
 # on GitHub and waits (`make ui-test-ci`), and it runs again when the release
 # is published. Locally the gate is `make test`. To run the UI suite here
 # anyway (and surrender the desktop while it runs):

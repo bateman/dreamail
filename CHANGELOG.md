@@ -6,6 +6,13 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Crisper, monochrome sidebar icons.** Sidebar and Settings sidebar icons
+  are drawn at the row title's size, in medium weight, so they read less soft
+  and large; they follow the "Sidebar icon size" setting in System Settings ▸
+  Appearance. The selected row's icon is the filled glyph in the text colour
+  (white on the accent selection of a focused sidebar), no longer tinted with
+  the accent colour, in active and inactive windows and with any accent
+  colour.
 - **Account photos.** The account switcher and the Accounts settings show each
   account's own Google profile photo instead of the initial disc. The photo
   URL comes from the profile MishMail already reads (no new permission, no

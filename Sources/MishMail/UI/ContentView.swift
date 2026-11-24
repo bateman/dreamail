@@ -1858,7 +1858,7 @@ struct Sidebar: View {
                             Text("Add view")
                         } icon: {
                             Image(systemName: "plus")
-                                .foregroundStyle(.mailIcon(selected: false))
+                                .mailIconStyle(selected: false)
                         }
                         .foregroundStyle(.secondary)
                     }
@@ -1970,15 +1970,18 @@ struct Sidebar: View {
         let reselect = ListReselectPolicy.mountsHandler(
             row: view, selected: store.selectedView)
         let selected = store.selectedView == view
-        // An explicit icon style: the sidebar list style would otherwise
-        // tint the glyph with the accent.
+        // Explicit icon and title styles: the sidebar list style would
+        // otherwise draw the glyph large and light, and tint the selected
+        // row's glyph with the accent (see `mailIcon`, `MailIconMetrics`).
         return Label {
             Text(view.title)
                 .fontWeight(selected ? .semibold : .regular)
+                .mailRowTitleStyle()
         } icon: {
             Image(systemName: view.icon(selected: selected))
-                .foregroundStyle(.mailIcon(selected: selected))
+                .mailIconStyle(selected: selected)
         }
+        .listItemTint(.monochrome)
         .badge((badge ?? 0) > 0 ? badge! : 0)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
         .simultaneousGesture(
