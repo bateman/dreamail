@@ -75,7 +75,7 @@ INSTALL_SIGN_FLAGS = CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEA
 	MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.entitlements
 endif
 
-.PHONY: test ui-test ui-test-ci build run demo install gen hooks prune release clean signing-doctor require-stable-signing require-run-signing require-pushed
+.PHONY: test ui-test ui-test-ci build run demo install gen icon hooks prune release clean signing-doctor require-stable-signing require-run-signing require-pushed
 
 # Refuse to ship an embedded relauncher that inherited the app's sandbox.
 # Stripping com.apple.quarantine from the installed update is its entire job,
@@ -161,7 +161,11 @@ define check_ship_app
 	@echo "Built app verifies: signature valid, version $(VERSION), team $(TEAM)."
 endef
 
-gen:
+# Re-export the AppIcon PNGs when Design/AppIcon.svg changed (no-op otherwise).
+icon:
+	@scripts/gen-icon.sh
+
+gen: icon
 	@# Worktrees lack the git-ignored Config/Local.xcconfig (personal signing
 	@# identity), so their Debug builds fall back to ad-hoc signing — and every
 	@# ad-hoc rebuild is a "new app" to the Keychain, which re-prompts for the
