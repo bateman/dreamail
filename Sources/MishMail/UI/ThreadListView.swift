@@ -556,8 +556,8 @@ private struct ThreadListSections: View, Equatable {
     /// Air between a section's last row and the next header's title,
     /// times the font scale.
     private static let sectionGap: CGFloat = 6
-    /// Header text's leading/trailing inset, aligned with the rows'.
-    private static let headerHorizontalInset: CGFloat = 8
+    /// What the plain List adds above a header's content (macOS 26).
+    private static let systemHeaderTopInset: CGFloat = 4
 
     // `grouped` and `rowDisplay` only change inside a layout pass, which
     // bumps `layoutGeneration`. The closure mutates the parent's @State
@@ -645,11 +645,11 @@ private struct ThreadListSections: View, Equatable {
                     }
                 }
                 .accessibilityIdentifier("threadSectionHeader.\(title)")
-                .padding(.top, Self.sectionGap * fontScale)
-                // Without this the List pads header content above and
-                // below (about 4 pt each on macOS 26), on top of the gap.
-                .listRowInsets(EdgeInsets(top: 0, leading: Self.headerHorizontalInset,
-                                          bottom: 0, trailing: Self.headerHorizontalInset))
+                // The List pads header content above and below (4 pt each
+                // on macOS 26) and ignores `listRowInsets` on headers. Take
+                // back the top one only: a system with a different inset can
+                // then only widen the gap, never clip the title or the pill.
+                .padding(.top, Self.sectionGap * fontScale - Self.systemHeaderTopInset)
             }
         }
         if store.hasMoreThreads || store.isLoadingMore {

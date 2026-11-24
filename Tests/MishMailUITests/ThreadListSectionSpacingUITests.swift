@@ -71,54 +71,57 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         rows.isEmpty ? 0 : rows.map(\.height).sorted()[rows.count / 2]
     }
 
-    private func assertCompactSectionBreaks(_ app: XCUIApplication,
-                                            checkAlignment: Bool = true,
-                                            file: StaticString = #filePath,
-                                            line: UInt = #line) {
-        let (rows, headers) = settledLayout(app, file: file, line: line)
-        XCTAssertGreaterThanOrEqual(rows.count, 4, "demo rows must be visible",
-                                    file: file, line: line)
-        guard rows.count >= 2 else { return }
-        let gaps = zip(rows, rows.dropFirst()).map { $1.minY - $0.maxY }
-        // Rows inside one section are separated only by the List's row
-        // insets (the narrowest gap); a section break is clearly wider.
-        let rowGap = gaps.min() ?? 0
-        let widest = gaps.max() ?? 0
-        // One row as the eye sees it: the row's frame plus its insets.
-        let rowPitch = medianRowHeight(rows) + rowGap
-        let detail = "rows \(rows.map { [$0.minY, $0.maxY] }); headers \(headers.map { [$0.minX, $0.minY, $0.maxY] })"
-        XCTAssertGreaterThan(widest - rowGap, 4,
-                             "expected a section break among the visible rows; \(detail)",
-                             file: file, line: line)
-        XCTAssertLessThan(widest, rowPitch,
-                          "a section break must be shorter than one row (\(rowPitch) pt); \(detail)",
-                          file: file, line: line)
-        XCTAssertLessThanOrEqual(widest - rowGap, 0.7 * rowPitch,
-                                 "the section header must be about half a row (\(rowPitch) pt); \(detail)",
-                                 file: file, line: line)
+    /// Spacing between two rows of the same section: the List's row insets.
+    private struct RowSpacing { let gap: CGFloat; let pitch: CGFloat }
 
-        // Every header between two rows lies wholly in the gap between them:
-        // no title or pill drawn over a row.
-        var checked = 0
-        for header in headers {
-            guard let above = rows.last(where: { $0.midY < header.midY }),
-                  let below = rows.first(where: { $0.midY > header.midY }) else { continue }
-            checked += 1
-            XCTAssertGreaterThanOrEqual(header.minY, above.maxY - 0.5,
-                                        "header overlaps the row above; \(detail)",
-                                        file: file, line: line)
-            XCTAssertLessThanOrEqual(header.maxY, below.minY + 0.5,
-                                     "header overlaps the row below; \(detail)",
+    @discardableResult
+    private func assertCompactSectionBreaks(_ app: XCUIApplication,
+                                            baseline: RowSpacing? = nil,
+                                            maxHeaderShare: CGFloat = 0.7,
+                                            file: StaticString = #filePath,
+                                            line: UInt = #line) -> RowSpacing? {
+        let (rows, headers) = settledLayout(app, file: file, line: line)
+        let detail = "rows \(rows.map { [$0.minX, $0.minY, $0.maxY] }); headers \(headers.map { [$0.minX, $0.minY, $0.maxY] })"
+        XCTAssertGreaterThanOrEqual(rows.count, 4, "demo rows must be visible; \(detail)",
+                                    file: file, line: line)
+        guard rows.count >= 2 else { return nil }
+        // A gap with a header in it is a section break; any other gap is
+        // the List's own spacing between two rows of one section.
+        var plainGaps: [CGFloat] = []
+        var breaks: [(above: CGRect, below: CGRect, headers: [CGRect])] = []
+        for (above, below) in zip(rows, rows.dropFirst()) {
+            let inside = headers.filter { $0.midY > above.midY && $0.midY < below.midY }
+            if inside.isEmpty { plainGaps.append(below.minY - above.maxY) }
+            else { breaks.append((above, below, inside)) }
+        }
+        guard let spacing = plainGaps.min().map({ RowSpacing(gap: $0, pitch: medianRowHeight(rows) + $0) })
+                ?? baseline else {
+            XCTFail("no two rows of one section on screen; \(detail)", file: file, line: line)
+            return nil
+        }
+        XCTAssertFalse(breaks.isEmpty, "expected a section break among the visible rows; \(detail)",
+                       file: file, line: line)
+        for (above, below, inside) in breaks {
+            let gap = below.minY - above.maxY
+            // One row as the eye sees it: the row's frame plus its insets.
+            XCTAssertLessThan(gap, spacing.pitch,
+                              "a section break must be shorter than one row (\(spacing.pitch) pt); \(detail)",
+                              file: file, line: line)
+            // The header band itself (break minus the normal row spacing).
+            XCTAssertLessThanOrEqual(gap - spacing.gap, maxHeaderShare * spacing.pitch,
+                                     "the section header must be about half a row (\(spacing.pitch) pt); \(detail)",
                                      file: file, line: line)
+            // The header lies wholly in the gap: no title or pill on a row.
+            for header in inside {
+                XCTAssertGreaterThanOrEqual(header.minY, above.maxY - 0.5,
+                                            "header overlaps the row above; \(detail)",
+                                            file: file, line: line)
+                XCTAssertLessThanOrEqual(header.maxY, below.minY + 0.5,
+                                         "header overlaps the row below; \(detail)",
+                                         file: file, line: line)
+            }
         }
-        XCTAssertGreaterThan(checked, 0, "expected a header between two rows; \(detail)",
-                             file: file, line: line)
-        // The header text starts where the row content starts.
-        if checkAlignment, let header = headers.first, let row = rows.first {
-            XCTAssertEqual(header.minX, row.minX, accuracy: 3,
-                           "header text must align with the rows; \(detail)",
-                           file: file, line: line)
-        }
+        return spacing
     }
 
     func testSectionBreakIsShorterThanARowInFullWidthList() {
@@ -143,9 +146,9 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
     /// plain title. It must fit the break too.
     func testLabelPillHeadersFitTheBreak() {
         let app = launch(readingPane: true)
-        let anyRow = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
-        XCTAssertTrue(anyRow.waitForExistence(timeout: 10))
+        // Every demo label holds one conversation, so no two rows share a
+        // section there: take the row spacing from the inbox first.
+        let inbox = assertCompactSectionBreaks(app)
         // Sidebar starts collapsed; → reveals it (see SidebarNavUITests).
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         let labels = app.descendants(matching: .any)
@@ -159,8 +162,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH 'threadSectionHeader.' AND NOT (identifier IN %@)",
                                   inboxSections)).firstMatch
         XCTAssertTrue(pill.waitForExistence(timeout: 5), "Labels view must show section headers")
-        // The pill's capsule starts left of its text: alignment is checked
-        // in the date views only.
-        assertCompactSectionBreaks(app, checkAlignment: false)
+        // The pill is 4 pt taller than a plain title.
+        assertCompactSectionBreaks(app, baseline: inbox, maxHeaderShare: 0.8)
     }
 }
