@@ -653,7 +653,7 @@ actor GmailClient {
                     guard MessageFetchFailureKind.isPerMessagePermanent(error) else { throw error }
                     PerfMetrics.measure(
                         .syncGetRetry,
-                        meta: "id=\(id) error=\(error.localizedDescription)") { () }
+                        meta: "id=\(id) \(DiagnosticLog.describe(error))") { () }
                     return .skipped(id)
                 case .retryable, .rateLimited:
                     let delay = GmailRetryBackoff.delay(
@@ -740,7 +740,7 @@ actor GmailClient {
                         DiagnosticLog.gmailHTTP(
                             account: accountEmail, method: "GET",
                             path: "/messages/\(result.id)", code: result.statusCode,
-                            body: result.body, note: "batch part, \(same) of \(results.count) ids")
+                            body: result.body, note: .batchPart(failing: same, total: results.count))
                     }
                     let error = GmailError.http(result.statusCode, result.body)
                     switch MessageFetchFailureKind.classify(error) {
@@ -839,7 +839,7 @@ actor GmailClient {
                     body += "\nRetry-After: \(retryAfter)"
                 }
                 DiagnosticLog.gmailHTTP(account: accountEmail, method: "POST", path: "/batch",
-                                        code: code, body: body, note: "ids=\(ids.count)")
+                                        code: code, body: body, note: .batchRequest(ids: ids.count))
                 throw GmailError.http(code, body)
             }
             let contentType = (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? ""
