@@ -362,4 +362,9 @@ final class DiagnosticLogTests: XCTestCase {
         XCTAssertTrue(text.contains("domain=NSCocoaErrorDomain"))
         XCTAssertTrue(text.contains("code=\(CocoaError.Code.fileWriteOutOfSpace.rawValue)"))
     }
+
+    func testKeychainErrorKeepsItsStatus() {
+        XCTAssertEqual(DiagnosticLog.describe(KeychainError.status(-25308)),
+                       "error=KeychainError status=-25308")
+    }
 }
