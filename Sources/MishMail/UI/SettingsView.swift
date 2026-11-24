@@ -82,14 +82,18 @@ struct SettingsView: View {
     private func row(_ p: Pane) -> some View {
         HStack {
             // Monochrome like the main sidebar, not the accent.
-            Label { Text(p.title) } icon: {
-                Image(systemName: p.icon).foregroundStyle(.mailIcon(selected: pane == p))
+            Label {
+                Text(p.title).foregroundStyle(Color(nsColor: .labelColor))
+            } icon: {
+                Image(systemName: p.icon).mailIconStyle(selected: pane == p)
             }
+            .listItemTint(.monochrome)
             if p == .updates, updates.available != nil {
                 Spacer()
                 Circle().fill(Color.accentColor).frame(width: 7, height: 7)
             }
         }
+        .accessibilityIdentifier("settings.pane.\(p.rawValue)")
         .tag(p)
     }
 

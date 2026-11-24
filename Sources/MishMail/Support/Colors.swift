@@ -123,12 +123,15 @@ extension MailboxView {
     func icon(selected: Bool) -> String { selected ? selectedIcon : icon }
 }
 
-extension ShapeStyle where Self == HierarchicalShapeStyle {
+extension ShapeStyle where Self == Color {
     /// Tint for navigation glyphs (sidebar rows, "Add view", the Settings
     /// sidebar, the list-column header), Gmail-style: the label colour on
-    /// the selected row, the secondary label colour elsewhere. Hierarchical
-    /// styles follow the text, light/dark and Increase Contrast.
-    static func mailIcon(selected: Bool) -> HierarchicalShapeStyle {
-        selected ? .primary : .secondary
+    /// the selected row, the secondary label colour elsewhere. Concrete
+    /// colours, not the hierarchical `.primary`/`.secondary`: inside a
+    /// selected `.sidebar` row the list sets the foreground style to the
+    /// accent, and a hierarchical style resolves to it (a blue icon). The
+    /// label colours still follow light/dark and Increase Contrast.
+    static func mailIcon(selected: Bool) -> Color {
+        selected ? Color(nsColor: .labelColor) : Color(nsColor: .secondaryLabelColor)
     }
 }

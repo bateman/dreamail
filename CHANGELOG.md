@@ -6,6 +6,11 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Crisper, monochrome sidebar icons.** Sidebar, Settings sidebar and
+  list-header icons are drawn at the row title's size, in medium weight and
+  the standard (not rounded) design, so they read less soft. The selected
+  row's icon is the filled glyph in the text colour, no longer tinted with the
+  accent colour, in active and inactive windows and with any accent colour.
 - **Faster first open, and inline images are not downloaded twice.** The first
   conversation you open is ready sooner, and re-opening a conversation with
   inline images no longer downloads the images again. Deleted mail leaves the

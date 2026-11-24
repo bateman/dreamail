@@ -429,7 +429,7 @@ struct ThreadListView: View {
             // flicker with the detail nav trio.
             ToolbarItem(placement: .navigation) {
                 Image(systemName: store.selectedView.selectedIcon)
-                    .foregroundStyle(.mailIcon(selected: false))
+                    .mailIconStyle(selected: false)
                     .accessibilityHidden(true)
             }
             .pmHideSharedBackground()
