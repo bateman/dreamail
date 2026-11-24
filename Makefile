@@ -15,6 +15,9 @@
 #                  runs it for a release only (`make ui-test-ci` starts it).
 #                  Locally it refuses unless UI_TEST_LOCAL=1.
 #   make build     just compile the test (Debug) app; don't launch it.
+#   make checks    the Linux CI checks: workflow/package pins, the Python
+#                  tests of the scripts (`make script-tests`) and shellcheck
+#                  (`make shellcheck`). No Xcode needed.
 #   make release   build Release, zip the app, publish a GitHub release
 #                  (only builds with MISHMAIL_UPDATE_CHANNEL set look at them;
 #                  the tracked configuration leaves it empty).
@@ -75,7 +78,7 @@ INSTALL_SIGN_FLAGS = CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEA
 	MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.entitlements
 endif
 
-.PHONY: test ui-test ui-test-ci build run demo install gen icon hooks prune release clean signing-doctor require-stable-signing require-run-signing require-pushed
+.PHONY: test ui-test ui-test-ci build run demo install gen icon hooks prune release clean signing-doctor require-stable-signing require-run-signing require-pushed checks script-tests shellcheck
 
 # Refuse to ship an embedded relauncher that inherited the app's sandbox.
 # Stripping com.apple.quarantine from the installed update is its entire job,
@@ -180,10 +183,20 @@ gen: icon
 	@# into a full rebuild on every make invocation.
 	xcodegen generate --use-cache
 
+# CI builds with WARNINGS_AS_ERRORS=1: a compiler warning in MishMail's own
+# targets fails the build (project.yml routes it to
+# SWIFT/GCC_TREAT_WARNINGS_AS_ERRORS; Swift packages are not affected).
+# `build` and `test` take it, and so does whatever runs them (run, demo, the
+# pre-commit hook, release's `test` prerequisite) when it is set. The Release
+# builds of install and release never take it. Note that `make release`
+# waits for a full CI run (`make ui-test-ci`), and that run fails on any
+# warning, e.g. a new deprecation after an Xcode update on the runner.
+WARNING_FLAGS = $(if $(filter 1,$(WARNINGS_AS_ERRORS)),MISHMAIL_WARNINGS_AS_ERRORS=YES)
+
 test: gen
 	# No -quiet: show "Executed N tests" (silent pass looked like a no-op).
 	xcodebuild test -project $(PROJECT) -scheme MishMailTests \
-		-destination '$(DESTINATION)' -derivedDataPath $(DD)
+		-destination '$(DESTINATION)' -derivedDataPath $(DD) $(WARNING_FLAGS)
 
 # Run the CI workflow, UI smoke tests included, on GitHub for the pushed HEAD
 # and wait for the result. The branch must be pushed. Requires the gh CLI.
@@ -234,7 +247,8 @@ ui-test: gen
 # The throwaway test app (Debug identity, isolated data).
 build: gen
 	xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Debug \
-		-destination '$(DESTINATION)' -derivedDataPath $(DD) -quiet $(DEBUG_SIGN_FLAGS)
+		-destination '$(DESTINATION)' -derivedDataPath $(DD) -quiet $(DEBUG_SIGN_FLAGS) \
+		$(WARNING_FLAGS)
 
 # Build the test app and launch it in place — the "let me look at my change"
 # verb. Launches with the fictional demo inbox by default (see DemoSeed.swift)
@@ -404,6 +418,33 @@ clean:
 	rm -rf build
 	rm -rf ~/Library/Developer/Xcode/DerivedData/MishMail-*
 	@echo "Cleaned ./build and ~/Library DerivedData/MishMail-* caches."
+
+# The checks CI runs on Linux (the "Workflow hardening" job). Need python3
+# and shellcheck (`brew install shellcheck`), not Xcode.
+checks: script-tests shellcheck
+	python3 .github/scripts/check-workflows.py
+	python3 .github/scripts/check-package-pins.py
+
+# Unit tests of the Python scripts: the CI guards in .github/scripts and the
+# MCP helpers in scripts/. The helpers run with HOME in the git-ignored build
+# tree, as ScriptEndpointTests.swift gives them a throwaway one, so no real
+# MCP token or config can be picked up.
+SCRIPT_TESTS_HOME = build/script-tests-home
+script-tests:
+	python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+	mkdir -p $(SCRIPT_TESTS_HOME)
+	HOME="$(CURDIR)/$(SCRIPT_TESTS_HOME)" python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+# Every tracked *.sh file (every shell script in the repository ends in .sh;
+# a new one must too). The names go NUL-separated from git to shellcheck and
+# are never expanded by a shell. A finding judged a false positive gets a
+# `# shellcheck disable=SCxxxx` with its reason on that line, never a global
+# exclude.
+shellcheck:
+	@command -v shellcheck >/dev/null || { echo "shellcheck not found: brew install shellcheck"; exit 1; }
+	@shellcheck --version | sed -n 2p
+	@[ -n "$$(git ls-files '*.sh')" ] || { echo "No shell scripts found."; exit 1; }
+	git ls-files -z '*.sh' | xargs -0 shellcheck
 
 # Install the git hooks (run once per clone).
 #   pre-commit   runs the unit tests.

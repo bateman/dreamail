@@ -53,7 +53,7 @@ insert_after("ThreadDetailView.swift", "Text(PlainTextLinks.attributed(text))",
 
 PY
 xcodegen generate
-action=test
+action="test"
 else
     cd "$work"
     action=test-without-building
