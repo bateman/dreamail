@@ -9,4 +9,4 @@ GRDB       url       https://github.com/duckduckgo/GRDB.swift
 # Tag 3.0.0: GRDB 7.4.1 with SQLCipher 4.7.0.
 GRDB       revision  46098847eeabdb008f238bef5750a8e64097b6ed
 # SHA-256 of GRDB.xcframework.zip, as declared by Package.swift at that revision.
-GRDB       checksum  41f01022f6a35986393e063e1ef386fd896646ed032f7d0419c4b02fa3afe61d
+GRDB       checksum  00f01022f6a35986393e063e1ef386fd896646ed032f7d0419c4b02fa3afe61d
