@@ -78,7 +78,7 @@ Chiusa il 24 novembre 2026: quattro PR unite su `main` (#12–#15) con lo stesso
 | F-01 | Mitigato (ondata 1). Da riprogettare prima di configurare un canale di rilascio. |
 | F-02 | Chiuso per la riservatezza. Da provare su Mac con un vero database legacy. |
 | F-03 | Chiuso: log diagnostico, log di sistema e rapporto di crash. |
-| F-04 | Chiuso nella sostanza. I dati cancellati dal database sono scollegati, non sovrascritti (cifrati; decisione aperta su `secure_delete`). |
+| F-04 | Chiuso. Dopo la PR #18 i dati cancellati vengono sovrascritti nel database e tolti dall'indice di ricerca; i limiti sono in `SECURITY.md`. |
 | F-05 | Chiuso. |
 | F-06 | Chiuso. |
 | F-07 | Chiuso. |
@@ -91,7 +91,7 @@ Chiusa il 24 novembre 2026: quattro PR unite su `main` (#12–#15) con lo stesso
 Decisioni prese dall'orchestratore senza consultare il proprietario, ribaltabili:
 
 - Rimuovendo un account vengono cancellati anche le viste salvate di quell'account, gli snippet riservati solo a esso, la sua finestra di sincronizzazione e l'intera cache di rete.
-- Qualsiasi chiamata a uno strumento lega una chat AI a tutti gli account: rimuovere un account cancella ogni chat che ha usato uno strumento, più tutte quelle precedenti alla migrazione 48. Il proprietario non ha ancora confermato.
+- Qualsiasi chiamata a uno strumento lega una chat AI a tutti gli account: rimuovere un account cancella ogni chat che ha usato uno strumento, più tutte quelle precedenti alla migrazione 48. Confermato dal proprietario il 24 novembre 2026.
 - Le build di installazione e di rilascio prendono l'interruttore AI solo dalla configurazione tracciata.
 - I riassunti e le categorie AI già salvati restano nel database, nascosti.
 
@@ -99,7 +99,6 @@ Scoperto durante l'ondata: `scripts/ci-restore-mtimes.py` ignorava i commit di m
 
 Seguiti annotati, non pianificati:
 
-- `PRAGMA secure_delete` per l'intero database (costo in prestazioni; decisione del proprietario).
 - Note di licenza di GRDB (MIT) e SQLCipher (BSD a tre clausole) da includere in un binario distribuito; il repository di DuckDuckGo che li confeziona non ha un file di licenza.
 - Una sessione di rete effimera per Gmail, al posto della cache condivisa su disco.
 - `UITestBreadcrumbs` resta attivabile nelle build di rilascio.
@@ -108,11 +107,30 @@ Seguiti annotati, non pianificati:
 - Lo script di riepilogo giornaliero via launchd va disattivato finché l'AI è spenta (documentato in `scripts/README.md`).
 - `make release` e il README usano lo xcodegen presente sulla macchina del maintainer.
 
+## Dopo l'ondata 2 — richieste dirette del proprietario
+
+| Contenuto | PR |
+|---|---|
+| Shortcut predefiniti allineati a Gmail Web, sempre personalizzabili; apertura di una conversazione nel pannello di lettura come predefinito | #17 |
+| "Cancellato vuol dire sparito": sovrascrittura nel database e nell'indice di ricerca, pulizia del file di appoggio, rimozione di allegati e notifiche insieme al messaggio, nessuna cache di rete su disco | #18 |
+
+La PR #18 ha avuto due giri di review, il massimo previsto: il secondo ha trovato che il salvataggio di una bozza avrebbe ritirato la notifica di un nuovo messaggio nella stessa conversazione, corretto prima del merge.
+
+Shortcut di Gmail non collegati perché l'app non ha ancora l'azione, candidati per l'ondata 3: silenzia, segna come importante, sposta in, messaggio successivo e precedente dentro una conversazione, espandi e comprimi tutto, `g k`, `g c`, i tasti di formattazione del testo.
+
+Seguiti annotati:
+
+- Conferma prima di un'azione di massa dopo `* a` (Gmail non la chiede; decisione del proprietario).
+- `]` e `[` richiedono Opzione su alcune tastiere non americane e lì non sono raggiungibili.
+- La sessione di rete del client AI usa ancora la configurazione predefinita, con cookie su disco; l'AI è spenta.
+- Il recupero cifrato di un vecchio database in chiaro danneggiato è la parte più voluminosa della PR #18 e serve solo a chi aggiorna da una versione precedente alla cifratura.
+
 ## Cancello — prova su Mac del proprietario
 
 ☐ Build locale, test e uso della demo.
 ☐ Verifiche che la CI non copre, emerse dall'ondata 1: pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub; nuovo accesso a Google con il listener limitato (Safari e Chrome); avvio con un vecchio database in chiaro e una seconda copia aperta (striscia di sola lettura, schermata "Finish encrypting your mail"); eliminazione del vecchio file di log all'avvio.
 ☐ Verifiche emerse dall'ondata 2 e dalla pulizia: `make install` e il controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto); nessuna interfaccia AI visibile (impostazioni, palette, barra di composizione, vista del thread); impostazioni, onboarding e palette senza le voci Notion; finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche); interruttore "Show sender and subject in notifications" e testo delle notifiche; avviso con un errore reale di Gmail.
+☐ Verifiche emerse dalle PR #17 e #18: shortcut su tastiera italiana (`]`, `[`, `#`, `*`), cursore nei campi Cc e Bcc e scelta del mittente in composizione, pannello di lettura su finestra stretta e su schermo da 13 pollici, lettura anticipata scorrendo con `j` e `k`; tempo della ricostruzione dell'indice di ricerca al primo avvio; ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio; nessun `Cache.db` che cresce nella cartella Caches.
 ☐ Solo dopo, collegamento di un account Gmail reale.
 
 ## Ondata 3 — parità Gmail
@@ -145,4 +163,6 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | 2C | `ci/grdb-revision-pin` | #12 | Unito |
 | 2D | `security/residual-logging` | #13 | Unito |
 | — | `security/diagnostic-log-privacy` | #10 | Unito dal proprietario, fuori flusso |
-| 3 | — | — | In attesa della prova su Mac e delle decisioni del proprietario |
+| — | `ux/gmail-default-shortcuts` | #17 | Unito |
+| — | `security/secure-delete` | #18 | Unito |
+| 3 | — | — | Non avviare: in attesa del proprietario |
