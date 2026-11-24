@@ -1542,6 +1542,26 @@ struct ComposeRequest: Identifiable {
         applyThreadLongStarPinDrops(selectionIntent: nil)
     }
 
+    /// Gmail `* a` / `* n` / `* r` / `* u` / `* s` / `* t`: check the loaded
+    /// conversations in that state (replacing the current checks), or clear.
+    func checkVisibleThreads(_ selection: ShortcutSequences.Selection) {
+        switch selection {
+        case .deselectAll:
+            clearCheckedThreads()
+        case .selectAll:
+            checkAllVisibleThreads()
+        case .read, .unread, .starred, .unstarred:
+            let byId = Dictionary(threads.map { ($0.id, $0) },
+                                  uniquingKeysWith: { first, _ in first })
+            let ids = ShortcutSequences.checkedIds(
+                order: selectionOrder, selection: selection,
+                state: { id in byId[id].map { ($0.isUnread, $0.isStarred) } })
+            checkedThreadIds = Set(ids)
+            lastCheckedThreadId = ids.last
+            applyThreadLongStarPinDrops(selectionIntent: nil)
+        }
+    }
+
     /// Gmail `x`: toggle check on the focused conversation.
     func toggleCheckSelected() {
         guard let id = selectedThreadId else { return }
@@ -3678,36 +3698,44 @@ struct ComposeRequest: Identifiable {
 
     // MARK: - Keyboard shortcuts
 
-    private var pendingGoKey: Date?
+    /// Set only while `archiveOpenConversation(goToPrevious: true)` runs, so
+    /// the removal advance goes up (Gmail `[`) instead of down.
+    @ObservationIgnored var advancePrefersPrevious = false
 
-    /// Drop an armed `g`-prefix so a later key isn't stolen as a go-to chord.
-    func clearPendingGoKey() {
-        pendingGoKey = nil
-    }
+    /// The `g` / `*` sequence state and the key → action routing.
+    @ObservationIgnored private var keyRouter = ShortcutKeyRouter()
+
+    /// A `g` / `*` prefix is waiting for its second key. The key monitor
+    /// then sends the next key straight to `handleKey`, ahead of the fixed
+    /// Shift chords (`* u` typed with Shift still down must not mark unread).
+    var hasPendingShortcutPrefix: Bool { keyRouter.hasPendingPrefix() }
+
+    /// Set by ContentView: runs the commands whose effect depends on what
+    /// the window shows (`open`, `backToList`, `[` / `]`).
+    @ObservationIgnored var viewCommandHandler: ((ShortcutCommand) -> Void)?
 
     /// Returns true if the key was handled. Gmail-style single keys,
-    /// including "g then …" navigation (g-i inbox, g-t sent, g-d drafts…).
+    /// including the `g` then … (go to) and `*` then … (select) sequences.
     func handleKey(_ chars: String) -> Bool {
-        if let started = pendingGoKey, Date().timeIntervalSince(started) < 1.5 {
-            pendingGoKey = nil
-            switch chars {
-            case "i": goTo(.inbox); return true
-            case "s": goTo(.starred); return true
-            case "t": goTo(.sent); return true
-            case "d": goTo(.drafts); return true
-            case "a": goTo(.allMail); return true
-            case "p": goTo(.promotions); return true
-            default: break   // fall through to normal handling
-            }
+        let bindings = keyBindings
+        switch keyRouter.route(chars, command: { bindings.command(for: $0) }) {
+        case .armed, .swallowed:
+            return true
+        case .goTo(let view):
+            goTo(view)
+            return true
+        case .select(let selection):
+            checkVisibleThreads(selection)
+            return true
+        case .help:
+            showShortcutsHelp.toggle()
+            return true
+        case .command(let command):
+            perform(command)
+            return true
+        case .unhandled:
+            return false
         }
-        switch chars {
-        case "g": pendingGoKey = Date(); return true
-        case "?": showShortcutsHelp.toggle(); return true
-        default: break
-        }
-        guard let command = keyBindings.command(for: chars) else { return false }
-        perform(command)
-        return true
     }
 
     /// Runs a rebindable single-key command. Kept separate from handleKey so
@@ -3755,6 +3783,8 @@ struct ComposeRequest: Identifiable {
         case .label: if selectedThread != nil { openLabelPicker() }
         case .undo: if let undo = undoAction { undo.undo() }
         case .compose: openCompose(ComposeRequest(replyTo: nil))
+        case .open, .backToList, .archiveNext, .archivePrevious:
+            viewCommandHandler?(command)
         }
     }
 

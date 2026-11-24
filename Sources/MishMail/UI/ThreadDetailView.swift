@@ -1066,7 +1066,7 @@ struct ThreadDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Label this thread (\(store.keyBindings.key(for: .label)))")
+                .help("Label this thread (\(store.keyBindings.displayKey(for: .label)))")
                 Spacer(minLength: 0)
             }
             .padding(.horizontal)
@@ -1818,7 +1818,7 @@ struct MessageCard: View {
                             .font(.system(size: 12 * fontScale))
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Reply (\(store.keyBindings.key(for: .reply)))")
+                    .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
                     .accessibilityLabel("Reply")
                     if ReplyComposer.hasAdditionalReplyAllRecipients(
                         message, ownAddresses: store.ownEmailAddresses) {
@@ -1829,7 +1829,7 @@ struct MessageCard: View {
                                 .font(.system(size: 12 * fontScale))
                         }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .help("Reply all (\(store.keyBindings.key(for: .replyAll)))")
+                        .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
                         .accessibilityLabel("Reply all")
                     }
                     Button {
@@ -1839,7 +1839,7 @@ struct MessageCard: View {
                             .font(.system(size: 12 * fontScale))
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Forward this message (\(store.keyBindings.key(for: .forward))) · starts a new conversation")
+                    .help("Forward this message (\(store.keyBindings.displayKey(for: .forward))) · starts a new conversation")
                     .accessibilityLabel("Forward this message")
                 }
                 Text(message.date, format: message.date.messageHeaderFormat)
@@ -2036,7 +2036,7 @@ struct MessageCard: View {
                                 .font(.system(size: 12.5 * fontScale))
                         }
                         .buttonStyle(.bordered)
-                        .help("Reply all (\(store.keyBindings.key(for: .replyAll)))")
+                        .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
                     }
                     Button {
                         store.openCompose(.init(replyTo: message, forward: true))

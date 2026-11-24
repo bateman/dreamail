@@ -26,6 +26,8 @@ struct TokenAddressField: View {
     @Binding var tokens: [String]
     @Binding var draft: String
     var autoFocus = false
+    /// Bumped by the owner to move keyboard focus here (Gmail ⌘⇧C / ⌘⇧B).
+    var focusRequest = 0
     @FocusState private var focused: Bool
     @State private var highlighted = 0
     /// Live selection box shared with the NSEvent monitor.
@@ -196,6 +198,11 @@ struct TokenAddressField: View {
             if autoFocus {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { focused = true }
             }
+        }
+        .onChange(of: focusRequest) {
+            // Deferred like autoFocus: the chord's own event is still being
+            // dispatched to the previous first responder.
+            DispatchQueue.main.async { focused = true }
         }
         .onDisappear {
             clearChipHoverChrome()

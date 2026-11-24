@@ -25,7 +25,7 @@ final class KeyBindingsTests: XCTestCase {
 
     func testCatalogCoversAllCommandsWithUniqueDefaults() {
         XCTAssertEqual(Set(KeyBindings.catalog.map(\.command)), Set(ShortcutCommand.allCases))
-        let keys = KeyBindings.catalog.map(\.defaultKey)
+        let keys = KeyBindings.catalog.compactMap(\.defaultKey)
         XCTAssertEqual(Set(keys).count, keys.count)
         XCTAssertTrue(Set(keys).isDisjoint(with: KeyBindings.reservedKeys))
     }
@@ -120,8 +120,8 @@ final class KeyBindingsTests: XCTestCase {
     }
 
     /// Ship-blocker: a pre-existing archive→x rebind must not be stolen by the
-    /// new toggleCheck default of x. Overrides win at lookup; migration parks
-    /// the shadowed default-only command on a free key so Settings stays honest.
+    /// toggleCheck default of x. Collision rule: the override keeps its key and
+    /// the default-only command is left unbound (not moved to another key).
     func testExistingOverrideToXWinsOverNewToggleCheckDefault() {
         // Simulate prefs written before toggleCheck existed.
         let raw = ["archive": "x"]
@@ -131,14 +131,18 @@ final class KeyBindingsTests: XCTestCase {
         let kb = KeyBindings(defaults: defaults)
         XCTAssertEqual(kb.command(for: "x"), .archive)
         XCTAssertEqual(kb.key(for: .archive), "x")
-        // toggleCheck was parked off x so it remains reachable and doesn't
-        // dual-display as x in Settings.
-        XCTAssertNotEqual(kb.key(for: .toggleCheck), "x")
-        XCTAssertEqual(kb.command(for: kb.key(for: .toggleCheck)), .toggleCheck)
-        // Persist migration for the next launch.
+        XCTAssertNil(kb.key(for: .toggleCheck),
+                     "the shadowed default is left unbound, not parked elsewhere")
+        XCTAssertEqual(kb.displayKey(for: .toggleCheck), KeyBindings.unboundLabel)
+        XCTAssertEqual(kb.defaultKeyHolder(for: .toggleCheck), .archive)
+        XCTAssertNil(kb.command(for: "e"), "archive's old default is free")
+        // Nothing is rewritten: the stored overrides are exactly the user's.
+        let stored = try! JSONDecoder().decode(
+            [String: String].self, from: defaults.data(forKey: "keyBindings")!)
+        XCTAssertEqual(stored, ["archive": "x"])
         let kb2 = KeyBindings(defaults: defaults)
         XCTAssertEqual(kb2.command(for: "x"), .archive)
-        XCTAssertEqual(kb2.key(for: .toggleCheck), kb.key(for: .toggleCheck))
+        XCTAssertNil(kb2.key(for: .toggleCheck))
     }
 
     func testOverrideWinsOverDefaultAtLookupWithoutMigrationNeed() {
@@ -153,7 +157,7 @@ final class KeyBindingsTests: XCTestCase {
     /// letters; single-key actions must still resolve.
     func testLetterKeysAreCaseInsensitive() {
         let kb = KeyBindings(defaults: defaults)
-        XCTAssertEqual(kb.command(for: "U"), .toggleRead)
+        XCTAssertEqual(kb.command(for: "O"), .open)
         XCTAssertEqual(kb.command(for: "E"), .archive)
         XCTAssertEqual(kb.rebind(.archive, to: "Q"), .ok)
         XCTAssertEqual(kb.key(for: .archive), "q")
@@ -177,5 +181,83 @@ final class KeyBindingsTests: XCTestCase {
         // Rewritten so the next launch doesn't re-normalize every time.
         let kb2 = KeyBindings(defaults: defaults)
         XCTAssertEqual(kb2.key(for: .archive), "q")
+    }
+
+    // MARK: - Gmail defaults: stored overrides and collisions
+
+    /// Overrides saved by the previous release survive unchanged. The read
+    /// toggle kept its raw value, so a user who had moved it keeps that key.
+    func testStoredReadToggleOverrideSurvivesTheDefaultChange() {
+        let raw = ["toggleRead": "q", "archive": "y"]
+        defaults.set(try! JSONEncoder().encode(raw), forKey: "keyBindings")
+        let kb = KeyBindings(defaults: defaults)
+        XCTAssertEqual(kb.key(for: .toggleRead), "q")
+        XCTAssertEqual(kb.command(for: "q"), .toggleRead)
+        XCTAssertEqual(kb.key(for: .archive), "y")
+        // The new defaults still apply where nothing collides.
+        XCTAssertEqual(kb.command(for: "u"), .backToList)
+        XCTAssertEqual(kb.command(for: "o"), .open)
+        let stored = try! JSONDecoder().decode(
+            [String: String].self, from: defaults.data(forKey: "keyBindings")!)
+        XCTAssertEqual(stored, raw)
+    }
+
+    /// A user who moved the toggle off `u` and gave `u` to another command
+    /// keeps that: the new `u` default (back to list) is left unbound.
+    func testOverrideOnNewDefaultKeyWinsAndLeavesTheDefaultUnbound() {
+        let raw = ["toggleRead": "q", "label": "u", "trash": "o"]
+        defaults.set(try! JSONEncoder().encode(raw), forKey: "keyBindings")
+        let kb = KeyBindings(defaults: defaults)
+        XCTAssertEqual(kb.command(for: "u"), .label)
+        XCTAssertEqual(kb.command(for: "o"), .trash)
+        XCTAssertNil(kb.key(for: .backToList))
+        XCTAssertNil(kb.key(for: .open))
+        XCTAssertEqual(kb.defaultKeyHolder(for: .backToList), .label)
+        XCTAssertEqual(kb.defaultKeyHolder(for: .open), .trash)
+        XCTAssertNil(kb.defaultKeyHolder(for: .archive))
+        // Neither command stole the key, and none was moved to another.
+        XCTAssertNil(kb.command(for: "l"), "label's old default is free")
+        XCTAssertEqual(kb.overrides.count, 3)
+        // Rebinding the shadowed command onto its default is a conflict…
+        XCTAssertEqual(kb.rebind(.backToList, to: "u"), .conflict(.label))
+        // …but once the override moves away, the default comes back.
+        XCTAssertEqual(kb.rebind(.label, to: "l"), .ok)
+        XCTAssertEqual(kb.key(for: .backToList), "u")
+        XCTAssertEqual(kb.command(for: "u"), .backToList)
+        XCTAssertNil(kb.defaultKeyHolder(for: .backToList))
+    }
+
+    /// An unbound command can be given any free key in Settings.
+    func testUnboundCommandCanBeBound() {
+        let raw = ["label": "u"]
+        defaults.set(try! JSONEncoder().encode(raw), forKey: "keyBindings")
+        let kb = KeyBindings(defaults: defaults)
+        XCTAssertNil(kb.key(for: .backToList))
+        XCTAssertEqual(kb.rebind(.backToList, to: "y"), .ok)
+        XCTAssertEqual(kb.command(for: "y"), .backToList)
+        XCTAssertEqual(kb.command(for: "u"), .label)
+    }
+
+    /// `*` became a reserved prefix. An override stored on it can no longer
+    /// fire, so it is dropped and the command gets its default back.
+    func testStoredOverrideOnNewlyReservedStarFallsBackToDefault() {
+        let raw = ["archive": "*", "snooze": "q"]
+        defaults.set(try! JSONEncoder().encode(raw), forKey: "keyBindings")
+        let kb = KeyBindings(defaults: defaults)
+        XCTAssertEqual(kb.key(for: .archive), "e")
+        XCTAssertNil(kb.command(for: "*"))
+        let stored = try! JSONDecoder().decode(
+            [String: String].self, from: defaults.data(forKey: "keyBindings")!)
+        XCTAssertEqual(stored, ["snooze": "q"])
+    }
+
+    func testResetRestoresGmailDefaultsAfterACollision() {
+        let raw = ["label": "u"]
+        defaults.set(try! JSONEncoder().encode(raw), forKey: "keyBindings")
+        let kb = KeyBindings(defaults: defaults)
+        kb.resetToDefaults()
+        XCTAssertEqual(kb.key(for: .backToList), "u")
+        XCTAssertEqual(kb.key(for: .label), "l")
+        XCTAssertNil(kb.key(for: .toggleRead))
     }
 }
