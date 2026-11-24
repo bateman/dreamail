@@ -203,7 +203,7 @@ final class InlineImageCacheTests: XCTestCase {
 
     func testRepositoryWithoutTheStoreReadsNoImages() async throws {
         let pool = try openPool()
-        try await pool.write { db in try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"]) }
+        _ = try await pool.write { db in try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"]) }
         try await cache(pool, gmailId: "m1")
         let load = await ThreadDetailRepository(db: pool).payload(
             threadId: "\(me):t1", suppressingDrafts: [],
@@ -400,11 +400,11 @@ final class InlineImageCacheTests: XCTestCase {
 
     func testNewContentForTheMessageDeletesItsImages() async throws {
         let pool = try openPool()
-        try await pool.write { db in try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"]) }
+        _ = try await pool.write { db in try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"]) }
         try await cache(pool, gmailId: "m1")
         XCTAssertEqual(try rowCount(pool), 1)
         // A full re-fetch (new revision) rewrites the body and attachment rows.
-        try await pool.write { db in
+        _ = try await pool.write { db in
             try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"],
                                 body: "<p>Edited</p><img src=\"cid:logo\">")
         }
@@ -415,7 +415,7 @@ final class InlineImageCacheTests: XCTestCase {
     /// does this) is a miss, never stale images.
     func testABodyThatChangedUnderTheRowsIsAMiss() async throws {
         let pool = try openPool()
-        try await pool.write { db in try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"]) }
+        _ = try await pool.write { db in try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"]) }
         try await cache(pool, gmailId: "m1")
         try await pool.write { db in
             try db.execute(sql: "UPDATE message_body SET bodyHTML = ? WHERE messageId = ?",
@@ -613,7 +613,7 @@ final class InlineImageCacheTests: XCTestCase {
     /// message with three 300 KB images from the cache, for the PR report.
     func testReportsTheCostOfAWarmOpenFromTheCache() async throws {
         let pool = try openPool()
-        try await pool.write { db in
+        _ = try await pool.write { db in
             try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["a", "b", "c"])
         }
         let (msg, rows) = try await pool.read { db in

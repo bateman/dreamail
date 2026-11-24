@@ -107,11 +107,11 @@ final class SecureDeleteTests: XCTestCase {
         let html = "<p>Logo</p><img src=\"cid:logo\">"
         try db.execute(sql: "UPDATE message_body SET bodyHTML = ? WHERE messageId = ?",
                        arguments: [html, id])
-        var row = AttachmentRow(id: nil, messageId: id, gmailAttachmentId: "att-\(gmailId)",
+        let row = AttachmentRow(id: nil, messageId: id, gmailAttachmentId: "att-\(gmailId)",
                                 filename: "logo.png", mimeType: "image/png",
                                 size: image.count, contentId: "logo")
         try row.insert(db)
-        let attachmentId = try XCTUnwrap(row.id)
+        let attachmentId = db.lastInsertedRowID
         let stored = try InlineImageCache.store(db, .init(
             messageId: id, accountId: account, bodyDigest: InlineImageCache.bodyDigest(html),
             parts: [.init(attachmentId: attachmentId, contentId: "logo",
