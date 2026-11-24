@@ -58,29 +58,61 @@ Decisioni prese dall'orchestratore senza consultare il proprietario, ribaltabili
 - Nessuna modalità diagnostica dettagliata nei log (F-03 ne suggeriva una opzionale).
 - Lo script di controllo dei workflow resta come allarme, non come barriera: la protezione vera è l'impostazione del repository "Require actions to be pinned to a full-length commit SHA", che spetta al proprietario attivare.
 
-## Ondata 2 — in parallelo
+## Pulizia — Notion Mail
 
-| Step | Contenuto | Finding | File principali |
-|---|---|---|---|
-| 2A | AI e server MCP spenti dietro un interruttore | F-05, F-06, F-12 e parte AI di F-04 | `UI/SettingsView.swift`, `App/MailStore+AI.swift`, `MCP/` |
-| 2B | Cancellazione completa dell'account e anteprime notifiche | F-04, F-11 | `App/MailStore+Accounts.swift`, `Support/Notifier.swift` |
-| 2C | Pin di GRDB per revisione, `Package.resolved` o verifica del checksum del binario in CI | F-10 (parte restante) | `project.yml`, `.github/` |
-| 2D | Log residui fuori da `DiagnosticLog`: errori del database con testo SQL e percorsi, eccezione di layout del testo, identificativo di thread nelle metriche | F-03 (parte restante) | `Store/Database.swift`, `Support/SafeTextLayout.m`, `UI/ThreadDetailView.swift` |
+Su richiesta del proprietario, prima dell'ondata 2: rimossa la funzione "Moving from Notion Mail" e ogni riferimento al prodotto in sorgenti, test, script e README (PR #11). L'importazione degli snippet accetta solo il formato di MishMail. Restano intatti le voci passate del changelog e i documenti archiviati dell'upstream.
 
-2C e 2D sono emersi dalle review dell'ondata 1.
+## Ondata 2 — esito
 
-F-08 (limiti sull'estrazione degli update) è rimandato alla distribuzione: con l'updater spento non è raggiungibile.
+Chiusa il 24 novembre 2026: quattro PR unite su `main` (#12–#15) con lo stesso flusso dell'ondata 1. In più la PR #10, aperta e unita dal proprietario fuori dal flusso, che si sovrappone allo step 2D e riduce il messaggio d'errore di Gmail.
 
-Altri seguiti annotati, non ancora pianificati:
+| Step | Contenuto | PR |
+|---|---|---|
+| 2A | AI e server MCP spenti dietro un interruttore di build (`MISHMAIL_AI_FEATURES`) | #15 |
+| 2B | Cancellazione completa dell'account e notifiche generiche | #14 |
+| 2C | Pin di GRDB per commit, riscaricato e verificato a ogni build di CI e di rilascio | #12 |
+| 2D | Log residui fuori da `DiagnosticLog` | #13 (e #10) |
 
-- `make release` e il README usano lo xcodegen presente sulla macchina del maintainer, non quello fissato in CI.
-- Dopo la conversione, il vecchio file in chiaro viene scollegato ma non sovrascritto; il percorso di reset conserva `mail.sqlite.unreadable`.
-- Le voci già scritte nel log di sistema da versioni precedenti non si possono eliminare.
+| Finding | Stato dopo l'ondata 2 |
+|---|---|
+| F-01 | Mitigato (ondata 1). Da riprogettare prima di configurare un canale di rilascio. |
+| F-02 | Chiuso per la riservatezza. Da provare su Mac con un vero database legacy. |
+| F-03 | Chiuso: log diagnostico, log di sistema e rapporto di crash. |
+| F-04 | Chiuso nella sostanza. I dati cancellati dal database sono scollegati, non sovrascritti (cifrati; decisione aperta su `secure_delete`). |
+| F-05 | Chiuso. |
+| F-06 | Chiuso. |
+| F-07 | Chiuso. |
+| F-08 | Rimandato alla distribuzione: con l'updater spento non è raggiungibile. |
+| F-09 | Chiuso. |
+| F-10 | Chiuso per CI e dipendenza. Non verificato: su un Mac, `make release` potrebbe usare la cache globale di SwiftPM senza ricontrollare l'hash. |
+| F-11 | Chiuso. |
+| F-12 | Chiuso a interruttore spento; ad AI accesa chiuso per il caso segnalato, con i residui corretti nello step 2A. |
+
+Decisioni prese dall'orchestratore senza consultare il proprietario, ribaltabili:
+
+- Rimuovendo un account vengono cancellati anche le viste salvate di quell'account, gli snippet riservati solo a esso, la sua finestra di sincronizzazione e l'intera cache di rete.
+- Qualsiasi chiamata a uno strumento lega una chat AI a tutti gli account: rimuovere un account cancella ogni chat che ha usato uno strumento, più tutte quelle precedenti alla migrazione 48. Il proprietario non ha ancora confermato.
+- Le build di installazione e di rilascio prendono l'interruttore AI solo dalla configurazione tracciata.
+- I riassunti e le categorie AI già salvati restano nel database, nascosti.
+
+Scoperto durante l'ondata: `scripts/ci-restore-mtimes.py` ignorava i commit di merge, quindi dopo aver integrato `main` una build con cache poteva collegare un oggetto vecchio. Corretto nella PR #14.
+
+Seguiti annotati, non pianificati:
+
+- `PRAGMA secure_delete` per l'intero database (costo in prestazioni; decisione del proprietario).
+- Note di licenza di GRDB (MIT) e SQLCipher (BSD a tre clausole) da includere in un binario distribuito; il repository di DuckDuckGo che li confeziona non ha un file di licenza.
+- Una sessione di rete effimera per Gmail, al posto della cache condivisa su disco.
+- `UITestBreadcrumbs` resta attivabile nelle build di rilascio.
+- L'importazione degli snippet legge il file intero senza limite di dimensione.
+- Un'azione "dimentica le credenziali AI": chiavi e token dei fornitori restano nel Keychain mentre l'AI è spenta.
+- Lo script di riepilogo giornaliero via launchd va disattivato finché l'AI è spenta (documentato in `scripts/README.md`).
+- `make release` e il README usano lo xcodegen presente sulla macchina del maintainer.
 
 ## Cancello — prova su Mac del proprietario
 
 ☐ Build locale, test e uso della demo.
 ☐ Verifiche che la CI non copre, emerse dall'ondata 1: pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub; nuovo accesso a Google con il listener limitato (Safari e Chrome); avvio con un vecchio database in chiaro e una seconda copia aperta (striscia di sola lettura, schermata "Finish encrypting your mail"); eliminazione del vecchio file di log all'avvio.
+☐ Verifiche emerse dall'ondata 2 e dalla pulizia: `make install` e il controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto); nessuna interfaccia AI visibile (impostazioni, palette, barra di composizione, vista del thread); impostazioni, onboarding e palette senza le voci Notion; finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche); interruttore "Show sender and subject in notifications" e testo delle notifiche; avviso con un errore reale di Gmail.
 ☐ Solo dopo, collegamento di un account Gmail reale.
 
 ## Ondata 3 — parità Gmail
@@ -89,6 +121,8 @@ Altri seguiti annotati, non ancora pianificati:
 - Gestione dei colori delle label.
 - Verifica ICS/RSVP su inviti reali e gap analysis rispetto a Postie.
 - Snooze: richiede prima una scelta di progetto (allineamento con Gmail Web e mobile).
+
+L'ondata 3 parte dopo il cancello: è la prima che aggiunge funzionalità, e ogni step va provato su un account reale.
 
 ## Ondata 4 — Calendar e PGP
 
@@ -105,4 +139,10 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | 1D | `security/oauth-listener-limits` | #6 | Unito |
 | 1E | `ci/least-privilege-pinning` | #5 | Unito |
 | 1F | `tests/caret-scroll-deterministic` | #3 | Unito |
-| 2A–2D | — | — | Da avviare |
+| Pulizia | `cleanup/remove-notion-mail` | #11 | Unito |
+| 2A | `security/ai-mcp-off-switch` | #15 | Unito |
+| 2B | `security/account-removal-notifications` | #14 | Unito |
+| 2C | `ci/grdb-revision-pin` | #12 | Unito |
+| 2D | `security/residual-logging` | #13 | Unito |
+| — | `security/diagnostic-log-privacy` | #10 | Unito dal proprietario, fuori flusso |
+| 3 | — | — | In attesa della prova su Mac e delle decisioni del proprietario |

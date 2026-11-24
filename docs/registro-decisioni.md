@@ -1,7 +1,7 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.7
-Ultimo aggiornamento: 23 novembre 2026
+Versione: 0.8
+Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
 ## 1. Obiettivo
@@ -20,7 +20,14 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-006 | **Linguaggio non vincolante** | La tecnologia viene scelta in funzione dell'obiettivo e della piattaforma. |
 | DEC-007 | **Approccio fork + riuso selettivo** | Usare **MishMail come candidato principale per il fork** e **Postie come fonte di funzionalità e test**. Decisione di indirizzo, subordinata all'audit dei repository e alla compilazione delle due applicazioni. Dalla v0.7 il ruolo di Postie è ridimensionato: ICS/RSVP esiste già nel fork (sezione 8.2). |
 | DEC-008 | **Security-first prima di importare funzionalità** | Risolvere i rischi prioritari dell'audit sul fork; effettuare test nativi macOS prima di collegare account reali o distribuire build. |
-| DEC-009 | **Aggiornamenti automatici sospesi nel fork di sviluppo** | Disabilitare la sostituzione automatica di eseguibili finché non siano definiti canale di release, identità del publisher e controlli anti-rollback. Dalla v0.7 è un prerequisito per l'uso con account reali, non solo per la distribuzione: l'updater parte da solo anche sulle build locali (sezione 13). **Implementazione ancora da fare.** |
+| DEC-009 | **Aggiornamenti automatici sospesi nel fork di sviluppo** | Disabilitare la sostituzione automatica di eseguibili finché non siano definiti canale di release, identità del publisher e controlli anti-rollback. Dalla v0.7 è un prerequisito per l'uso con account reali, non solo per la distribuzione: l'updater parte da solo anche sulle build locali (sezione 13). Implementato nello step 1A (PR #7): updater inerte senza canale e comunque spento su una copia senza Team ID. |
+| DEC-010 | **GO su MishMail come base** | Decisione del 23 novembre 2026, dopo la CI verde sul commit auditato. Postie resta un riferimento di confronto. |
+| DEC-011 | **AI e server MCP spenti per il momento** | Estranei all'obiettivo della sezione 1 e sede di quattro finding. Il codice resta; un'impostazione di build li riaccende (`MISHMAIL_AI_FEATURES`, step 2A). |
+| DEC-012 | **Notion Mail fuori dal prodotto** | Non interessa: rimossi la funzione di migrazione e ogni riferimento (PR #11). |
+| DEC-013 | **La rimozione di un account cancella sempre tutto ciò che gli appartiene** | Nessuna richiesta su cosa conservare: più semplice e più sicuro (step 2B). |
+| DEC-014 | **Notifiche generiche come impostazione predefinita** | "New mail" senza mittente né oggetto; mittente e oggetto solo se attivati dall'utente (step 2B). |
+| DEC-015 | **Messaggio d'errore di Gmail limitato a 160 caratteri** | L'avviso mantiene il messaggio leggibile di Google, accettando che possa riportare parte della richiesta, per esempio una ricerca; il JSON grezzo e gli altri campi restano fuori (PR #10). |
+| DEC-016 | **F-01 segnalato all'upstream dal proprietario** | La segnalazione riservata secondo `SECURITY.md` è a carico del proprietario del fork. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -86,7 +93,7 @@ La colonna "Stato nel fork" riporta ciò che il codice contiene al commit `18294
 - Verificare compilazione ed esecuzione dei test di MishMail su macOS; verificare compilazione, architettura, test, licenza e dipendenze di Postie. La licenza MIT di MishMail è confermata nel file `LICENSE`.
 - Definire il set minimo di funzionalità della prima versione (MVP).
 - Stabilire se mantenere il supporto multi-account già presente nel fork.
-- **Stabilire se mantenere le funzioni AI e il server MCP del fork.** Sono estranee all'obiettivo della sezione 1 e concentrano quattro finding su dodici (F-05, F-06, F-12 e parte di F-04); disattivarle ridurrebbe la remediation.
+- ~~Stabilire se mantenere le funzioni AI e il server MCP del fork.~~ Deciso: spenti per il momento (DEC-011). Sono estranee all'obiettivo della sezione 1 e concentrano quattro finding su dodici (F-05, F-06, F-12 e parte di F-04); disattivarle ridurrebbe la remediation.
 - **Definire il rapporto con l'upstream:** proporre a monte le correzioni di sicurezza o mantenerle solo nel fork; segnalare in modo riservato F-01, che riguarda anche gli utenti upstream, secondo `SECURITY.md`.
 - Definire lo snooze: con app chiusa, su dispositivi diversi e rispetto allo snooze di Gmail Web e mobile.
 - Selezionare la libreria OpenPGP e il modello di gestione chiavi; decidere il trattamento di bozze, ricerca e AI per i messaggi cifrati.
@@ -379,6 +386,8 @@ Validare tutto con app compilata e firmata su macOS. La correzione delle vulnera
 
 ## 14. Stato attuale, dipendenze e prossime verifiche
 
+> Aggiornamento v0.8: le PR di remediation sono state eseguite come ondate 1 e 2 del [piano di sviluppo](piano-sviluppo.md), che ne riporta l'esito per finding. L'elenco sotto è quello della v0.7 e resta come traccia.
+
 ☑ Audit statico a commit fisso ricevuto, con 12 finding documentati e 0 Critical dimostrati.
 ☑ Verificato il 23 novembre 2026 che il `main` del fork è ancora a `18294fa`; da ripetere prima di iniziare le PR.
 ☑ Confronto del documento con il codice del fork (v0.7): corretti stato delle funzionalità, stack e ordine della roadmap.
@@ -404,7 +413,8 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-22 | 0.4 | Aggiunta analisi UI/UX per la fase futura: benchmark Mimestream, Briskmail, bytemail e MishMail; principi di design e checklist di confronto prima di eventuale redesign. |
 | 2026-11-22 | 0.5 | Registrato il repository di sviluppo [bateman/mishmail](https://github.com/bateman/mishmail), distinto dall'upstream [ronboger/mishmail](https://github.com/ronboger/mishmail). |
 | 2026-11-23 | 0.6 | Unificato piano di sviluppo e security audit del commit `18294fa`: 12 finding, controlli verificati in sorgente, limiti della verifica, DEC-008/009, priorità remediation e PR proposte. |
-| 2026-11-23 | **0.7** | Confronto con il codice del fork. Corretti: stato reale delle funzionalità (ICS/RSVP, unsubscribe, shortcut, colori label, snooze, undo send e multi-account già presenti), stack (Swift 5.10, GRDB/SQLCipher, login loopback al posto di `ASWebAuthenticationSession`), scope `gmail.modify` restricted, conteggio dei test. Aggiunti: updater come prerequisito per gli account reali, identità del fork, GO/NO-GO prima delle remediation, questioni aperte su AI/MCP, upstream, snooze, Calendar e PGP, riferimenti alle revisioni di sicurezza esistenti. Nessuna nuova decisione confermata. |
+| 2026-11-23 | 0.7 | Confronto con il codice del fork. Corretti: stato reale delle funzionalità (ICS/RSVP, unsubscribe, shortcut, colori label, snooze, undo send e multi-account già presenti), stack (Swift 5.10, GRDB/SQLCipher, login loopback al posto di `ASWebAuthenticationSession`), scope `gmail.modify` restricted, conteggio dei test. Aggiunti: updater come prerequisito per gli account reali, identità del fork, GO/NO-GO prima delle remediation, questioni aperte su AI/MCP, upstream, snooze, Calendar e PGP, riferimenti alle revisioni di sicurezza esistenti. Nessuna nuova decisione confermata. |
+| 2026-11-24 | **0.8** | Dopo le ondate 1 e 2 del piano di sviluppo: aggiunte DEC-010–016, DEC-009 segnata come implementata, chiusa la questione su AI e MCP. Lo stato di ogni finding e i seguiti sono in [piano-sviluppo.md](piano-sviluppo.md); i riferimenti di riga della sezione 12 valgono solo per il commit auditato `18294fa`. |
 
 ---
 

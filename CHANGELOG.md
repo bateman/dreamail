@@ -6,6 +6,38 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **AI features and the local MCP server are off.** A build setting
+  (`MISHMAIL_AI_FEATURES`, empty in the tracked configuration) decides it, not
+  a preference. Off means no Ask Mish, summaries, AI drafting, suggested
+  replies or AI sorting, no request to any model provider or to Ollama, no
+  stored provider credential read, and no MCP listener even if an earlier
+  build had it enabled. Install and release builds take the setting from the
+  tracked configuration only and check the built app. The code is kept. For
+  when it is turned on again: a saved key or sign-in is only ever sent to the
+  origin it was entered for, consent is tied to scheme, host and port,
+  cross-origin redirects are refused, and the helper scripts refuse plain HTTP
+  to anything but a loopback address.
+- **Removing an account now removes everything of it.** Besides cached mail and
+  the sign-in: opened attachment copies, saved views for the account, snippets
+  available only to it, its sync and filter settings, its notifications, recent
+  searches, and Ask Mish chats that may contain its mail. The confirmation
+  lists all of this. If the removal fails nothing is deleted and you are told;
+  a removal interrupted by a quit is finished at the next launch. The advice to
+  remove and re-add an account to grant the filters permission is gone: signing
+  in again is enough.
+- **Notifications are generic by default.** "New mail", "Follow-up reminder" and
+  "Scheduled message sent" with no sender or subject. Settings → General →
+  Notifications has a switch to show sender and subject; the message preview is
+  never shown.
+- **Errors in the system log carry no mail data.** Database, sign-in and
+  text-layout errors log an error type and code, not SQL text, file paths or
+  text from the message being written; a failed launch no longer writes them
+  to the crash report. Gmail errors in banners show the status, the reason and
+  Google's one-line message (up to 160 characters) instead of the raw response.
+- **The database dependency is pinned by commit.** GRDB with SQLCipher is fixed
+  to an exact commit instead of a tag, and CI and release builds download it
+  afresh so its checksum is verified every time. `docs/DEPENDENCIES.md` records
+  where it comes from and how to upgrade it.
 - **This fork has its own identity and its updater is off.** Bundle
   identifiers are now `io.github.bateman.*`, so the app keeps its own
   container, settings and Keychain items and starts fresh: nothing is migrated
