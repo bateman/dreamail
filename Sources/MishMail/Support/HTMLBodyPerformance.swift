@@ -67,6 +67,14 @@ struct HTMLBodyHeightCache {
         }
     }
 
+    /// Store only when `key` has no entry yet: an estimate (an offscreen
+    /// pre-render at its own width) never replaces a height measured in the
+    /// pane.
+    mutating func storeIfAbsent(_ height: CGFloat, width: CGFloat, for key: String) {
+        guard entries[key] == nil else { return }
+        store(height, width: width, for: key)
+    }
+
     mutating func removeAll() {
         entries.removeAll(keepingCapacity: true)
         order.removeAll(keepingCapacity: true)
@@ -99,6 +107,14 @@ enum HTMLBodyHeightCacheStore {
         lock.lock()
         defer { lock.unlock() }
         cache.store(height, width: width, for: key)
+    }
+
+    static func storeIfAbsent(_ height: CGFloat, contentID: String,
+                              fontScale: Double, width: CGFloat) {
+        let key = HTMLBodyHeightCache.key(contentID: contentID, fontScale: fontScale)
+        lock.lock()
+        defer { lock.unlock() }
+        cache.storeIfAbsent(height, width: width, for: key)
     }
 }
 

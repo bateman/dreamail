@@ -106,6 +106,17 @@ enum HTMLBodyNeighborPrerender {
             let loader = PrerenderNavigationLoader { success in
                 continuation.resume(returning: success)
             }
+            // The paint measures the body anyway; keep that height so the
+            // card that claims this view sizes its first frame from it
+            // instead of the placeholder (no visible grow on j/k).
+            loader.onMeasured = { [weak webView] result in
+                guard let webView,
+                      let height = HTMLBodyLayout.measuredHeight(
+                          fromScriptResult: result) else { return }
+                HTMLBodyHeightCacheStore.storeIfAbsent(
+                    height, contentID: candidate.contentID,
+                    fontScale: key.fontScale, width: webView.frame.width)
+            }
             // Retain loader for the navigation lifetime via the delegate slot.
             objc_setAssociatedObject(
                 webView, prerenderLoaderAssocKey, loader,
@@ -151,6 +162,8 @@ private final class PrerenderNavigationLoader: NSObject, WKNavigationDelegate {
     static let timeoutSeconds: TimeInterval = 5
 
     private let completion: (Bool) -> Void
+    /// Result of the layout-and-measure install (the body's height).
+    var onMeasured: ((Any?) -> Void)?
     private var finished = false
     private var loadToken = UUID()
     private var navigationGate = HTMLNavigationIdentityGate()
@@ -215,8 +228,10 @@ private final class PrerenderNavigationLoader: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard navigationGate.accepts(navigation) else { return }
         // Install layout measure so the DOM settles before we park.
-        webView.evaluateJavaScript(HTMLBodyLayout.installLayoutAndMeasureJS) { [weak self] _, _ in
-            self?.finish(true)
+        webView.evaluateJavaScript(HTMLBodyLayout.installLayoutAndMeasureJS) { [weak self] result, _ in
+            guard let self, !self.finished else { return }
+            self.onMeasured?(result)
+            self.finish(true)
         }
     }
 
