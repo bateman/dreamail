@@ -422,12 +422,14 @@ struct ThreadListView: View {
         .background(Color.mailContent)
         .navigationTitle(store.selectedView.title)
         .toolbar {
-            // View glyph next to the title. Shared glass is
-            // hidden so it stays a bare colored icon — no capsule, no
-            // scroll-edge flicker with the detail nav trio.
+            // View glyph next to the title: the filled form, as on the
+            // selected sidebar row, in the same neutral tint. Shared glass is
+            // hidden so it stays a bare icon — no capsule, no scroll-edge
+            // flicker with the detail nav trio.
             ToolbarItem(placement: .navigation) {
-                Image(systemName: store.selectedView.icon)
-                    .foregroundStyle(store.selectedView.iconColor)
+                Image(systemName: store.selectedView.selectedIcon)
+                    .foregroundStyle(Color.mailIcon)
+                    .accessibilityHidden(true)
             }
             .pmHideSharedBackground()
             // While searching, let the user reach past the local cache to Gmail.
@@ -611,9 +613,11 @@ private struct ThreadListSections: View, Equatable {
                 } else {
                 HStack(spacing: 4) {
                     if title == Self.prioritySection {
+                        // Inherits the header's secondary colour: the word
+                        // "Priority" says what the section is.
                         Image(systemName: "star.fill")
                             .font(.system(size: 9 * fontScale))
-                            .foregroundStyle(.orange)
+                            .accessibilityHidden(true)
                     }
                     Text(title)
                 }
@@ -1710,6 +1714,7 @@ struct ThreadRowDisplay: Equatable {
             ? "1 message" : "\(thread.messageCount) messages")
         if thread.hasAttachment { parts.append("Has attachment") }
         if thread.isStarred { parts.append("Starred") }
+        if thread.reminderAt != nil { parts.append("Reminder set") }
         // Captures "today" at layout time; the list recomputes on
         // NSCalendarDayChanged, same as its date sections.
         parts.append(thread.lastDate.formatted(thread.lastDate.threadListFormat))
@@ -1855,8 +1860,9 @@ struct ThreadRow: View, Equatable {
                             .font(.system(size: 12 * fontScale)).foregroundStyle(.secondary)
                     }
                     if thread.reminderAt != nil {
+                        // Neutral like the paperclip: the glyph is the cue.
                         Image(systemName: "bell.fill")
-                            .font(.system(size: 12 * fontScale)).foregroundStyle(.orange)
+                            .font(.system(size: 12 * fontScale)).foregroundStyle(.secondary)
                     }
                     if thread.isStarred {
                         Image(systemName: "star.fill")

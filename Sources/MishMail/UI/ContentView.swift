@@ -1802,8 +1802,11 @@ struct Sidebar: View {
                 Button {
                     store.openCompose(.init(replyTo: nil))
                 } label: {
+                    // Monochrome like the sidebar glyphs: a borderless
+                    // button would otherwise take the accent colour.
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 15))
+                        .foregroundStyle(.primary)
                         .frame(width: 30, height: 30)
                         .contentShape(Rectangle())
                 }
@@ -1851,10 +1854,16 @@ struct Sidebar: View {
                     Button {
                         store.editingView = SavedView.empty()
                     } label: {
-                        Label("Add view", systemImage: "plus")
-                            .foregroundStyle(.secondary)
+                        Label {
+                            Text("Add view")
+                        } icon: {
+                            Image(systemName: "plus")
+                                .foregroundStyle(Color.mailIcon)
+                        }
+                        .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .listItemTint(.monochrome)
                 }
                 Section("Mail") {
                     sidebarItem(.allMail)
@@ -1949,7 +1958,8 @@ struct Sidebar: View {
     }
 
 
-    /// Sidebar row: each view keeps its own icon color.
+    /// Sidebar row, Gmail-style: a monochrome outline glyph that switches to
+    /// its filled form while the row is selected.
     private func sidebarItem(_ view: MailboxView, badge: Int? = nil) -> some View {
         // List(selection:) only fires onChange when the value *changes*, so
         // re-clicking the already-selected row (e.g. Inbox while a committed
@@ -1965,9 +1975,12 @@ struct Sidebar: View {
         return Label {
             Text(view.title)
         } icon: {
-            Image(systemName: view.icon)
-                .foregroundStyle(view.iconColor)
+            Image(systemName: view.icon(selected: store.selectedView == view))
+                .foregroundStyle(Color.mailIcon)
         }
+        // The sidebar list style tints row icons with the accent unless told
+        // otherwise; keep every row neutral.
+        .listItemTint(.monochrome)
         .badge((badge ?? 0) > 0 ? badge! : 0)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
         .simultaneousGesture(
