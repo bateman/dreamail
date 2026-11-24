@@ -436,27 +436,54 @@ final class ComposeSpellLanguagesTests: XCTestCase {
         XCTAssertEqual(view.string, "Ciao Marco!")
     }
 
-    // MARK: AppKit routes continuous checking through the hook
+    // MARK: AppKit routes continuous checking through the hooks
 
-    func testContinuousCheckingGoesThroughTheLanguageHook() {
+    /// Counts both hooks and lets AppKit do the real work.
+    final class ProbeView: MultilingualSpellTextView {
+        var checkedLanguages: [String?] = []
+        var handled = 0
+        override func forwardCheck(in range: NSRange, types: NSTextCheckingTypes,
+                                   options: [NSSpellChecker.OptionKey: Any]) {
+            checkedLanguages.append((options[.orthography] as? NSOrthography)?.dominantLanguage)
+            super.forwardCheck(in: range, types: types, options: options)
+        }
+        override func handleTextCheckingResults(_ results: [NSTextCheckingResult],
+                                                forRange range: NSRange,
+                                                types checkingTypes: NSTextCheckingTypes,
+                                                options: [NSSpellChecker.OptionKey: Any] = [:],
+                                                orthography: NSOrthography, wordCount: Int) {
+            handled += 1
+            super.handleTextCheckingResults(results, forRange: range, types: checkingTypes,
+                                            options: options, orthography: orthography,
+                                            wordCount: wordCount)
+        }
+    }
+
+    func testContinuousCheckingGoesThroughTheLanguageHooks() {
+        _ = NSApplication.shared
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
-        let view = RecordingView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        let view = ProbeView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         window.contentView?.addSubview(view)
+        window.orderFront(nil)
         view.spellLanguageIdentifier = FakeIdentifier()
         view.spellLanguageChecker = FakeChecker()
         view.spellLanguages = enIt
         view.isContinuousSpellCheckingEnabled = true
         window.makeFirstResponder(view)
-        view.forwarded.removeAll()
+        view.checkedLanguages.removeAll()
+        view.handled = 0
         view.insertText("Hello there, thanks for the notes. ",
                         replacementRange: NSRange(location: NSNotFound, length: 0))
         let deadline = Date().addingTimeInterval(5)
-        while view.forwarded.isEmpty, Date() < deadline {
+        while view.handled == 0, Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
-        XCTAssertFalse(view.forwarded.isEmpty, "continuous checking bypassed checkText(in:types:options:)")
-        XCTAssertEqual(view.forwarded.first?.language, "en")
+        XCTAssertFalse(view.checkedLanguages.isEmpty,
+                       "checkText(in:types:options:) not reached; handled=\(view.handled)")
+        XCTAssertGreaterThan(view.handled, 0,
+                             "handleTextCheckingResults not reached; checks=\(view.checkedLanguages)")
+        XCTAssertEqual(view.checkedLanguages.first ?? nil, "en")
         window.close()
     }
 }
