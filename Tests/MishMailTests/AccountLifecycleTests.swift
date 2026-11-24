@@ -189,6 +189,30 @@ final class AccountLifecycleTests: XCTestCase {
         }
     }
 
+    /// A quit after the purge and before the Keychain delete leaves the
+    /// removal marked; the next launch finishes it. A marked account that
+    /// still exists was never purged and keeps its sign-in.
+    func testInterruptedRemovalIsFinishedAtLaunch() throws {
+        let suite = "AccountLifecycleTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        AccountLifecycle.markRemovalPending("a@x.com", defaults: defaults)
+        AccountLifecycle.markRemovalPending("b@x.com", defaults: defaults)
+        AccountLifecycle.markRemovalPending("a@x.com", defaults: defaults)
+        XCTAssertEqual(AccountLifecycle.pendingRemovals(defaults: defaults),
+                       ["a@x.com", "b@x.com"])
+
+        let plan = AccountLifecycle.removalsToFinish(
+            pending: AccountLifecycle.pendingRemovals(defaults: defaults),
+            live: ["b@x.com", "a@x.com.au"])
+        XCTAssertEqual(plan.finish, ["a@x.com"])
+        XCTAssertEqual(plan.stale, ["b@x.com"])
+
+        AccountLifecycle.clearRemovalPending("a@x.com", defaults: defaults)
+        AccountLifecycle.clearRemovalPending("b@x.com", defaults: defaults)
+        XCTAssertNil(defaults.object(forKey: AccountLifecycle.pendingRemovalsKey))
+    }
+
     // MARK: - Reauthorization
 
     func testBackgroundSyncSkipsAccountsThatNeedReauth() {

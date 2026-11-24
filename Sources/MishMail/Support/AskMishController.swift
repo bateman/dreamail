@@ -131,9 +131,9 @@ final class AskMishController {
     @ObservationIgnored private var bufferedBubbleID: UUID?
     @ObservationIgnored private var bufferedBubbleText = ""
     @ObservationIgnored private var bubbleFlushTask: Task<Void, Never>?
-    /// Accounts whose mail entered this conversation and are not yet in its
-    /// stored provenance (F-04). Written with the next rows.
-    @ObservationIgnored private var unrecordedProvenance: Set<String> = []
+    /// Provenance not yet stored for this conversation (F-04). Written with
+    /// the next rows, and kept until a write succeeds.
+    @ObservationIgnored private var provenance = ChatProvenance.Pending()
 
     init(store: MailStore) {
         self.store = store
@@ -295,7 +295,7 @@ final class AskMishController {
         injectedThreadContexts = [:]
         attachedThreads = []
         unsentUserText = nil
-        unrecordedProvenance = []
+        provenance = ChatProvenance.Pending()
         totalPromptTokens = 0
         totalCompletionTokens = 0
         totalCacheCreationInputTokens = 0
@@ -353,7 +353,7 @@ final class AskMishController {
         injectedThreadContexts = [:]
         attachedThreads = []
         unsentUserText = nil
-        unrecordedProvenance = []
+        provenance = ChatProvenance.Pending()
         let totals = AskMishContext.usageTotals(rows: rows)
         totalPromptTokens = totals.promptTokens
         totalCompletionTokens = totals.completionTokens
@@ -391,7 +391,11 @@ final class AskMishController {
     /// Called after an account removal. When the conversation on screen was
     /// deleted with the account (`ChatProvenance`), or was never stored, its
     /// transcript and history go too: they may quote the removed mail.
-    func discardConversationIfPurged() async {
+    func discardConversationIfPurged(removedAccount: String) async {
+        // Threads of the removed account attached for the next turn would
+        // keep their subjects on screen, and their ids in the next request.
+        let prefix = "\(removedAccount):"
+        attachedThreads.removeAll { $0.id.hasPrefix(prefix) }
         if let id = conversationID {
             let exists = (try? await AppDatabase.shared.dbPool.read { db in
                 try ChatConversationRow.exists(db, key: id)
@@ -467,6 +471,9 @@ final class AskMishController {
         // another email while the model or a tool is running.
         let currentThread = includeSelectedThread ? store?.selectedThread : nil
         let turnSystemMessage = systemMessage(currentThread: currentThread)
+        // The system prompt names the open thread (subject, account) even
+        // when no body is injected, and on a retry.
+        if let currentThread { provenance.noteThread(accountId: currentThread.accountId) }
         if shouldAppendUser {
             unsentUserText = nil
             await ensureConversation(firstUserText: userText)
@@ -599,7 +606,8 @@ final class AskMishController {
             // Tools reach every connected account. Record that before they
             // run, so an account removed mid-call takes this chat with it.
             if unrun == nil, !calls.isEmpty {
-                await write(rows: [], includingAllAccounts: true)
+                provenance.noteTools()
+                await write(rows: [])
             }
             for call in calls where unrun == nil {
                 if Task.isCancelled {
@@ -925,7 +933,7 @@ final class AskMishController {
             history = AskMishContext.removingContext(injectedThreadContexts[id], from: history)
             injectedThreadContexts[id] = context
             injectedThreadRevisions[id] = revisions[id]
-            unrecordedProvenance.insert(bodies[0].accountId)
+            provenance.noteThread(accountId: bodies[0].accountId)
             messages.append(context)
         }
         return messages
@@ -1240,14 +1248,13 @@ final class AskMishController {
     /// Writes `rows` together with the provenance they need (F-04). Nothing
     /// is written once the conversation was deleted, or when an account it
     /// drew on was removed meanwhile (`ChatProvenance.record` deletes it).
-    private func write(rows: [ChatMessageRow], includingAllAccounts: Bool = false) async {
+    private func write(rows: [ChatMessageRow]) async {
         guard let id = conversationID, !id.isEmpty else { return }
         let updatedAt = rows.last?.createdAt ?? Date()
-        let provenance = unrecordedProvenance
+        let pending = provenance
         let stored = (try? await AppDatabase.shared.dbPool.write { db in
             guard try ChatProvenance.record(
-                db, conversationId: id, accounts: provenance,
-                includingAllAccounts: includingAllAccounts) else { return }
+                db, conversationId: id, pending: pending) else { return }
             for row in rows { try row.insert(db) }
             if var conversation = try ChatConversationRow.fetchOne(db, key: id) {
                 conversation.updatedAt = updatedAt
@@ -1256,7 +1263,7 @@ final class AskMishController {
         }) != nil
         // Kept on failure: the next write retries it before any later row
         // can quote that mail.
-        if stored { unrecordedProvenance.subtract(provenance) }
+        if stored { provenance.committed(pending) }
     }
 
     private static func encode<T: Encodable>(_ value: [T]) -> String {

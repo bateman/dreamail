@@ -116,6 +116,44 @@ final class NotificationContentTests: XCTestCase {
                        "the setting changes the text, not which notification it replaces")
     }
 
+    /// The system stores identifiers whatever the setting: they carry no
+    /// address and no thread id, only salted hashes.
+    func testIdentifiersCarryNoAddressOrThreadId() {
+        let a = item(1)
+        var ids = NotificationContent.newMail([a], showDetails: false, salt: "s1").map(\.id)
+        ids += NotificationContent.newMail([a], showDetails: true, salt: "s1").map(\.id)
+        ids += NotificationContent.newMail((1...5).map { item($0) }, showDetails: true,
+                                           salt: "s1").map(\.id)
+        ids += NotificationContent.reminders([a], showDetails: false, salt: "s1").map(\.id)
+        ids.append(NotificationContent.scheduledSent(
+            accountId: "a@x.com", rowId: 3, subject: "s", showDetails: true, salt: "s1").id)
+        for id in ids {
+            for leak in ["a@x.com", "a%40x", "@", "x.com", ":t1"] {
+                XCTAssertFalse(id.contains(leak), "\(id) contains \(leak)")
+            }
+            XCTAssertTrue(NotificationContent.belongs(id, toAccount: "a@x.com", salt: "s1"), id)
+        }
+        let otherInstall = NotificationContent.newMail([a], showDetails: false, salt: "s2")[0].id
+        XCTAssertNotEqual(ids[0], otherInstall, "the hash depends on the per-install salt")
+        XCTAssertFalse(NotificationContent.belongs(otherInstall, toAccount: "a@x.com", salt: "s1"))
+    }
+
+    /// The same accounts in another order must give the same batch id, so a
+    /// newer count replaces the older one.
+    func testBatchIdentifierIgnoresAccountOrder() {
+        let ab = NotificationContent.newMail(
+            [item(1, account: "a@x.com"), item(2, account: "b@x.com")],
+            showDetails: false, salt: "s")
+        let ba = NotificationContent.newMail(
+            [item(3, account: "b@x.com"), item(4, account: "a@x.com"), item(5, account: "b@x.com")],
+            showDetails: false, salt: "s")
+        XCTAssertEqual(ab.map(\.id), ba.map(\.id))
+        XCTAssertEqual(NotificationContent.identifier(kind: .reminder, accounts: ["a", "b"],
+                                                      key: "batch", salt: "s"),
+                       NotificationContent.identifier(kind: .reminder, accounts: ["b", "a", "a"],
+                                                      key: "batch", salt: "s"))
+    }
+
     /// Separators inside an address must not split or widen the match.
     func testAddressesWithSeparatorsAreEncoded() {
         let odd = "x/y,z.w@q.com"

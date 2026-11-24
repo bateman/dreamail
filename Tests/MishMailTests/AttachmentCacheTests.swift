@@ -119,6 +119,46 @@ final class AttachmentCacheTests: XCTestCase {
         XCTAssertTrue(exists(root.appendingPathComponent("b@x.com")))
     }
 
+    // MARK: - Leftovers
+
+    /// A removal interrupted by a quit, or a delete that failed, leaves the
+    /// folder of an account that no longer exists. The launch sweep removes
+    /// it and keeps the live accounts' copies.
+    func testOrphanSweepRemovesFoldersOfAccountsThatAreGone() throws {
+        let live = try cache(account: "b@x.com")
+        let gone = try cache(account: "a@x.com")
+        let goneToo = try cache(account: "a@x.com.au", row: 9)
+        try fm.createSymbolicLink(at: root.appendingPathComponent("planted"),
+                                  withDestinationURL: outside)
+
+        XCTAssertTrue(AttachmentCache.removeOrphans(liveAccounts: ["b@x.com"], root: root))
+
+        XCTAssertTrue(exists(live))
+        XCTAssertFalse(exists(gone))
+        XCTAssertFalse(exists(goneToo))
+        XCTAssertFalse(exists(root.appendingPathComponent("planted")))
+        XCTAssertTrue(exists(victim), "the planted link is unlinked, not followed")
+    }
+
+    func testOrphanSweepLeavesALinkedRootAlone() throws {
+        let linkedRoot = base.appendingPathComponent("linked-root", isDirectory: true)
+        try fm.createSymbolicLink(at: linkedRoot, withDestinationURL: outside)
+        XCTAssertFalse(AttachmentCache.removeOrphans(liveAccounts: [], root: linkedRoot))
+        XCTAssertTrue(exists(victim))
+        XCTAssertTrue(AttachmentCache.removeOrphans(
+            liveAccounts: [], root: base.appendingPathComponent("absent")))
+    }
+
+    /// A download that finishes after its account was removed must not
+    /// write (and so recreate the account's folder).
+    func testDownloadForARemovedAccountIsNotStored() {
+        XCTAssertTrue(AttachmentCache.mayStore(accountId: "a@x.com",
+                                               liveAccounts: ["a@x.com", "b@x.com"]))
+        XCTAssertFalse(AttachmentCache.mayStore(accountId: "a@x.com", liveAccounts: ["b@x.com"]))
+        XCTAssertFalse(AttachmentCache.mayStore(accountId: "a@x.com",
+                                                liveAccounts: ["a@x.com.au"]))
+    }
+
     // MARK: - Write-side containment
 
     func testContainmentAcceptsARealTree() throws {

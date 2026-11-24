@@ -197,6 +197,137 @@ final class AccountRemovalResidueTests: XCTestCase {
         }
     }
 
+    // MARK: - Provenance still to write
+
+    /// A write that fails (a busy database) must not drop the "every
+    /// account" mark of a tool turn: the results written later still need it.
+    func testPendingProvenanceStaysUntilAWriteSucceeds() {
+        var pending = ChatProvenance.Pending()
+        pending.noteTools()
+        pending.noteThread(accountId: "a@x.com")
+        let firstAttempt = pending
+        // The write of `firstAttempt` failed: nothing is committed.
+        XCTAssertTrue(pending.needsAllAccounts)
+        XCTAssertEqual(pending.accounts, ["a@x.com"])
+
+        pending.noteThread(accountId: "b@x.com")
+        let retry = pending
+        pending.committed(retry)
+        XCTAssertFalse(pending.needsAllAccounts)
+        XCTAssertEqual(pending.accounts, [])
+        XCTAssertNotEqual(firstAttempt, pending)
+    }
+
+    func testProvenanceNotedDuringAWriteIsKept() {
+        var pending = ChatProvenance.Pending()
+        pending.noteThread(accountId: "a@x.com")
+        let inFlight = pending
+        pending.noteThread(accountId: "b@x.com")
+        pending.noteTools()
+        pending.committed(inFlight)
+        XCTAssertEqual(pending.accounts, ["b@x.com"])
+        XCTAssertTrue(pending.needsAllAccounts)
+    }
+
+    /// The open thread named in the system prompt counts even when none of
+    /// its bodies was injected.
+    func testRecordingPendingProvenanceStoresTheAccounts() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.insertAccount(db, "a@x.com")
+            try self.insertAccount(db, "b@x.com")
+            try self.insertChat(db, id: "thread", quoting: "")
+            try self.insertChat(db, id: "tools", quoting: "")
+            var thread = ChatProvenance.Pending()
+            thread.noteThread(accountId: "a@x.com")
+            XCTAssertTrue(try ChatProvenance.record(db, conversationId: "thread", pending: thread))
+            var tools = ChatProvenance.Pending()
+            tools.noteTools()
+            XCTAssertTrue(try ChatProvenance.record(db, conversationId: "tools", pending: tools))
+            XCTAssertEqual(try ChatProvenance.accounts(db, conversationId: "thread"), ["a@x.com"])
+            XCTAssertEqual(try ChatProvenance.accounts(db, conversationId: "tools"),
+                           ["a@x.com", "b@x.com"])
+            try AccountLifecycle.purgeAccount(db, id: "b@x.com")
+        }
+        try q.read { db in
+            XCTAssertEqual(try self.chatIds(db), ["thread"])
+        }
+    }
+
+    // MARK: - Late writes and leftovers
+
+    /// An open composer's autosave or a schedule that lands after the purge
+    /// is refused instead of storing mail for an account that is gone.
+    func testWritesForARemovedAccountAreRefused() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.insertAccount(db, "b@x.com")
+            XCTAssertNoThrow(try AccountLifecycle.requireLiveAccount(db, id: "b@x.com"))
+            XCTAssertNoThrow(try AccountLifecycle.requireLiveAccount(db, id: ""))
+            XCTAssertThrowsError(try AccountLifecycle.requireLiveAccount(db, id: "a@x.com")) {
+                XCTAssertTrue($0 is AccountLifecycle.AccountRemovedError)
+            }
+        }
+    }
+
+    /// Rows that a late write or an interrupted removal left for an account
+    /// that no longer exists go at launch; the live account's stay.
+    func testLaunchSweepDeletesRowsOfAccountsThatAreGone() throws {
+        let q = try makeDB()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try q.write { db in
+            try self.insertAccount(db, "b@x.com")
+            for account in ["a@x.com", "b@x.com"] {
+                try LocalDraft(
+                    id: nil, accountId: account, fromEmail: "", toHeader: "j@y.com",
+                    ccHeader: "", bccHeader: "", subject: "Draft", body: "b",
+                    replyToMessageId: nil, forward: false, replacingDraftId: nil,
+                    attachmentsJSON: Data("[]".utf8), createdAt: now, updatedAt: now).insert(db)
+                try ScheduledSend(
+                    id: nil, accountId: account, toHeader: "j@y.com",
+                    ccHeader: "", bccHeader: "", subject: "Later", body: "b",
+                    sendAt: now, replyToMessageId: nil, forward: false, replacingDraftId: nil,
+                    attachmentsJSON: Data("[]".utf8), createdAt: now).insert(db)
+                try PendingThreadOp.enqueue(db, accountId: account, gmailThreadId: "t1",
+                                            change: .modify(add: ["STARRED"]))
+                var view = SavedView.empty()
+                view.name = "View \(account)"
+                view.accountId = account
+                try view.insert(db)
+                try ThreadAICategory(threadId: "\(account):t1", category: "fyi").insert(db)
+                try self.insertChat(db, id: "chat-\(account)", quoting: "x")
+            }
+            try MailThread(
+                id: "b@x.com:t1", accountId: "b@x.com", gmailThreadId: "t1",
+                subject: "s", snippet: "sn", fromDisplay: "F",
+                lastDate: now, isUnread: false, isStarred: false,
+                inInbox: true, inTrash: false, labelIds: "INBOX",
+                snoozeUntil: nil, participants: "F", messageCount: 1,
+                hasAttachment: false, reminderAt: nil).insert(db)
+            var unified = SavedView.empty()
+            unified.name = "All accounts"
+            try unified.insert(db)
+            // Provenance recorded while a@x.com existed; its row is gone now.
+            try db.execute(sql: """
+                INSERT INTO chatConversationAccount (conversationId, accountId)
+                VALUES ('chat-a@x.com', 'a@x.com'), ('chat-b@x.com', 'b@x.com')
+                """)
+
+            try AccountLifecycle.purgeOrphanRows(db)
+        }
+        try q.read { db in
+            for table in ["localDraft", "scheduledSend", "pendingThreadOp"] {
+                XCTAssertEqual(try String.fetchAll(db, sql: "SELECT accountId FROM \(table)"),
+                               ["b@x.com"], table)
+            }
+            XCTAssertEqual(try String.fetchAll(db, sql: "SELECT name FROM savedView ORDER BY name"),
+                           ["All accounts", "View b@x.com"])
+            XCTAssertEqual(try String.fetchAll(db, sql: "SELECT threadId FROM threadAI"),
+                           ["b@x.com:t1"])
+            XCTAssertEqual(try self.chatIds(db), ["chat-b@x.com"])
+        }
+    }
+
     // MARK: - Notifications
 
     /// Every identifier the app posts names its account, so a removal

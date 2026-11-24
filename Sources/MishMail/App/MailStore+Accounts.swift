@@ -71,46 +71,57 @@ extension MailStore {
             _ = exitDemoMode()
             return
         }
-        // Read-only cache (F-02): refuse before anything changes. Removal
-        // deletes the Keychain token first and then purges the rows; with
-        // the purge refused, the token would be gone while the account and
-        // its mail stayed on disk and came back on the next reload.
+        // Read-only cache (F-02): refuse before anything changes, so the
+        // removal cannot fail halfway on a cache that refuses every write.
         guard cacheAcceptsWrites() else { return }
         let pool = db
         // Stop the account's sync first: a pass still running would write
         // rows for an account that is being deleted. Drop the account from
-        // `accounts` now so late sync errors and reauth requests for it are
-        // ignored (see `isKnownAccount`).
+        // `accounts` now so late sync errors, reauth requests and attachment
+        // downloads for it are ignored (see `isKnownAccount`).
         let engine = engines[id]
         accounts.removeAll { $0.id == id }
         leaveScope(ofRemovedAccount: id)
         Task { @MainActor [weak self] in
             await engine?.cancelSync()
-            Keychain.delete("refreshToken.\(id)")
+            // The database purge comes first because it is the step that can
+            // fail. On failure nothing irreversible has happened yet: the
+            // sign-in, notifications and attachment copies are still there,
+            // the account comes back on reload, and the user is told. The
+            // account row and its queued edits, offline drafts, scheduled
+            // sends, triage rows, saved views and Ask Mish chats go in one
+            // transaction.
+            AccountLifecycle.markRemovalPending(id)
+            do {
+                try await pool.write { db in
+                    try AccountLifecycle.purgeAccount(db, id: id)
+                }
+            } catch {
+                AccountLifecycle.clearRemovalPending(id)
+                guard let self, !self.isShuttingDown else { return }
+                self.reloadAccounts()
+                self.lastError = AccountLifecycle.removalFailedMessage
+                return
+            }
+            await Self.removeOutsideDatabase(accountId: id)
             // After the Keychain delete: the next token request finds no
             // refresh token and fails, instead of reusing the cached one.
             await GmailClient.shared(accountEmail: id).forgetAccessToken()
-            // The account row and its queued edits, offline drafts, scheduled
-            // sends, triage rows, saved views and Ask Mish chats go in one
-            // transaction.
-            let purged = (try? await pool.write { db in
-                try AccountLifecycle.purgeAccount(db, id: id)
-            }) != nil
-            // Everything outside the database (F-04). The notifications and
-            // the attachment copies go even if the purge failed: they are
-            // copies, and the account is already out of the app.
-            if purged { AccountLifecycle.clearAccountDefaults(accountId: id) }
-            Notifier.removeNotifications(forAccount: id)
+            // Fold the purged pages out of the WAL and the freelist now
+            // rather than at the next idle pass.
             _ = await Task.detached(priority: .utility) {
-                AttachmentCache.removeAccount(id)
+                AppDatabase.shared.checkpoint()
             }.value
             // Gmail API responses may sit in the shared HTTP cache on disk.
             // Nothing there needs to survive, so all of it goes.
             URLCache.shared.removeAllCachedResponses()
             guard let self, !self.isShuttingDown else { return }
+            // Recent searches are not tagged by account; any of them may be
+            // about this one's mail.
+            self.clearRecentSearches()
             // A chat open in the panel may have been deleted with the account;
             // its transcript must not stay on screen or in memory.
-            await self.askMishController?.discardConversationIfPurged()
+            await self.askMishController?.discardConversationIfPurged(removedAccount: id)
             // The account's mail cascades away with it; any payload cached for
             // one of its conversations must not outlive the rows behind it.
             self.applyThreadContentChange(.everything)
@@ -126,6 +137,49 @@ extension MailStore {
             // Own-address set changed — drop the weight map and re-mine.
             self.rebuildContacts(forceFull: true)
             await self.reloadPendingThreadOpCount()
+        }
+    }
+
+    /// Launch-time cleanup of what an interrupted or partly failed removal
+    /// left behind (F-04): attachment folders of accounts that no longer
+    /// exist, and rows a late write (an open composer, an in-flight edit or
+    /// triage result) stored for one after its purge. `live` comes from the
+    /// account table, never from a list that may not be loaded yet.
+    /// Once per launch, on the first account list read from the database.
+    func sweepRemovedAccountResidueOnce(live: [String]) {
+        guard !Self.residueSwept else { return }
+        Self.residueSwept = true
+        sweepRemovedAccountResidue(live: live)
+    }
+
+    private static var residueSwept = false
+
+    /// Everything of a purged account outside the database (F-04): the
+    /// sign-in, its preferences, notifications and attachment copies. Then
+    /// the removal is no longer pending. A copy a failed delete leaves goes
+    /// at the next launch (`sweepRemovedAccountResidue`).
+    private static func removeOutsideDatabase(accountId id: String) async {
+        Keychain.delete("refreshToken.\(id)")
+        AccountLifecycle.clearAccountDefaults(accountId: id)
+        Notifier.removeNotifications(forAccount: id)
+        _ = await Task.detached(priority: .utility) {
+            AttachmentCache.removeAccount(id)
+        }.value
+        AccountLifecycle.clearRemovalPending(id)
+    }
+
+    func sweepRemovedAccountResidue(live: [String]) {
+        guard cacheAcceptsWrites(silent: true) else { return }
+        let pool = db
+        let removals = AccountLifecycle.removalsToFinish(
+            pending: AccountLifecycle.pendingRemovals(), live: live)
+        for id in removals.stale { AccountLifecycle.clearRemovalPending(id) }
+        Task {
+            for id in removals.finish { await Self.removeOutsideDatabase(accountId: id) }
+        }
+        Task.detached(priority: .utility) {
+            AttachmentCache.removeOrphans(liveAccounts: live)
+            _ = try? await pool.write { db in try AccountLifecycle.purgeOrphanRows(db) }
         }
     }
 

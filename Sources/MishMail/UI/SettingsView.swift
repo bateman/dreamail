@@ -403,7 +403,7 @@ struct AccountsSettings: View {
                 }
                 Button("Cancel", role: .cancel) { accountToRemove = nil }
             } message: { _ in
-                Text("This removes cached mail and the saved sign-in from this Mac. Unsent scheduled mail, offline drafts, and edits not yet synced for this account are deleted. Gmail mail on the server is not deleted.")
+                Text("This removes cached mail, opened attachments and the saved sign-in from this Mac. Also deleted: unsent scheduled mail, offline drafts and edits not yet synced for this account, its saved views, snippets available only to it, its sync and filter settings, its notifications, and Ask Mish chats that may contain this account's mail. Gmail mail on the server is not deleted.")
             }
         }
     }

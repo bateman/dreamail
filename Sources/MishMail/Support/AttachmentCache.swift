@@ -67,6 +67,30 @@ enum AttachmentCache {
         return removeEntry(named: accountFolderName(accountId), in: rootFD)
     }
 
+    /// Whether a downloaded copy may still be written. A download that
+    /// finishes after its account was removed must not recreate the
+    /// account's folder.
+    static func mayStore(accountId: String, liveAccounts: [String]) -> Bool {
+        liveAccounts.contains(accountId)
+    }
+
+    /// Deletes every account folder under `root` that belongs to none of
+    /// `liveAccounts`: what a removal interrupted by a quit, or a delete
+    /// that failed, left behind. Never follows a link; a linked root is left
+    /// alone. Returns false when anything could not be removed.
+    @discardableResult
+    static func removeOrphans(liveAccounts: [String], root: URL = defaultRoot) -> Bool {
+        let rootFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard rootFD >= 0 else { return errno == ENOENT }
+        defer { close(rootFD) }
+        let live = Set(liveAccounts.map(accountFolderName))
+        var ok = true
+        for name in entries(of: rootFD) where !live.contains(name) {
+            if !removeEntry(named: name, in: rootFD) { ok = false }
+        }
+        return ok
+    }
+
     // MARK: - Walk
 
     private static func isRealDirectory(_ path: String) -> Bool {

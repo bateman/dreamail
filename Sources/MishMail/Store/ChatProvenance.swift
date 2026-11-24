@@ -17,6 +17,36 @@ import GRDB
 ///
 /// Pure database policy: it works whether or not the AI features are built in.
 enum ChatProvenance {
+    /// What the conversation's next write must add to its provenance. Kept
+    /// until a write succeeds, so a failed write (a busy database) cannot
+    /// let later rows that quote the mail go out without it.
+    struct Pending: Equatable {
+        private(set) var accounts: Set<String> = []
+        /// A tool ran or is about to run: every connected account counts.
+        private(set) var needsAllAccounts = false
+
+        /// A thread of `accountId` reached the model: injected as context,
+        /// or named in the system prompt as the open thread.
+        mutating func noteThread(accountId: String) {
+            if !accountId.isEmpty { accounts.insert(accountId) }
+        }
+
+        mutating func noteTools() { needsAllAccounts = true }
+
+        /// `written` reached the database; anything noted since stays.
+        mutating func committed(_ written: Pending) {
+            accounts.subtract(written.accounts)
+            if written.needsAllAccounts { needsAllAccounts = false }
+        }
+    }
+
+    /// Records `pending`; see the other overload.
+    @discardableResult
+    static func record(_ db: Database, conversationId: String, pending: Pending) throws -> Bool {
+        try record(db, conversationId: conversationId, accounts: pending.accounts,
+                   includingAllAccounts: pending.needsAllAccounts)
+    }
+
     /// Adds `accounts` (and, with `includingAllAccounts`, every account in
     /// the cache) to the conversation's provenance.
     ///

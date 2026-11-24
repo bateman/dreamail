@@ -895,7 +895,7 @@ final class MailStore {
             filtersLoadError[accountId] = nil
         } catch GmailError.http(403, _) {
             filtersLoadError[accountId] =
-                "MishMail doesn't have permission to read this account's filters yet. Remove and re-add the account (Accounts pane) to grant it."
+                "MishMail doesn't have permission to read this account's filters yet. Sign in to it again with Add Google Account… (Accounts pane) to grant it; the account and its mail stay as they are."
             // Keep any previous good cache; only leave the slot empty when we
             // never had one (so UI can show the scope error).
             if previous == nil { filtersByAccount[accountId] = nil }
@@ -2584,6 +2584,7 @@ struct ComposeRequest: Identifiable {
         if nextLabels != labelsByAccount {
             labelsByAccount = nextLabels
         }
+        sweepRemovedAccountResidueOnce(live: raw.map(\.id))
     }
 
     func reloadSavedViews() {
@@ -4499,6 +4500,12 @@ struct ComposeRequest: Identifiable {
             try fm.removeItem(at: url)
         }
         let data = try await downloadAttachment(attachment, message: message)
+        // The account may have been removed while the download ran; writing
+        // now would recreate its folder after the cleanup (F-04).
+        guard AttachmentCache.mayStore(accountId: message.accountId,
+                                       liveAccounts: accounts.map(\.id)) else {
+            throw CancellationError()
+        }
         try fm.createDirectory(at: dir, withIntermediateDirectories: true,
                                attributes: [.posixPermissions: 0o700])
         guard AttachmentCache.isContained(dir, in: root) else {

@@ -104,6 +104,80 @@ enum AccountLifecycle {
         try db.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [id])
     }
 
+    struct AccountRemovedError: LocalizedError {
+        var errorDescription: String? { "This account was removed from MishMail." }
+    }
+
+    /// Call first in a write that stores mail for `accountId` in a table
+    /// without a foreign key (offline drafts, scheduled sends). A composer
+    /// still open when its account is removed would otherwise write its text
+    /// back after the purge. An empty id is not checked.
+    static func requireLiveAccount(_ db: Database, id: String) throws {
+        guard !id.isEmpty else { return }
+        guard try Account.exists(db, key: id) else { throw AccountRemovedError() }
+    }
+
+    // MARK: Interrupted removals
+
+    static let pendingRemovalsKey = "accountRemovalsPending"
+
+    /// Recorded before the purge and cleared once everything outside the
+    /// database is gone too. A quit or crash in between (after the purge,
+    /// before the Keychain delete) leaves the id here, and the next launch
+    /// finishes the job (`removalsToFinish`).
+    static func markRemovalPending(_ id: String, defaults: UserDefaults = .standard) {
+        var ids = pendingRemovals(defaults: defaults)
+        guard !ids.contains(id) else { return }
+        ids.append(id)
+        defaults.set(ids, forKey: pendingRemovalsKey)
+    }
+
+    static func clearRemovalPending(_ id: String, defaults: UserDefaults = .standard) {
+        let ids = pendingRemovals(defaults: defaults).filter { $0 != id }
+        if ids.isEmpty {
+            defaults.removeObject(forKey: pendingRemovalsKey)
+        } else {
+            defaults.set(ids, forKey: pendingRemovalsKey)
+        }
+    }
+
+    static func pendingRemovals(defaults: UserDefaults = .standard) -> [String] {
+        defaults.stringArray(forKey: pendingRemovalsKey) ?? []
+    }
+
+    /// Marked removals whose account row is gone: the purge committed, the
+    /// rest may not have run. A marked account that still exists was never
+    /// purged; its mark is just dropped (`stale`).
+    static func removalsToFinish(pending: [String], live: [String])
+        -> (finish: [String], stale: [String]) {
+        let liveSet = Set(live)
+        return (pending.filter { !liveSet.contains($0) }, pending.filter { liveSet.contains($0) })
+    }
+
+    static let removalFailedMessage =
+        "The account couldn't be removed. Nothing was deleted; try again."
+
+    /// Rows of the tables without a foreign key whose account no longer
+    /// exists: a write that landed after its account's purge (an open
+    /// composer's autosave, an in-flight edit or triage result), or a purge
+    /// that never ran. Called at launch. An empty account id is left alone:
+    /// it is not an account that was removed.
+    static func purgeOrphanRows(_ db: Database) throws {
+        for table in ["pendingThreadOp", "localDraft", "scheduledSend", "savedView"] {
+            try db.execute(sql: """
+                DELETE FROM \(table)
+                WHERE accountId IS NOT NULL AND accountId != ''
+                  AND accountId NOT IN (SELECT id FROM account)
+                """)
+        }
+        try db.execute(sql: "DELETE FROM threadAI WHERE threadId NOT IN (SELECT id FROM thread)")
+        try db.execute(sql: """
+            DELETE FROM chatConversation
+            WHERE id IN (SELECT conversationId FROM chatConversationAccount
+                         WHERE accountId NOT IN (SELECT id FROM account))
+            """)
+    }
+
     /// Same case-insensitive match as `Snippet.isAvailable(for:)`.
     private static func removeFromSnippetScopes(_ db: Database, id: String) throws {
         let scoped = try Snippet.filter(Column("accountIdsJSON") != nil).fetchAll(db)
