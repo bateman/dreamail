@@ -169,7 +169,7 @@ final class SelectionAdvanceTests: XCTestCase {
     }
 
     func testSinglePressOpensWithNoSettle() {
-        // Notion Mail–style: a deliberate j/k or ↑/↓ opens immediately.
+        // Live preview: a deliberate j/k or ↑/↓ opens immediately.
         XCTAssertEqual(
             DetailOpenPolicy.settleNanoseconds(isKeyRepeat: false), 0)
         XCTAssertEqual(DetailOpenPolicy.singlePressSettleNanoseconds, 0)

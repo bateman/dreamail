@@ -159,7 +159,7 @@ enum PlainTextLinks {
             piece.link = link.url
             // SwiftUI `Text` draws the SwiftUI color. The selectable text
             // view draws the AppKit color. Set both, or the link stays black.
-            piece.foregroundColor = Color.notionAccent
+            piece.foregroundColor = Color.mailAccent
             piece.underlineStyle = .single
             piece.appKit.foregroundColor = .mailAccent
             piece.appKit.underlineStyle = .single

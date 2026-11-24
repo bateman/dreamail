@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Shared Notion Mail-style rendering of a Gmail filter as a sentence
+/// Shared rendering of a Gmail filter as a sentence
 /// ("If mail is from x, then Skip inbox"). Used by Settings → Gmail filters
 /// and by the per-message matching-filters disclosure on a message card.
 enum GmailFilterDisplay {
@@ -108,7 +108,7 @@ enum GmailFilterDisplay {
     }
 }
 
-/// One filter as an icon + Notion-style sentence. Compact mode drops the
+/// One filter as an icon + plain-language sentence. Compact mode drops the
 /// circular icon chrome for embedding under a message card.
 struct GmailFilterSentenceRow: View {
     @Environment(MailStore.self) var store

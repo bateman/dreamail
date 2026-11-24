@@ -1,6 +1,6 @@
 import Foundation
 
-/// Notion-style natural-language date suggestions for the snooze picker.
+/// Natural-language date suggestions for the snooze picker.
 /// Turns partial input like "tom", "fri 3pm", "in 2 weeks", "aug 12" into
 /// concrete future dates, prefix-matching so suggestions appear as you type.
 enum SnoozeDateParser {

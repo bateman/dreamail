@@ -3,19 +3,18 @@ import GRDB
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Notion Mail-style settings window: a slim sidebar of panes on the left,
+/// Settings window: a slim sidebar of panes on the left,
 /// the selected pane on the right. Opens with Cmd-, or from the app sidebar.
 struct SettingsView: View {
     @Environment(MailStore.self) var store
 
     enum Pane: String, Identifiable {
-        case notionMail, accounts, googleAPI, filters, snippets, general, appearance, shortcuts, ai, updates
+        case accounts, googleAPI, filters, snippets, general, appearance, shortcuts, ai, updates
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
-            case .notionMail: return "Moving from Notion Mail"
             case .accounts: return "Accounts"
             case .googleAPI: return "Google API"
             case .filters: return "Gmail filters"
@@ -30,7 +29,6 @@ struct SettingsView: View {
 
         var icon: String {
             switch self {
-            case .notionMail: return "arrow.right.doc.on.clipboard"
             case .accounts: return "person.2"
             case .googleAPI: return "key"
             case .filters: return "line.3.horizontal.decrease"
@@ -50,9 +48,6 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             List(selection: $pane) {
-                Section {
-                    row(.notionMail)
-                }
                 Section("Account") {
                     row(.accounts)
                     row(.googleAPI)
@@ -95,7 +90,6 @@ struct SettingsView: View {
     @ViewBuilder
     private var detail: some View {
         switch pane {
-        case .notionMail: NotionMailSettings()
         case .accounts: AccountsSettings()
         case .googleAPI: GoogleAPISettings()
         case .filters: GmailFiltersSettings()
@@ -109,7 +103,7 @@ struct SettingsView: View {
     }
 }
 
-/// Shared pane layout: Notion-style big title with a hairline under it.
+/// Shared pane layout: big title with a hairline under it.
 struct PaneScaffold<Content: View>: View {
     let title: String
     var subtitle: String? = nil
@@ -415,7 +409,7 @@ struct AccountsSettings: View {
     }
 }
 
-// MARK: - Gmail filters (read-only, Notion Mail-style sentences)
+// MARK: - Gmail filters (read-only, plain-language sentences)
 
 struct GmailFiltersSettings: View {
     @Environment(MailStore.self) var store
@@ -512,7 +506,36 @@ struct GmailFiltersSettings: View {
     }
 }
 
-// MARK: - Snippets (Notion Mail-style table with search + editor sheet)
+// MARK: - Snippets (table with search + editor sheet)
+
+/// Runs a Snippets → Import file pick and returns the status line to show.
+enum SnippetFileImport {
+    @MainActor
+    static func apply(_ result: Result<URL, Error>, store: MailStore) -> String? {
+        switch result {
+        case .success(let url):
+            do {
+                let counts = try store.importSnippets(from: url)
+                var msg = counts.skipped == 0
+                    ? "Imported \(counts.added)"
+                    : "Imported \(counts.added), skipped \(counts.skipped)"
+                if counts.unknownAccountIds > 0 {
+                    msg += "; \(counts.unknownAccountIds) unknown account id"
+                        + (counts.unknownAccountIds == 1 ? "" : "s")
+                        + " (snippet hidden until fixed)"
+                }
+                if counts.added == 0, counts.skipped == 0 {
+                    msg = "No snippets found in that file"
+                }
+                return msg
+            } catch {
+                return "Import failed: \(error.localizedDescription)"
+            }
+        case .failure:
+            return nil
+        }
+    }
+}
 
 struct SnippetsSettings: View {
     @Environment(MailStore.self) var store
@@ -534,7 +557,7 @@ struct SnippetsSettings: View {
 
     var body: some View {
         PaneScaffold(title: "Snippets",
-                     subtitle: "Reusable text you can drop into any email by typing / in compose. Import JSON or CSV, including a Notion Mail export.") {
+                     subtitle: "Reusable text you can drop into any email by typing / in compose. Import JSON or CSV with name and body fields.") {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 10) {
                     SearchField(prompt: "Search snippets…", text: $search)
@@ -548,7 +571,7 @@ struct SnippetsSettings: View {
                             .foregroundStyle(.secondary)
                     }
                     Button("Import…") { showImporter = true }
-                        .help("Import JSON or CSV snippets, including a Notion Mail export")
+                        .help("Import a JSON array or CSV with name and body columns")
                     Button("Create new") {
                         editing = Snippet(id: nil, name: "", body: "")
                     }
@@ -1067,7 +1090,7 @@ struct AppearanceSettings: View {
                         Text("Opens in a centered card").tag(ThreadOpenStyle.centerPeek.rawValue)
                     }
                 } footer: {
-                    Text("Fills the window is Superhuman-style: click a conversation (or press ↩) and it takes over the window; Esc or g i (any go-to) returns to the list. The reading pane shows conversations beside the message list instead. The centered card (Notion Mail-style center peek) floats the conversation over the list; Esc or clicking outside it returns to the list.")
+                    Text("Fills the window is Superhuman-style: click a conversation (or press ↩) and it takes over the window; Esc or g i (any go-to) returns to the list. The reading pane shows conversations beside the message list instead. The centered card (center peek) floats the conversation over the list; Esc or clicking outside it returns to the list.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -1350,7 +1373,7 @@ private struct VIPManager: View {
                                     Spacer()
                                 }
                                 .padding(.horizontal, 8).padding(.vertical, 5)
-                                .background(idx == highlighted ? Color.notionAccent.opacity(0.18) : .clear)
+                                .background(idx == highlighted ? Color.mailAccent.opacity(0.18) : .clear)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -1452,7 +1475,7 @@ private struct VIPManager: View {
                     }
                     .overlay(RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(style: StrokeStyle(lineWidth: dropTargeted ? 2 : 1, dash: [5, 3]))
-                        .foregroundStyle(dropTargeted ? Color.notionAccent : Color(nsColor: .separatorColor)))
+                        .foregroundStyle(dropTargeted ? Color.mailAccent : Color(nsColor: .separatorColor)))
                     .onDrop(of: ["public.file-url"], isTargeted: $dropTargeted) { handleDrop($0) }
                 HStack {
                     Text(pasteText.isEmpty ? " "

@@ -1,13 +1,13 @@
 import CoreGraphics
 
-/// Notion Mail-style "center peek": the conversation opens in a centered
+/// "Center peek": the conversation opens in a centered
 /// card over the list instead of filling the window or docking beside it.
 /// Pure geometry so it is unit-testable without SwiftUI.
 enum CenterPeekLayout {
     /// Below this the conversation is unreadable; the card claims what it
     /// can of the host instead.
     static let minimumCardWidth: CGFloat = 520
-    /// Reading measure cap — Notion Mail's peek stays a column, not a sheet.
+    /// Reading measure cap — the peek stays a column, not a sheet.
     static let maximumCardWidth: CGFloat = 980
     /// Preferred share of the host width.
     static let widthFraction: CGFloat = 0.72

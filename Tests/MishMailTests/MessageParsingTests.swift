@@ -198,7 +198,7 @@ final class MessageParsingTests: XCTestCase {
     }
 
     func testStripHTMLDropsStyleAndScriptContents() {
-        // Notion Mail regression: its HTML carries a large <style> block whose
+        // Regression: some senders' HTML carries a large <style> block whose
         // CSS used to leak into the extracted text (and quoted replies).
         let html = """
         <html><head><title>ignore</title>

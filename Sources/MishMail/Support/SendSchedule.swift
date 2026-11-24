@@ -1,6 +1,6 @@
 import Foundation
 
-/// Preset send times for schedule-send (Notion Mail-style), plus display
+/// Preset send times for schedule-send, plus display
 /// helpers. Pure date math so it's unit-testable.
 enum SendSchedule: CaseIterable {
     case tomorrowMorning    // tomorrow 8:00 AM

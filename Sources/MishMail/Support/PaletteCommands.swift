@@ -55,7 +55,6 @@ enum PaletteCommands {
         case toggleAskMish
         case sortInboxWithAI
         case addView
-        case notionMailSettings
         /// Same entry point as the single key, so the palette inherits the
         /// key's rules (checked threads win over the focused one).
         case perform(ShortcutCommand)
@@ -82,8 +81,6 @@ enum PaletteCommands {
             Entry(id: "askmish", title: "Ask Mish", icon: "bubble.left.and.text.bubble.right", action: .toggleAskMish),
             Entry(id: "aisort", title: "Sort Inbox with AI", icon: "sparkles", action: .sortInboxWithAI),
             Entry(id: "newview", title: "Add View…", icon: "plus", action: .addView),
-            Entry(id: "notionmail", title: "Moving from Notion Mail…",
-                  icon: "arrow.right.doc.on.clipboard", action: .notionMailSettings),
         ]
         list += threadActions(ctx)
         for mailbox in BuiltinMailbox.allCases {

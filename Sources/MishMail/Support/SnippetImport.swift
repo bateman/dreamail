@@ -1,10 +1,13 @@
 import Foundation
 
-/// JSON / CSV snippet import (Settings → Snippets and Moving from Notion Mail).
+/// JSON / CSV snippet import (Settings → Snippets → Import).
 ///
-/// Accepts MishMail's own array (`[{"name","body",…}]`) and the shapes a
-/// Notion Mail snippet export commonly lands in: a `{ "snippets": […] }`
-/// wrapper, alternate keys (`shortcut`/`content`), and CSV with a header row.
+/// Accepts MishMail's own format only: a JSON array of
+/// `{"name", "body", "movesToBcc"?, "accountIds"?}` objects (or one such
+/// object), or CSV whose header row has `name` and `body` columns and an
+/// optional `movesToBcc` column. Key and header names match case-insensitively.
+/// Bodies are stored verbatim: compose expands `{name}` and `{{name}}`
+/// placeholders itself.
 enum SnippetImport {
     struct Item: Codable, Equatable {
         var name: String
@@ -19,7 +22,7 @@ enum SnippetImport {
         case unrecognized
 
         var errorDescription: String? {
-            "Could not read snippets. Use a JSON array or CSV with name and body columns."
+            "Could not read snippets. Use a JSON array of objects with name and body, or CSV with name and body columns."
         }
     }
 
@@ -45,23 +48,6 @@ enum SnippetImport {
         }
     }
 
-    /// Map Notion Mail `{{First Name}}` / `{{Your Name}}` tokens onto the
-    /// placeholders MishMail expands. Only known variable names rewrite.
-    /// Code braces and custom prompts stay verbatim.
-    static func rewriteNotionVariables(_ body: String) -> String {
-        guard let regex = placeholderRegex else { return body }
-        let ns = body as NSString
-        var result = body
-        let matches = regex.matches(in: body, range: NSRange(location: 0, length: ns.length))
-        for match in matches.reversed() {
-            let inner = ns.substring(with: match.range(at: 1))
-            guard let token = canonicalVariable(inner) else { continue }
-            guard let range = Range(match.range, in: result) else { continue }
-            result.replaceSubrange(range, with: "{\(token)}")
-        }
-        return result
-    }
-
     // MARK: - JSON
 
     private static func decodeJSON(_ data: Data) -> [Item]? {
@@ -78,11 +64,6 @@ enum SnippetImport {
             return arr.compactMap { $0 as? [String: Any] }
         }
         guard let dict = obj as? [String: Any] else { return [] }
-        for key in ["snippets", "items", "data", "records", "templates"] {
-            if let arr = dict[key] as? [Any] {
-                return arr.compactMap { $0 as? [String: Any] }
-            }
-        }
         if hasSnippetKeys(dict) { return [dict] }
         return []
     }
@@ -96,9 +77,9 @@ enum SnippetImport {
               let body = string(dict, keys: bodyKeys) else { return nil }
         return Item(
             name: name,
-            body: rewriteNotionVariables(body),
-            movesToBcc: bool(dict, keys: ["movesToBcc", "moveToBcc", "moves_to_bcc", "bcc"]),
-            accountIds: stringArray(dict, keys: ["accountIds", "account_ids", "accounts"]))
+            body: body,
+            movesToBcc: bool(dict, keys: ["movesToBcc"]),
+            accountIds: stringArray(dict, keys: ["accountIds"]))
     }
 
     // MARK: - CSV
@@ -114,11 +95,9 @@ enum SnippetImport {
         guard records.count >= 2, let header = records.first else { return nil }
         let cols = header.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
         let nameIdx = columnIndex(cols, candidates: nameKeys)
-            ?? (cols.count >= 2 ? 0 : nil)
         let bodyIdx = columnIndex(cols, candidates: bodyKeys)
-            ?? (cols.count >= 2 ? 1 : nil)
         guard let nameIdx, let bodyIdx, nameIdx != bodyIdx else { return nil }
-        let bccIdx = columnIndex(cols, candidates: ["movestobcc", "movetobcc", "bcc"])
+        let bccIdx = columnIndex(cols, candidates: ["movesToBcc"])
         var items: [Item] = []
         for row in records.dropFirst() {
             guard nameIdx < row.count, bodyIdx < row.count else { continue }
@@ -130,51 +109,16 @@ enum SnippetImport {
             if let bccIdx, bccIdx < row.count {
                 moves = parseBool(row[bccIdx])
             }
-            items.append(Item(name: name, body: rewriteNotionVariables(body),
+            items.append(Item(name: name, body: body,
                               movesToBcc: moves, accountIds: nil))
         }
         return items.isEmpty ? nil : items
     }
 
-    // MARK: - Placeholders
-
-    private static let placeholderRegex = try? NSRegularExpression(
-        pattern: #"\{{1,2}\s*([A-Za-z][A-Za-z0-9 _-]*?)\s*\}{1,2}"#)
-
-    private static let variableAliases: [String: String] = [
-        "first_name": "first_name", "firstname": "first_name", "first": "first_name",
-        "last_name": "last_name", "lastname": "last_name", "last": "last_name",
-        "name": "name", "full_name": "name", "fullname": "name",
-        "recipient": "name", "recipient_name": "name",
-        "email": "email", "recipient_email": "email",
-        "date": "date", "today": "date",
-        "my_name": "my_name", "myname": "my_name",
-        "your_name": "my_name", "yourname": "my_name",
-        "sender": "my_name", "sender_name": "my_name",
-        "my_first_name": "my_first_name", "myfirstname": "my_first_name",
-        "your_first_name": "my_first_name", "yourfirstname": "my_first_name",
-        "bcc_first_name": "bcc_first_name", "bccfirstname": "bcc_first_name",
-        "bcc_name": "bcc_name", "bccname": "bcc_name",
-        "bcc_email": "bcc_email", "bccemail": "bcc_email",
-        "introducer": "bcc_name",
-    ]
-
-    private static func canonicalVariable(_ raw: String) -> String? {
-        let key = raw.lowercased()
-            .replacingOccurrences(of: "-", with: " ")
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: "_")
-        return variableAliases[key]
-    }
-
     // MARK: - Dict helpers
 
-    private static let nameKeys = [
-        "name", "shortcut", "title", "slug", "command", "trigger",
-    ]
-    private static let bodyKeys = [
-        "body", "content", "text", "snippet", "html", "value",
-    ]
+    private static let nameKeys = ["name"]
+    private static let bodyKeys = ["body"]
 
     private static func value(_ dict: [String: Any], keys: [String]) -> Any? {
         let mapped = Dictionary(uniqueKeysWithValues: dict.map {
@@ -229,8 +173,7 @@ enum SnippetImport {
 
     private static func columnIndex(_ cols: [String], candidates: [String]) -> Int? {
         let wanted = Set(candidates.map { $0.lowercased() })
-        return cols.firstIndex { wanted.contains($0.replacingOccurrences(of: "_", with: ""))
-            || wanted.contains($0) }
+        return cols.firstIndex { wanted.contains($0) }
     }
 
     private static func stripBOM(_ data: Data) -> Data {

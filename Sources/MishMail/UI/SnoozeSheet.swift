@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Notion-style date picker shared by snooze (window overlay) and schedule-send
+/// Natural-language date picker shared by snooze (window overlay) and schedule-send
 /// (sheet): type a natural-language date ("tomorrow", "fri 3pm", "in 2 weeks",
 /// "aug 12") and pick from live suggestions, or choose a preset. Fully
 /// keyboard-driven: ↑/↓ move, Return picks, Esc cancels.

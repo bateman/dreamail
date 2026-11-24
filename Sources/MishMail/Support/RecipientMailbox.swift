@@ -4,7 +4,7 @@ import GRDB
 /// Which linked mailbox a brand-new compose should send from, judged by who
 /// it is addressed to.
 ///
-/// A `mailto:` handoff (Notion Calendar's `e e`, a browser link) carries the
+/// A `mailto:` handoff (a calendar app's email-guests action, a browser link) carries the
 /// recipients but not the account the user was acting as. Defaulting to the
 /// *active* sidebar account picks the wrong From whenever the invite arrived
 /// in another mailbox. The strongest local evidence is the most recent

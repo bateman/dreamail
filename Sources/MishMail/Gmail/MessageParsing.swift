@@ -399,7 +399,7 @@ enum MessageParser {
 
     /// Converts an HTML body to readable plain text. Non-content elements
     /// (`<style>`, `<script>`, `<head>`, comments) are removed *with their
-    /// contents* — Notion Mail in particular ships a large `<style>` block
+    /// contents* — some senders ship a large `<style>` block
     /// whose CSS used to leak into quoted replies. Structural tags become
     /// newlines so paragraphs survive, then entities are decoded.
     /// Precompiled `stripHTML` patterns. `String.replacingOccurrences(of:
@@ -654,7 +654,7 @@ enum MessageParser {
 /// survives readably and the send path can tell user text from quote.
 ///
 /// Forwards intentionally start a **new** Gmail conversation (no `threadId`,
-/// no `In-Reply-To`) — matching gmail.com / Notion Mail. Context travels in
+/// no `In-Reply-To`) — matching gmail.com. Context travels in
 /// the body: one message ("Forward") or the whole thread ("Forward all").
 ///
 /// The compose editor is plain text, but most mail is HTML. To forward

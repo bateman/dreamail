@@ -17,7 +17,7 @@ final class ThreadRowPillChromeTests: XCTestCase {
     // MARK: - Luminance / pale-tint foreground
 
     func testDarkTintsPreferWhiteTitleOnSelection() {
-        // Notion palette red / blue — white text is correct.
+        // Palette red / blue — white text is correct.
         XCTAssertEqual(ThreadRowPillChrome.selectionUsesLightForeground(hex: "#EB5757"), true)
         XCTAssertEqual(ThreadRowPillChrome.selectionUsesLightForeground(hex: "#2D9CDB"), true)
         XCTAssertEqual(ThreadRowPillChrome.selectionUsesLightForeground(hex: "#27AE60"), true)
@@ -30,7 +30,7 @@ final class ThreadRowPillChromeTests: XCTestCase {
         XCTAssertEqual(ThreadRowPillChrome.selectionUsesLightForeground(hex: "#FAD165"), false)
         XCTAssertEqual(ThreadRowPillChrome.selectionUsesLightForeground(hex: "#C2C2C2"), false)
         XCTAssertEqual(ThreadRowPillChrome.selectionUsesLightForeground(hex: "#FFFFFF"), false)
-        // Notion yellow (#DFAB01) is a mid tone and should keep white text.
+        // Palette yellow (#DFAB01) is a mid tone and should keep white text.
         XCTAssertEqual(ThreadRowPillChrome.selectionUsesLightForeground(hex: "#DFAB01"), true)
         let pale = ThreadRowPillChrome.relativeLuminance(r: 0.98, g: 0.82, b: 0.40)
         let mid = ThreadRowPillChrome.relativeLuminance(r: 0.92, g: 0.60, b: 0.29)

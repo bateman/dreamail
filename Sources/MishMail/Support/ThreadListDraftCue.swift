@@ -1,6 +1,6 @@
 import Foundation
 
-/// Orange "Draft" prefix on thread-list participant rows (Gmail/Notion style).
+/// Orange "Draft" prefix on thread-list participant rows (Gmail style).
 ///
 /// Must key off denorm `inDrafts` (live DRAFT without TRASH), **not** the
 /// historical `labelIds` union. Discarded compose attempts stay as

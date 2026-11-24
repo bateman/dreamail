@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// Notion/Gmail-style compose: a docked card with recipient chips,
+/// Gmail-style compose: a docked card with recipient chips,
 /// borderless fields, minimal footer.
 struct ComposeView: View {
     @Environment(MailStore.self) var store
@@ -149,7 +149,7 @@ struct ComposeView: View {
     /// `editDraft` / undo restore, then tracks each successful autosave).
     /// Thread this into Send, Discard, and replace — never only into autosave.
     @State private var replacingDraft: Message?
-    /// Notion-style footer status after typing.
+    /// Draft-save status in the footer after typing.
     @State private var draftStatus: DraftSaveStatus = .idle
     /// Outbox row this compose owns (saved while offline). Autosave updates
     /// it in place; the first save that reaches Gmail deletes it.
@@ -907,8 +907,8 @@ struct ComposeView: View {
         .onTapGesture { setMinimized(false) }
     }
 
-    /// Expanded title bar: click chrome (title / empty space) to minimize,
-    /// like Notion Mail. Inline replies skip minimize (Pop out instead) so the
+    /// Expanded title bar: click chrome (title / empty space) to minimize.
+    /// Inline replies skip minimize (Pop out instead) so the
     /// reading pane stays usable. Buttons still own their own hits.
     private var expandedHeader: some View {
         HStack(spacing: 6) {
@@ -1047,7 +1047,7 @@ struct ComposeView: View {
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Reply/forward context. Forwards always start a new Gmail
-            // conversation (gmail.com / Notion Mail); say so so users don't
+            // conversation (as on gmail.com); say so so users don't
             // expect the Kearney-style source thread to absorb the send.
             if let original {
                 HStack(spacing: 5) {
@@ -1353,7 +1353,7 @@ struct ComposeView: View {
                                     .font(.system(size: 12))
                                     .lineLimit(1)
                             }
-                            .foregroundStyle(accessory == .snippets ? Color.notionAccent : Color.secondary)
+                            .foregroundStyle(accessory == .snippets ? Color.mailAccent : Color.secondary)
                         }
                         .buttonStyle(.plain)
                         // Same as Send: never wrap/compress when "Draft saved" appears.
@@ -1446,7 +1446,7 @@ struct ComposeView: View {
                 // trash stays glued to Send — status-between-them left a large
                 // empty hole when idle (screenshot).
                 HStack(spacing: 10) {
-                    // Notion-style draft status — dismiss is the header ✕
+                    // Draft status — dismiss is the header ✕
                     // (and Esc). Slot always sized; paint only after typing.
                     draftStatusLabel
                         .padding(.horizontal, 4)
@@ -1476,7 +1476,7 @@ struct ComposeView: View {
                                 .background(UnevenRoundedRectangle(
                                     topLeadingRadius: 6, bottomLeadingRadius: 6,
                                     bottomTrailingRadius: 0, topTrailingRadius: 0)
-                                    .fill(Color.notionAccent))
+                                    .fill(Color.mailAccent))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -1499,7 +1499,7 @@ struct ComposeView: View {
                                 .background(UnevenRoundedRectangle(
                                     topLeadingRadius: 0, bottomLeadingRadius: 0,
                                     bottomTrailingRadius: 6, topTrailingRadius: 6)
-                                    .fill(Color.notionAccent))
+                                    .fill(Color.mailAccent))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -2169,7 +2169,7 @@ struct ComposeView: View {
     private var composeAIProposalPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles").foregroundStyle(Color.notionAccent)
+                Image(systemName: "sparkles").foregroundStyle(Color.mailAccent)
                 TextField("What should this email say?", text: $aiInstructions)
                     .textFieldStyle(.plain)
                     .focused($aiInstructionsFocused)
@@ -2185,7 +2185,7 @@ struct ComposeView: View {
                 } else {
                     Button(proposalPhase.proposal == nil ? "Draft" : "Regenerate") { regenerateAIProposal() }
                         .buttonStyle(.plain)
-                        .foregroundStyle(Color.notionAccent)
+                        .foregroundStyle(Color.mailAccent)
                 }
                 Button {
                     stopAIProposal()
@@ -2211,7 +2211,7 @@ struct ComposeView: View {
                     HStack(spacing: 12) {
                         Button("Use draft") { applyAIProposal() }
                             .buttonStyle(PressScaleButtonStyle())
-                            .foregroundStyle(Color.notionAccent)
+                            .foregroundStyle(Color.mailAccent)
                             .disabled(!canApplyProposal)
                             .accessibilityIdentifier("compose.aiApply")
                         Button("Copy") {
@@ -2233,7 +2233,7 @@ struct ComposeView: View {
             }
         }
         .padding(10)
-        .background(Color.notionAccent.opacity(0.06),
+        .background(Color.mailAccent.opacity(0.06),
                     in: RoundedRectangle(cornerRadius: PMRadius.md))
         .accessibilityIdentifier("compose.aiPreview")
     }

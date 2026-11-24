@@ -17,16 +17,16 @@ extension NSColor {
 }
 
 extension Color {
-    // MARK: Notion Mail palette
+    // MARK: App palette
     // Warm near-blacks in dark mode, warm off-whites in light mode, and the
-    // Notion blue accent. Everything theme-adaptive via NSColor providers.
+    // blue accent. Everything theme-adaptive via NSColor providers.
 
-    /// Notion blue, used everywhere the app previously used the system accent.
-    static let notionAccent = Color(nsColor: .mailAccent)
+    /// The blue accent, used everywhere the app previously used the system accent.
+    static let mailAccent = Color(nsColor: NSColor.mailAccent)
     /// Main content background (thread list, reading pane).
-    static let notionContent = Color(nsColor: .adaptive(light: 0xFFFFFF, dark: 0x191919))
+    static let mailContent = Color(nsColor: .adaptive(light: 0xFFFFFF, dark: 0x191919))
     /// Sidebar background, a step warmer/lighter than the content.
-    static let notionSidebar = Color(nsColor: .adaptive(light: 0xF7F7F5, dark: 0x232323))
+    static let mailSidebar = Color(nsColor: .adaptive(light: 0xF7F7F5, dark: 0x232323))
 
     /// Opaque color from an sRGB hex value (same in light and dark).
     static func hex(_ hex: UInt32) -> Color {
@@ -45,7 +45,7 @@ extension Color {
     }
 
     /// The label color palette offered in the organizer (name, hex).
-    /// Notion-ish hues that read well as tinted pills in both themes.
+    /// Muted hues that read well as tinted pills in both themes.
     static let labelPalette: [(name: String, hex: String)] = [
         ("Red", "#EB5757"), ("Orange", "#F2994A"), ("Yellow", "#DFAB01"),
         ("Green", "#27AE60"), ("Teal", "#12A594"), ("Blue", "#2D9CDB"),
@@ -84,7 +84,7 @@ extension Color {
     }
 }
 
-/// Notion Mail-style icon + color per mailbox view: colorful for the primary
+/// Icon + color per mailbox view: colorful for the primary
 /// views (red inbox, purple promotions, blue social…), quiet gray for the
 /// utility ones. Used by the sidebar and the list-column header.
 extension MailboxView {
@@ -111,7 +111,7 @@ extension MailboxView {
 
     var iconColor: Color {
         switch self {
-        case .inbox: return .hex(0xEB5757)        // Notion red
+        case .inbox: return .hex(0xEB5757)        // red
         case .promotions: return .hex(0x9B51E0)   // purple
         case .social: return .hex(0x2D9CDB)       // blue
         case .starred: return .hex(0xF2C94C)      // yellow
