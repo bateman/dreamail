@@ -327,8 +327,12 @@ actor GmailClient {
             }
             guard (200..<300).contains(code) else {
                 let body = String(data: data, encoding: .utf8) ?? ""
+                var logged = body
+                if let header = http?.value(forHTTPHeaderField: "Retry-After") {
+                    logged += "\nRetry-After: \(header)"
+                }
                 DiagnosticLog.gmailHTTP(account: accountEmail, method: method, path: path,
-                                        code: code, body: body)
+                                        code: code, body: logged)
                 if method == "GET",
                    MessageFetchFailureKind.classify(GmailError.http(code, body)) == .rateLimited {
                     guard retryRateLimit else {
@@ -641,7 +645,7 @@ actor GmailClient {
             do {
                 let msg = try await getMessageOnce(id: id, format: format)
                 if attempt > 0 {
-                    PerfMetrics.measure(.syncGetRetry, meta: "id=\(id) attempt=\(attempt + 1)") { () }
+                    PerfMetrics.measure(.syncGetRetry, meta: "attempt=\(attempt + 1)") { () }
                 }
                 return .ok(msg)
             } catch {
@@ -653,7 +657,7 @@ actor GmailClient {
                     guard MessageFetchFailureKind.isPerMessagePermanent(error) else { throw error }
                     PerfMetrics.measure(
                         .syncGetRetry,
-                        meta: "id=\(id) \(DiagnosticLog.describe(error))") { () }
+                        meta: "skipped \(DiagnosticLog.describe(error))") { () }
                     return .skipped(id)
                 case .retryable, .rateLimited:
                     let delay = GmailRetryBackoff.delay(
@@ -668,7 +672,7 @@ actor GmailClient {
                 }
             }
         }
-        PerfMetrics.measure(.syncGetRetry, meta: "exhausted id=\(id)") { () }
+        PerfMetrics.measure(.syncGetRetry, meta: "exhausted") { () }
         return .exhausted(id)
     }
 
@@ -755,7 +759,7 @@ actor GmailClient {
                         report.skippedIds.append(result.id)
                         PerfMetrics.measure(
                             .syncGetRetry,
-                            meta: "id=\(result.id) status=\(result.statusCode)") { () }
+                            meta: "batch skipped status=\(result.statusCode)") { () }
                     }
                 }
                 guard !rateLimited.isEmpty else { return report }
