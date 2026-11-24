@@ -265,14 +265,16 @@ actor SyncEngine {
     static func applyLabels(_ db: Database, accountId: String, labels: [GLabel]) throws {
         for l in labels {
             let id = "\(accountId):\(l.id)"
-            // Color and order are local customizations — a resync must
-            // never wipe them. Gmail's own label color only seeds a label
-            // that has no local color yet.
+            // A local color pick and order are local customizations — a
+            // resync must never wipe them. Gmail's own colors are mirrored
+            // as they are now, so a color changed in Gmail shows here too.
             let existing = try LabelRow.fetchOne(db, key: id)
             let row = LabelRow(id: id, accountId: accountId,
                                gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
-                               color: existing?.color ?? l.color?.backgroundColor,
-                               sortOrder: existing?.sortOrder ?? LabelRow.unsorted)
+                               color: existing?.color,
+                               sortOrder: existing?.sortOrder ?? LabelRow.unsorted,
+                               gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
+                               gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor))
             // Runs every pass, and labels almost never change between
             // passes — write only rows that differ from the stored one.
             if row != existing { try row.save(db) }
