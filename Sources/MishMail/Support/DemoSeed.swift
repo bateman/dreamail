@@ -81,7 +81,7 @@ enum DemoSeed {
         do {
             return try db.read { try String.fetchAll($0, sql: "SELECT id FROM account") }
         } catch {
-            NSLog("MishMail: demo account check failed — %@", "\(error)")
+            NSLog("MishMail: demo account check failed — %@", DiagnosticLog.describe(error))
             return nil
         }
     }
@@ -140,7 +140,7 @@ enum DemoSeed {
             }
             return true
         } catch {
-            NSLog("MishMail: demo seed failed — %@", "\(error)")
+            NSLog("MishMail: demo seed failed — %@", DiagnosticLog.describe(error))
             return false
         }
     }
@@ -150,7 +150,7 @@ enum DemoSeed {
             try db.write { try clearDemoData(in: $0) }
             return true
         } catch {
-            NSLog("MishMail: demo cleanup failed — %@", "\(error)")
+            NSLog("MishMail: demo cleanup failed — %@", DiagnosticLog.describe(error))
             return false
         }
     }

@@ -24,21 +24,21 @@ import AppKit
 /// failures leave no crash report, and macOS persists none of the usual
 /// launch-time log lines for it.
 
-let logURL = FileManager.default.homeDirectoryForCurrentUser
+let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+let logURL = URL(fileURLWithPath: homePath)
     .appendingPathComponent("Library/Logs/MishMailRelauncher.log")
 
+/// Owner-only (0600), never through a symlink, with the home directory
+/// shortened to `~` so the user name stays out of the file.
 func crumb(_ message: String) {
     let stamp = ISO8601DateFormat.string(from: Date())
-    let line = "\(stamp) [\(getpid())] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if let handle = try? FileHandle(forWritingTo: logURL) {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            try? handle.close()
-        } else {
-            try? data.write(to: logURL)
-        }
-    }
+    let text = message.replacingOccurrences(of: homePath + "/", with: "~/")
+    let bytes = Array("\(stamp) [\(getpid())] \(text)\n".utf8)
+    let fd = open(logURL.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+    guard fd >= 0 else { return }
+    defer { close(fd) }
+    fchmod(fd, 0o600)
+    _ = bytes.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count) }
 }
 
 /// `ISO8601DateFormatter` is thread-safe and cheap to keep around; wrapped so
@@ -177,6 +177,7 @@ do {
     crumb("exit \(proc.terminationStatus): /usr/bin/open fallback")
     exit(proc.terminationStatus)
 } catch {
-    crumb("exit 70: could not spawn /usr/bin/open: \(error.localizedDescription)")
+    crumb("exit 70: could not spawn /usr/bin/open: \(type(of: error)) "
+          + "domain=\((error as NSError).domain) code=\((error as NSError).code)")
     exit(70)  // EX_SOFTWARE
 }

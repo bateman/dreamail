@@ -1865,7 +1865,7 @@ struct ComposeRequest: Identifiable {
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
-            NSLog("MishMail: failed to write mcp.json: %@", "\(error)")
+            NSLog("MishMail: failed to write mcp.json: %@", DiagnosticLog.describe(error))
         }
     }
 
