@@ -56,15 +56,15 @@ final class SnippetImportTests: XCTestCase {
         XCTAssertEqual(SnippetImport.plan(items, existingNames: items.map(\.name)).count, 0)
     }
 
-    func testArrayAcceptsAlternateKeys() throws {
+    /// Only MishMail's own keys are read; other exports' key names are not.
+    func testAlternateKeysAreUnrecognized() {
         let json = """
-        [{"shortcut": "intro", "content": "Hi {first_name},\\n\\nBest,\\n{my_name}"},
+        [{"shortcut": "intro", "content": "Hi {first_name}"},
          {"title": "cal", "text": "Link: {date}"}]
         """
-        let items = try SnippetImport.decode(Data(json.utf8))
-        XCTAssertEqual(items.map(\.name), ["intro", "cal"])
-        XCTAssertEqual(items[0].body, "Hi {first_name},\n\nBest,\n{my_name}")
-        XCTAssertEqual(items[1].body, "Link: {date}")
+        XCTAssertThrowsError(try SnippetImport.decode(Data(json.utf8))) { error in
+            XCTAssertTrue(error is SnippetImport.ImportError)
+        }
     }
 
     /// Only an array or a single snippet object is read; an object wrapping
@@ -83,9 +83,9 @@ final class SnippetImportTests: XCTestCase {
         XCTAssertEqual(items[0].body, "Thanks {{first_name}}!")
     }
 
-    func testCSVImportMapsShortcutContentHeader() throws {
+    func testCSVImportReadsNameBodyAndBccColumns() throws {
         let csv = """
-        shortcut,content,bcc
+        Name,Body,movesToBcc
         intro,"Hi {first_name}",true
         cal,See you {date},false
         """
@@ -94,6 +94,18 @@ final class SnippetImportTests: XCTestCase {
         XCTAssertEqual(items[0].body, "Hi {first_name}")
         XCTAssertEqual(items[0].movesToBcc, true)
         XCTAssertEqual(items[1].movesToBcc, false)
+    }
+
+    /// A CSV without `name` and `body` headers is not guessed column by
+    /// column.
+    func testCSVWithOtherHeadersIsUnrecognized() {
+        let csv = """
+        shortcut,content,bcc
+        intro,"Hi {first_name}",true
+        """
+        XCTAssertThrowsError(try SnippetImport.decode(Data(csv.utf8))) { error in
+            XCTAssertTrue(error is SnippetImport.ImportError)
+        }
     }
 
     func testCSVQuotedNewlinesStayInBody() throws {

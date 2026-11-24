@@ -4643,9 +4643,9 @@ struct ComposeRequest: Identifiable {
         reloadSnippets()
     }
 
-    /// Imports snippets from JSON or CSV (MishMail array or single object,
-    /// shortcut/content keys, CSV headers). Skips names that already exist
-    /// so re-importing is harmless.
+    /// Imports snippets from MishMail's JSON (an array or one object) or CSV
+    /// with name/body headers. Skips names that already exist so
+    /// re-importing is harmless.
     /// `unknownAccountIds` counts scope emails that don't match a signed-in
     /// account (typos hide the snippet until fixed).
     func importSnippets(from url: URL) throws -> (added: Int, skipped: Int, unknownAccountIds: Int) {

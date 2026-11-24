@@ -44,9 +44,13 @@ minor versions may still change behavior.
   for the deferred scroll itself.
 - **Notion Mail is gone from the app.** The "Moving from Notion Mail" pane,
   its Cmd-K entry and the onboarding callout are removed. Snippet import reads
-  a JSON array (or one snippet object) or CSV and keeps bodies as written: it
-  no longer unwraps `{"snippets": […]}` files or rewrites `{{First Name}}`-style
-  variables. Compose still expands `{first_name}` and `{{first_name}}`.
+  only MishMail's own format: a JSON array of objects (or one object) with
+  `name` and `body`, or CSV with `name` and `body` columns. It no longer
+  unwraps `{"snippets": […]}` files, guesses other key or column names, or
+  rewrites `{{First Name}}`-style variables. A newly imported `{{First Name}}`
+  (or `{firstname}`, `{today}`, `{sender}`…) is sent as literal text, with no
+  warning; snippets imported earlier are unaffected. Compose still expands
+  `{first_name}` and `{{first_name}}`.
 
 - **A draft no longer disappears from Drafts while you write it.** Each
   autosave removed the old draft from the local mailbox and wrote nothing new

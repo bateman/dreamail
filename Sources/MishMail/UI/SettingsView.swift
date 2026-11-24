@@ -557,7 +557,7 @@ struct SnippetsSettings: View {
 
     var body: some View {
         PaneScaffold(title: "Snippets",
-                     subtitle: "Reusable text you can drop into any email by typing / in compose. Import JSON or CSV.") {
+                     subtitle: "Reusable text you can drop into any email by typing / in compose. Import JSON or CSV with name and body fields.") {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 10) {
                     SearchField(prompt: "Search snippets…", text: $search)
@@ -571,7 +571,7 @@ struct SnippetsSettings: View {
                             .foregroundStyle(.secondary)
                     }
                     Button("Import…") { showImporter = true }
-                        .help("Import JSON or CSV snippets")
+                        .help("Import a JSON array or CSV with name and body columns")
                     Button("Create new") {
                         editing = Snippet(id: nil, name: "", body: "")
                     }

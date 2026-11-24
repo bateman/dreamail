@@ -2,9 +2,11 @@ import Foundation
 
 /// JSON / CSV snippet import (Settings → Snippets → Import).
 ///
-/// Accepts MishMail's own array (`[{"name","body",…}]`) or a single such
-/// object, alternate keys (`shortcut`/`content`, …), and CSV with a header
-/// row. Bodies are stored verbatim: compose expands `{name}` and `{{name}}`
+/// Accepts MishMail's own format only: a JSON array of
+/// `{"name", "body", "movesToBcc"?, "accountIds"?}` objects (or one such
+/// object), or CSV whose header row has `name` and `body` columns and an
+/// optional `movesToBcc` column. Key and header names match case-insensitively.
+/// Bodies are stored verbatim: compose expands `{name}` and `{{name}}`
 /// placeholders itself.
 enum SnippetImport {
     struct Item: Codable, Equatable {
@@ -20,7 +22,7 @@ enum SnippetImport {
         case unrecognized
 
         var errorDescription: String? {
-            "Could not read snippets. Use a JSON array or CSV with name and body columns."
+            "Could not read snippets. Use a JSON array of objects with name and body, or CSV with name and body columns."
         }
     }
 
@@ -76,8 +78,8 @@ enum SnippetImport {
         return Item(
             name: name,
             body: body,
-            movesToBcc: bool(dict, keys: ["movesToBcc", "moveToBcc", "moves_to_bcc", "bcc"]),
-            accountIds: stringArray(dict, keys: ["accountIds", "account_ids", "accounts"]))
+            movesToBcc: bool(dict, keys: ["movesToBcc"]),
+            accountIds: stringArray(dict, keys: ["accountIds"]))
     }
 
     // MARK: - CSV
@@ -93,11 +95,9 @@ enum SnippetImport {
         guard records.count >= 2, let header = records.first else { return nil }
         let cols = header.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
         let nameIdx = columnIndex(cols, candidates: nameKeys)
-            ?? (cols.count >= 2 ? 0 : nil)
         let bodyIdx = columnIndex(cols, candidates: bodyKeys)
-            ?? (cols.count >= 2 ? 1 : nil)
         guard let nameIdx, let bodyIdx, nameIdx != bodyIdx else { return nil }
-        let bccIdx = columnIndex(cols, candidates: ["movestobcc", "movetobcc", "bcc"])
+        let bccIdx = columnIndex(cols, candidates: ["movesToBcc"])
         var items: [Item] = []
         for row in records.dropFirst() {
             guard nameIdx < row.count, bodyIdx < row.count else { continue }
@@ -117,12 +117,8 @@ enum SnippetImport {
 
     // MARK: - Dict helpers
 
-    private static let nameKeys = [
-        "name", "shortcut", "title", "slug", "command", "trigger",
-    ]
-    private static let bodyKeys = [
-        "body", "content", "text", "snippet", "html", "value",
-    ]
+    private static let nameKeys = ["name"]
+    private static let bodyKeys = ["body"]
 
     private static func value(_ dict: [String: Any], keys: [String]) -> Any? {
         let mapped = Dictionary(uniqueKeysWithValues: dict.map {
@@ -177,8 +173,7 @@ enum SnippetImport {
 
     private static func columnIndex(_ cols: [String], candidates: [String]) -> Int? {
         let wanted = Set(candidates.map { $0.lowercased() })
-        return cols.firstIndex { wanted.contains($0.replacingOccurrences(of: "_", with: ""))
-            || wanted.contains($0) }
+        return cols.firstIndex { wanted.contains($0) }
     }
 
     private static func stripBOM(_ data: Data) -> Data {
