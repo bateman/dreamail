@@ -6,6 +6,16 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Deleted mail is gone, not just hidden.** Deleted content is overwritten in
+  the mail cache and removed from the search index when it is deleted, and old
+  copies are cleared from the cache's write-ahead log within seconds of a
+  deletion and at least every five minutes. A deleted message's opened
+  attachment copies and its conversation's notification go with it. Gmail
+  responses are no longer written to an on-disk HTTP cache, and the old cache
+  files are removed. `SECURITY.md` has a new section, "What deleting means",
+  with what this does and does not cover (SSD and backup copies, the short
+  window before clean-up, files handed to other apps).
+
 - **Default shortcuts and layout follow Gmail on the web.** `u` now goes back to
   the conversation list (it was mark read/unread: use Shift-I / Shift-U, which
   now only mark read / unread, or bind the toggle again in Settings), `o` opens,

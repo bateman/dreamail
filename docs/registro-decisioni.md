@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.8
+Versione: 0.9
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -28,6 +28,10 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-014 | **Notifiche generiche come impostazione predefinita** | "New mail" senza mittente né oggetto; mittente e oggetto solo se attivati dall'utente (step 2B). |
 | DEC-015 | **Messaggio d'errore di Gmail limitato a 160 caratteri** | L'avviso mantiene il messaggio leggibile di Google, accettando che possa riportare parte della richiesta, per esempio una ricerca; il JSON grezzo e gli altri campi restano fuori (PR #10). |
 | DEC-016 | **F-01 segnalato all'upstream dal proprietario** | La segnalazione riservata secondo `SECURITY.md` è a carico del proprietario del fork. |
+| DEC-017 | **Shortcut predefiniti come Gmail Web** | I tasti predefiniti seguono Gmail sul web e restano personalizzabili; dove Gmail confligge con una convenzione di macOS vince macOS (PR #17). |
+| DEC-018 | **Apertura nel pannello di lettura come predefinito** | In Settings → Appearance → "Opening a conversation" il predefinito è "Shows in a reading pane"; una scelta salvata viene rispettata (PR #17). |
+| DEC-019 | **Cancellato vuol dire sparito** | Ciò che viene cancellato non deve più esistere, non solo risultare irraggiungibile: sovrascrittura nel database e nell'indice di ricerca, pulizia del file di appoggio, rimozione di allegati e notifiche con il messaggio. I limiti fisici (SSD, backup, istantanee) sono dichiarati in `SECURITY.md` (PR #18). |
+| DEC-020 | **Chat AI alla rimozione di un account: regola prudente** | Rimuovere un account cancella ogni chat che ha usato uno strumento e tutte quelle prive di tracciatura. Confermato dal proprietario. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -414,7 +418,8 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-22 | 0.5 | Registrato il repository di sviluppo [bateman/mishmail](https://github.com/bateman/mishmail), distinto dall'upstream [ronboger/mishmail](https://github.com/ronboger/mishmail). |
 | 2026-11-23 | 0.6 | Unificato piano di sviluppo e security audit del commit `18294fa`: 12 finding, controlli verificati in sorgente, limiti della verifica, DEC-008/009, priorità remediation e PR proposte. |
 | 2026-11-23 | 0.7 | Confronto con il codice del fork. Corretti: stato reale delle funzionalità (ICS/RSVP, unsubscribe, shortcut, colori label, snooze, undo send e multi-account già presenti), stack (Swift 5.10, GRDB/SQLCipher, login loopback al posto di `ASWebAuthenticationSession`), scope `gmail.modify` restricted, conteggio dei test. Aggiunti: updater come prerequisito per gli account reali, identità del fork, GO/NO-GO prima delle remediation, questioni aperte su AI/MCP, upstream, snooze, Calendar e PGP, riferimenti alle revisioni di sicurezza esistenti. Nessuna nuova decisione confermata. |
-| 2026-11-24 | **0.8** | Dopo le ondate 1 e 2 del piano di sviluppo: aggiunte DEC-010–016, DEC-009 segnata come implementata, chiusa la questione su AI e MCP. Lo stato di ogni finding e i seguiti sono in [piano-sviluppo.md](piano-sviluppo.md); i riferimenti di riga della sezione 12 valgono solo per il commit auditato `18294fa`. |
+| 2026-11-24 | 0.8 | Dopo le ondate 1 e 2 del piano di sviluppo: aggiunte DEC-010–016, DEC-009 segnata come implementata, chiusa la questione su AI e MCP. Lo stato di ogni finding e i seguiti sono in [piano-sviluppo.md](piano-sviluppo.md); i riferimenti di riga della sezione 12 valgono solo per il commit auditato `18294fa`. |
+| 2026-11-24 | **0.9** | Aggiunte DEC-017–020: shortcut come Gmail Web, pannello di lettura predefinito, "cancellato vuol dire sparito", regola delle chat alla rimozione di un account. L'ondata 3 non è avviata. |
 
 ---
 
