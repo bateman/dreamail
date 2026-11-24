@@ -462,7 +462,7 @@ actor SyncEngine {
         } catch {
             PerfMetrics.measure(
                 .syncReconcilePartial,
-                meta: "labels failed=\(ids.count) error=\(error.localizedDescription)") { () }
+                meta: "labels failed=\(ids.count) \(DiagnosticLog.describe(error))") { () }
         }
     }
 

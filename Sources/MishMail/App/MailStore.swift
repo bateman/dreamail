@@ -1869,6 +1869,9 @@ struct ComposeRequest: Identifiable {
     /// which is what produces new mail at all.
     private func runDeferredStartupWork() async {
         guard !isShuttingDown else { return }
+        // Purge a pre-redaction log and age out old lines even when no
+        // error is logged this session.
+        DiagnosticLog.maintainAtLaunch()
         reloadScheduledSends()
         reloadLocalDrafts()
         await reloadPendingThreadOpCount()
