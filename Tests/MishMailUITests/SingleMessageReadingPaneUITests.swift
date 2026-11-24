@@ -74,7 +74,15 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
             .matching(identifier: "messageBody").firstMatch
         XCTAssertTrue(body.waitForExistence(timeout: 5),
                       "the only message must open expanded")
-        let first = body.frame.height
+        // The body's span in the card: from the header's date to the action
+        // bar right below the body. (The body's own accessibility frame is
+        // the web view's, not the space its container reserves.)
+        let date = app.descendants(matching: .any)
+            .matching(identifier: "messageHeaderDate").firstMatch
+        let reply = app.buttons.matching(identifier: "messageActionReply").firstMatch
+        XCTAssertTrue(date.exists && reply.exists)
+        let span = { reply.frame.minY - date.frame.maxY }
+        let first = span()
         XCTAssertGreaterThan(first, 2.5 * 120,
                              "the body must not open as a 120 pt placeholder box")
         XCTAssertGreaterThan(first, 0.4 * window.frame.height,
@@ -88,7 +96,7 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(8)
         while Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
-            let now = body.frame.height
+            let now = span()
             XCTAssertGreaterThanOrEqual(now, first - 1,
                                         "the body must not shrink below its first frame")
             if abs(now - last) < 1 { settled = true; break }

@@ -2122,6 +2122,7 @@ struct MessageCard: View {
                             .font(.system(size: 12.5 * fontScale))
                     }
                     .buttonStyle(.bordered)
+                    .accessibilityIdentifier("messageActionReply")
                     if ReplyComposer.hasAdditionalReplyAllRecipients(
                         message, ownAddresses: store.ownEmailAddresses) {
                         Button {
