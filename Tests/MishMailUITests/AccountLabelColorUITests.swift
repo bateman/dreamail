@@ -26,18 +26,13 @@ final class AccountLabelColorUITests: XCTestCase {
         // Sidebar starts collapsed; → reveals it (as in SidebarNavUITests).
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
 
-        // The switcher row's title is the label, not the sender name.
-        let switcher = element(app, "accountSwitcher")
-        XCTAssertTrue(switcher.waitForExistence(timeout: 5))
-        switcher.click()
-        XCTAssertTrue(inPopover(app, "Personal").waitForExistence(timeout: 5),
-                      "the account row is titled with its label")
-        XCTAssertFalse(inPopover(app, "Alex Rivera").exists,
-                       "the sender name is not shown in the switcher")
-        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        XCTAssertTrue(app.popovers.firstMatch.waitForNonExistence(timeout: 5))
-
-        openEditor(app)
+        openEditor(app) {
+            // The switcher row's title is the label, not the sender name.
+            XCTAssertTrue(self.inPopover(app, "Personal").waitForExistence(timeout: 5),
+                          "the account row is titled with its label")
+            XCTAssertFalse(self.inPopover(app, "Alex Rivera").exists,
+                           "the sender name is not shown in the switcher")
+        }
         let picker = element(app, "accountLabelColorPicker.\(account)")
         XCTAssertTrue(picker.waitForExistence(timeout: 5), "the editor has a color picker")
         XCTAssertTrue(element(app, "accountLabelColorPreview.\(account)").exists,
@@ -91,10 +86,13 @@ final class AccountLabelColorUITests: XCTestCase {
             .firstMatch
     }
 
-    private func openEditor(_ app: XCUIApplication) {
+    /// Opens the switcher popover, runs `inPopover` while it is open, then
+    /// chooses "Edit Account Labels…".
+    private func openEditor(_ app: XCUIApplication, inPopover: () -> Void = {}) {
         let switcher = element(app, "accountSwitcher")
         XCTAssertTrue(switcher.waitForExistence(timeout: 5), "account switcher in the sidebar")
         switcher.click()
+        inPopover()
         let edit = element(app, "editAccountLabels")
         XCTAssertTrue(edit.waitForExistence(timeout: 5), "switcher offers Edit Account Labels…")
         edit.click()
