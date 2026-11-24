@@ -4078,10 +4078,12 @@ struct ComposeRequest: Identifiable {
             meta: "intent=\(intent.rawValue)")
         if intent.opensDetailImmediately {
             openDetail(id)
-        } else if intent == .browse {
-            // Warm prev/next while the user is still browsing so the eventual
-            // open lands on a cached payload. Same 90 ms cancel-on-next timer
-            // as openDetail — holding j/k does not thrash the DB.
+        } else if NeighborPrefetch.warmsOnSelection(intent) {
+            // Warm the highlighted row and prev/next while the user is still
+            // browsing (or before the first open, for the auto-highlighted
+            // top row) so the eventual open lands on a cached payload. Same
+            // 90 ms cancel-on-next timer as openDetail — holding j/k does not
+            // thrash the DB.
             scheduleNeighborPrefetch(openedId: id)
         }
         setSelectionFocus(id, intent: intent)
@@ -4206,8 +4208,9 @@ struct ComposeRequest: Identifiable {
         // Stamp each neighbour with its own revision now. A sync landing
         // during the settle can only make this payload miss later — it can
         // never install content the newer revision should have invalidated.
-        let (prev, next) = NeighborPrefetch.neighbors(selected: openedId, in: order)
-        let targets = [prev, next].compactMap { $0 }.map {
+        let targets = NeighborPrefetch.targets(
+            selected: openedId, openedId: openedThreadId, in: order
+        ).map {
             (id: $0, revision: contentRevisions.revision(of: $0))
         }
         neighborPrefetchTask = Task { [weak self] in
