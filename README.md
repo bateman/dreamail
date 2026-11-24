@@ -20,10 +20,11 @@ silent auto-sort refusing cloud providers.
 
 - **Build from source (recommended):** clone the repository, install
   `xcodegen`, then run `make run`. The Debug app opens an isolated demo inbox.
-- **Download the current development build:** use
-  [GitHub Releases](https://github.com/ronboger/mishmail/releases/latest).
-  It is development-signed but not notarized yet, so macOS may require you to
-  right-click the app and choose **Open** on first launch.
+- **Binaries:** this fork publishes none; build from source. Upstream
+  development builds are on
+  [ronboger/mishmail's GitHub Releases](https://github.com/ronboger/mishmail/releases/latest)
+  under the upstream bundle identifier, and this fork's builds
+  (`io.github.bateman.MishMail`) never update from them.
 - **Explore safely:** on first launch, choose **Try demo inbox** to browse
   fictional mail before connecting Google. Demo mode never syncs or sends.
 Connecting a real inbox requires your own free Google Desktop OAuth client;
@@ -187,15 +188,27 @@ build; choose **Always Allow**. Subsequent rebuilds keep the same identity and
 do not ask again.
 
 Paid membership is only needed to distribute a Developer ID signed and
-notarized build to other Macs. An ad-hoc/source installation will only accept
-in-app executable updates that are Developer ID signed and notarized;
-otherwise it opens the GitHub release page. `make release` explicitly rejects
+notarized build to other Macs. An ad-hoc/source installation never updates
+itself in place, even with a release channel configured: with no Team ID of
+its own there is no publisher to check an update against, and "any notarized
+Developer ID" is something any publisher can provide. Update it with
+`make install`. `make release` explicitly rejects
 free Personal Team and ad-hoc identities so they cannot accidentally be
 published as updates for other users.
 
 ### Releases & updates
 
-MishMail publishes binaries to GitHub Releases (`ronboger/mishmail`). The
+**In this fork the updater is disabled.** The release channel is a build
+setting with no default (`MISHMAIL_UPDATE_CHANNEL` in
+[`Config/Signing.xcconfig`](Config/Signing.xcconfig), `OWNER/REPO`), and the
+tracked value is empty: the app makes no release checks, never contacts a
+releases API, and never replaces itself; Settings → Updates says updates are
+disabled. Update a source build with `make install`. The rest of this section
+describes the updater as it behaves once a channel you publish and sign is
+configured in `Config/Local.xcconfig` **and** the build is signed with a Team
+ID; an ad-hoc build stays inert even with a channel.
+
+With a channel configured, the
 app checks once a day; when a newer version exists, an **Update app** button
 appears at the bottom of the sidebar and an **Install and Relaunch** button in
 **Settings → Updates** — clicking either downloads and verifies the release
@@ -209,13 +222,16 @@ To update from the terminal instead — or to cross from a build older than
 0.4.1, whose updater predates all of this — run:
 
 ```sh
-scripts/update-mishmail.sh
+scripts/update-mishmail.sh --repo OWNER/REPO
 ```
 
-It runs the same checks the app does (SHA-256 against `SHA256SUMS`, code
-signature, Team ID continuity with the install it's replacing, and the release
-version against the bundle's own), then replaces `/Applications/MishMail.app`
-and relaunches. Pass a path as the first argument if MishMail lives elsewhere.
+The repository is required: there is no default channel. It runs the same
+checks the app does (SHA-256 against `SHA256SUMS`, code signature, Team ID
+continuity and bundle identifier of the install it's replacing, and the
+release version against the bundle's own), installs only a strictly newer
+version, then replaces `/Applications/MishMail.app` and relaunches. Pass a
+path as the last argument if MishMail lives elsewhere; `--allow-downgrade`
+reinstalls the same or an older release, for recovery only.
 
 To cut a release: bump `MARKETING_VERSION` in `project.yml`, then
 
@@ -322,8 +338,31 @@ before a hosted chat.
 
 ## Where things live
 
-- Mail cache (SQLCipher-encrypted): `~/Library/Containers/dev.ronboger.MishMail/Data/Library/Application Support/MishMail/mail.sqlite`
-- OAuth refresh tokens, client secret, and the DB key: macOS Keychain (`dev.ronboger.MishMail`)
+This fork's bundle identifier is `io.github.bateman.MishMail` (Debug:
+`io.github.bateman.MishMail.debug`), so it has its own sandbox container,
+defaults domain and Keychain items:
+
+- Mail cache (SQLCipher-encrypted): `~/Library/Containers/io.github.bateman.MishMail/Data/Library/Application Support/MishMail/mail.sqlite`
+- OAuth refresh tokens, client secret, and the DB key: macOS Keychain (`io.github.bateman.MishMail`)
+
+### Coming from an upstream (`dev.ronboger.MishMail`) install
+
+Nothing is migrated: the first launch of this fork starts fresh, so sign in
+to Google again and let it resync. The old install's data stays where it was
+until you remove it. Quit both apps first, then:
+
+```sh
+# Old mail cache, attachments and preferences (Release and Debug)
+rm -rf ~/Library/Containers/dev.ronboger.MishMail ~/Library/Containers/dev.ronboger.MishMail.debug
+# Old Google refresh tokens, client secret and database key. Each command
+# deletes one item; repeat until it reports that none was found.
+security delete-generic-password -s dev.ronboger.MishMail
+security delete-generic-password -s dev.ronboger.MishMail.debug
+```
+
+Then revoke the old app's access in your Google Account (Security → Your
+connections to third-party apps & services), unless this fork uses the same
+OAuth client and you want to keep the grant.
 
 ## Security
 

@@ -3,15 +3,17 @@
 <!-- Daily incremental summary pass: picks up newly arrived threads and
      refreshes summaries whose thread got new messages. No-ops in seconds when
      nothing changed, and exits quietly if MishMail isn't running.
-     Install:  launchctl load -w ~/Library/LaunchAgents/dev.ronboger.mishmail-summarize.plist
-     Remove:   launchctl unload -w ~/Library/LaunchAgents/dev.ronboger.mishmail-summarize.plist -->
+     Before installing, replace /path/to/mishmail below with the absolute
+     path of your checkout (launchd does not expand ~ or $HOME).
+     Install:  launchctl load -w ~/Library/LaunchAgents/io.github.bateman.mishmail-summarize.plist
+     Remove:   launchctl unload -w ~/Library/LaunchAgents/io.github.bateman.mishmail-summarize.plist -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.ronboger.mishmail-summarize</string>
+    <string>io.github.bateman.mishmail-summarize</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/ronboger/mishmail/scripts/mishmail-summarize-daily.sh</string>
+        <string>/path/to/mishmail/scripts/mishmail-summarize-daily.sh</string>
     </array>
     <!-- Daily at 06:15. Edit the shell script, not this file, to change
          model/backend — including switching to a cloud model later. -->

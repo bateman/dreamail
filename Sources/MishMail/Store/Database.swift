@@ -638,6 +638,15 @@ final class AppDatabase: @unchecked Sendable {
     /// On-disk location, kept so the WAL sidecar can be sized without asking
     /// SQLite (see `checkpointIfNeeded`).
     private let path: String
+    /// What this launch may do with the cache. Anything but `.writable`
+    /// means a legacy plaintext file waits for its one-time encryption
+    /// (another instance holds it, or the conversion was busy): the pool is
+    /// then read-only — SQLite refuses every write — so no new mail is stored
+    /// unencrypted. The next launch retries the conversion and, once it
+    /// succeeds, opens the encrypted file writable as usual. Fixed for the
+    /// life of the process.
+    let storageState: StorageState
+    var allowsWrites: Bool { storageState.allowsWrites }
 
     /// Application Support directory that holds `mail.sqlite` (and discovery
     /// files such as `mcp.json`).
@@ -645,13 +654,13 @@ final class AppDatabase: @unchecked Sendable {
         URL(fileURLWithPath: path).deletingLastPathComponent()
     }
 
-    init() throws {
+    convenience init() throws {
         let root = try FileManager.default.url(for: .applicationSupportDirectory,
                                                in: .userDomainMask, appropriateFor: nil, create: true)
         let environment = ProcessInfo.processInfo.environment
         let isUITest = environment["MISHMAIL_UI_TEST"] == "1"
         let isDeveloperDemo = environment["MISHMAIL_DEMO"] == "1"
-        let dir = Self.storageDirectory(
+        let dir = AppDatabase.storageDirectory(
             root: root,
             isUITest: isUITest,
             isDeveloperDemo: isDeveloperDemo
@@ -662,22 +671,32 @@ final class AppDatabase: @unchecked Sendable {
             try FileManager.default.removeItem(at: dir)
         }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let path = dir.appendingPathComponent("mail.sqlite").path
-        self.path = path
-
         // Real mail is encrypted with a Keychain-held key. The fictional demo
         // uses a fixed non-secret fixture key so an ad-hoc source build never
         // asks for Keychain access (and can be rebuilt freely).
-        let key = try Self.databaseKey()
+        try self.init(path: dir.appendingPathComponent("mail.sqlite").path,
+                      key: try AppDatabase.databaseKey(),
+                      allowConversion: !AppDatabase.anotherInstanceIsRunning())
+    }
+
+    /// Opens the cache at `path`. Visible to the hostless tests, which
+    /// drive it with fixture files and keys instead of the Keychain.
+    init(path: String, key: String, allowConversion: Bool) throws {
+        self.path = path
         // Runs on the main thread at launch (`AppDatabase.shared`), before
         // the pool opens and before migrations. Usually one cheap probe; the
         // one-time plaintext or passphrase→raw-key conversion copies the whole
         // file (a few seconds for a ~400 MB mailbox), exactly once.
         let scheme = try Self.prepareDatabaseFile(
-            path: path, key: key,
-            allowConversion: !Self.anotherInstanceIsRunning())
+            path: path, key: key, allowConversion: allowConversion)
         do {
-            dbPool = try Self.openAndMigrate(path: path, key: key, scheme: scheme)
+            let pool = try Self.openAndMigrate(path: path, key: key, scheme: scheme)
+            dbPool = pool
+            storageState = Self.initialStorageState(scheme: scheme, pool: pool)
+            if storageState != .writable {
+                NSLog("MishMail: mail cache still plaintext; opened read-only (%@)",
+                      "\(storageState)")
+            }
         } catch where !Self.isTransientOpenError(error) {
             // The cache can't be opened — wrong key (keychain item lost or
             // rotated, e.g. a backup restore) or a corrupt file. Everything in
@@ -690,7 +709,18 @@ final class AppDatabase: @unchecked Sendable {
             NSLog("MishMail: mail cache unreadable (%@); resetting", "\(error)")
             try Self.setAsideUnreadable(path: path)
             dbPool = try Self.openAndMigrate(path: path, key: key, scheme: .raw)
+            storageState = .writable
         }
+    }
+
+    /// A read-only plaintext file is only worth showing when its schema is
+    /// what this build reads. Migrations cannot run on it (they would
+    /// write), so a file a migration behind would fail most queries and
+    /// look like an empty mailbox.
+    private static func initialStorageState(scheme: KeyScheme, pool: DatabasePool) -> StorageState {
+        guard !scheme.allowsWrites else { return .writable }
+        let current = (try? pool.read { db in try migrator.hasCompletedMigrations(db) }) ?? false
+        return current ? .readOnly : .encryptionRequired
     }
 
     static func storageDirectory(
@@ -765,11 +795,18 @@ final class AppDatabase: @unchecked Sendable {
     /// is 16× the default and keeps the worst case under 200 MB.
     static let pageCacheKiB = 32_768
 
-    private static func openAndMigrate(
+    /// Opens the pool the app runs on. For `.plaintext` (encryption deferred)
+    /// the pool is read-only and migrations are skipped: they would write,
+    /// and the unencrypted file must not change until it is encrypted.
+    /// Visible to the hostless tests, which open fixtures through it.
+    static func openAndMigrate(
         path: String, key: String, scheme: KeyScheme
     ) throws -> DatabasePool {
         let keyString = scheme.keyString(for: key)
         var config = Configuration()
+        // Fail closed (F-02): enforced by SQLite on every connection, so no
+        // caller can write plaintext mail by forgetting to check a flag.
+        config.readonly = !scheme.allowsWrites
         config.prepareDatabase { db in
             if let keyString {
                 try db.usePassphrase(keyString)
@@ -793,7 +830,9 @@ final class AppDatabase: @unchecked Sendable {
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
         }
         let pool = try DatabasePool(path: path, configuration: config)
-        try migrator.migrate(pool)
+        if scheme.allowsWrites {
+            try migrator.migrate(pool)
+        }
         return pool
     }
 
@@ -829,7 +868,7 @@ final class AppDatabase: @unchecked Sendable {
     /// task once the app is up (`MailStore.runDeferredStartupWork`).
     func reclaimSpaceIfNeeded() {
         closeLock.lock()
-        let blocked = phase != .open
+        let blocked = phase != .open || !allowsWrites
         closeLock.unlock()
         guard !blocked else { return }
         do {
@@ -870,7 +909,7 @@ final class AppDatabase: @unchecked Sendable {
     /// it needs no timer of its own.
     func checkpointIfNeeded() {
         closeLock.lock()
-        let blocked = phase != .open
+        let blocked = phase != .open || !allowsWrites
         closeLock.unlock()
         guard !blocked else { return }
         guard walSizeBytes >= Self.checkpointThresholdBytes else { return }
@@ -917,6 +956,8 @@ final class AppDatabase: @unchecked Sendable {
         let current = phase
         closeLock.unlock()
         guard current != .closed, force || current == .open else { return }
+        // A read-only (still plaintext) cache has nothing to checkpoint.
+        guard allowsWrites else { return }
         do {
             try dbPool.writeWithoutTransaction { db in
                 // Order matters: `incremental_vacuum` is itself a write, so
@@ -999,7 +1040,12 @@ final class AppDatabase: @unchecked Sendable {
         case raw
         case passphrase
         /// Pre-encryption file whose conversion was deferred this launch.
+        /// Opened read-only (see `allowsWrites`), never written.
         case plaintext
+
+        /// Whether a pool opened with this scheme may write. Only encrypted
+        /// files are writable: new mail never lands in a plaintext file.
+        var allowsWrites: Bool { self != .plaintext }
 
         /// The string handed to `sqlite3_key` (via GRDB's `usePassphrase`),
         /// or nil for an unencrypted file.
@@ -1009,6 +1055,50 @@ final class AppDatabase: @unchecked Sendable {
             case .passphrase: return hexKey
             case .plaintext: return nil
             }
+        }
+    }
+
+    /// How far this launch may use the cache (F-02). Pure, so the hostless
+    /// tests pin the policy and the copy the app shows for it.
+    enum StorageState: Equatable {
+        /// Encrypted (or freshly created): the normal case.
+        case writable
+        /// Plaintext awaiting encryption, schema current: mail is readable,
+        /// every local write is refused.
+        case readOnly
+        /// Plaintext awaiting encryption whose schema is behind this build.
+        /// It cannot be migrated without writing it, and the current queries
+        /// cannot read it, so the app shows no mailbox at all.
+        case encryptionRequired
+
+        var allowsWrites: Bool { self == .writable }
+        /// False when presenting the mailbox would show an empty or broken
+        /// inbox instead of the user's mail.
+        var showsMailbox: Bool { self != .encryptionRequired }
+
+        /// Persistent indicator. Not an error banner: nothing dismisses it
+        /// and no later error replaces it while the state lasts.
+        var statusMessage: String? {
+            switch self {
+            case .writable:
+                return nil
+            case .readOnly:
+                return "Your mail cache isn't encrypted yet, so MishMail is read-only: "
+                    + "sync, scheduled sends, queued edits and Outbox drafts are paused, "
+                    + "and changes aren't saved. Quit any other copy of MishMail, "
+                    + "then reopen MishMail to finish encrypting."
+            case .encryptionRequired:
+                return "MishMail has to encrypt its mail cache before it can show your mail. "
+                    + "Nothing was synced or changed. Quit any other copy of MishMail, "
+                    + "then reopen MishMail to finish encrypting."
+            }
+        }
+
+        /// Shared notice for a local change refused in this state.
+        var writeRefusal: String? {
+            allowsWrites ? nil
+                : "Not saved: MishMail is read-only until its mail cache is encrypted. "
+                    + "Quit any other copy of MishMail, then reopen it."
         }
     }
 
@@ -1050,6 +1140,9 @@ final class AppDatabase: @unchecked Sendable {
     ///
     /// - Missing file: nothing to do; SQLite creates it raw-keyed on open.
     /// - Plaintext (pre-encryption builds): encrypted straight to raw key.
+    ///   If that is busy, or `allowConversion` is false, the file is left
+    ///   untouched and `.plaintext` comes back, which `openAndMigrate` opens
+    ///   read-only; the next launch retries.
     /// - Raw-keyed already: one probe, no KDF — the steady state.
     /// - Passphrase-keyed: converted once (see `convertPassphraseToRawKey`).
     ///   If that fails, or `allowConversion` is false (another instance holds

@@ -19,7 +19,7 @@ final class MCPServer: @unchecked Sendable {
     private var listener: NWListener?
     private var token: String = ""
     private var activeConnections = 0
-    private let queue = DispatchQueue(label: "dev.ronboger.MishMail.mcp", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "io.github.bateman.MishMail.mcp", qos: .userInitiated)
     private let lock = NSLock()
 
     init(tools: any MCPToolProvider, serverVersion: String = MCPRouter.defaultServerVersion) {

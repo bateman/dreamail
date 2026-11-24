@@ -11,11 +11,11 @@ final class RelaunchProtocolTests: XCTestCase {
         let home = URL(fileURLWithPath: "/Users/ron")
         XCTAssertEqual(
             Relaunch.containerTemp(home: home).path,
-            "/Users/ron/Library/Containers/dev.ronboger.MishMail/Data/tmp")
+            "/Users/ron/Library/Containers/io.github.bateman.MishMail/Data/tmp")
     }
 
     func testPlanAndMarkerLiveInTheSameDirectoryOnBothSides() {
-        let appSide = URL(fileURLWithPath: "/Users/ron/Library/Containers/dev.ronboger.MishMail/Data/tmp")
+        let appSide = URL(fileURLWithPath: "/Users/ron/Library/Containers/io.github.bateman.MishMail/Data/tmp")
         let helperSide = Relaunch.containerTemp(home: URL(fileURLWithPath: "/Users/ron"))
         XCTAssertEqual(Relaunch.planURL(inTemp: appSide).path,
                        Relaunch.planURL(inTemp: helperSide).path)

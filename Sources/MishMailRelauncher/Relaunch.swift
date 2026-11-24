@@ -23,7 +23,7 @@ enum Relaunch {
         let nonce: String
     }
 
-    static let bundleID = "dev.ronboger.MishMail"
+    static let bundleID = "io.github.bateman.MishMail"
     static let planName = "relauncher-plan.json"
 
     /// The sandboxed app's `FileManager.temporaryDirectory` and the helper's

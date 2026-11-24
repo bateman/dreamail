@@ -91,7 +91,7 @@ for inspecting the schema in `Store/Database.swift`.
   updates; the reasons are documented in `project.yml` and the
   entitlements file.
 - Debug and Release builds are two distinct apps on purpose
-  (`MishMail Debug`, `dev.ronboger.MishMail.debug`). Differences between
+  (`MishMail Debug`, `io.github.bateman.MishMail.debug`). Differences between
   them are intentional.
 - `Support/DemoSeed.swift` only acts when the `MISHMAIL_DEMO=1`
   environment variable is set.
