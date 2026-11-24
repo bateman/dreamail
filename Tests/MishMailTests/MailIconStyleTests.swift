@@ -2,35 +2,21 @@ import AppKit
 import SwiftUI
 import XCTest
 
-/// The navigation glyphs (sidebar rows, "Add view", the Settings sidebar,
-/// the list-column header) share one style: the default, not rounded, font
-/// design, medium weight, the row title's size, and monochrome label
-/// colours that never resolve to the accent.
+/// The sidebar glyphs (main sidebar rows, "Add view", the Settings sidebar)
+/// share one style: medium weight at the row title's size for the macOS
+/// "Sidebar icon size" setting, and monochrome colours that never resolve
+/// to the accent.
 final class MailIconStyleTests: XCTestCase {
 
     // MARK: - Metrics
 
-    func testDefaultScaleMatchesTheSidebarRowTitle() {
-        let metrics = MailIconMetrics()
-        XCTAssertEqual(metrics.design, .default)
-        XCTAssertNotEqual(metrics.design, .rounded)
-        XCTAssertEqual(metrics.weight, .medium)
-        XCTAssertEqual(metrics.pointSize, 13)
-        XCTAssertEqual(metrics.columnWidth, 18)
-    }
-
-    /// The Text size steps of `AppFontScale.options` (App/, not compiled
-    /// into this bundle).
-    private static let fontScales: [CGFloat] = [0.8, 0.9, 1.0, 1.15, 1.3, 1.45, 1.6]
-
-    func testEveryFontScaleKeepsTheDesignAndWeightAndScalesTheSize() {
-        for scale in Self.fontScales {
-            let metrics = MailIconMetrics(scale: scale)
-            XCTAssertEqual(metrics.design, .default, "\(scale)")
-            XCTAssertEqual(metrics.weight, .medium, "\(scale)")
-            XCTAssertEqual(metrics.pointSize, 13 * scale, accuracy: 0.0001, "\(scale)")
-            XCTAssertEqual(metrics.columnWidth, 18 * scale, accuracy: 0.0001, "\(scale)")
-            XCTAssertEqual(metrics, MailIconMetrics(scale: scale))
+    func testSizeFollowsTheSidebarIconSizeSetting() {
+        let cases: [(SidebarRowSize, CGFloat)] = [(.small, 11), (.medium, 13), (.large, 15)]
+        for (rowSize, points) in cases {
+            let metrics = MailIconMetrics(rowSize: rowSize)
+            XCTAssertEqual(metrics.pointSize, points, "\(rowSize)")
+            XCTAssertEqual(metrics.columnWidth, points + 5, "\(rowSize)")
+            XCTAssertEqual(metrics.weight, .medium, "\(rowSize)")
         }
     }
 
@@ -78,63 +64,23 @@ final class MailIconStyleTests: XCTestCase {
         }
     }
 
-    // MARK: - Every navigation glyph uses the shared style
+    // MARK: - Every sidebar glyph uses the shared style
 
-    func testNavigationGlyphsUseTheSharedStyle() throws {
-        let content = try Self.squashed("Sources/MishMail/UI/ContentView.swift")
-        XCTAssertTrue(content.contains(Self.squash("""
-            Image(systemName: view.icon(selected: selected))
-                .mailIconStyle(selected: selected)
-            }
-            .listItemTint(.monochrome)
-            """)), "sidebar rows")
-        XCTAssertTrue(content.contains(Self.squash("""
-            .fontWeight(selected ? .semibold : .regular)
-                .mailRowTitleStyle()
-            """)), "sidebar row titles")
-        XCTAssertTrue(content.contains(Self.squash("""
-            Image(systemName: "plus")
-                .mailIconStyle(selected: false)
-            """)), "Add view")
-
-        let settings = try Self.squashed("Sources/MishMail/UI/SettingsView.swift")
-        XCTAssertTrue(settings.contains(Self.squash("""
-            Text(p.title).mailRowTitleStyle()
-            } icon: {
-            Image(systemName: p.icon).mailIconStyle(selected: pane == p)
-            }
-            .listItemTint(.monochrome)
-            """)), "Settings sidebar")
-
-        let list = try Self.squashed("Sources/MishMail/UI/ThreadListView.swift")
-        XCTAssertTrue(list.contains(Self.squash("""
-            Image(systemName: store.selectedView.selectedIcon)
-                .mailIconStyle(selected: false)
-            """)), "list-column header")
-
-        // No rounded design on any of these views.
-        for text in [content, settings, list] {
-            XCTAssertFalse(text.contains(".fontDesign(.rounded)"))
+    /// The list-column header keeps the toolbar's own symbol size and only
+    /// takes the monochrome colour, so it is not listed here.
+    func testSidebarGlyphsUseTheSharedStyle() throws {
+        for path in ["Sources/MishMail/UI/ContentView.swift", "Sources/MishMail/UI/SettingsView.swift"] {
+            let text = try ForkIdentityTests.repoFile(path)
+            XCTAssertTrue(text.contains(".mailIconStyle("), path)
+            XCTAssertTrue(text.contains(".mailRowTitleStyle()"), path)
+            XCTAssertFalse(text.contains(".foregroundStyle(.mailIcon("), path)
         }
     }
 
     // MARK: - Helpers
 
-    private static func squash(_ text: String) -> String {
-        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-    }
-
-    private static func squashed(_ path: String) throws -> String {
-        squash(try ForkIdentityTests.repoFile(path))
-    }
-
     private static func resolve(_ color: NSColor, in name: NSAppearance.Name) -> NSColor? {
-        guard let appearance = NSAppearance(named: name) else { return nil }
-        var out: NSColor?
-        appearance.performAsCurrentDrawingAppearance {
-            out = color.usingColorSpace(.sRGB)
-        }
-        return out
+        AppearanceColorSupport.resolve(color, in: name)
     }
 
     private static func same(_ a: NSColor, _ b: NSColor) -> Bool {

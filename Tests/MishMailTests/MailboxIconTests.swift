@@ -97,12 +97,7 @@ final class MailboxIconTests: XCTestCase {
     // MARK: - Helpers
 
     private static func resolve(_ color: NSColor, in name: NSAppearance.Name) -> NSColor? {
-        guard let appearance = NSAppearance(named: name) else { return nil }
-        var out: NSColor?
-        appearance.performAsCurrentDrawingAppearance {
-            out = color.usingColorSpace(.sRGB)
-        }
-        return out
+        AppearanceColorSupport.resolve(color, in: name)
     }
 
     private typealias RGB = (r: Double, g: Double, b: Double)

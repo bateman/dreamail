@@ -2,17 +2,20 @@ import AppKit
 import XCTest
 
 /// The selected sidebar row draws its glyph and title in neutral colours,
-/// never the accent: in the main sidebar with the window active and
-/// inactive, and in the Settings sidebar, with the default and a red accent.
+/// never the accent, in the main sidebar and the Settings sidebar, with the
+/// default and a red accent, in each selection state:
+/// - focused list: a solid accent capsule, with white glyph and title;
+/// - focus elsewhere in an active window (the state the owner reported) and
+///   inactive window: a grey capsule, with label-colour glyph and title.
 ///
-/// Reads the rendered pixels of the selected row: a screen capture of the
-/// strip from the window's leading edge to the row's trailing edge, where
-/// the glyph and the title are drawn. The selection capsule's own colour is
-/// not judged (a focused sidebar draws a solid accent capsule, and the row
-/// then draws white on it, as AppKit does): only the pixels that stand out
-/// from the strip's background (glyph, title), each of which must be a grey
-/// blended with that background. An accent-tinted glyph is not. An
-/// unselected row is the control.
+/// Reads the rendered pixels of the selected row: a capture of the app
+/// window, cropped to the strip from the window's leading edge to the row's
+/// trailing edge, where the glyph and the title are drawn. Only the pixels
+/// that stand out from the strip's background (glyph, title) are judged:
+/// each must be a grey blended over that background. An accent-tinted glyph
+/// is not. The background itself is checked to be the accent or grey as the
+/// state requires, so an ignored accent override or a missed state shows
+/// up. An unselected row is the control.
 final class SidebarIconTintUITests: XCTestCase {
 
     func testSelectedRowIsMonochromeWithTheDefaultAccent() throws {
@@ -39,69 +42,96 @@ final class SidebarIconTintUITests: XCTestCase {
         app.launch()
         addTeardownBlock { app.terminate() }
 
-        let main = app.windows.firstMatch
+        // The main window is the one listing the demo threads.
+        let main = app.windows.containing(
+            NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
         XCTAssertTrue(main.waitForExistence(timeout: 10))
         app.activate()
 
         // Sidebar starts collapsed; → reveals it. Clicking Inbox gives the
         // sidebar list focus, so its selection draws emphasized.
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        let inbox = app.descendants(matching: .any)
+        let inbox = main.descendants(matching: .any)
             .matching(identifier: "sidebar.inbox").firstMatch
         XCTAssertTrue(inbox.waitForExistence(timeout: 5))
         inbox.click()
-        Self.settle()
         // Control: an unselected row's outline glyph is grey too, so the
         // measure itself does not see colour where there is none.
-        let starred = app.descendants(matching: .any)
+        let starred = main.descendants(matching: .any)
             .matching(identifier: "sidebar.starred").firstMatch
         XCTAssertTrue(starred.waitForExistence(timeout: 5))
-        try Self.assertMonochrome(row: starred, window: main, "main sidebar, unselected row")
-        try Self.assertMonochrome(row: inbox, window: main, "main sidebar, active window")
+        try Self.assertMonochrome(row: starred, window: main, capsule: .grey,
+                                  "main sidebar, unselected row")
+        try Self.assertMonochrome(row: inbox, window: main, capsule: .accent,
+                                  "main sidebar, focused")
 
-        // Settings: select General, check its row while Settings is key.
+        // Focus to the thread list, window still active.
+        let thread = main.descendants(matching: .any)
+            .matching(identifier: "threadRow.you@example.com:t3").firstMatch
+        XCTAssertTrue(thread.waitForExistence(timeout: 5))
+        thread.click()
+        try Self.assertMonochrome(row: inbox, window: main, capsule: .grey,
+                                  "main sidebar, focus in the thread list")
+
+        // Settings: select Snippets with the sidebar focused, then move
+        // focus to the pane's search field.
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        let general = settings.descendants(matching: .any)
-            .matching(identifier: "settings.pane.general").firstMatch
-        XCTAssertTrue(general.waitForExistence(timeout: 5))
-        general.click()
-        Self.settle()
-        try Self.assertMonochrome(row: general, window: settings, "Settings sidebar")
+        let snippets = settings.descendants(matching: .any)
+            .matching(identifier: "settings.pane.snippets").firstMatch
+        XCTAssertTrue(snippets.waitForExistence(timeout: 5))
+        snippets.click()
+        try Self.assertMonochrome(row: snippets, window: settings, capsule: .accent,
+                                  "Settings sidebar, focused")
+        let searchField = settings.searchFields.firstMatch
+        let textField = settings.textFields.firstMatch
+        XCTAssertTrue(Self.waitUntil { searchField.exists || textField.exists },
+                      "Snippets search field")
+        (searchField.exists ? searchField : textField).click()
+        try Self.assertMonochrome(row: snippets, window: settings, capsule: .grey,
+                                  "Settings sidebar, focus in the pane")
 
         // Inactive main window: close Settings (it covers the sidebar), then
         // open the small, centred About panel, which takes key status.
         app.typeKey("w", modifierFlags: .command)
-        Self.settle()
-        XCTAssertFalse(settings.exists, "Settings should close with Cmd-W")
+        XCTAssertTrue(Self.waitUntil { !settings.exists }, "Settings should close with Cmd-W")
         // XCUITest opens the app menu on its way to the item.
         let about = app.menuItems["About MishMail"]
         XCTAssertTrue(about.waitForExistence(timeout: 5))
         about.click()
-        Self.settle()
         // The About panel is an NSPanel: XCUITest lists it as a dialog.
-        let panels = (app.dialogs.allElementsBoundByIndex + app.windows.allElementsBoundByIndex)
-            .filter { $0.frame != main.frame }
-        XCTAssertFalse(panels.isEmpty, "the About panel should open")
+        let panel = app.dialogs.firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 5), "the About panel should open")
         let strip = Self.strip(row: inbox, window: main)
-        for panel in panels {
-            XCTAssertFalse(panel.frame.intersects(strip),
-                           "\(panel.identifier) \(panel.frame) covers the Inbox row \(strip)")
-        }
-        let inactive = try Self.assertMonochrome(row: inbox, window: main,
-                                                 "main sidebar, inactive window")
-        // Proof the window lost key status: the selection is no longer the
-        // accent capsule but the grey, unemphasized one.
-        XCTAssertLessThan(PixelStats.ownColour(pixel: inactive.background, background: (128, 128, 128)), 30,
-                          "inactive window: selection should be grey, is \(inactive.background)")
+        XCTAssertFalse(panel.frame.intersects(strip),
+                       "About panel \(panel.frame) covers the Inbox row \(strip)")
+        try Self.assertMonochrome(row: inbox, window: main, capsule: .grey,
+                                  "main sidebar, inactive window")
     }
 
     // MARK: - Pixels
 
-    private static func settle() {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+    private enum Capsule {
+        /// Solid accent: the background is coloured.
+        case accent
+        /// Grey: unfocused or inactive selection, or no selection.
+        case grey
+
+        func matches(_ background: (Double, Double, Double)) -> Bool {
+            let colour = PixelStats.ownColour(pixel: background, background: (128, 128, 128))
+            return self == .accent ? colour > 30 : colour < 30
+        }
+    }
+
+    private static func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() > deadline { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return true
     }
 
     /// Screen rect, in points, of the row's leading strip: the window's
@@ -112,42 +142,58 @@ final class SidebarIconTintUITests: XCTestCase {
         return CGRect(x: minX, y: r.minY, width: max(1, r.maxX - minX), height: r.height)
     }
 
-    @discardableResult
+    /// Captures the row's strip from the app window until its background is
+    /// the expected capsule (the selection redraws after a click), then
+    /// checks the glyph and title pixels.
     private static func assertMonochrome(row: XCUIElement, window: XCUIElement,
-                                         _ context: String,
+                                         capsule: Capsule, _ context: String,
                                          file: StaticString = #filePath,
-                                         line: UInt = #line) throws -> PixelStats {
-        let rect = strip(row: row, window: window)
-        let shot = XCUIScreen.main.screenshot()
-        let image = shot.image
-        let cg = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                               file: file, line: line)
-        // Element frames are in points; the capture is in pixels.
-        let screenWidth = NSScreen.main?.frame.width ?? image.size.width
-        let scale = CGFloat(cg.width) / screenWidth
-        let pixelRect = CGRect(x: rect.minX * scale, y: rect.minY * scale,
-                               width: rect.width * scale, height: rect.height * scale)
-            .integral.intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
-        let crop = try XCTUnwrap(cg.cropping(to: pixelRect), "\(context): crop \(pixelRect)",
-                                 file: file, line: line)
+                                         line: UInt = #line) throws {
+        var capture: (stats: PixelStats, crop: CGImage, scale: CGFloat)?
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            capture = try Self.capture(row: row, window: window, context, file: file, line: line)
+            if let capture, capsule.matches(capture.stats.background) { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+        let (stats, crop, scale) = try XCTUnwrap(capture, file: file, line: line)
 
+        // Kept in the result bundle when the test fails (default lifetime).
         let attachment = XCTAttachment(image: NSImage(cgImage: crop, size: .zero))
         attachment.name = "\(context) strip"
-        attachment.lifetime = .keepAlways
         XCTContext.runActivity(named: context) { $0.add(attachment) }
 
-        let stats = PixelStats(crop)
+        let detail = "\(context): \(stats.saturated) of \(stats.foreground) glyph/title pixels are coloured; "
+            + stats.summary(scale: scale)
+        print("SidebarIconTint: \(detail)")
+        XCTAssertTrue(capsule.matches(stats.background),
+                      "\(context): background should be \(capsule), \(detail)", file: file, line: line)
         // A glyph and a title stand out from the background.
         XCTAssertGreaterThanOrEqual(stats.foreground, 40,
                                     "\(context): no glyph or title found in the strip",
                                     file: file, line: line)
         // A grey glyph's antialiased edges are grey-over-background blends
         // too; an accent-tinted glyph is coloured almost everywhere.
-        let detail = "\(context): \(stats.saturated) of \(stats.foreground) glyph/title pixels are coloured; "
-            + "strip \(rect), \(stats.summary(scale: scale))"
-        print("SidebarIconTint: \(detail)")
         XCTAssertLessThan(stats.saturatedFraction, 0.15, detail, file: file, line: line)
-        return stats
+    }
+
+    /// The row's strip cut from a capture of its window only.
+    private static func capture(row: XCUIElement, window: XCUIElement, _ context: String,
+                                file: StaticString, line: UInt) throws
+        -> (stats: PixelStats, crop: CGImage, scale: CGFloat) {
+        let frame = window.frame
+        let image = window.screenshot().image
+        let cg = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                               file: file, line: line)
+        // Element frames are in points; the capture is in pixels.
+        let scale = CGFloat(cg.width) / frame.width
+        let rect = strip(row: row, window: window).offsetBy(dx: -frame.minX, dy: -frame.minY)
+        let pixelRect = CGRect(x: rect.minX * scale, y: rect.minY * scale,
+                               width: rect.width * scale, height: rect.height * scale)
+            .integral.intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        let crop = try XCTUnwrap(cg.cropping(to: pixelRect), "\(context): crop \(pixelRect)",
+                                 file: file, line: line)
+        return (PixelStats(crop), crop, scale)
     }
 
     /// Foreground pixels: those far from the strip's most common colour

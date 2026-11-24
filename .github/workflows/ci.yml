@@ -123,12 +123,12 @@ jobs:
 
   ui-test:
     name: UI smoke tests
-    # About six minutes, so not on every push or pull request. Runs when a
+    # About eleven minutes, so not on every push or pull request. Runs when a
     # release is published and on a manual run; `make release` starts a
     # manual run and waits for it before it publishes (`make ui-test-ci`).
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
-    # About eight minutes with setup.
+    # About twelve minutes with setup.
     timeout-minutes: 25
     # Separate job so a UI hang or desktop hijack cannot hide unit-test results.
     steps:

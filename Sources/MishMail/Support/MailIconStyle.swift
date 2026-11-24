@@ -1,46 +1,49 @@
 import SwiftUI
 
-/// Size, weight and design of the navigation glyphs: main sidebar rows,
-/// "Add view", the Settings sidebar and the list-column header.
+/// Size and weight of the navigation glyphs: main sidebar rows, "Add view"
+/// and the Settings sidebar.
 ///
 /// The `.sidebar` list style draws a Label's icon from its own symbol
 /// configuration: large and light on macOS 26, which reads soft and rounded
-/// next to the 13 pt row title. These glyphs set an explicit font instead:
-/// the default (not rounded) design, medium weight, and a point size equal
-/// to the sidebar row title, so the glyph's cap height matches the text.
+/// next to the row title. These glyphs set an explicit font instead: medium
+/// weight, at the row title's size for the macOS "Sidebar icon size"
+/// setting (System Settings ▸ Appearance), so the glyph's cap height matches
+/// the text.
 struct MailIconMetrics: Equatable {
-    /// Point size at font scale 1: the sidebar row title's size.
-    static let basePointSize: CGFloat = 13
-    /// Width of the icon column at font scale 1, so outline and filled glyphs
-    /// of different widths keep the titles aligned.
-    static let baseColumnWidth: CGFloat = 18
-
     let pointSize: CGFloat
+    /// Width of the icon column, so outline and filled glyphs of different
+    /// widths keep the titles aligned.
     let columnWidth: CGFloat
     let weight: Font.Weight
-    let design: Font.Design
 
-    init(scale: CGFloat = 1) {
-        pointSize = Self.basePointSize * scale
-        columnWidth = Self.baseColumnWidth * scale
+    /// Small, medium and large sidebar rows title their rows at 11, 13 and
+    /// 15 pt.
+    init(rowSize: SidebarRowSize) {
+        if rowSize == .small {
+            pointSize = 11
+        } else if rowSize == .large {
+            pointSize = 15
+        } else {
+            pointSize = 13
+        }
+        columnWidth = pointSize + 5
         weight = .medium
-        design = .default
     }
 
-    var font: Font { .system(size: pointSize, weight: weight, design: design) }
+    var font: Font { .system(size: pointSize, weight: weight) }
 }
 
 private struct MailIconModifier: ViewModifier {
     let selected: Bool
-    let metrics: MailIconMetrics
+    /// The "Sidebar icon size" setting (macOS 14+, this app's minimum).
+    @Environment(\.sidebarRowSize) private var rowSize
     /// `.increased` inside a row drawn over the emphasized (accent) selection.
     @Environment(\.backgroundProminence) private var prominence
 
     func body(content: Content) -> some View {
+        let metrics = MailIconMetrics(rowSize: rowSize)
         content
             .font(metrics.font)
-            // Overrides a rounded design inherited from any ancestor.
-            .fontDesign(metrics.design)
             .imageScale(.medium)
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(.mailIcon(selected: selected, prominence: prominence))
@@ -57,11 +60,11 @@ private struct MailRowTitleModifier: ViewModifier {
 }
 
 extension View {
-    /// The one style for navigation glyphs (see `MailIconMetrics`), in the
+    /// The one style for sidebar glyphs (see `MailIconMetrics`), in the
     /// monochrome `mailIcon` tint: never the accent, selected or not. On the
     /// solid accent capsule of an emphasized selection it is white.
-    func mailIconStyle(selected: Bool, scale: CGFloat = 1) -> some View {
-        modifier(MailIconModifier(selected: selected, metrics: MailIconMetrics(scale: scale)))
+    func mailIconStyle(selected: Bool) -> some View {
+        modifier(MailIconModifier(selected: selected))
     }
 
     /// Title of a navigation sidebar row: the label colour, white on an
