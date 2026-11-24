@@ -287,8 +287,9 @@ enum DemoSeed {
                  listUnsubscribe: String? = nil,
                  listUnsubscribePost: String? = nil,
                  to: String? = nil, deliveredTo: String? = nil,
-                 html: String? = nil) {
-            var labels = ["INBOX"] + extraLabels
+                 html: String? = nil, sent: Bool = false) {
+            // The user's own reply is in Sent, not the Inbox.
+            var labels = (sent ? ["SENT"] : ["INBOX"]) + extraLabels
             if starred { labels.append("STARRED") }
             if unread { labels.append("UNREAD") }
             out.append(Message(
@@ -380,6 +381,26 @@ enum DemoSeed {
             // which address (a forwarding domain) the message reached.
             to: "undisclosed-recipients:;",
             deliveredTo: "\(account), alex@rivera.example")
+
+        // The earlier messages of t2, so the demo has a conversation with
+        // several messages (the reading pane's collapsed rows). Added last so
+        // the ids of the messages above stay as they were.
+        add("t2", from: "Priya Raman <priya@example.edu>",
+            subject: "Draft ready for your review",
+            snippet: "Here is the first full draft of the paper. The related work section is still thin, and Figure 3 needs a second look.",
+            body: "Hi Alex,\n\nHere is the first full draft of the paper. The related work section is still thin, and Figure 3 needs a second look.\n\nPriya",
+            hoursAgo: 30, unread: false, extraLabels: ["Label_research"])
+        add("t2", from: "Alex Rivera <\(account)>",
+            subject: "Re: Draft ready for your review",
+            snippet: "Thanks, Priya. I read it on the train: the argument holds up. Figure 3 looks off to me, the scales do not match the text.",
+            body: "Thanks, Priya. I read it on the train: the argument holds up.\n\nFigure 3 looks off to me, the scales do not match the text.\n\nAlex",
+            hoursAgo: 27, unread: false, extraLabels: ["Label_research"],
+            to: "Priya Raman <priya@example.edu>", sent: true)
+        add("t2", from: "Priya Raman <priya@example.edu>",
+            subject: "Re: Draft ready for your review",
+            snippet: "Good catch, the normalization was wrong. I am rerunning the analysis now and will send the revised figures tonight.",
+            body: "Good catch, the normalization was wrong.\n\nI am rerunning the analysis now and will send the revised figures tonight.\n\nPriya",
+            hoursAgo: 6, unread: false, extraLabels: ["Label_research"])
 
         return out
     }
