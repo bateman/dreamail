@@ -1802,8 +1802,11 @@ struct Sidebar: View {
                 Button {
                     store.openCompose(.init(replyTo: nil))
                 } label: {
+                    // Monochrome like the sidebar glyphs: a borderless
+                    // button would otherwise take the accent colour.
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 15))
+                        .foregroundStyle(.primary)
                         .frame(width: 30, height: 30)
                         .contentShape(Rectangle())
                 }
@@ -1851,8 +1854,13 @@ struct Sidebar: View {
                     Button {
                         store.editingView = SavedView.empty()
                     } label: {
-                        Label("Add view", systemImage: "plus")
-                            .foregroundStyle(.secondary)
+                        Label {
+                            Text("Add view")
+                        } icon: {
+                            Image(systemName: "plus")
+                                .foregroundStyle(.mailIcon(selected: false))
+                        }
+                        .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -1883,7 +1891,6 @@ struct Sidebar: View {
                 HStack(spacing: 7) {
                     Image(systemName: "sparkles.rectangle.stack")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.mailAccent)
                     Text("Demo inbox")
                         .font(.system(size: 12.5, weight: .medium))
                     Spacer()
@@ -1901,7 +1908,6 @@ struct Sidebar: View {
                     HStack(spacing: 7) {
                         Image(systemName: "arrow.down.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundStyle(Color.accentColor)
                         // Says "restart" up front: from here one click on a
                         // sidebar row installs and relaunches the app.
                         Text("Update to \(release.version) and restart")
@@ -1949,7 +1955,8 @@ struct Sidebar: View {
     }
 
 
-    /// Sidebar row: each view keeps its own icon color.
+    /// Sidebar row, Gmail-style: a monochrome outline glyph; the selected row
+    /// gets the filled glyph, a darker tint and a bold title.
     private func sidebarItem(_ view: MailboxView, badge: Int? = nil) -> some View {
         // List(selection:) only fires onChange when the value *changes*, so
         // re-clicking the already-selected row (e.g. Inbox while a committed
@@ -1962,11 +1969,15 @@ struct Sidebar: View {
         // rebuild the row. `.tag` stays outermost so List(selection:) sees it.
         let reselect = ListReselectPolicy.mountsHandler(
             row: view, selected: store.selectedView)
+        let selected = store.selectedView == view
+        // An explicit icon style: the sidebar list style would otherwise
+        // tint the glyph with the accent.
         return Label {
             Text(view.title)
+                .fontWeight(selected ? .semibold : .regular)
         } icon: {
-            Image(systemName: view.icon)
-                .foregroundStyle(view.iconColor)
+            Image(systemName: view.icon(selected: selected))
+                .foregroundStyle(.mailIcon(selected: selected))
         }
         .badge((badge ?? 0) > 0 ? badge! : 0)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
