@@ -158,8 +158,9 @@ final class UpdateScriptTests: XCTestCase {
         XCTAssertNotEqual(result.status, 0)
         XCTAssertTrue(result.stderr.contains("not validly signed by team ABCDE12345"),
                       result.stderr)
-        let verify = try codesignCalls().filter { $0.hasPrefix("--verify") }
-        XCTAssertEqual(verify.count, 1, "\(try codesignCalls())")
+        let calls = try codesignCalls()
+        let verify = calls.filter { $0.hasPrefix("--verify") }
+        XCTAssertEqual(verify.count, 1, "\(calls)")
         XCTAssertTrue(verify.first?.hasPrefix(
             "--verify --deep --strict -R=anchor apple generic and identifier "
             + "\"io.github.bateman.MishMail\" and certificate leaf[subject.OU] = \"ABCDE12345\" ")
