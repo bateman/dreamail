@@ -161,13 +161,7 @@ final class LogHygieneTests: XCTestCase {
 /// The lexer behind the guard: string literals (with interpolations and raw
 /// strings), parentheses and commas, enough to see what each call logs.
 enum LogScan {
-    struct Value: CustomStringConvertible {
-        let line: Int
-        let call: String
-        let expression: String
-        let isPublic: Bool
-        var description: String { "\(line) \(call) \(expression) public=\(isPublic)" }
-    }
+    typealias Value = (line: Int, call: String, expression: String, isPublic: Bool)
 
     /// Files without any of these are not lexed.
     static let markers = ["NSLog", "os_log", "privacy:", "PerfMetrics", "extraMeta", "try!"]
@@ -209,13 +203,13 @@ enum LogScan {
         }
 
         for (name, open) in calls(in: c, where: { perfCalls.contains($0) || $0.hasSuffix(".end") }) {
+            if name.hasSuffix(".end"),
+               !trim(String(c[(open + 1)..<min(c.count, open + 40)])).hasPrefix("extraMeta:") { continue }
             guard let close = closingParen(c, open: open) else {
                 out.append("\(lineNumber(c, at: open)): \(name) call the guard cannot lex")
                 continue
             }
-            let body = Array(c[(open + 1)..<close])
-            if name.hasSuffix(".end"), !trim(String(body)).hasPrefix("extraMeta:") { continue }
-            for arg in splitTopLevel(body) {
+            for arg in splitTopLevel(Array(c[(open + 1)..<close])) {
                 for e in exposed(arg).dropFirst() where isErrorText(e) || isIdentifier(e) {
                     out.append("\(lineNumber(c, at: open)): \(name) meta carries `\(trim(e))`")
                 }
@@ -249,13 +243,13 @@ enum LogScan {
             // NSLog writes everything publicly, Swift interpolations in its
             // format included; os_log keeps `%@` private unless `{public}`.
             let format = args[formatIndex]
-            values.append(Value(line: line, call: name, expression: format, isPublic: name == "NSLog"))
+            values.append((line, name, format, name == "NSLog"))
             let specifiers = formatSpecifiers(format)
             for (k, arg) in args.dropFirst(formatIndex + 1).enumerated() {
                 let spec = k < specifiers.count ? specifiers[k] : ""
                 let isPublic = name == "NSLog" || spec.contains("{public}")
                     || !(spec.hasSuffix("@") || spec.contains("{private}"))
-                values.append(Value(line: line, call: name, expression: arg, isPublic: isPublic))
+                values.append((line, name, arg, isPublic))
             }
         }
         return (values, unparsed)
@@ -324,19 +318,13 @@ enum LogScan {
         var depth = 0
         var i = open
         while i < c.count {
-            switch c[i] {
-            case "\"":
+            if c[i] == "\"" {
                 guard let end = endOfString(c, from: i) else { return nil }
                 i = end
                 continue
-            case "(":
-                depth += 1
-            case ")":
-                depth -= 1
-                if depth == 0 { return i }
-            default:
-                break
             }
+            if c[i] == "(" { depth += 1 }
+            if c[i] == ")" { depth -= 1; if depth == 0 { return i } }
             i += 1
         }
         return nil
@@ -344,44 +332,23 @@ enum LogScan {
 
     static func isRaw(_ c: [Character], _ quote: Int) -> Bool { quote > 0 && c[quote - 1] == "#" }
 
-    /// Index just past the literal opened by the `"` at `start`.
+    /// Index just past the literal opened by the `"` at `start`. A
+    /// multi-line `"""` literal does not lex: its call is reported.
     static func endOfString(_ c: [Character], from start: Int) -> Int? {
-        if isRaw(c, start) {  // #"…"# and #"""…"""#: no escapes, no `\(`
-            var i = start + 1
-            while i + 1 < c.count {
-                if c[i] == "\"", c[i + 1] == "#" { return i + 2 }
-                i += 1
-            }
-            return nil
-        }
-        if start + 2 < c.count, c[start + 1] == "\"", c[start + 2] == "\"" {
-            var i = start + 3
-            while i + 2 < c.count {
-                if c[i] == "\\" { i += 2; continue }
-                if c[i] == "\"", c[i + 1] == "\"", c[i + 2] == "\"" { return i + 3 }
-                i += 1
-            }
-            return nil
-        }
         var i = start + 1
-        while i < c.count {
-            switch c[i] {
-            case "\\":
-                if i + 1 < c.count, c[i + 1] == "(" {
-                    guard let close = closingParen(c, open: i + 1) else { return nil }
-                    i = close + 1
-                } else {
-                    i += 2
-                }
-            case "\"":
-                return i + 1
-            case "\n":
-                return nil
-            default:
-                i += 1
+        if isRaw(c, start) {  // #"…"#: no escapes, no `\(`
+            while i + 1 < c.count, !(c[i] == "\"" && c[i + 1] == "#") { i += 1 }
+            return i + 1 < c.count ? i + 2 : nil
+        }
+        while i < c.count, c[i] != "\"", c[i] != "\n" {
+            if c[i] == "\\", i + 1 < c.count, c[i + 1] == "(" {
+                guard let close = closingParen(c, open: i + 1) else { return nil }
+                i = close + 1
+            } else {
+                i += c[i] == "\\" ? 2 : 1
             }
         }
-        return nil
+        return i < c.count && c[i] == "\"" ? i + 1 : nil
     }
 
     /// Arguments at depth 0, trimmed.
@@ -391,19 +358,15 @@ enum LogScan {
         var depth = 0
         var i = 0
         while i < c.count {
-            switch c[i] {
-            case "\"":
+            if c[i] == "\"" {
                 i = endOfString(c, from: i) ?? c.count
                 continue
-            case "(", "[", "{":
-                depth += 1
-            case ")", "]", "}":
-                depth -= 1
-            case "," where depth == 0:
+            }
+            if "([{".contains(c[i]) { depth += 1 }
+            if ")]}".contains(c[i]) { depth -= 1 }
+            if c[i] == ",", depth == 0 {
                 parts.append(String(c[start..<i]))
                 start = i + 1
-            default:
-                break
             }
             i += 1
         }
