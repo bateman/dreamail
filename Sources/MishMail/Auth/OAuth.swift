@@ -213,7 +213,7 @@ final class OAuthService {
             .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")" }
             .joined(separator: "&")
             .data(using: .utf8)
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await GoogleHTTP.session.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
             let status = (resp as? HTTPURLResponse)?.statusCode
             if status == 400, oauthErrorCode(from: data) == "invalid_grant" {

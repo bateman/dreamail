@@ -35,6 +35,14 @@ enum Notifier {
         }
     }
 
+    /// Withdraws the notifications of threads whose mail was deleted.
+    static func removeNotifications(withIdentifiers ids: [String]) {
+        guard !ids.isEmpty else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removeDeliveredNotifications(withIdentifiers: ids)
+        center.removePendingNotificationRequests(withIdentifiers: ids)
+    }
+
     static func setBadge(_ count: Int) {
         DispatchQueue.main.async {
             // Classic Dock badge: always works, no permission needed.

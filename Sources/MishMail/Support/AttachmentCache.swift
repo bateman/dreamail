@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 #if canImport(Darwin)
 import Darwin
 #else
@@ -65,6 +66,63 @@ enum AttachmentCache {
         guard rootFD >= 0 else { return errno == ENOENT }
         defer { close(rootFD) }
         return removeEntry(named: accountFolderName(accountId), in: rootFD)
+    }
+
+    /// Deletes the copies of one message's attachments, after the message
+    /// left the cache. Same walk as `removeAccount`: never follows a link.
+    @discardableResult
+    static func removeMessage(accountId: String, gmailMessageId: String,
+                              root: URL = defaultRoot) -> Bool {
+        withAccountFolder(accountId, root: root) { accountFD in
+            removeEntry(named: MessageParser.safeFilename(gmailMessageId), in: accountFD)
+        }
+    }
+
+    /// For each of `accounts`, the folder names of its messages that may
+    /// have copies: those still in the cache with an attachment. Read in the
+    /// launch sweep, so `removeMessages(ofAccount:keeping:)` can delete the
+    /// copies of messages that are gone.
+    static func cachedMessageFolders(_ db: Database, accounts: [String]) throws -> [String: Set<String>] {
+        var result: [String: Set<String>] = [:]
+        for account in accounts {
+            let ids = try String.fetchAll(db, sql: """
+                SELECT gmailId FROM message WHERE accountId = ? AND hasAttachment = 1
+                """, arguments: [account])
+            result[account] = Set(ids.map(MessageParser.safeFilename))
+        }
+        return result
+    }
+
+    /// Deletes the copies of every message of `accountId` whose folder is
+    /// not in `keep`. A copy of a message that is still there but had no
+    /// attachment flag is downloaded again when opened. Never follows a link.
+    @discardableResult
+    static func removeMessages(ofAccount accountId: String, keeping keep: Set<String>,
+                               root: URL = defaultRoot) -> Bool {
+        withAccountFolder(accountId, root: root) { accountFD in
+            var ok = true
+            for name in entries(of: accountFD) where !keep.contains(name) {
+                if !removeEntry(named: name, in: accountFD) { ok = false }
+            }
+            return ok
+        }
+    }
+
+    /// Runs `body` on the account's folder, opened through the root's own
+    /// handle with `O_NOFOLLOW` at each step, as `removeAccount` does: a link
+    /// in place of the root or the account folder is never followed. True
+    /// when there is nothing to do (no root, no folder); false when either is
+    /// a link or not a directory.
+    private static func withAccountFolder(_ accountId: String, root: URL,
+                                          _ body: (Int32) -> Bool) -> Bool {
+        let rootFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard rootFD >= 0 else { return errno == ENOENT }
+        defer { close(rootFD) }
+        let accountFD = openat(rootFD, accountFolderName(accountId),
+                               O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard accountFD >= 0 else { return errno == ENOENT }
+        defer { close(accountFD) }
+        return body(accountFD)
     }
 
     /// Whether a downloaded copy may still be written. A download that

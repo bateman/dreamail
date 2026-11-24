@@ -544,18 +544,20 @@ actor SyncEngine {
     /// thread keys the deleted rows belonged to.
     @discardableResult
     static func deleteMessages(_ db: Database, localIds: [String]) throws -> Set<String> {
-        var keys = Set<String>()
-        for chunk in sqlChunks(localIds) {
-            let ids = Array(chunk)
-            let marks = placeholders(ids.count)
-            keys.formUnion(try String.fetchAll(
-                db,
-                sql: "SELECT DISTINCT threadId FROM message WHERE id IN (\(marks))",
-                arguments: StatementArguments(ids)))
-            try db.execute(sql: "DELETE FROM message WHERE id IN (\(marks))",
-                           arguments: StatementArguments(ids))
+        try SearchIndexDeletes.deleting(db, messages: localIds.count) {
+            var keys = Set<String>()
+            for chunk in sqlChunks(localIds) {
+                let ids = Array(chunk)
+                let marks = placeholders(ids.count)
+                keys.formUnion(try String.fetchAll(
+                    db,
+                    sql: "SELECT DISTINCT threadId FROM message WHERE id IN (\(marks))",
+                    arguments: StatementArguments(ids)))
+                try db.execute(sql: "DELETE FROM message WHERE id IN (\(marks))",
+                               arguments: StatementArguments(ids))
+            }
+            return keys
         }
-        return keys
     }
 
     /// Deletes this account's thread rows named in `keys` that no longer
@@ -592,14 +594,19 @@ actor SyncEngine {
     /// or all of them when cutoff is nil. Pure SQL — exercised directly by
     /// the test suite.
     static func pruneMessages(_ db: Database, accountId: String, olderThan cutoff: Date?) throws {
+        let filter: String
+        let arguments: StatementArguments
         if let cutoff {
-            try db.execute(sql: """
-                DELETE FROM message WHERE accountId = ? AND date < ?
-                AND labelIds NOT LIKE '%STARRED%'
-                """, arguments: [accountId, cutoff])
+            filter = "accountId = ? AND date < ? AND labelIds NOT LIKE '%STARRED%'"
+            arguments = [accountId, cutoff]
         } else {
-            try db.execute(sql: "DELETE FROM message WHERE accountId = ?",
-                           arguments: [accountId])
+            filter = "accountId = ?"
+            arguments = [accountId]
+        }
+        let count = try Int.fetchOne(
+            db, sql: "SELECT count(*) FROM message WHERE \(filter)", arguments: arguments) ?? 0
+        try SearchIndexDeletes.deleting(db, messages: count) {
+            try db.execute(sql: "DELETE FROM message WHERE \(filter)", arguments: arguments)
         }
     }
 

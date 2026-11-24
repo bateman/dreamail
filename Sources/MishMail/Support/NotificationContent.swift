@@ -118,6 +118,15 @@ enum NotificationContent {
                    key: hashed(item.threadId, salt: salt), salt: salt)
     }
 
+    /// The identifiers a thread's own notifications are posted under (new
+    /// mail, follow-up reminder), so they can be withdrawn once the thread's
+    /// mail is deleted. Counts ("3 new messages") name no thread and stay.
+    static func threadIdentifiers(accountId: String, threadId: String,
+                                  salt: String = identifierSalt) -> [String] {
+        let item = MailItem(accountId: accountId, threadId: threadId, sender: "", subject: "")
+        return [Kind.mail, .reminder].map { threadIdentifier(kind: $0, item: item, salt: salt) }
+    }
+
     /// True when the notification `identifier` must go once `accountId` is
     /// removed: it names that account, or it predates account-scoped
     /// identifiers and cannot say which account it was about.

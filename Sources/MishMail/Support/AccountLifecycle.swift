@@ -101,7 +101,15 @@ enum AccountLifecycle {
             arguments: [prefix, prefix])
         try removeFromSnippetScopes(db, id: id)
         try ChatProvenance.purgeConversations(db, drawingOn: id)
-        try db.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [id])
+        // The account's mail cascades with the account row.
+        let messages = try Int.fetchOne(
+            db, sql: "SELECT count(*) FROM message WHERE accountId = ?", arguments: [id]) ?? 0
+        try SearchIndexDeletes.deleting(db, messages: messages) {
+            try db.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [id])
+        }
+        // The cascade queued every message of the account, with its address;
+        // the removal deletes its copies and notifications wholesale.
+        try DeletedMessageResidue.forget(db, account: id)
     }
 
     struct AccountRemovedError: LocalizedError {
@@ -188,7 +196,7 @@ enum AccountLifecycle {
     /// that never ran. Called at launch. An empty account id is left alone:
     /// it is not an account that was removed.
     static func purgeOrphanRows(_ db: Database) throws {
-        for table in ["pendingThreadOp", "localDraft", "scheduledSend", "savedView"] {
+        for table in ["pendingThreadOp", "localDraft", "scheduledSend", "savedView", "deletedMessage"] {
             try db.execute(sql: """
                 DELETE FROM \(table)
                 WHERE accountId IS NOT NULL AND accountId != ''
