@@ -113,22 +113,38 @@ extension MailboxView {
     }
 
     /// Filled glyph, shown on the selected row (and the list-column header,
-    /// which names the selected view). Falls back to the outline where the
-    /// symbol has no filled form.
+    /// which names the selected view). Named explicitly so a new view has to
+    /// name both forms; where a symbol has no filled form the outline stays.
     var selectedIcon: String {
         switch self {
+        case .inbox: return "tray.fill"
+        case .promotions: return "basket.fill"
+        case .social: return "bubble.left.fill"
+        case .starred: return "star.fill"
+        case .snoozed: return "clock.fill"
+        case .reminders: return "bell.fill"
+        case .drafts: return "doc.text.fill"
         // No filled variant of the badged calendar: keep the outline.
-        case .scheduled: return icon
-        default: return icon + ".fill"
+        case .scheduled: return "calendar.badge.clock"
+        case .outbox: return "tray.and.arrow.up.fill"
+        case .sent: return "paperplane.fill"
+        case .allMail: return "archivebox.fill"
+        case .trash: return "trash.fill"
+        case .account: return "person.crop.circle.fill"
+        case .label, .labels: return "tag.fill"
+        case .saved: return "line.3.horizontal.decrease.circle.fill"
         }
     }
 
     func icon(selected: Bool) -> String { selected ? selectedIcon : icon }
 }
 
-extension Color {
-    /// The one tint for navigation glyphs (sidebar rows, "Add view", the
-    /// list-column header): the secondary label colour, so it follows the
-    /// text and adapts to light/dark and Increase Contrast.
-    static let mailIcon = Color.secondary
+extension ShapeStyle where Self == HierarchicalShapeStyle {
+    /// Tint for navigation glyphs (sidebar rows, "Add view", the Settings
+    /// sidebar, the list-column header), Gmail-style: the label colour on
+    /// the selected row, the secondary label colour elsewhere. Hierarchical
+    /// styles follow the text, light/dark and Increase Contrast.
+    static func mailIcon(selected: Bool) -> HierarchicalShapeStyle {
+        selected ? .primary : .secondary
+    }
 }

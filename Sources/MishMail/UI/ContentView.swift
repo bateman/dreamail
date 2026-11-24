@@ -1858,12 +1858,11 @@ struct Sidebar: View {
                             Text("Add view")
                         } icon: {
                             Image(systemName: "plus")
-                                .foregroundStyle(Color.mailIcon)
+                                .foregroundStyle(.mailIcon(selected: false))
                         }
                         .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .listItemTint(.monochrome)
                 }
                 Section("Mail") {
                     sidebarItem(.allMail)
@@ -1892,7 +1891,6 @@ struct Sidebar: View {
                 HStack(spacing: 7) {
                     Image(systemName: "sparkles.rectangle.stack")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.mailAccent)
                     Text("Demo inbox")
                         .font(.system(size: 12.5, weight: .medium))
                     Spacer()
@@ -1910,7 +1908,6 @@ struct Sidebar: View {
                     HStack(spacing: 7) {
                         Image(systemName: "arrow.down.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundStyle(Color.accentColor)
                         // Says "restart" up front: from here one click on a
                         // sidebar row installs and relaunches the app.
                         Text("Update to \(release.version) and restart")
@@ -1958,8 +1955,8 @@ struct Sidebar: View {
     }
 
 
-    /// Sidebar row, Gmail-style: a monochrome outline glyph that switches to
-    /// its filled form while the row is selected.
+    /// Sidebar row, Gmail-style: a monochrome outline glyph; the selected row
+    /// gets the filled glyph, a darker tint and a bold title.
     private func sidebarItem(_ view: MailboxView, badge: Int? = nil) -> some View {
         // List(selection:) only fires onChange when the value *changes*, so
         // re-clicking the already-selected row (e.g. Inbox while a committed
@@ -1972,15 +1969,16 @@ struct Sidebar: View {
         // rebuild the row. `.tag` stays outermost so List(selection:) sees it.
         let reselect = ListReselectPolicy.mountsHandler(
             row: view, selected: store.selectedView)
+        let selected = store.selectedView == view
+        // An explicit icon style: the sidebar list style would otherwise
+        // tint the glyph with the accent.
         return Label {
             Text(view.title)
+                .fontWeight(selected ? .semibold : .regular)
         } icon: {
-            Image(systemName: view.icon(selected: store.selectedView == view))
-                .foregroundStyle(Color.mailIcon)
+            Image(systemName: view.icon(selected: selected))
+                .foregroundStyle(.mailIcon(selected: selected))
         }
-        // The sidebar list style tints row icons with the accent unless told
-        // otherwise; keep every row neutral.
-        .listItemTint(.monochrome)
         .badge((badge ?? 0) > 0 ? badge! : 0)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
         .simultaneousGesture(

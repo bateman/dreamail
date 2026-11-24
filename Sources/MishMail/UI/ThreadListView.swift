@@ -355,7 +355,7 @@ struct ThreadListView: View {
             if !store.committedSearch.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11)).foregroundStyle(Color.mailAccent)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                     Text("Results for")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     Text("\u{201C}\(store.committedSearch)\u{201D}")
@@ -428,7 +428,7 @@ struct ThreadListView: View {
             // flicker with the detail nav trio.
             ToolbarItem(placement: .navigation) {
                 Image(systemName: store.selectedView.selectedIcon)
-                    .foregroundStyle(Color.mailIcon)
+                    .foregroundStyle(.mailIcon(selected: false))
                     .accessibilityHidden(true)
             }
             .pmHideSharedBackground()

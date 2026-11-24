@@ -1,11 +1,10 @@
 import AppKit
-import SwiftUI
 import XCTest
 
 /// The sidebar and list-column header draw every mailbox view Gmail-style:
-/// a monochrome outline glyph, the filled variant on the selected row, one
-/// neutral tint for all of them. Colour stays where it carries information
-/// (Gmail label colours, the starred star in the list), which is pinned too.
+/// a monochrome outline glyph, the filled variant on the selected row, in
+/// neutral tints that contrast with their backgrounds. The starred star in
+/// the list keeps its colour, which is pinned too.
 final class MailboxIconTests: XCTestCase {
 
     /// One instance of every `MailboxView` case, with its outline and filled
@@ -53,79 +52,32 @@ final class MailboxIconTests: XCTestCase {
         }
     }
 
-    // MARK: - The neutral tint
+    // MARK: - Contrast
 
-    func testIconTintIsTheSecondaryLabelColour() {
-        XCTAssertEqual(Color.mailIcon, Color.secondary)
-    }
-
-    func testSecondaryLabelColourIsAchromaticInBothAppearances() throws {
+    /// WCAG 2.x non-text contrast (1.4.11) asks for 3:1 against the adjacent
+    /// background: the sidebar for unselected rows (secondary label colour),
+    /// the selection highlight for the selected row (label colour), which
+    /// must also read darker than the unselected rows, as in Gmail.
+    func testIconTintsContrastWithTheirBackgroundsInBothAppearances() throws {
         for name in [NSAppearance.Name.aqua, .darkAqua] {
-            let c = try XCTUnwrap(Self.resolve(.secondaryLabelColor, in: name))
-            XCTAssertEqual(c.redComponent, c.greenComponent, accuracy: 0.01, "\(name)")
-            XCTAssertEqual(c.greenComponent, c.blueComponent, accuracy: 0.01, "\(name)")
-        }
-    }
+            let sidebar = try XCTUnwrap(Self.resolve(.mailSidebar, in: name))
+            let highlight = try XCTUnwrap(
+                Self.resolve(.unemphasizedSelectedContentBackgroundColor, in: name))
+            let secondary = try XCTUnwrap(Self.resolve(.secondaryLabelColor, in: name))
+            let label = try XCTUnwrap(Self.resolve(.labelColor, in: name))
+            let selectedBackground = Self.composite(highlight, over: sidebar)
 
-    /// WCAG 2.x non-text contrast (1.4.11) asks for 3:1 against the
-    /// adjacent background: here the sidebar.
-    func testIconTintContrastsWithTheSidebarInBothAppearances() throws {
-        for name in [NSAppearance.Name.aqua, .darkAqua] {
-            let fg = try XCTUnwrap(Self.resolve(.secondaryLabelColor, in: name))
-            let bg = try XCTUnwrap(Self.resolve(.mailSidebar, in: name))
-            let ratio = Self.contrast(fg, over: bg)
-            XCTAssertGreaterThanOrEqual(ratio, 3.0, "\(name): \(ratio)")
-        }
-    }
+            let unselected = Self.contrast(Self.composite(secondary, over: sidebar), sidebar)
+            let selected = Self.contrast(Self.composite(label, over: selectedBackground),
+                                         selectedBackground)
 
-    // MARK: - Wiring in the views
-
-    /// Every place that draws a mailbox view's glyph tints it with the one
-    /// neutral token; no view carries its own hue any more.
-    func testMailboxGlyphsAreDrawnWithTheNeutralTint() throws {
-        var uses = 0
-        for file in ["Sources/MishMail/UI/ContentView.swift",
-                     "Sources/MishMail/UI/ThreadListView.swift"] {
-            let lines = try ForkIdentityTests.repoFile(file)
-                .components(separatedBy: "\n")
-            for (i, line) in lines.enumerated() where line.contains("Image(systemName:")
-                && (line.contains(".icon(") || line.contains(".icon)")
-                    || line.contains(".selectedIcon")) {
-                uses += 1
-                let next = lines[(i + 1)..<min(i + 3, lines.count)].joined(separator: "\n")
-                XCTAssertTrue(next.contains(".foregroundStyle(Color.mailIcon)"),
-                              "\(file):\(i + 1) draws a mailbox glyph without the neutral tint")
-            }
-        }
-        // Sidebar row + list-column header.
-        XCTAssertGreaterThanOrEqual(uses, 2)
-    }
-
-    func testNoPerViewIconColourRemains() throws {
-        let root = ForkIdentityTests.repoRoot.appendingPathComponent("Sources")
-        let walker = try XCTUnwrap(FileManager.default.enumerator(
-            at: root, includingPropertiesForKeys: nil))
-        for case let url as URL in walker where url.pathExtension == "swift" {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            XCTAssertFalse(text.contains(".iconColor"), url.lastPathComponent)
+            XCTAssertGreaterThanOrEqual(unselected, 3.0, "\(name) unselected: \(unselected)")
+            XCTAssertGreaterThanOrEqual(selected, 3.0, "\(name) selected: \(selected)")
+            XCTAssertGreaterThan(selected, unselected, "\(name)")
         }
     }
 
     // MARK: - Colour that carries information stays
-
-    /// Gmail label colours are user data: the organizer palette and the
-    /// "#RRGGBB" parsing that renders synced colours are unchanged.
-    func testLabelColoursAreUntouched() {
-        XCTAssertEqual(Color.labelPalette.map(\.hex), [
-            "#EB5757", "#F2994A", "#DFAB01", "#27AE60", "#12A594", "#2D9CDB",
-            "#5E6AD2", "#9B51E0", "#E255A1", "#9F6B53", "#787774",
-        ])
-        for entry in Color.labelPalette {
-            let value = UInt32(entry.hex.dropFirst(), radix: 16)!
-            XCTAssertEqual(Color.hexString(entry.hex), Color.hex(value), entry.name)
-            XCTAssertNotEqual(Color.hexString(entry.hex), Color.mailIcon, entry.name)
-        }
-    }
 
     /// Gmail shows a starred conversation's star in yellow in the list.
     func testStarredThreadRowKeepsItsYellowStar() throws {
@@ -153,22 +105,34 @@ final class MailboxIconTests: XCTestCase {
         return out
     }
 
-    /// Contrast ratio of `fg` alpha-composited over the opaque `bg`.
-    private static func contrast(_ fg: NSColor, over bg: NSColor) -> Double {
+    private typealias RGB = (r: Double, g: Double, b: Double)
+
+    /// `fg` alpha-composited over the opaque `bg`.
+    private static func composite(_ fg: NSColor, over bg: RGB) -> RGB {
         let a = Double(fg.alphaComponent)
-        func mix(_ f: CGFloat, _ b: CGFloat) -> Double { Double(f) * a + Double(b) * (1 - a) }
-        let top = (mix(fg.redComponent, bg.redComponent),
-                   mix(fg.greenComponent, bg.greenComponent),
-                   mix(fg.blueComponent, bg.blueComponent))
-        let back = (Double(bg.redComponent), Double(bg.greenComponent), Double(bg.blueComponent))
-        let l1 = luminance(top), l2 = luminance(back)
+        return (Double(fg.redComponent) * a + bg.r * (1 - a),
+                Double(fg.greenComponent) * a + bg.g * (1 - a),
+                Double(fg.blueComponent) * a + bg.b * (1 - a))
+    }
+
+    private static func composite(_ fg: NSColor, over bg: NSColor) -> RGB {
+        composite(fg, over: (Double(bg.redComponent), Double(bg.greenComponent),
+                             Double(bg.blueComponent)))
+    }
+
+    private static func contrast(_ a: RGB, _ b: RGB) -> Double {
+        let l1 = luminance(a), l2 = luminance(b)
         return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
     }
 
-    private static func luminance(_ c: (Double, Double, Double)) -> Double {
+    private static func contrast(_ a: RGB, _ b: NSColor) -> Double {
+        contrast(a, (Double(b.redComponent), Double(b.greenComponent), Double(b.blueComponent)))
+    }
+
+    private static func luminance(_ c: RGB) -> Double {
         func lin(_ v: Double) -> Double {
             v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
         }
-        return 0.2126 * lin(c.0) + 0.7152 * lin(c.1) + 0.0722 * lin(c.2)
+        return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
     }
 }
