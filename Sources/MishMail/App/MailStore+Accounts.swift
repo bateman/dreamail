@@ -91,12 +91,26 @@ extension MailStore {
             // refresh token and fails, instead of reusing the cached one.
             await GmailClient.shared(accountEmail: id).forgetAccessToken()
             // The account row and its queued edits, offline drafts, scheduled
-            // sends and triage rows go in one transaction.
+            // sends, triage rows, saved views and Ask Mish chats go in one
+            // transaction.
             let purged = (try? await pool.write { db in
                 try AccountLifecycle.purgeAccount(db, id: id)
             }) != nil
-            if purged { AccountLifecycle.clearBackfillFlags(accountId: id) }
+            // Everything outside the database (F-04). The notifications and
+            // the attachment copies go even if the purge failed: they are
+            // copies, and the account is already out of the app.
+            if purged { AccountLifecycle.clearAccountDefaults(accountId: id) }
+            Notifier.removeNotifications(forAccount: id)
+            _ = await Task.detached(priority: .utility) {
+                AttachmentCache.removeAccount(id)
+            }.value
+            // Gmail API responses may sit in the shared HTTP cache on disk.
+            // Nothing there needs to survive, so all of it goes.
+            URLCache.shared.removeAllCachedResponses()
             guard let self, !self.isShuttingDown else { return }
+            // A chat open in the panel may have been deleted with the account;
+            // its transcript must not stay on screen or in memory.
+            await self.askMishController?.discardConversationIfPurged()
             // The account's mail cascades away with it; any payload cached for
             // one of its conversations must not outlive the rows behind it.
             self.applyThreadContentChange(.everything)

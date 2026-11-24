@@ -4476,13 +4476,17 @@ struct ComposeRequest: Identifiable {
     private func attachmentTempURL(_ attachment: AttachmentRow, message: Message) async throws -> URL {
         // Keyed by attachment row too, so two same-named attachments on one
         // message can't serve each other's cached bytes.
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MishMailAttachments", isDirectory: true)
-            .appendingPathComponent(MessageParser.safeFilename(message.accountId), isDirectory: true)
-            .appendingPathComponent(MessageParser.safeFilename(message.gmailId), isDirectory: true)
-            .appendingPathComponent(String(attachment.id ?? 0), isDirectory: true)
+        let root = AttachmentCache.defaultRoot
+        let dir = AttachmentCache.messageDirectory(
+            root: root, accountId: message.accountId,
+            gmailMessageId: message.gmailId, attachmentRowId: attachment.id)
         let url = dir.appendingPathComponent(MessageParser.safeFilename(attachment.filename))
         let fm = FileManager.default
+        // A link anywhere in the tree would send the copy (and, at account
+        // removal, the cleanup) outside the cache. Refuse instead (F-04).
+        if fm.fileExists(atPath: dir.path), !AttachmentCache.isContained(dir, in: root) {
+            throw CocoaError(.fileWriteUnknown)
+        }
         if fm.fileExists(atPath: url.path) {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             if values.isRegularFile == true, values.isSymbolicLink != true {
@@ -4497,6 +4501,9 @@ struct ComposeRequest: Identifiable {
         let data = try await downloadAttachment(attachment, message: message)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true,
                                attributes: [.posixPermissions: 0o700])
+        guard AttachmentCache.isContained(dir, in: root) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
         // createDirectory's attributes only apply to directories it creates;
         // tighten any tree an older build left at 0755.
         var ancestor = dir

@@ -114,8 +114,8 @@ final class AccountLifecycleTests: XCTestCase {
             XCTAssertEqual(try self.counts(db, account: "a@x.com"), [
                 "account": 0, "thread": 0, "threadAI": 0, "pendingThreadOp": 0,
                 "localDraft": 0, "scheduledSend": 0,
-                // Saved views are kept on purpose; see `purgeAccount`.
-                "savedView": 1,
+                // Removal deletes everything of the account (F-04).
+                "savedView": 0,
             ])
             XCTAssertEqual(try self.counts(db, account: "b@x.com"), [
                 "account": 1, "thread": 1, "threadAI": 1, "pendingThreadOp": 1,
@@ -151,27 +151,42 @@ final class AccountLifecycleTests: XCTestCase {
         }
     }
 
-    func testClearBackfillFlagsRemovesOnlyThatAccountsKeys() throws {
+    func testClearAccountDefaultsRemovesOnlyThatAccountsKeys() throws {
         let suite = "AccountLifecycleTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        for id in ["a@x.com", "b@x.com"] {
+        // "a@x.com.au" starts with "a@x.com": its keys must survive.
+        let ids = ["a@x.com", "b@x.com", "a@x.com.au"]
+        for id in ids {
             defaults.set(30, forKey: "backfill.window.\(id)")
             defaults.set(true, forKey: "backfill.starred.\(id)")
             defaults.set(true, forKey: SyncEngine.attachmentRepairDefaultsKey(accountId: id))
+            defaults.set(90, forKey: WindowBackfill.listedKey(accountId: id))
+            defaults.set(30, forKey: "syncWindowDays.\(id)")
+            defaults.set(Data("{}".utf8), forKey: "categoryFilter.label.\(id).Label_1")
+            defaults.set("accepted", forKey: CalendarInvite.rsvpDefaultsKey(
+                accountId: id, uid: "event@cal"))
         }
-        defaults.set(30, forKey: "syncWindowDays.a@x.com")
 
-        AccountLifecycle.clearBackfillFlags(accountId: "a@x.com", defaults: defaults)
+        AccountLifecycle.clearAccountDefaults(accountId: "a@x.com", defaults: defaults)
 
-        XCTAssertNil(defaults.object(forKey: "backfill.window.a@x.com"))
-        XCTAssertNil(defaults.object(forKey: "backfill.starred.a@x.com"))
-        XCTAssertNil(defaults.object(forKey: "backfill.attachments.a@x.com"))
-        XCTAssertEqual(defaults.integer(forKey: "syncWindowDays.a@x.com"), 30,
-                       "the user's Keep-mail-from choice is a preference, not sync state")
-        XCTAssertEqual(defaults.integer(forKey: "backfill.window.b@x.com"), 30)
-        XCTAssertTrue(defaults.bool(forKey: "backfill.starred.b@x.com"))
-        XCTAssertTrue(defaults.bool(forKey: "backfill.attachments.b@x.com"))
+        let gone = [
+            "backfill.window.a@x.com", "backfill.starred.a@x.com",
+            "backfill.attachments.a@x.com", "backfill.windowListed.a@x.com",
+            "syncWindowDays.a@x.com", "categoryFilter.label.a@x.com.Label_1",
+            CalendarInvite.rsvpDefaultsKey(accountId: "a@x.com", uid: "event@cal"),
+        ]
+        for key in gone { XCTAssertNil(defaults.object(forKey: key), key) }
+        for id in ["b@x.com", "a@x.com.au"] {
+            XCTAssertEqual(defaults.integer(forKey: "backfill.window.\(id)"), 30, id)
+            XCTAssertTrue(defaults.bool(forKey: "backfill.starred.\(id)"), id)
+            XCTAssertTrue(defaults.bool(forKey: "backfill.attachments.\(id)"), id)
+            XCTAssertEqual(defaults.integer(forKey: "backfill.windowListed.\(id)"), 90, id)
+            XCTAssertEqual(defaults.integer(forKey: "syncWindowDays.\(id)"), 30, id)
+            XCTAssertNotNil(defaults.data(forKey: "categoryFilter.label.\(id).Label_1"), id)
+            XCTAssertEqual(defaults.string(forKey: CalendarInvite.rsvpDefaultsKey(
+                accountId: id, uid: "event@cal")), "accepted", id)
+        }
     }
 
     // MARK: - Reauthorization

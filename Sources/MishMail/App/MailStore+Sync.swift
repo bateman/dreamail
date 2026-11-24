@@ -422,13 +422,14 @@ extension MailStore {
         let newThreads = (try? await pool.read { db in
             try MailThread.filter(fresh.contains(Column("id"))).order(Column("lastDate").desc).fetchAll(db)
         }) ?? []
-        for thread in newThreads.prefix(3) {
-            Notifier.notify(title: thread.fromDisplay,
-                            body: thread.subject.isEmpty ? thread.snippet : thread.subject,
-                            id: "mail.\(thread.id)")
+        // Generic text unless the user opted in to sender and subject (F-11).
+        let items = newThreads.map {
+            NotificationContent.MailItem(accountId: $0.accountId, threadId: $0.id,
+                                         sender: $0.fromDisplay, subject: $0.subject)
         }
-        if newThreads.count > 3 {
-            Notifier.notify(title: "MishMail", body: "\(newThreads.count) new messages", id: "mail.batch")
+        for request in NotificationContent.newMail(
+            items, showDetails: NotificationContent.showsDetails()) {
+            Notifier.notify(request)
         }
     }
 

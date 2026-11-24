@@ -958,6 +958,7 @@ struct GeneralSettings: View {
     @State private var isDefaultMailApp = false
     @State private var settingDefaultMail = false
     @State private var defaultMailError: String?
+    @AppStorage(NotificationContent.showDetailsKey) private var notificationDetails = false
 
     /// Debug builds use a separate bundle id + sandbox; claiming mailto: only
     /// affects this build (not the installed Release app in /Applications).
@@ -1023,6 +1024,14 @@ struct GeneralSettings: View {
                     Text("Default email app")
                 } footer: {
                     Text(defaultMailFooter)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section {
+                    Toggle("Show sender and subject in notifications", isOn: $notificationDetails)
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    Text("Off: notifications only say “New mail”, so no mail details are kept in Notification Center.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

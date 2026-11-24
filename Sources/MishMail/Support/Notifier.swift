@@ -8,12 +8,31 @@ enum Notifier {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
     }
 
-    static func notify(title: String, body: String, id: String) {
+    /// Posts what `NotificationContent` decided; callers never build the
+    /// text themselves, so the privacy default cannot be bypassed.
+    static func notify(_ request: NotificationContent.Request) {
         let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        content.title = request.title
+        content.body = request.body
+        let request = UNNotificationRequest(identifier: request.id, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+
+    /// Withdraws the delivered and pending notifications of a removed
+    /// account, plus any from earlier builds whose identifiers name no
+    /// account (see `NotificationContent.belongs`).
+    static func removeNotifications(forAccount accountId: String) {
+        let center = UNUserNotificationCenter.current()
+        center.getDeliveredNotifications { delivered in
+            let ids = delivered.map(\.request.identifier)
+                .filter { NotificationContent.belongs($0, toAccount: accountId) }
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
+        center.getPendingNotificationRequests { pending in
+            let ids = pending.map(\.identifier)
+                .filter { NotificationContent.belongs($0, toAccount: accountId) }
+            if !ids.isEmpty { center.removePendingNotificationRequests(withIdentifiers: ids) }
+        }
     }
 
     static func setBadge(_ count: Int) {

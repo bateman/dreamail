@@ -490,9 +490,9 @@ extension MailStore {
                     try await deliver(p)
                     _ = try? await db.write { db in try ScheduledSend.deleteOne(db, key: rowId) }
                     holds[rowId] = nil
-                    Notifier.notify(title: "Scheduled message sent",
-                                    body: s.subject.isEmpty ? s.toHeader : s.subject,
-                                    id: "scheduled.\(rowId)")
+                    Notifier.notify(NotificationContent.scheduledSent(
+                        accountId: s.accountId, rowId: rowId, subject: s.subject,
+                        showDetails: NotificationContent.showsDetails()))
                     continue
                 } catch {
                     failure = error

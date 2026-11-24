@@ -32,6 +32,7 @@ extension MailStore {
             try MailThread.filter(Column("reminderAt") != nil && Column("reminderAt") <= Date()).fetchAll(db)
         }) ?? []
         var changed = false
+        var reminded: [NotificationContent.MailItem] = []
         for thread in due {
             changed = true
             // "Remind if no reply": only *inbound* activity cancels the nudge.
@@ -44,9 +45,9 @@ extension MailStore {
                 reminderSetAt: thread.reminderSetAt,
                 lastInboundDate: thread.lastInboundDate)
             if !replied {
-                Notifier.notify(title: "Follow up: \(thread.fromDisplay)",
-                                body: thread.subject.isEmpty ? thread.snippet : thread.subject,
-                                id: "reminder.\(thread.id)")
+                reminded.append(NotificationContent.MailItem(
+                    accountId: thread.accountId, threadId: thread.id,
+                    sender: thread.fromDisplay, subject: thread.subject))
             }
             // Compare-and-clear: the narrow UPDATE is only *safe* because of
             // `AND reminderAt = ?`. Without the predicate, a reminder the user
@@ -59,6 +60,11 @@ extension MailStore {
                     sql: LocalReminders.clearSQL,
                     arguments: [thread.id, thread.reminderAt])
             }
+        }
+        // Generic text unless the user opted in to sender and subject (F-11).
+        for request in NotificationContent.reminders(
+            reminded, showDetails: NotificationContent.showsDetails()) {
+            Notifier.notify(request)
         }
         if changed { reloadThreads() }
     }
