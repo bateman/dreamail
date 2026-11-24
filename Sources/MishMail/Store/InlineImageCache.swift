@@ -588,8 +588,9 @@ actor InlineImageStore {
             }
             if (stored || !stale.isEmpty), !Task.isCancelled {
                 await self?.countTransaction()
+                let marks = stale
                 _ = try? await db.write { db in
-                    try InlineImageCache.touch(db, messageIds: stale, now: stamp)
+                    try InlineImageCache.touch(db, messageIds: marks, now: stamp)
                     try InlineImageCache.evict(db, budget: budget)
                 }
             }
