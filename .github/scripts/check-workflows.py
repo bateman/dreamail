@@ -1,89 +1,97 @@
 #!/usr/bin/env python3
-"""Fail if a GitHub Actions workflow loses its supply-chain hardening.
+"""Tripwire: fail if a GitHub Actions workflow loses its hardening.
 
-Checks every workflow file given (default: .github/workflows/*.yml|yaml):
+This catches regressions in review; it is not a security boundary, since a
+pull request can edit this checker too. Server-side enforcement is the
+repository setting "Require actions to be pinned to a full-length commit
+SHA" plus the default read-only GITHUB_TOKEN.
 
-  * a top-level `permissions:` block exists and grants nothing beyond read
-    (a job that needs more raises it in its own `permissions:`);
-  * no `permissions: write-all` anywhere;
-  * every `uses:` of a remote action or reusable workflow names a full
-    40-character commit SHA, followed by a `# <version>` comment so the
-    pin can be reviewed and updated (local `./` actions and `docker://`
-    images pinned by `@sha256:` digest are accepted);
-  * no `brew install`, which always takes the newest formula and so cannot
-    pin a tool's version (see .github/scripts/install-xcodegen.sh).
+It fails closed: it accepts only the plain block forms below, and any other
+line that mentions `uses` or `permissions` is a violation, so flow mappings,
+quoted keys, refs on the next line and similar variants are rejected by
+construction rather than chased one by one.
 
-Standard library only, line-based: the runners have no YAML module and these
-rules need no full parse. Exit status 1 lists every violation found.
+  * A top-level `permissions:` block must exist, and each entry under it
+    must be `read` or `none`. A job that needs more opens its own indented
+    `permissions:` block. Inline forms (`write-all`, `{ ... }`) are rejected.
+  * Every step `uses:` must be `owner/repo[/path]@<40-hex SHA> # vX.Y.Z`.
+    Local `./` actions and `docker://` images are rejected; none are used.
+    The version comment is not checked against the SHA (that needs the
+    network); Dependabot (.github/dependabot.yml) keeps the two in step.
+  * No `brew install|reinstall|upgrade|bundle`, which take the newest
+    formula and cannot pin a version (see install-xcodegen.sh).
+  * No `pull_request_target` or `workflow_run` triggers, which run with
+    the base repository's secrets and write token on untrusted input.
+
+Standard library only, line-based. Exit status 1 lists every violation.
 """
 
 import re
 import sys
 from pathlib import Path
 
-SHA_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(/[^@\s]+)?@[0-9a-f]{40}$")
-DOCKER_DIGEST = re.compile(r"^docker://[^@\s]+@sha256:[0-9a-f]{64}$")
-USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(?P<ref>[^\s#]+)\s*(?P<comment>#.*)?$")
-VERSION_COMMENT = re.compile(r"^#\s*v?\d+(\.\d+)*\S*")
-PERMISSIONS = re.compile(r"^(?P<indent>\s*)permissions:\s*(?P<value>[^#]*?)\s*(#.*)?$")
-BREW_INSTALL = re.compile(r"\bbrew\s+install\b")
+USES = re.compile(
+    r"^\s*(?:- )?uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?"
+    r"@[0-9a-f]{40} # v\d+(?:\.\d+)*$"
+)
+PERMISSIONS_BLOCK = re.compile(r"^(?P<indent> *)permissions:$")
+READ_ENTRY = re.compile(r"^ +[a-z-]+: (?:read|none)$")
+BREW = re.compile(r"\bbrew\b.*\b(?:install|reinstall|upgrade|bundle)\b")
+TRIGGERS = re.compile(r"\b(?:pull_request_target|workflow_run)\b")
+
+
+def code_part(line: str) -> str:
+    """The line without a trailing ` # comment`; '' for comment-only lines."""
+    if line.lstrip().startswith("#"):
+        return ""
+    return line.split(" #", 1)[0].rstrip()
 
 
 def check(path: Path) -> list[str]:
     errors = []
     lines = path.read_text().splitlines()
-    top_level_permissions = None
+    top_level = False
+    in_top_block = False
 
     for number, line in enumerate(lines, start=1):
         where = f"{path}:{number}"
-        if line.lstrip().startswith("#"):
+        code = code_part(line)
+        if not code.strip():
             continue
 
-        match = PERMISSIONS.match(line)
-        if match:
-            value = match["value"].strip("'\"")
-            if value == "write-all":
-                errors.append(f"{where}: `permissions: write-all` is not allowed")
-            if match["indent"] == "":
-                top_level_permissions = number
-                if value in ("", "{}"):
-                    # Block form: every entry below must be read or none.
-                    for offset, entry in enumerate(lines[number:], start=number + 1):
-                        if entry.strip() == "" or entry.lstrip().startswith("#"):
-                            continue
-                        if not entry.startswith((" ", "\t")):
-                            break
-                        scope, _, level = entry.split("#")[0].partition(":")
-                        if level.strip() not in ("read", "none"):
-                            errors.append(
-                                f"{path}:{offset}: top-level `{scope.strip()}: {level.strip()}` "
-                                "grants more than read; raise it in the job that needs it"
-                            )
-                elif value != "read-all":
-                    errors.append(
-                        f"{where}: top-level `permissions: {value}` grants more than read"
-                    )
+        if in_top_block:
+            if code.startswith(" "):
+                if not READ_ENTRY.match(code):
+                    errors.append(f"{where}: top-level permissions may only be `read` or "
+                                  "`none`; raise a scope in the job that needs it")
+                continue
+            in_top_block = False
 
-        match = USES.match(line)
-        if match:
-            ref = match["ref"].strip("'\"")
-            if ref.startswith("./"):
-                pass
-            elif ref.startswith("docker://"):
-                if not DOCKER_DIGEST.match(ref):
-                    errors.append(f"{where}: `{ref}` is not pinned to an @sha256: digest")
-            elif not SHA_REF.match(ref):
-                errors.append(f"{where}: `{ref}` is not pinned to a full commit SHA")
-            elif not (match["comment"] and VERSION_COMMENT.match(match["comment"])):
-                errors.append(f"{where}: `{ref}` needs a trailing `# vX.Y.Z` version comment")
+        if re.search(r"\bpermissions\b", code):
+            match = PERMISSIONS_BLOCK.match(code)
+            if not match:
+                errors.append(f"{where}: unsupported permissions form; use a block "
+                              "`permissions:` with one `scope: level` per line")
+            elif match["indent"] == "":
+                top_level = in_top_block = True
 
-        if BREW_INSTALL.search(line):
-            errors.append(
-                f"{where}: `brew install` cannot pin a version; install a checksummed "
-                "release instead (see .github/scripts/install-xcodegen.sh)"
-            )
+        if re.search(r"\buses\b", code) and not USES.match(line):
+            errors.append(f"{where}: `uses:` must be `owner/repo@<full commit SHA> # vX.Y.Z` "
+                          "on one line, as a plain block key")
 
-    if top_level_permissions is None:
+        # Join shell continuations so `brew \` + newline + `install` is seen.
+        logical, follow = code, number
+        while logical.endswith("\\") and follow < len(lines):
+            logical = logical[:-1] + " " + code_part(lines[follow])
+            follow += 1
+        if BREW.search(logical):
+            errors.append(f"{where}: Homebrew cannot pin a version; install a "
+                          "checksummed release instead (see install-xcodegen.sh)")
+
+        if TRIGGERS.search(code):
+            errors.append(f"{where}: `pull_request_target` and `workflow_run` are not allowed")
+
+    if not top_level:
         errors.insert(0, f"{path}: no top-level `permissions:` block (use `contents: read`)")
     return errors
 

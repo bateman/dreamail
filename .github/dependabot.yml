@@ -1,0 +1,11 @@
+# Keeps the workflow actions' commit-SHA pins and their `# vX.Y.Z` comments
+# current, so security fixes in pinned actions reach CI (finding F-10).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

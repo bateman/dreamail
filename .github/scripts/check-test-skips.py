@@ -13,6 +13,10 @@ The allowlist (.github/test-skip-allowlist.txt) names tests whose skip
 depends on the runner, one `Class.testMethod` per line, `#` for comments.
 An allowlisted test that did not skip is reported, so stale entries show.
 
+It understands only XCTest's console output ("Test Case '-[...]' skipped",
+"Executed N tests"); a runner other than xcodebuild/XCTest needs its own
+patterns here.
+
 Usage: check-test-skips.py LOG [ALLOWLIST]
 """
 

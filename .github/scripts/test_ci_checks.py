@@ -47,15 +47,26 @@ class CheckWorkflowsTests(TempFiles):
         jobs:
           build:
             runs-on: macos-26
+            permissions:
+              contents: write
             steps:
               - uses: actions/checkout@{SHA} # v4.4.0
-              - uses: ./local-action
               - name: Cache
                 uses: actions/cache/restore@{SHA} # v4.3.0
+              - run: |
+                  make test \\
+                    -j2
         """)
+    STEP = "      - uses: actions/checkout@" + SHA + " # v4.4.0\n"
 
     def errors(self, text: str) -> list[str]:
         return check_workflows.check(self.write("workflow.yml", text))
+
+    def assertRejected(self, text: str, fragment: str = ""):
+        errors = self.errors(text)
+        self.assertTrue(errors, "accepted:\n" + text)
+        if fragment:
+            self.assertTrue(any(fragment in e for e in errors), errors)
 
     def test_hardened_workflow_passes(self):
         self.assertEqual(self.errors(self.HARDENED), [])
@@ -71,58 +82,69 @@ class CheckWorkflowsTests(TempFiles):
         text = self.HARDENED.replace("permissions:\n  contents: read\n", "")
         self.assertIn("no top-level `permissions:`", self.errors(text)[0])
 
-    def test_job_level_permissions_do_not_count_as_top_level(self):
-        text = self.HARDENED.replace("permissions:\n  contents: read\n", "").replace(
-            "    runs-on: macos-26\n", "    runs-on: macos-26\n    permissions:\n      contents: read\n")
+    def test_job_level_block_does_not_count_as_top_level(self):
+        text = self.HARDENED.replace("permissions:\n  contents: read\n", "")
+        self.assertIn("permissions:\n      contents: write", text)
         self.assertIn("no top-level `permissions:`", self.errors(text)[0])
 
     def test_top_level_write_fails(self):
-        text = self.HARDENED.replace("contents: read", "contents: write")
-        self.assertTrue(any("grants more than read" in e for e in self.errors(text)))
+        text = self.HARDENED.replace("  contents: read", "  contents: write")
+        self.assertRejected(text, "may only be `read` or `none`")
 
-    def test_write_all_fails_anywhere(self):
-        text = self.HARDENED.replace(
-            "    runs-on: macos-26\n", "    runs-on: macos-26\n    permissions: write-all\n")
-        self.assertTrue(any("write-all" in e for e in self.errors(text)))
+    def test_unsupported_permissions_forms_fail(self):
+        for form in ("permissions: write-all", "permissions: read-all",
+                     "permissions: { contents: read }", '"permissions": write-all',
+                     "permissions : write-all"):
+            for where in ("top", "job"):
+                with self.subTest(form=form, where=where):
+                    if where == "top":
+                        text = self.HARDENED.replace("permissions:\n  contents: read", form)
+                    else:
+                        text = self.HARDENED.replace(
+                            "    permissions:\n      contents: write", "    " + form)
+                    self.assertRejected(text, "unsupported permissions form")
 
-    def test_tag_reference_fails(self):
-        text = self.HARDENED.replace(f"actions/checkout@{SHA} # v4.4.0", "actions/checkout@v4")
-        self.assertTrue(any("actions/checkout@v4" in e for e in self.errors(text)))
+    def test_unpinned_or_unusual_uses_fail(self):
+        variants = [
+            "      - uses: actions/checkout@v4\n",
+            "      - uses: actions/checkout@main\n",
+            f"      - uses: actions/checkout@{SHA[:12]} # v4.4.0\n",
+            f"      - uses: actions/checkout@{SHA}\n",
+            f"      - uses: actions/checkout@{SHA} # pinned\n",
+            f'      - uses: "actions/checkout@{SHA}" # v4.4.0\n',
+            "      - { uses: actions/checkout@v4 }\n",
+            '      - "uses": actions/cache@v4\n',
+            "      - uses : actions/checkout@v4\n",
+            "      - uses:\n          actions/checkout@v4\n",
+            "      - uses: ./local-action\n",
+            "      - uses: docker://alpine:3.20\n",
+        ]
+        for variant in variants:
+            with self.subTest(variant=variant):
+                self.assertRejected(self.HARDENED.replace(self.STEP, variant), "`uses:`")
 
-    def test_short_sha_fails(self):
-        text = self.HARDENED.replace(f"checkout@{SHA}", f"checkout@{SHA[:12]}")
-        self.assertTrue(any("not pinned to a full commit SHA" in e for e in self.errors(text)))
+    def test_homebrew_fails(self):
+        for run in ("brew install xcodegen", "brew reinstall xcodegen",
+                    "brew upgrade", "brew bundle", "HOMEBREW_X=1 brew install x"):
+            with self.subTest(run=run):
+                self.assertRejected(self.HARDENED + f"      - run: {run}\n", "Homebrew")
+        continued = self.HARDENED + "      - run: |\n          brew \\\n            install xcodegen\n"
+        self.assertRejected(continued, "Homebrew")
 
-    def test_branch_reference_fails(self):
-        text = self.HARDENED.replace(f"actions/checkout@{SHA} # v4.4.0", "actions/checkout@main")
-        self.assertTrue(any("not pinned" in e for e in self.errors(text)))
-
-    def test_sha_without_version_comment_fails(self):
-        text = self.HARDENED.replace(" # v4.4.0", "")
-        self.assertTrue(any("version comment" in e for e in self.errors(text)))
-
-    def test_quoted_tag_reference_fails(self):
-        text = self.HARDENED.replace(f"actions/checkout@{SHA} # v4.4.0", '"actions/checkout@v4"')
-        self.assertTrue(any("not pinned" in e for e in self.errors(text)))
-
-    def test_docker_image_needs_a_digest(self):
-        text = self.HARDENED.replace("./local-action", "docker://alpine:3.20")
-        self.assertTrue(any("sha256" in e for e in self.errors(text)))
-        digest = "a" * 64
-        text = self.HARDENED.replace("./local-action", f"docker://alpine@sha256:{digest}")
-        self.assertEqual(self.errors(text), [])
-
-    def test_brew_install_fails(self):
-        text = self.HARDENED + "          - run: brew install xcodegen\n"
-        self.assertTrue(any("brew install" in e for e in self.errors(text)))
+    def test_dangerous_triggers_fail(self):
+        for trigger in ("pull_request_target", "workflow_run"):
+            with self.subTest(trigger=trigger):
+                text = self.HARDENED.replace("on: [push]", f"on: [push, {trigger}]")
+                self.assertRejected(text, "not allowed")
 
     def test_commented_lines_are_ignored(self):
-        text = self.HARDENED + "          # - uses: actions/checkout@v4\n          # brew install x\n"
+        text = self.HARDENED + ("      # - uses: actions/checkout@v4\n"
+                                "      # brew install x; permissions: write-all\n")
         self.assertEqual(self.errors(text), [])
 
     def test_workflow_before_the_hardening_fails(self):
-        # The ci.yml of 45e9507, before this check existed: the regression
-        # this guards against.
+        # The shape of ci.yml at 45e9507, before this check existed: the
+        # regression this guards against.
         before = """\
             name: CI
             on:

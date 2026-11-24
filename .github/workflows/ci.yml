@@ -22,6 +22,7 @@ jobs:
   workflow-hardening:
     name: Workflow hardening
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -29,7 +30,7 @@ jobs:
 
       # Every action pinned to a full commit SHA, a read-only top-level
       # permissions block, no unpinned `brew install` (finding F-10).
-      - name: Check workflow pinning and permissions
+      - name: Check workflow pinning and token scope
         run: python3 .github/scripts/check-workflows.py
 
       - name: Test the CI checks
@@ -38,6 +39,8 @@ jobs:
   test:
     name: Unit tests & build
     runs-on: macos-26
+    # A cold build and test run takes about six minutes.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -99,6 +102,8 @@ jobs:
     # manual run and waits for it before it publishes (`make ui-test-ci`).
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
+    # About eight minutes with setup.
+    timeout-minutes: 25
     # Separate job so a UI hang or desktop hijack cannot hide unit-test results.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
