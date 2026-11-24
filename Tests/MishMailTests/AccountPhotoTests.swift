@@ -308,11 +308,23 @@ final class AccountPhotoTests: XCTestCase {
 
     func testIntervalPolicy() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertTrue(AccountPhotoPolicy.isDue(lastFetchedAt: nil, now: now))
-        XCTAssertFalse(AccountPhotoPolicy.isDue(lastFetchedAt: now.addingTimeInterval(-3600), now: now))
-        XCTAssertTrue(AccountPhotoPolicy.isDue(
-            lastFetchedAt: now.addingTimeInterval(-AccountPhotoPolicy.refreshInterval), now: now))
-        XCTAssertTrue(AccountPhotoPolicy.isDue(lastFetchedAt: now.addingTimeInterval(3600), now: now),
+        func rec(_ ago: TimeInterval, photo: Bool, failed: Bool) -> AccountPhotoRecord {
+            AccountPhotoRecord(accountId: "a", imageData: photo ? Data([1]) : nil,
+                               fetchedAt: now.addingTimeInterval(-ago), lastAttemptFailed: failed)
+        }
+        let day = AccountPhotoPolicy.refreshInterval
+        let hour = AccountPhotoPolicy.failureRetryInterval
+        XCTAssertTrue(AccountPhotoPolicy.isDue(nil, now: now))
+        XCTAssertFalse(AccountPhotoPolicy.isDue(rec(3600, photo: true, failed: false), now: now))
+        XCTAssertTrue(AccountPhotoPolicy.isDue(rec(day, photo: true, failed: false), now: now))
+        XCTAssertFalse(AccountPhotoPolicy.isDue(rec(hour - 1, photo: false, failed: true), now: now))
+        XCTAssertTrue(AccountPhotoPolicy.isDue(rec(hour, photo: false, failed: true), now: now),
+                      "a failure with nothing to show retries within the hour")
+        XCTAssertFalse(AccountPhotoPolicy.isDue(rec(2 * hour, photo: true, failed: true), now: now),
+                       "a failure with a photo shown waits the full day")
+        XCTAssertFalse(AccountPhotoPolicy.isDue(rec(2 * hour, photo: false, failed: false), now: now),
+                       "\"no photo\" is an answer, not a failure")
+        XCTAssertTrue(AccountPhotoPolicy.isDue(rec(-3600, photo: true, failed: false), now: now),
                       "a clock set back does not freeze the photo")
     }
 
@@ -430,6 +442,269 @@ final class AccountPhotoTests: XCTestCase {
         XCTAssertEqual(try photoCount(q), 0)
     }
 
+    // MARK: - Failure keeps the stored image (R4)
+
+    func testFailureNeverRewritesTheImageFromAnEarlierRead() async throws {
+        let q = try makeDB()
+        try insertAccount(q, "a@x.com")
+        let url = photoURL
+        let good = MockPhotoTransport(body: Self.image(width: 96, height: 96))
+        _ = await refresher(q, good).refresh(accountId: "a@x.com", force: true) { url }
+        let newer = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
+        let failing = MockPhotoTransport(error: URLError(.networkConnectionLost))
+        let outcome = await refresher(q, failing).refresh(accountId: "a@x.com", force: true) {
+            // Another writer stores a newer photo after the refresher read
+            // the row and before its fetch fails.
+            try await q.write { db in
+                try db.execute(sql: "UPDATE accountPhoto SET imageData = ? WHERE accountId = ?",
+                               arguments: [newer, "a@x.com"])
+            }
+            return url
+        }
+        XCTAssertEqual(outcome, .failed)
+        let row = try XCTUnwrap(stored(q, "a@x.com"))
+        XCTAssertEqual(row.imageData, newer, "the failure only records the attempt")
+        XCTAssertTrue(row.lastAttemptFailed)
+    }
+
+    func testFailureWithNoPhotoRetriesAfterAnHour() async throws {
+        let q = try makeDB()
+        try insertAccount(q, "a@x.com")
+        let clock = PhotoTestClock()
+        let url = photoURL
+        let failing = MockPhotoTransport(error: URLError(.notConnectedToInternet))
+        let r = refresher(q, failing, clock: clock)
+        let first = await r.refreshScheduling(accountId: "a@x.com", force: false) { url }
+        XCTAssertEqual(first.outcome, .failed)
+        XCTAssertEqual(first.nextDue, clock.now.addingTimeInterval(AccountPhotoPolicy.failureRetryInterval))
+        clock.advance(by: 30 * 60)
+        do {
+            let outcome = await r.refresh(accountId: "a@x.com", force: false) { url }
+            XCTAssertEqual(outcome, .notDue)
+        }
+        clock.advance(by: 31 * 60)
+        do {
+            let outcome = await r.refresh(accountId: "a@x.com", force: false) { url }
+            XCTAssertEqual(outcome, .failed)
+        }
+        XCTAssertEqual(failing.requests.count, 2)
+
+        // Once a photo is stored, a failure waits the full day.
+        let good = MockPhotoTransport(body: Self.image(width: 96, height: 96))
+        _ = await refresher(q, good, clock: clock).refresh(accountId: "a@x.com", force: true) { url }
+        let afterFailure = await r.refreshScheduling(accountId: "a@x.com", force: true) { url }
+        XCTAssertEqual(afterFailure.nextDue, clock.now.addingTimeInterval(AccountPhotoPolicy.refreshInterval))
+        clock.advance(by: 2 * 60 * 60)
+        do {
+            let outcome = await r.refresh(accountId: "a@x.com", force: false) { url }
+            XCTAssertEqual(outcome, .notDue)
+        }
+    }
+
+    func testSuccessReportsTheNextDayAsDue() async throws {
+        let q = try makeDB()
+        try insertAccount(q, "a@x.com")
+        let clock = PhotoTestClock()
+        let url = photoURL
+        let good = MockPhotoTransport(body: Self.image(width: 96, height: 96))
+        let result = await refresher(q, good, clock: clock)
+            .refreshScheduling(accountId: "a@x.com", force: true) { url }
+        XCTAssertEqual(result.outcome, .stored(hasPhoto: true))
+        XCTAssertEqual(result.nextDue, clock.now.addingTimeInterval(AccountPhotoPolicy.refreshInterval))
+        let demo = await refresher(q, good, demo: true)
+            .refreshScheduling(accountId: "a@x.com", force: true) { url }
+        XCTAssertEqual(demo, AccountPhotoRefresher.Result(outcome: .skippedDemo, nextDue: nil))
+    }
+
+    func testCancelledRefreshWritesNothing() async throws {
+        let q = try makeDB()
+        try insertAccount(q, "a@x.com")
+        let good = MockPhotoTransport(body: Self.image(width: 96, height: 96))
+        let r = refresher(q, good)
+        let url = photoURL
+        let gate = PhotoCounter()
+        let task = Task {
+            await r.refresh(accountId: "a@x.com", force: true) {
+                gate.bump()
+                while !Task.isCancelled { await Task.yield() }
+                return url
+            }
+        }
+        while gate.value == 0 { await Task.yield() }
+        task.cancel()
+        let outcome = await task.value
+        XCTAssertEqual(outcome, .cancelled)
+        XCTAssertNil(try stored(q, "a@x.com"))
+    }
+
+    // MARK: - Clean re-encode (R3)
+
+    func testReencodeDropsColorProfileAndMetadata() throws {
+        // A Display P3 JPEG with EXIF and GPS metadata.
+        let p3 = try XCTUnwrap(CGColorSpace(name: CGColorSpace.displayP3))
+        let ctx = try XCTUnwrap(CGContext(data: nil, width: 300, height: 200, bitsPerComponent: 8,
+                                          bytesPerRow: 0, space: p3,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.setFillColor(CGColor(colorSpace: p3, components: [1, 0, 0, 1])!)
+        ctx.fill(CGRect(x: 0, y: 0, width: 300, height: 200))
+        let source = NSMutableData()
+        let dest = try XCTUnwrap(CGImageDestinationCreateWithData(
+            source as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil))
+        let meta: [CFString: Any] = [
+            kCGImagePropertyExifDictionary: [kCGImagePropertyExifUserComment: "secret comment"],
+            kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 41.1, kCGImagePropertyGPSLatitudeRef: "N"],
+        ]
+        CGImageDestinationAddImage(dest, try XCTUnwrap(ctx.makeImage()), meta as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+        let inProps = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(
+            CGImageSourceCreateWithData(source as CFData, nil)!, 0, nil) as? [CFString: Any])
+        XCTAssertNotNil(inProps[kCGImagePropertyGPSDictionary], "fixture carries metadata")
+
+        let out = try XCTUnwrap(AccountPhotoPolicy.normalizedImage(from: source as Data))
+        XCTAssertLessThanOrEqual(out.count, AccountPhotoPolicy.maxStoredBytes)
+        let outSource = try XCTUnwrap(CGImageSourceCreateWithData(out as CFData, nil))
+        XCTAssertEqual(CGImageSourceGetType(outSource) as String?, UTType.png.identifier)
+        let props = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(outSource, 0, nil)
+            as? [CFString: Any])
+        XCTAssertNil(props[kCGImagePropertyExifDictionary])
+        XCTAssertNil(props[kCGImagePropertyGPSDictionary])
+        XCTAssertNil(props[kCGImagePropertyTIFFDictionary])
+        let profile = props[kCGImagePropertyProfileName] as? String ?? ""
+        XCTAssertFalse(profile.localizedCaseInsensitiveContains("P3"), profile)
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(outSource, 0, nil))
+        XCTAssertNotEqual(image.colorSpace?.name, CGColorSpace.displayP3)
+        XCTAssertEqual(image.bitsPerComponent, 8)
+        XCTAssertEqual(max(image.width, image.height), AccountPhotoPolicy.maxPixelSize)
+        XCTAssertFalse(String(decoding: out, as: UTF8.self).contains("secret"))
+    }
+
+    func testMultiFrameImageIsRefused() throws {
+        let out = NSMutableData()
+        let dest = try XCTUnwrap(CGImageDestinationCreateWithData(
+            out as CFMutableData, UTType.png.identifier as CFString, 2, nil))
+        for _ in 0..<2 {
+            let frame = try XCTUnwrap(CGImageSourceCreateImageAtIndex(
+                CGImageSourceCreateWithData(Self.image(width: 8, height: 8) as CFData, nil)!, 0, nil))
+            CGImageDestinationAddImage(dest, frame, nil)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+        let src = try XCTUnwrap(CGImageSourceCreateWithData(out as CFData, nil))
+        XCTAssertEqual(CGImageSourceGetCount(src), 2, "fixture is an animated PNG")
+        XCTAssertNil(AccountPhotoPolicy.normalizedImage(from: out as Data))
+    }
+
+    // MARK: - URL hardening (S1)
+
+    func testPercentEncodedOrMalformedHostsAreRefused() {
+        for raw in ["https://lh3%2Egoogleusercontent.com/a/x",
+                    "https://lh3.googleusercontent%2Ecom/a/x",
+                    "https://%6Ch3.googleusercontent.com/a/x",
+                    "https://lh3.googleusercontent.com./a/x"] {
+            XCTAssertNil(AccountPhotoPolicy.validatedURL(raw), raw)
+        }
+    }
+
+    func testFetchValidatesTheURLItself() async {
+        let mock = MockPhotoTransport(body: Self.image(width: 8, height: 8))
+        for raw in ["http://lh3.googleusercontent.com/a", "https://lh3.googleusercontent.com:444/a",
+                    "https://u@lh3.googleusercontent.com/a", "https://evil.example.com/a"] {
+            do {
+                _ = try await AccountPhotoFetcher.fetch(URL(string: raw)!, transport: mock.transport)
+                XCTFail("fetched \(raw)")
+            } catch {
+                XCTAssertEqual(error as? AccountPhotoError, .notAllowedURL, raw)
+            }
+        }
+        XCTAssertTrue(mock.requests.isEmpty)
+    }
+
+    // MARK: - The real transport, over a stub URLProtocol (R2)
+
+    private func liveFetch(_ raw: String) async throws -> Data {
+        let config = AccountPhotoSession.configuration
+        config.protocolClasses = [PhotoStubProtocol.self]
+        let session = AccountPhotoSession.makeSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+        return try await AccountPhotoFetcher.fetch(
+            URL(string: raw)!, transport: .streaming(session: session))
+    }
+
+    private let otherPhotoURL = "https://lh3.googleusercontent.com/a/other=s96-c"
+
+    func testLiveTransportFetchesWithoutTokenOrCookies() async throws {
+        PhotoStubProtocol.state.reset([
+            photoURL: .init(status: 200, headers: ["Content-Type": "image/png"],
+                            body: Self.image(width: 96, height: 96)),
+        ])
+        let png = try await liveFetch(photoURL)
+        XCTAssertNotNil(pixelSize(png))
+        let seen = PhotoStubProtocol.state.requests
+        XCTAssertEqual(seen.map { $0.url?.absoluteString }, [photoURL])
+        XCTAssertNil(seen.first?.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertNil(seen.first?.value(forHTTPHeaderField: "Cookie"))
+    }
+
+    func testLiveTransportFollowsNoRedirect() async throws {
+        let image = Self.image(width: 96, height: 96)
+        for target in ["https://evil.example.com/me.png", otherPhotoURL] {
+            PhotoStubProtocol.state.reset([
+                photoURL: .init(status: 302, headers: ["Location": target, "Content-Type": "image/png"],
+                                body: Data(), redirectTo: URL(string: target)),
+                target: .init(status: 200, headers: ["Content-Type": "image/png"], body: image),
+            ])
+            do {
+                _ = try await liveFetch(photoURL)
+                XCTFail("redirect to \(target) was followed and accepted")
+            } catch {
+                // Refused (as a 3xx) or failed: either way nothing accepted.
+            }
+            XCTAssertEqual(PhotoStubProtocol.state.requests.map { $0.url?.absoluteString }, [photoURL],
+                           "no second request for \(target)")
+        }
+    }
+
+    func testLiveTransportStopsAtTheCapWithoutContentLength() async {
+        var body = Self.image(width: 8, height: 8)
+        body.append(Data(count: AccountPhotoPolicy.maxBytes))
+        PhotoStubProtocol.state.reset([
+            photoURL: .init(status: 200, headers: ["Content-Type": "image/png"], body: body, chunked: true),
+        ])
+        do {
+            _ = try await liveFetch(photoURL)
+            XCTFail("oversized body accepted")
+        } catch {
+            XCTAssertEqual(error as? AccountPhotoError, .tooLarge)
+        }
+    }
+
+    func testLiveTransportRefusesADeclaredLengthOverTheCap() async {
+        PhotoStubProtocol.state.reset([
+            photoURL: .init(status: 200,
+                            headers: ["Content-Type": "image/png",
+                                      "Content-Length": String(AccountPhotoPolicy.maxBytes + 1)],
+                            body: Self.image(width: 8, height: 8)),
+        ])
+        do {
+            _ = try await liveFetch(photoURL)
+            XCTFail("declared oversized body accepted")
+        } catch {
+            XCTAssertEqual(error as? AccountPhotoError, .tooLarge)
+        }
+    }
+
+    func testLiveTransportRefusesNon200() async {
+        PhotoStubProtocol.state.reset([
+            photoURL: .init(status: 500, headers: ["Content-Type": "image/png"],
+                            body: Self.image(width: 8, height: 8)),
+        ])
+        do {
+            _ = try await liveFetch(photoURL)
+            XCTFail("500 accepted")
+        } catch {
+            XCTAssertEqual(error as? AccountPhotoError, .badStatus)
+        }
+    }
+
     /// The photo path writes nowhere but the database, and logs nothing.
     func testPhotoCodeHasNoFileWritesOrLogging() throws {
         let root = URL(fileURLWithPath: #filePath)
@@ -486,6 +761,66 @@ final class MockPhotoTransport: @unchecked Sendable {
             return (body, response)
         }
     }
+}
+
+/// Serves canned replies inside a URLSession built with `protocolClasses`,
+/// and records every request that reaches it.
+final class PhotoStubProtocol: URLProtocol {
+    struct Reply {
+        var status: Int
+        var headers: [String: String]
+        var body: Data
+        var redirectTo: URL? = nil
+        var chunked = false
+    }
+
+    final class State: @unchecked Sendable {
+        private let lock = NSLock()
+        private var replies: [String: Reply] = [:]
+        private var seen: [URLRequest] = []
+        func reset(_ replies: [String: Reply]) {
+            lock.withLock { self.replies = replies; seen = [] }
+        }
+        func take(_ request: URLRequest) -> Reply? {
+            lock.withLock {
+                seen.append(request)
+                return replies[request.url?.absoluteString ?? ""]
+            }
+        }
+        var requests: [URLRequest] { lock.withLock { seen } }
+    }
+
+    static let state = State()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url, let reply = Self.state.take(request) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        let response = HTTPURLResponse(url: url, statusCode: reply.status,
+                                       httpVersion: "HTTP/1.1", headerFields: reply.headers)!
+        if let target = reply.redirectTo {
+            client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: target),
+                                redirectResponse: response)
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if reply.chunked {
+            var offset = 0
+            while offset < reply.body.count {
+                let end = min(offset + 64 * 1024, reply.body.count)
+                client?.urlProtocol(self, didLoad: reply.body.subdata(in: offset..<end))
+                offset = end
+            }
+        } else if !reply.body.isEmpty {
+            client?.urlProtocol(self, didLoad: reply.body)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 final class PhotoTestClock: @unchecked Sendable {

@@ -2770,6 +2770,7 @@ final class AppDatabase: @unchecked Sendable {
                     .references("account", onDelete: .cascade)
                 t.column("imageData", .blob)
                 t.column("fetchedAt", .datetime).notNull()
+                t.column("lastAttemptFailed", .boolean).notNull().defaults(to: false)
             }
         }
         return m

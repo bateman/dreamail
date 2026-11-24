@@ -12,8 +12,10 @@ minor versions may still change behavior.
   new sign-in); the image is fetched only from Google's photo hosts, without
   the account's token, at sign-in and then at most once a day, and kept
   downscaled in the encrypted database with the account. Removing the account
-  deletes it. Accounts with no photo, demo mode, and any failure keep the
-  initial disc.
+  deletes it. For an account without a photo Google usually returns a
+  generated letter image, and that is what is shown. The initial disc stays
+  until a first photo is stored (so also while fetches fail), when Google
+  gives no usable photo, and in demo mode.
 - **Compact section breaks in the thread list.** Between "Last 7 days",
   "Last 30 days", "Older" and the other sections there was an empty band about
   two rows tall. The next header now follows the last row after a small gap,

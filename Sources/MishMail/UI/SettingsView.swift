@@ -363,10 +363,7 @@ struct AccountsSettings: View {
                                 .contextMenu {
                                     if !store.demoMode {
                                         Button("Refresh Profile Photo") {
-                                            Task {
-                                                await store.refreshAccountPhoto(
-                                                    accountId: account.id, force: true)
-                                            }
+                                            store.refreshAccountPhoto(accountId: account.id, force: true)
                                         }
                                     }
                                 }

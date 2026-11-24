@@ -11,6 +11,9 @@ struct AccountAvatarView: View {
     let key: String
     let size: CGFloat
     var photo: NSImage?
+    /// Hidden from VoiceOver where the surrounding control already reads the
+    /// account's name (the switcher rows and header).
+    var decorative = false
 
     var body: some View {
         Group {
@@ -35,5 +38,6 @@ struct AccountAvatarView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(photo == nil ? "\(name) account" : "\(name) account photo")
         .accessibilityAddTraits(.isImage)
+        .accessibilityHidden(decorative)
     }
 }
