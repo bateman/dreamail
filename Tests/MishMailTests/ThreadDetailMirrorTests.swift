@@ -12,7 +12,7 @@ final class ThreadDetailMirrorTests: XCTestCase {
         let revision = ThreadContentRevision(epoch: 0, local: 0)
         mirror.store(payload(["m1"]), for: "t1", revision: revision, current: revision, suppressing: [])
 
-        let hit = mirror.payload(for: "t1", revision: revision, current: revision, suppressing: [])
+        let hit = mirror.payload(for: "t1", revision: revision, suppressing: [])
 
         XCTAssertEqual(hit?.messages.map(\.id), ["m1"])
     }
@@ -60,9 +60,9 @@ final class ThreadDetailMirrorTests: XCTestCase {
         mirror.store(payload(["b"]), for: "t2", revision: revision, current: revision, suppressing: [])
         mirror.store(payload(["c"]), for: "t3", revision: revision, current: revision, suppressing: [])
 
-        XCTAssertNil(mirror.payload(for: "t1", revision: revision, current: revision, suppressing: []))
-        XCTAssertNotNil(mirror.payload(for: "t2", revision: revision, current: revision, suppressing: []))
-        XCTAssertNotNil(mirror.payload(for: "t3", revision: revision, current: revision, suppressing: []))
+        XCTAssertNil(mirror.payload(for: "t1", revision: revision, suppressing: []))
+        XCTAssertNotNil(mirror.payload(for: "t2", revision: revision, suppressing: []))
+        XCTAssertNotNil(mirror.payload(for: "t3", revision: revision, suppressing: []))
     }
 
     private func payload(_ ids: [String]) -> ThreadDetailPayload {
