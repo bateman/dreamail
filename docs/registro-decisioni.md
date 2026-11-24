@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.10
+Versione: 0.11
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -36,6 +36,10 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-022 | **Correttore in più lingue insieme** | Si usano i dizionari di macOS, senza cambiare impostazioni di sistema. Con più lingue scelte una parola è sottolineata solo se sbagliata in tutte; il costo accettato è che un refuso valido in un'altra lingua scelta non viene segnalato (PR #22). |
 | DEC-023 | **Colori delle label come in Gmail** | Il colore di una label è quello di Gmail, aggiornato a ogni sincronizzazione; fondo pieno e testo sempre leggibile. Un colore scelto nell'app ha la precedenza e non viene scritto su Gmail. Le label senza colore sono grigio neutro (PR #25). |
 | DEC-024 | **Stile di comunicazione conciso** | Tutte le sessioni di lavoro sul repository comunicano in modo conciso, secondo `CLAUDE.md`; errori, passi saltati e cose non verificate si dichiarano sempre (PR #24). |
+| DEC-025 | **Colore della label dell'account** | Ogni account ha un colore locale per la sua label, scelto con il selettore di colore di sistema; non viene inviato a Google e viene cancellato con l'account (PR #31). |
+| DEC-026 | **Foto profilo Google** | L'avatar dell'account è la foto profilo Google, ottenuta senza nuovi permessi, scaricata solo da host Google senza token, conservata nel database cifrato e cancellata con l'account (PR #32). |
+| DEC-027 | **Warning come errori in CI** | La CI fallisce su qualsiasi warning di compilazione nel codice dell'app e dei test di unità, ed esegue i test degli script e `shellcheck`; le build locali e di rilascio non cambiano (PR #33). |
+| DEC-028 | **Icone della barra laterale** | Le icone seguono la dimensione della barra laterale impostata in macOS e non usano mai il colore d'accento; la capsula di selezione resta quella standard di macOS, in attesa di conferma del proprietario (PR #34). |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -424,7 +428,8 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-23 | 0.7 | Confronto con il codice del fork. Corretti: stato reale delle funzionalità (ICS/RSVP, unsubscribe, shortcut, colori label, snooze, undo send e multi-account già presenti), stack (Swift 5.10, GRDB/SQLCipher, login loopback al posto di `ASWebAuthenticationSession`), scope `gmail.modify` restricted, conteggio dei test. Aggiunti: updater come prerequisito per gli account reali, identità del fork, GO/NO-GO prima delle remediation, questioni aperte su AI/MCP, upstream, snooze, Calendar e PGP, riferimenti alle revisioni di sicurezza esistenti. Nessuna nuova decisione confermata. |
 | 2026-11-24 | 0.8 | Dopo le ondate 1 e 2 del piano di sviluppo: aggiunte DEC-010–016, DEC-009 segnata come implementata, chiusa la questione su AI e MCP. Lo stato di ogni finding e i seguiti sono in [piano-sviluppo.md](piano-sviluppo.md); i riferimenti di riga della sezione 12 valgono solo per il commit auditato `18294fa`. |
 | 2026-11-24 | 0.9 | Aggiunte DEC-017–020: shortcut come Gmail Web, pannello di lettura predefinito, "cancellato vuol dire sparito", regola delle chat alla rimozione di un account. L'ondata 3 non è avviata. |
-| 2026-11-24 | **0.10** | Dopo la prima prova su Mac: aggiunte DEC-021–024 (icone monocromatiche, correttore in più lingue, colori delle label come in Gmail, stile di comunicazione conciso). La cache persistente e cifrata delle immagini resta un'opzione in attesa delle prove del proprietario, annotata in [piano-sviluppo.md](piano-sviluppo.md). L'ondata 3 non è avviata. |
+| 2026-11-24 | 0.10 | Dopo la prima prova su Mac: aggiunte DEC-021–024 (icone monocromatiche, correttore in più lingue, colori delle label come in Gmail, stile di comunicazione conciso). La cache persistente e cifrata delle immagini resta un'opzione in attesa delle prove del proprietario, annotata in [piano-sviluppo.md](piano-sviluppo.md). L'ondata 3 non è avviata. |
+| 2026-11-24 | **0.11** | Terzo giro di richieste: aggiunte DEC-025–028 (colore della label dell'account, foto profilo Google, warning come errori in CI, icone della barra laterale). L'ondata 3 non è avviata. |
 
 ---
 

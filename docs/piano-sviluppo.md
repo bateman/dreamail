@@ -156,6 +156,32 @@ Seguiti annotati:
 - Scaricare in anticipo le immagini dei messaggi vicini: non fatto, consuma quota Gmail per posta forse mai aperta.
 - Con un vecchio build aperto su un database aggiornato, i colori di Gmail verrebbero ricopiati come scelte locali: il ritorno a una versione precedente non è supportato.
 
+## Terzo giro di richieste del proprietario
+
+| Contenuto | PR |
+|---|---|
+| Colore della label dell'account, scelto in "Edit Account Labels…" con il selettore di colore di sistema; pillola con la stessa regola di leggibilità delle label Gmail | #31 |
+| Foto profilo Google come avatar dell'account | #32 |
+| CI: test Python degli script, warning di compilazione come errori, `shellcheck`; nuovi target `make checks`, `make script-tests`, `make shellcheck` | #33 |
+| Icone della barra laterale meno arrotondate (dimensione del titolo, tratto medio) e icona della voce selezionata non più nel colore d'accento | #34 |
+
+Esiti da ricordare:
+
+- PR #32: nessun nuovo permesso Google (`userinfo.profile` era già richiesto). La foto si scarica solo da `lh3`–`lh6.googleusercontent.com`, senza token né cookie, al massimo una volta al giorno; sta nel database cifrato e viene cancellata con l'account. È la prima nuova destinazione di rete aggiunta dal fork.
+- PR #31 e #32 aggiungono le migrazioni v52 e v53, in quest'ordine.
+- PR #33: `make release` aspetta una CI completa, che ora fallisce su qualsiasi warning; i binari di rilascio sono compilati senza il blocco. Un nuovo warning dopo un aggiornamento di Xcode sulla macchina di CI blocca un rilascio finché non è corretto.
+- PR #34: la causa dell'aspetto arrotondato era dimensione e peso scelti dalla barra laterale di sistema, non un font arrotondato. Con il focus sulla barra laterale la selezione resta la capsula nel colore d'accento con icona bianca, come nelle app macOS; senza focus è grigia con icona scura. In attesa di conferma del proprietario.
+- Il job dei test di interfaccia dura ora circa undici minuti.
+
+Rimandati dal proprietario (osservazioni sull'infrastruttura di CI): Dependabot per pacchetti Swift e script Python, lint Swift e CodeQL, misura della copertura, hook git versionati. Non verificato: se la protezione del ramo `main` richiede i controlli di CI.
+
+Seguiti annotati:
+
+- Un account senza foto mostra l'immagine con la lettera generata da Google, non distinguibile da una foto vera.
+- Avatar anche nel selettore del mittente in composizione, se desiderato.
+- Su macOS precedenti al 26 il colore predefinito della pillola dell'account può differire leggermente da quello del disco dell'avatar.
+- La build dei test di interfaccia non passa il blocco sui warning.
+
 ## Cancello — prova su Mac del proprietario
 
 ☐ Build locale, test e uso della demo.
@@ -163,6 +189,7 @@ Seguiti annotati:
 ☐ Verifiche emerse dall'ondata 2 e dalla pulizia: `make install` e il controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto); nessuna interfaccia AI visibile (impostazioni, palette, barra di composizione, vista del thread); impostazioni, onboarding e palette senza le voci Notion; finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche); interruttore "Show sender and subject in notifications" e testo delle notifiche; avviso con un errore reale di Gmail.
 ☐ Verifiche emerse dalle PR #17 e #18: shortcut su tastiera italiana (`]`, `[`, `#`, `*`), cursore nei campi Cc e Bcc e scelta del mittente in composizione, pannello di lettura su finestra stretta e su schermo da 13 pollici, lettura anticipata scorrendo con `j` e `k`; tempo della ricostruzione dell'indice di ricerca al primo avvio; ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio; nessun `Cache.db` che cresce nella cartella Caches.
 ☐ Verifiche emerse dalle PR #20–#26: aspetto delle icone monocromatiche e della voce selezionata; email singola espansa (anche in "center peek" e vista compatta, e restringimento per email HTML corte); correttore con English e Italian scelti (menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta); riapertura di email con loghi senza sfarfallio, velocità della prima apertura e di `j`/`k`; colori delle label in lista, pannello di lettura e menu, riga selezionata con colore d'accento non blu e a finestra in secondo piano; intestazioni di sezione su macOS 14 e 15, intestazione fissa durante lo scorrimento, vista Labels.
+☐ Verifiche emerse dalle PR #31–#34: editor del colore della label (pannello colori di sistema, chiusura all'uscita, riga disattivata quando la pillola non si vede), testo nero sulle pillole predefinite blu, viola e rosa; foto profilo con un account reale (download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione, VoiceOver nel menu degli account); icone in modalità scura, con accento giallo o grafite, con dimensione della barra laterale piccola e grande, su macOS 14 e 15.
 ☐ Solo dopo, collegamento di un account Gmail reale.
 
 ## Ondata 3 — parità Gmail
@@ -204,4 +231,9 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | — | `docs/concise-communication-style` | #24 | Unito |
 | — | `ux/readable-label-colors` | #25 | Unito |
 | — | `ux/thread-list-section-spacing` | #26 | Unito |
+| — | `docs/ux-round-2` | #30 | Unito |
+| — | `feature/account-label-color` | #31 | Unito |
+| — | `feature/account-profile-photo` | #32 | Unito |
+| — | `ci/script-tests-warnings-shellcheck` | #33 | Unito |
+| — | `ux/sidebar-icon-shape` | #34 | Unito |
 | 3 | — | — | Non avviare: in attesa del proprietario |
