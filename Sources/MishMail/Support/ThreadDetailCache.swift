@@ -536,10 +536,8 @@ struct ThreadDetailCacheEntry: Equatable {
 /// mounts ready strings into WebKit.
 actor ThreadDetailRepository {
     private let db: DatabasePool
-    /// Persistent `cid:` images. When set, a payload read from the database
-    /// carries the images of every hydrated body whose images are all
-    /// cached, so the first frame paints them (prefetched neighbours too:
-    /// reading the local cache is allowed there, downloading is not).
+    /// Persistent `cid:` images, read by `warmCachedCIDBodies` (never by
+    /// `payload`, which stays text only).
     let inlineImages: InlineImageStore?
     private var cache = ThreadDetailLRU<ThreadDetailCacheEntry>(capacity: 10)
     /// Newest revisions `discardStale` has seen. A read that started before
@@ -579,26 +577,12 @@ actor ThreadDetailRepository {
 
         // Hold the SQLCipher reader only for row fetch. Quote scans and HTML
         // document assembly are pure string work and must not pin a connection.
-        let readsImages = inlineImages != nil
-        let read = (try? db.read { db -> (ThreadDetailPayload, [String: [String: InlineImageCache.Part]]) in
-            let payload = try Self.fetchPayload(threadId: threadId, db: db)
-            let images = readsImages
-                ? try InlineImageCache.completeParts(db, for: payload.messages)
-                : [:]
-            return (payload, images)
-        })
-        var loaded = read?.0 ?? ThreadDetailPayload(
+        var loaded = (try? db.read { db in
+            try Self.fetchPayload(threadId: threadId, db: db)
+        }) ?? ThreadDetailPayload(
             messages: [], attachmentsByMessageId: [:], bodyPrepByMessageId: [:])
         loaded.bodyPrepByMessageId = Self.buildBodyPrep(
             messages: loaded.messages, fontScale: fontScale)
-        if let images = read?.1, !images.isEmpty {
-            loaded.cidInlineByMessageId = Self.cachedCIDBodies(
-                messages: loaded.messages, images: images, fontScale: fontScale)
-            if let store = inlineImages {
-                let used = Array(loaded.cidInlineByMessageId.keys)
-                Task { await store.noteUsed(used) }
-            }
-        }
         if !isSuperseded(revision, threadId: threadId) {
             cache.insert(
                 ThreadDetailCacheEntry(
@@ -715,6 +699,44 @@ actor ThreadDetailRepository {
         return true
     }
 
+    /// Adds the persistently cached `cid:` images to a cached payload: the
+    /// neighbour prefetch calls this after `payload`, so a conversation it
+    /// warmed paints its images in the first frame. Reads the local cache
+    /// only (never Gmail), and builds the bodies off this actor. Only for
+    /// the entry still at `revision` and `fontScale` (`rememberCIDInline`
+    /// checks again on the way in). Returns the bodies it added.
+    @discardableResult
+    func warmCachedCIDBodies(threadId: String, revision: ThreadContentRevision,
+                             fontScale: Double) async -> [String: CIDInlinedBody] {
+        guard let store = inlineImages,
+              let entry = cache.values[threadId], entry.revision == revision,
+              abs(entry.fontScale - fontScale) < 0.001 else { return [:] }
+        let messages = entry.payload.messages.filter {
+            entry.payload.cidInlineByMessageId[$0.id] == nil && $0.bodyHTML != nil
+        }
+        guard !messages.isEmpty else { return [:] }
+        let work = Task.detached(priority: .utility) { () -> [String: CIDInlinedBody] in
+            let lookups = messages.compactMap(InlineImageCache.Lookup.init(message:))
+            guard !lookups.isEmpty, !Task.isCancelled else { return [:] }
+            let images = await store.completeParts(for: lookups)
+            guard !images.isEmpty, !Task.isCancelled else { return [:] }
+            return ThreadDetailRepository.cachedCIDBodies(
+                messages: messages, images: images, fontScale: fontScale)
+        }
+        let bodies = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        var added: [String: CIDInlinedBody] = [:]
+        for (id, body) in bodies
+        where rememberCIDInline(body, messageId: id, threadId: threadId,
+                                revision: revision, fontScale: fontScale) {
+            added[id] = body
+        }
+        return added
+    }
+
     /// Thread ids with a payload in memory (test observability).
     func cachedThreadIds() -> Set<String> {
         Set(cache.values.keys)
@@ -796,8 +818,14 @@ actor ThreadDetailRepository {
     ) -> [String: CIDInlinedBody] {
         var out: [String: CIDInlinedBody] = [:]
         for message in messages {
+            guard !Task.isCancelled else { break }
             guard let html = message.bodyHTML, let parts = images[message.id],
                   !parts.isEmpty else { continue }
+            // Would exceed the in-memory cap once inlined: not worth building
+            // only to discard (the pane resolves it from the cache on open).
+            let imageBytes = parts.values.reduce(0) { $0 + $1.data.count }
+            guard html.utf8.count + (imageBytes + 2) / 3 * 4
+                    <= CIDInlineCachePolicy.maximumBytes else { continue }
             let inlined = CIDImageInliner.rewrite(
                 html, parts: parts.mapValues { (mimeType: $0.mimeType, data: $0.data) })
             let body = CIDInlinedBody(

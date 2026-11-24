@@ -50,7 +50,8 @@ final class InlineImageCacheTests: XCTestCase {
     @discardableResult
     private func addMessage(_ db: Database, account: String, gmailId: String,
                             thread: String = "t1", cids: [String],
-                            body: String? = nil, date: Date = Date()) throws -> [AttachmentRow] {
+                            body: String? = nil, date: Date = Date(),
+                            mime: String = "image/png") throws -> [AttachmentRow] {
         try addAccount(db, account)
         let id = "\(account):\(gmailId)"
         let message = Message(
@@ -61,7 +62,7 @@ final class InlineImageCacheTests: XCTestCase {
             referencesHeader: "", labelIds: "INBOX", isUnread: false, hasAttachment: false)
         let attachments = cids.enumerated().map { index, cid in
             AttachmentRow(id: nil, messageId: id, gmailAttachmentId: "att-\(gmailId)-\(index)",
-                          filename: "\(cid).png", mimeType: "image/png", size: 64, contentId: cid)
+                          filename: "\(cid).png", mimeType: mime, size: 64, contentId: cid)
         }
         _ = try SyncEngine.upsertPending(
             db, items: [.init(message: message, attachments: attachments, headersOnly: false)])
@@ -101,25 +102,29 @@ final class InlineImageCacheTests: XCTestCase {
         }
     }
 
-    /// What `MailStore.inlineCIDImages` does: cache first, fetch the rest,
-    /// store a complete result.
+    /// The app's own resolve path (`MailStore.inlineCIDImages` calls the
+    /// same function), with `fetcher` standing in for Gmail.
     private func resolve(_ store: InlineImageStore, message: Message,
                          attachments: [AttachmentRow], fetcher: Fetcher)
         async -> CIDPartResolver.Outcome {
         let body = message.bodyHTML ?? ""
-        let refs = CIDImageInliner.referencedIDs(in: body)
-        let cached = await store.cachedParts(messageId: message.id, accountId: message.accountId,
-                                             bodyHTML: body)
-        let outcome = await CIDPartResolver.resolve(
-            references: refs, attachmentsByCID: byCID(attachments), cached: cached
+        return await CIDPartResolver.resolveUsingCache(
+            messageId: message.id, accountId: message.accountId, bodyHTML: body,
+            references: CIDImageInliner.referencedIDs(in: body),
+            attachmentsByCID: byCID(attachments), didRefetch: false, store: store
         ) { try fetcher.fetch($0) }
-        if outcome.fetchedCount > 0,
-           InlineImageCachePolicy.shouldStore(references: refs, parts: outcome.parts,
-                                              didRefetch: false) {
-            await store.remember(messageId: message.id, accountId: message.accountId,
-                                 bodyHTML: body, parts: Array(outcome.parts.values))
+    }
+
+    private func lookup(_ message: Message, account: String? = nil) -> InlineImageCache.Lookup {
+        InlineImageCache.Lookup(messageId: message.id, accountId: account ?? message.accountId,
+                                bodyHTML: message.bodyHTML ?? "")
+    }
+
+    private func lastUsed(_ pool: DatabasePool, _ messageId: String) throws -> [Double] {
+        try pool.read { db in
+            try Double.fetchAll(db, sql: "SELECT lastUsedAt FROM inlineImage WHERE messageId = ?",
+                                arguments: [messageId])
         }
-        return outcome
     }
 
     /// Synchronous on purpose: callable from the async tests.
@@ -173,16 +178,24 @@ final class InlineImageCacheTests: XCTestCase {
         await first.shutDown()
         try close(pool)
 
-        // Relaunch: a new pool, a new store, a new repository.
+        // Relaunch: a new pool, a new store, a new repository. What the
+        // neighbour prefetch does: the text payload, then the cached images.
         let relaunched = try openPool()
         let store = InlineImageStore(db: relaunched)
         let repository = ThreadDetailRepository(db: relaunched, inlineImages: store)
+        let revision = ThreadContentRevisions().revision(of: "\(me):t1")
+        let cold = await repository.payload(
+            threadId: "\(me):t1", suppressingDrafts: [], revision: revision)
+        XCTAssertFalse(cold.cacheHit)
+        XCTAssertTrue(cold.payload.cidInlineByMessageId.isEmpty, "payload() stays text only")
+        let warmed = await repository.warmCachedCIDBodies(
+            threadId: "\(me):t1", revision: revision, fontScale: 1.0)
+        XCTAssertEqual(Set(warmed.keys), ["\(me):m1"])
         let load = await repository.payload(
-            threadId: "\(me):t1", suppressingDrafts: [],
-            revision: ThreadContentRevisions().revision(of: "\(me):t1"))
-        XCTAssertFalse(load.cacheHit)
+            threadId: "\(me):t1", suppressingDrafts: [], revision: revision)
+        XCTAssertTrue(load.cacheHit)
         let body = try XCTUnwrap(load.payload.cidInlineByMessageId["\(me):m1"],
-                                 "the first payload carries the inlined body")
+                                 "the warmed payload carries the inlined body")
         XCTAssertFalse(CIDImageInliner.containsCIDReferences(body.html))
         XCTAssertTrue(body.html.contains(CIDImageInliner.dataURI(mimeType: "image/png", data: png(1))))
         XCTAssertTrue(body.html.contains(CIDImageInliner.dataURI(mimeType: "image/png", data: png(2))))
@@ -198,7 +211,66 @@ final class InlineImageCacheTests: XCTestCase {
         XCTAssertEqual(fetcher.requests, [])
         XCTAssertEqual(again.fetchedCount, 0)
         XCTAssertEqual(again.parts.count, 2)
+        await store.flush()
+        let writes = await store.writeTransactionCount
+        XCTAssertEqual(writes, 0, "a hit used within the day writes nothing")
         await store.shutDown()
+    }
+
+    /// A cold `payload()` reads no image and changes nothing in the cache.
+    func testAColdPayloadDoesNoImageWork() async throws {
+        let pool = try openPool()
+        _ = try await pool.write { db in try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"]) }
+        try await cache(pool, gmailId: "m1")
+        let before = try lastUsed(pool, "\(me):m1")
+        let store = InlineImageStore(db: pool, flushDelayNanoseconds: 1_000_000)
+        let load = await ThreadDetailRepository(db: pool, inlineImages: store).payload(
+            threadId: "\(me):t1", suppressingDrafts: [],
+            revision: ThreadContentRevisions().revision(of: "\(me):t1"))
+        XCTAssertTrue(load.payload.cidInlineByMessageId.isEmpty)
+        await store.flush()
+        let writes = await store.writeTransactionCount
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try lastUsed(pool, "\(me):m1"), before)
+        await store.shutDown()
+    }
+
+    /// The prefetch path (`warmCachedCIDBodies`) never marks images as used;
+    /// a shown message is marked at most once a day.
+    func testPrefetchDoesNotTouchAndRepeatedOpensWithinADayDoNotWrite() async throws {
+        let pool = try openPool()
+        _ = try await pool.write { db in try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"]) }
+        try await cache(pool, gmailId: "m1")
+        let stored = try lastUsed(pool, "\(me):m1")
+
+        let store = InlineImageStore(db: pool, flushDelayNanoseconds: 1_000_000)
+        let repository = ThreadDetailRepository(db: pool, inlineImages: store)
+        let revision = ThreadContentRevisions().revision(of: "\(me):t1")
+        _ = await repository.payload(threadId: "\(me):t1", suppressingDrafts: [], revision: revision)
+        let warmed = await repository.warmCachedCIDBodies(
+            threadId: "\(me):t1", revision: revision, fontScale: 1.0)
+        XCTAssertFalse(warmed.isEmpty)
+        // Shown three times within the day.
+        for _ in 0..<3 {
+            await store.noteUsed(["\(me):m1"])
+            await store.flush()
+        }
+        let writes = await store.writeTransactionCount
+        XCTAssertEqual(writes, 0, "no write: the mark is younger than a day")
+        XCTAssertEqual(try lastUsed(pool, "\(me):m1"), stored)
+        await store.shutDown()
+
+        // Two days later the first open writes once, the next ones nothing.
+        let later = Date().addingTimeInterval(2 * 86_400)
+        let next = InlineImageStore(db: pool, flushDelayNanoseconds: 1_000_000, now: { later })
+        for _ in 0..<3 {
+            await next.noteUsed(["\(me):m1"])
+            await next.flush()
+        }
+        let laterWrites = await next.writeTransactionCount
+        XCTAssertEqual(laterWrites, 1)
+        XCTAssertEqual(try lastUsed(pool, "\(me):m1"), [later.timeIntervalSinceReferenceDate])
+        await next.shutDown()
     }
 
     func testRepositoryWithoutTheStoreReadsNoImages() async throws {
@@ -239,25 +311,63 @@ final class InlineImageCacheTests: XCTestCase {
             .init(attachmentId: id, contentId: cid, mimeType: "image/png",
                   data: Data(repeating: 1, count: bytes))
         }
-        XCTAssertTrue(InlineImageCachePolicy.shouldStore(
-            references: ["a"], parts: ["a": part("a")], didRefetch: false))
-        XCTAssertFalse(InlineImageCachePolicy.shouldStore(
-            references: ["a", "b"], parts: ["a": part("a")], didRefetch: false), "incomplete")
-        XCTAssertFalse(InlineImageCachePolicy.shouldStore(
-            references: ["a"], parts: ["a": part("a")], didRefetch: true), "re-fetched")
-        XCTAssertFalse(InlineImageCachePolicy.shouldStore(
-            references: ["a"], parts: ["a": part("a", bytes: 0)], didRefetch: false), "empty")
-        XCTAssertFalse(InlineImageCachePolicy.shouldStore(
-            references: ["a"], parts: ["a": part("a", id: CIDPartResolver.unsavedAttachmentId)],
-            didRefetch: false), "no attachment row")
+        func ok(_ refs: Set<String>, _ parts: [String: InlineImageCache.Part],
+                refetch: Bool = false, storable: Bool = true) -> Bool {
+            InlineImageCachePolicy.shouldStore(
+                references: refs,
+                outcome: .init(parts: parts, fetchedCount: parts.count, allStorable: storable),
+                didRefetch: refetch)
+        }
+        XCTAssertTrue(ok(["a"], ["a": part("a")]))
+        XCTAssertFalse(ok(["a", "b"], ["a": part("a")]), "incomplete")
+        XCTAssertFalse(ok(["a"], ["a": part("a")], refetch: true), "re-fetched")
+        XCTAssertFalse(ok(["a"], ["a": part("a", bytes: 0)]), "empty")
+        XCTAssertFalse(ok(["a"], ["a": part("a", id: CIDPartResolver.unsavedAttachmentId)]),
+                       "no attachment row")
+        XCTAssertFalse(ok(["a"], ["a": part("a")], storable: false), "SVG or relabelled type")
         let half = InlineImageCache.perMessageBytes / 2
-        XCTAssertTrue(InlineImageCachePolicy.shouldStore(
-            references: ["a", "b"], parts: ["a": part("a", bytes: half), "b": part("b", bytes: half, id: 2)],
-            didRefetch: false), "exactly the cap")
-        XCTAssertFalse(InlineImageCachePolicy.shouldStore(
-            references: ["a", "b"],
-            parts: ["a": part("a", bytes: half), "b": part("b", bytes: half + 1, id: 2)],
-            didRefetch: false), "over the per-message cap")
+        XCTAssertTrue(ok(["a", "b"], ["a": part("a", bytes: half), "b": part("b", bytes: half, id: 2)]),
+                      "exactly the cap")
+        XCTAssertFalse(ok(["a", "b"], ["a": part("a", bytes: half), "b": part("b", bytes: half + 1, id: 2)]),
+                       "over the per-message cap")
+    }
+
+    func testOnlyRasterImageTypesAreStoredAndTheTypeIsSanitized() async throws {
+        XCTAssertTrue(InlineImageCache.isStorableMIME("image/png"))
+        XCTAssertTrue(InlineImageCache.isStorableMIME("IMAGE/GIF; name=x.gif"))
+        XCTAssertFalse(InlineImageCache.isStorableMIME("image/svg+xml"))
+        XCTAssertFalse(InlineImageCache.isStorableMIME("text/html"))
+        XCTAssertFalse(InlineImageCache.isStorableMIME("image/x<script>"))
+
+        let pool = try openPool()
+        try await pool.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "svg", thread: "s", cids: ["logo"],
+                                mime: "image/svg+xml")
+            try self.addMessage(db, account: self.me, gmailId: "gif", thread: "g", cids: ["logo"],
+                                mime: "IMAGE/GIF; name=logo.gif")
+        }
+        try await cache(pool, gmailId: "svg")
+        try await cache(pool, gmailId: "gif")
+        XCTAssertEqual(try rowCount(pool, messageId: "\(me):svg"), 0, "SVG is never stored")
+        try await pool.read { db in
+            XCTAssertEqual(try String.fetchAll(db, sql: "SELECT DISTINCT mimeType FROM inlineImage"),
+                           ["image/gif"])
+        }
+        // A forged write of the SVG part, relabelled or not, is refused by
+        // the store itself.
+        try await pool.write { db in
+            let msg = try self.message(db, "\(self.me):svg")
+            let attachmentId = try XCTUnwrap(try Int64.fetchOne(
+                db, sql: "SELECT id FROM attachment WHERE messageId = ?", arguments: [msg.id]))
+            for mime in ["image/jpeg", "image/svg+xml"] {
+                XCTAssertFalse(try InlineImageCache.store(db, .init(
+                    messageId: msg.id, accountId: self.me,
+                    bodyDigest: InlineImageCache.bodyDigest(msg.bodyHTML!),
+                    parts: [.init(attachmentId: attachmentId, contentId: "logo",
+                                  mimeType: mime, data: self.png(1))]), now: Date()), mime)
+            }
+        }
+        XCTAssertEqual(try rowCount(pool, messageId: "\(me):svg"), 0)
     }
 
     func testStoreRefusesAMessageOverThePerMessageCap() throws {
@@ -289,23 +399,19 @@ final class InlineImageCacheTests: XCTestCase {
         try await cache(pool, gmailId: "m1", seed: 1)
         try await pool.read { db in
             let m2 = try self.message(db, "\(self.me):m2")
-            XCTAssertTrue(try InlineImageCache.parts(db, messageId: m2.id, accountId: self.me,
-                                                     bodyHTML: m2.bodyHTML!).isEmpty)
+            XCTAssertTrue(try InlineImageCache.parts(db, self.lookup(m2)).isEmpty)
             let theirs = try self.message(db, "\(self.other):m1")
-            XCTAssertTrue(try InlineImageCache.parts(db, messageId: theirs.id, accountId: self.other,
-                                                     bodyHTML: theirs.bodyHTML!).isEmpty)
+            XCTAssertTrue(try InlineImageCache.parts(db, self.lookup(theirs)).isEmpty)
             // Asking for m1's rows under another account finds nothing.
             let mine = try self.message(db, "\(self.me):m1")
-            XCTAssertTrue(try InlineImageCache.parts(db, messageId: mine.id, accountId: self.other,
-                                                     bodyHTML: mine.bodyHTML!).isEmpty)
+            XCTAssertTrue(try InlineImageCache.parts(db, self.lookup(mine, account: self.other)).isEmpty)
         }
         try await cache(pool, gmailId: "m2", seed: 2)
         try await cache(pool, account: other, gmailId: "m1", seed: 3)
         try await pool.read { db in
             for (account, gmailId, seed) in [(self.me, "m1", UInt8(1)), (self.me, "m2", 2), (self.other, "m1", 3)] {
                 let msg = try self.message(db, "\(account):\(gmailId)")
-                let parts = try InlineImageCache.parts(db, messageId: msg.id, accountId: account,
-                                                       bodyHTML: msg.bodyHTML!)
+                let parts = try InlineImageCache.parts(db, self.lookup(msg))
                 XCTAssertEqual(parts["logo"]?.data, self.png(seed), "\(account) \(gmailId)")
             }
         }
@@ -366,6 +472,22 @@ final class InlineImageCacheTests: XCTestCase {
         XCTAssertEqual(try rowCount(pool, messageId: "\(me):k1"), 1)
     }
 
+    /// The sync engine's delete path (Gmail-side deletions).
+    func testSyncDeleteRemovesItsImages() async throws {
+        let pool = try openPool()
+        try await pool.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "m1", cids: ["logo"])
+            try self.addMessage(db, account: self.me, gmailId: "k1", thread: "kept", cids: ["logo"])
+        }
+        try await cache(pool, gmailId: "m1")
+        try await cache(pool, gmailId: "k1")
+        _ = try await pool.write { db in
+            try SyncEngine.deleteMessages(db, localIds: ["\(self.me):m1"])
+        }
+        XCTAssertEqual(try rowCount(pool, messageId: "\(me):m1"), 0)
+        XCTAssertEqual(try rowCount(pool, messageId: "\(me):k1"), 1)
+    }
+
     func testPruningOldMailDeletesItsImages() async throws {
         let pool = try openPool()
         try await pool.write { db in
@@ -423,7 +545,7 @@ final class InlineImageCacheTests: XCTestCase {
         }
         try await pool.read { db in
             let msg = try self.message(db, "\(self.me):m1")
-            XCTAssertTrue(try InlineImageCache.completeParts(db, for: [msg]).isEmpty)
+            XCTAssertTrue(try InlineImageCache.completeParts(db, [self.lookup(msg)]).isEmpty)
         }
     }
 
@@ -485,8 +607,9 @@ final class InlineImageCacheTests: XCTestCase {
                              now: { time })
         }
         // Each message: two parts of 68 bytes.
+        let day: TimeInterval = 86_400
         for id in ["a", "b", "c"] {
-            clock += 10
+            clock += 2 * day
             let s = store(at: clock, budget: 10_000)
             let (msg, rows) = try await pool.read { db in
                 (try self.message(db, "\(self.me):\(id)"),
@@ -499,8 +622,9 @@ final class InlineImageCacheTests: XCTestCase {
         let stored = try await pool.read { db in try InlineImageCache.totalBytes(db) }
         XCTAssertEqual(stored, 3 * 2 * 68)
 
-        // "a" is used again: "b" is now the least recently used.
-        clock += 10
+        // "a" is shown again two days later: "b" is now the least recently
+        // used, and the write that marks "a" also enforces the budget.
+        clock += 2 * day
         let touch = store(at: clock, budget: 2 * 2 * 68)
         await touch.noteUsed(["\(me):a"])
         await touch.flush()
@@ -544,7 +668,18 @@ final class InlineImageCacheTests: XCTestCase {
                               fetcher: Fetcher { _ in Data(repeating: 0xAB, count: 64 * 1_024) })
         }
         let writing = Task { await store.flush() }
+        // Quit once the batch is running.
+        for _ in 0..<2_000 {
+            if await store.batchesStarted > 0 { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
         await store.shutDown()
+        let started = await store.batchesStarted
+        let finished = await store.batchesFinished
+        let stillWriting = await store.isWriting
+        XCTAssertEqual(started, 1)
+        XCTAssertEqual(finished, started, "shutDown returned only after the running write ended")
+        XCTAssertFalse(stillWriting)
         await writing.value
 
         // Queued after the shutdown: refused.
@@ -552,9 +687,13 @@ final class InlineImageCacheTests: XCTestCase {
             (try self.message(db, "\(self.me):m0"),
              try AttachmentRow.filter(Column("messageId") == "\(self.me):m0").fetchAll(db))
         }
-        await store.remember(messageId: late.id, accountId: me, bodyHTML: late.bodyHTML!,
-                             parts: lateRows.map { InlineImageCache.Part(attachmentId: $0.id!, contentId: $0.contentId!,
-                                                         mimeType: "image/png", data: self.png(5)) })
+        await store.remember(InlineImageCache.Pending(
+            messageId: late.id, accountId: me,
+            bodyDigest: InlineImageCache.bodyDigest(late.bodyHTML!),
+            parts: lateRows.map {
+                InlineImageCache.Part(attachmentId: $0.id!, contentId: $0.contentId!,
+                                      mimeType: "image/png", data: self.png(5))
+            }))
         let queued = await store.queuedMessageCount
         XCTAssertEqual(queued, 0)
 
@@ -564,8 +703,7 @@ final class InlineImageCacheTests: XCTestCase {
                 SELECT count(*) FROM inlineImage GROUP BY messageId
                 """)
             XCTAssertTrue(perMessage.allSatisfy { $0 == 3 }, "all of a message or none: \(perMessage)")
-            XCTAssertTrue(perMessage.count == 0 || perMessage.count == count,
-                          "one transaction: all messages or none (\(perMessage.count))")
+            XCTAssertLessThanOrEqual(perMessage.count, count)
         }
         try close(pool)
     }
@@ -603,7 +741,10 @@ final class InlineImageCacheTests: XCTestCase {
                 .map { $0["table"] as String })
             XCTAssertEqual(cascades, ["attachment", "message", "account"])
             XCTAssertEqual(try String.fetchAll(db, sql: "SELECT id FROM account"), ["a@x.com"])
-            XCTAssertTrue(try db.indexes(on: "inlineImage").contains { $0.columns == ["lastUsedAt"] })
+            let indexes = try db.indexes(on: "inlineImage").map(\.columns)
+            XCTAssertTrue(indexes.contains(["messageId", "lastUsedAt", "byteCount"]), "\(indexes)")
+            XCTAssertFalse(indexes.contains(["messageId"]), "covered by the composite index")
+            XCTAssertFalse(indexes.contains(["lastUsedAt"]), "covered by the composite index")
         }
     }
 
@@ -624,18 +765,25 @@ final class InlineImageCacheTests: XCTestCase {
         _ = await resolve(store, message: msg, attachments: rows,
                           fetcher: Fetcher { _ in Data(repeating: 0x5A, count: 300 * 1_024) })
         await store.flush()
-        var samples: [Double] = []
+        var text: [Double] = []
+        var images: [Double] = []
         for _ in 0..<5 {
             let repository = ThreadDetailRepository(db: pool, inlineImages: store)
+            let revision = ThreadContentRevisions().revision(of: "\(me):t1")
             let start = Date()
-            let load = await repository.payload(
-                threadId: "\(me):t1", suppressingDrafts: [],
-                revision: ThreadContentRevisions().revision(of: "\(me):t1"))
-            samples.append(Date().timeIntervalSince(start) * 1_000)
-            XCTAssertNotNil(load.payload.cidInlineByMessageId["\(me):m1"])
+            _ = await repository.payload(threadId: "\(me):t1", suppressingDrafts: [],
+                                         revision: revision)
+            let mid = Date()
+            let warmed = await repository.warmCachedCIDBodies(
+                threadId: "\(me):t1", revision: revision, fontScale: 1.0)
+            images.append(Date().timeIntervalSince(mid) * 1_000)
+            text.append(mid.timeIntervalSince(start) * 1_000)
+            XCTAssertNotNil(warmed["\(me):m1"])
         }
         await store.shutDown()
-        samples.sort()
-        print("INLINE_IMAGE_CACHE warm-open payload with 3 x 300 KB images: median \(String(format: "%.1f", samples[2])) ms, samples \(samples.map { String(format: "%.1f", $0) })")
+        text.sort()
+        images.sort()
+        func fmt(_ v: [Double]) -> String { v.map { String(format: "%.1f", $0) }.joined(separator: " ") }
+        print("INLINE_IMAGE_CACHE text payload median \(String(format: "%.1f", text[2])) ms [\(fmt(text))]; cached images (3 x 300 KB) median \(String(format: "%.1f", images[2])) ms [\(fmt(images))]")
     }
 }

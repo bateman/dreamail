@@ -3,26 +3,30 @@ import Foundation
 import GRDB
 
 /// Inline (`cid:`) images of messages, kept in the encrypted database so a
-/// conversation whose images were resolved once paints them at once on a
-/// later open, after a relaunch too, with no Gmail attachment request.
+/// conversation whose images were resolved once paints them without a Gmail
+/// attachment request on a later open, after a relaunch too.
 ///
-/// What is stored: the bytes of each image part a message's HTML references
-/// as `src="cid:…"`, once per part (not the base64-inlined HTML: the reading
-/// pane rebuilds that from the stored body and these bytes, off the main
-/// actor). Remote (http/https) images are never stored here.
+/// What is stored: the bytes of each raster image part a message's HTML
+/// references as `src="cid:…"`, once per part, with a sanitized MIME type
+/// (never SVG, never a non-image part). Not the base64-inlined HTML: that is
+/// rebuilt from the stored body and these bytes, off the main actor. Remote
+/// (http/https) images are never stored here.
 ///
 /// Key: the part's attachment row (`attachmentId`, unique and never reused:
-/// the column is AUTOINCREMENT) plus its message, account, Content-ID and a
-/// digest of the body it was resolved from. A sender chooses Content-IDs, so
-/// a Content-ID alone is never a key: a lookup only returns rows of the asked
-/// message and account whose attachment row still carries that Content-ID.
+/// the column is AUTOINCREMENT) plus its message and Content-ID. Two more
+/// columns are kept as defence in depth: the account (lookups and the
+/// account purge name it, so a row can never answer for another account even
+/// if an id were wrong) and a digest of the body the images were resolved
+/// from (a body rewritten by any path that kept its attachment rows is a
+/// miss, never stale images). A sender chooses Content-IDs, so a Content-ID
+/// alone is never a key.
 ///
 /// Deleted means gone: every row cascades with its attachment row, its
 /// message and its account, so whatever deletes those (a sync delete, a
-/// local prune, a discarded draft, an account removal, a content re-fetch
-/// that rewrites the attachment rows) deletes the images too, under the
-/// same `secure_delete` and WAL scrub as the rest of the mail. The paths that
-/// purge message content also delete these rows by name.
+/// local prune, a discarded draft, a content re-fetch that replaces the
+/// attachment rows, an account removal) deletes the images too, under the
+/// same `secure_delete` and WAL scrub as the rest of the mail. Account
+/// removal also deletes them by name.
 ///
 /// Bounded: `totalBudgetBytes` overall, least recently used message first,
 /// and `perMessageBytes` per message.
@@ -39,12 +43,44 @@ enum InlineImageCache {
     /// that cap. A larger message re-downloads its images, as before.
     static let perMessageBytes = 3 * 1_024 * 1_024
 
+    /// A message's "last used" mark is refreshed at most this often, so
+    /// reopening a conversation does not write to the database.
+    static let touchInterval: TimeInterval = 86_400
+
     struct Part: Equatable, Sendable {
         var attachmentId: Int64
         /// Normalized (`CIDImageInliner.normalize`).
         var contentId: String
+        /// Sanitized (`CIDImageInliner.sanitizeMIME`).
         var mimeType: String
         var data: Data
+    }
+
+    /// What identifies one message's cached images: computed outside any
+    /// database access (the regex scan and the digest are string work).
+    struct Lookup: Equatable, Sendable {
+        var messageId: String
+        var accountId: String
+        var bodyDigest: String
+        var references: Set<String>
+
+        init(messageId: String, accountId: String, bodyHTML: String,
+             references: Set<String>? = nil) {
+            self.messageId = messageId
+            self.accountId = accountId
+            self.bodyDigest = InlineImageCache.bodyDigest(bodyHTML)
+            self.references = references ?? CIDImageInliner.referencedIDs(in: bodyHTML)
+        }
+
+        /// Nil for a message whose (hydrated) body references no `cid:` image.
+        init?(message: Message) {
+            guard let html = message.bodyHTML,
+                  CIDImageInliner.containsCIDReferences(html) else { return nil }
+            let refs = CIDImageInliner.referencedIDs(in: html)
+            guard !refs.isEmpty else { return nil }
+            self.init(messageId: message.id, accountId: message.accountId,
+                      bodyHTML: html, references: refs)
+        }
     }
 
     /// One message's complete resolve result, waiting to be written.
@@ -61,7 +97,7 @@ enum InlineImageCache {
         try db.create(table: tableName) { t in
             t.primaryKey("attachmentId", .integer)
                 .references("attachment", onDelete: .cascade)
-            t.column("messageId", .text).notNull().indexed()
+            t.column("messageId", .text).notNull()
                 .references("message", onDelete: .cascade)
             t.column("accountId", .text).notNull().indexed()
                 .references("account", onDelete: .cascade)
@@ -69,12 +105,15 @@ enum InlineImageCache {
             t.column("contentId", .text).notNull()
             t.column("mimeType", .text).notNull()
             t.column("byteCount", .integer).notNull()
-            t.column("lastUsedAt", .double).notNull().indexed()
-            // Last: the small columns stay in the row's own page, so the
-            // budget sum reads no image bytes and a "used" mark dirties only
-            // that page, not the image's overflow pages.
+            t.column("lastUsedAt", .double).notNull()
+            // Last: the small columns stay in the row's own page, so a "used"
+            // mark dirties only that page, not the image's overflow pages.
             t.column("data", .blob).notNull()
         }
+        // One covering index for the per-message lookups, the cascade from
+        // `message`, the budget sum and the eviction's GROUP BY.
+        try db.create(index: "inlineImage_on_messageId_lastUsedAt_byteCount",
+                      on: tableName, columns: ["messageId", "lastUsedAt", "byteCount"])
     }
 
     // MARK: Keys
@@ -87,21 +126,28 @@ enum InlineImageCache {
             .joined()
     }
 
+    /// Raster image types only: SVG (a script grammar) and anything that is
+    /// not `image/*` are never stored.
+    static func isStorableMIME(_ raw: String) -> Bool {
+        let head = raw.split(separator: ";", maxSplits: 1).first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() } ?? ""
+        return head.hasPrefix("image/") && CIDImageInliner.sanitizeMIME(head) == head
+    }
+
     // MARK: Reads
 
     /// Cached images of one message's current body, keyed by normalized
     /// Content-ID. Only rows of this message and account, resolved from this
     /// very body, whose attachment row still belongs to the message and still
     /// carries that Content-ID.
-    static func parts(_ db: Database, messageId: String, accountId: String,
-                      bodyHTML: String) throws -> [String: Part] {
+    static func parts(_ db: Database, _ lookup: Lookup) throws -> [String: Part] {
         let rows = try Row.fetchAll(db, sql: """
             SELECT i.attachmentId, i.contentId, i.mimeType, i.data,
                    a.contentId AS rowContentId
             FROM inlineImage i
             JOIN attachment a ON a.id = i.attachmentId AND a.messageId = i.messageId
             WHERE i.messageId = ? AND i.accountId = ? AND i.bodyDigest = ?
-            """, arguments: [messageId, accountId, bodyDigest(bodyHTML)])
+            """, arguments: [lookup.messageId, lookup.accountId, lookup.bodyDigest])
         var out: [String: Part] = [:]
         for row in rows {
             let cid: String = row["contentId"]
@@ -113,21 +159,16 @@ enum InlineImageCache {
         return out
     }
 
-    /// For each message whose (hydrated) HTML references `cid:` images: its
-    /// cached parts, only when every referenced image is cached. A partial
-    /// set is never served: the pane resolves the message as usual instead.
+    /// For each lookup: its cached parts, only when every referenced image is
+    /// cached. A partial set is never served: the pane resolves that message
+    /// as usual instead.
     static func completeParts(_ db: Database,
-                              for messages: [Message]) throws -> [String: [String: Part]] {
+                              _ lookups: [Lookup]) throws -> [String: [String: Part]] {
         var out: [String: [String: Part]] = [:]
-        for message in messages {
-            guard let html = message.bodyHTML,
-                  CIDImageInliner.containsCIDReferences(html) else { continue }
-            let refs = CIDImageInliner.referencedIDs(in: html)
-            guard !refs.isEmpty else { continue }
-            let found = try parts(db, messageId: message.id,
-                                  accountId: message.accountId, bodyHTML: html)
-            guard refs.isSubset(of: Set(found.keys)) else { continue }
-            out[message.id] = found.filter { refs.contains($0.key) }
+        for lookup in lookups where !lookup.references.isEmpty {
+            let found = try parts(db, lookup)
+            guard lookup.references.isSubset(of: Set(found.keys)) else { continue }
+            out[lookup.messageId] = found.filter { lookup.references.contains($0.key) }
         }
         return out
     }
@@ -137,13 +178,32 @@ enum InlineImageCache {
         try Int.fetchOne(db, sql: "SELECT COALESCE(SUM(byteCount), 0) FROM inlineImage") ?? 0
     }
 
+    /// Of `messageIds`, those with images whose "used" mark is older than
+    /// `cutoff`, i.e. the ones a touch would actually change.
+    static func staleMessageIds(_ db: Database, _ messageIds: [String],
+                                cutoff: Date) throws -> [String] {
+        var out: [String] = []
+        for chunk in chunks(messageIds) {
+            out += try String.fetchAll(
+                db,
+                sql: """
+                    SELECT DISTINCT messageId FROM inlineImage
+                    WHERE messageId IN (\(marks(chunk.count))) AND lastUsedAt < ?
+                    """,
+                arguments: StatementArguments(chunk)
+                    + StatementArguments([cutoff.timeIntervalSinceReferenceDate]))
+        }
+        return out
+    }
+
     // MARK: Writes
 
     /// Store one message's complete result, replacing what it had. Nothing
     /// is written unless everything still matches, checked in this
     /// transaction: the message (of that account) and its body as resolved,
-    /// and every part's attachment row with its Content-ID. A message deleted
-    /// or rewritten while the write waited is therefore never brought back.
+    /// and every part's attachment row with its Content-ID and a raster
+    /// image type. A message deleted or rewritten while the write waited is
+    /// therefore never brought back.
     @discardableResult
     static func store(_ db: Database, _ pending: Pending, now: Date) throws -> Bool {
         guard !pending.parts.isEmpty,
@@ -158,10 +218,14 @@ enum InlineImageCache {
         else { return false }
         for part in pending.parts {
             guard !part.data.isEmpty,
-                  let rowCID = try String.fetchOne(db, sql: """
-                      SELECT contentId FROM attachment WHERE id = ? AND messageId = ?
+                  let row = try Row.fetchOne(db, sql: """
+                      SELECT contentId, mimeType FROM attachment WHERE id = ? AND messageId = ?
                       """, arguments: [part.attachmentId, pending.messageId]),
-                  CIDImageInliner.normalize(rowCID) == part.contentId
+                  let rowCID: String = row["contentId"],
+                  CIDImageInliner.normalize(rowCID) == part.contentId,
+                  let rowMIME: String = row["mimeType"],
+                  isStorableMIME(rowMIME),
+                  part.mimeType == CIDImageInliner.sanitizeMIME(rowMIME)
             else { return false }
         }
         try forget(db, messageId: pending.messageId)
@@ -178,13 +242,19 @@ enum InlineImageCache {
         return true
     }
 
-    /// Marks messages' images as used now (least-recently-used order).
+    /// Marks messages' images as used now (least-recently-used order), only
+    /// where the mark is older than `touchInterval`.
     static func touch(_ db: Database, messageIds: [String], now: Date) throws {
         let stamp = now.timeIntervalSinceReferenceDate
+        let cutoff = stamp - touchInterval
         for chunk in chunks(messageIds) {
             try db.execute(
-                sql: "UPDATE inlineImage SET lastUsedAt = ? WHERE messageId IN (\(marks(chunk.count)))",
-                arguments: StatementArguments([stamp]) + StatementArguments(chunk))
+                sql: """
+                    UPDATE inlineImage SET lastUsedAt = ?
+                    WHERE messageId IN (\(marks(chunk.count))) AND lastUsedAt < ?
+                    """,
+                arguments: StatementArguments([stamp]) + StatementArguments(chunk)
+                    + StatementArguments([cutoff]))
         }
     }
 
@@ -250,9 +320,10 @@ enum InlineImageCache {
 /// being frozen as a broken image.
 enum InlineImageCachePolicy {
     static func shouldStore(references: Set<String>,
-                            parts: [String: InlineImageCache.Part],
+                            outcome: CIDPartResolver.Outcome,
                             didRefetch: Bool) -> Bool {
-        guard !didRefetch, !references.isEmpty,
+        let parts = outcome.parts
+        guard !didRefetch, outcome.allStorable, !references.isEmpty,
               references.isSubset(of: Set(parts.keys)) else { return false }
         let used = parts.filter { references.contains($0.key) }
         guard used.values.allSatisfy({
@@ -270,6 +341,9 @@ enum CIDPartResolver {
         var parts: [String: InlineImageCache.Part]
         /// How many parts came from `fetch` (an attachment request each).
         var fetchedCount: Int
+        /// False when a resolved part is of a type the cache never stores
+        /// (SVG, a type that needed relabelling).
+        var allStorable: Bool = true
     }
 
     /// `Part.attachmentId` of a part whose attachment row has no id.
@@ -300,9 +374,10 @@ enum CIDPartResolver {
             do {
                 let data = try await fetch(att)
                 guard !data.isEmpty else { continue }
+                if !InlineImageCache.isStorableMIME(att.mimeType) { out.allStorable = false }
                 out.parts[cid] = InlineImageCache.Part(
                     attachmentId: attachmentId, contentId: cid,
-                    mimeType: att.mimeType, data: data)
+                    mimeType: CIDImageInliner.sanitizeMIME(att.mimeType), data: data)
             } catch {
                 // Left unresolved; the other images can still load.
                 continue
@@ -310,17 +385,59 @@ enum CIDPartResolver {
         }
         return out
     }
+
+    /// The reading pane's resolve (`MailStore.inlineCIDImages`): the
+    /// persistent cache first, `fetch` for the rest, then a complete result
+    /// is queued for storage, or a cache hit marked as used. `didRefetch`:
+    /// the message was just re-fetched, so its rows are new and nothing is
+    /// stored for them yet.
+    static func resolveUsingCache(
+        messageId: String,
+        accountId: String,
+        bodyHTML: String,
+        references: Set<String>,
+        attachmentsByCID: [String: AttachmentRow],
+        didRefetch: Bool,
+        store: InlineImageStore?,
+        fetch: @Sendable (AttachmentRow) async throws -> Data
+    ) async -> Outcome {
+        let lookup = InlineImageCache.Lookup(
+            messageId: messageId, accountId: accountId,
+            bodyHTML: bodyHTML, references: references)
+        var cached: [String: InlineImageCache.Part] = [:]
+        if let store, !didRefetch {
+            cached = await store.cachedParts(for: lookup)
+        }
+        let outcome = await resolve(
+            references: references, attachmentsByCID: attachmentsByCID,
+            cached: cached, fetch: fetch)
+        guard let store else { return outcome }
+        if outcome.fetchedCount > 0 {
+            if InlineImageCachePolicy.shouldStore(
+                references: references, outcome: outcome, didRefetch: didRefetch) {
+                await store.remember(InlineImageCache.Pending(
+                    messageId: messageId, accountId: accountId,
+                    bodyDigest: lookup.bodyDigest,
+                    parts: Array(outcome.parts.values)))
+            }
+        } else if !outcome.parts.isEmpty {
+            await store.noteUsed([messageId])
+        }
+        return outcome
+    }
 }
 
 /// Owns the writes to the persistent inline-image cache: batched, off the
 /// main actor, and stopped cleanly at quit.
 ///
-/// Results and "used" marks queue here and go to the database together in
-/// one write transaction, `flushDelay` after the first of them. Each
-/// transaction is atomic, so a quit or crash during a write leaves either
-/// all of it or none of it. `shutDown` (called by the app's termination
-/// path before the pool closes) drops what is queued, cancels the pending
-/// or running write (GRDB rolls a cancelled write back) and awaits it.
+/// Results and "used" marks queue here and are written `flushDelay` after
+/// the first of them: one transaction per stored message, then one for the
+/// marks and the eviction. Each transaction is atomic, so a quit or crash
+/// during a write leaves a message's images whole or absent. A "used" mark
+/// younger than `InlineImageCache.touchInterval` writes nothing.
+/// `shutDown` (called by the app's termination path before the pool
+/// closes) drops what is queued, cancels the pending or running write (GRDB
+/// rolls a cancelled transaction back) and awaits it.
 actor InlineImageStore {
     private let db: any DatabaseWriter
     private let budget: Int
@@ -330,9 +447,15 @@ actor InlineImageStore {
     private var pendingTouches: Set<String> = []
     /// Sleeping until the next batched write.
     private var timerTask: Task<Void, Never>?
-    /// The write transaction in flight, if any.
+    /// The write in flight, if any.
     private var writeTask: Task<Void, Never>?
     private var isClosed = false
+
+    /// Write transactions begun (test observability).
+    private(set) var writeTransactionCount = 0
+    /// Batches begun and finished (cancelled ones included).
+    private(set) var batchesStarted = 0
+    private(set) var batchesFinished = 0
 
     init(db: any DatabaseWriter,
          budget: Int = InlineImageCache.totalBudgetBytes,
@@ -346,28 +469,33 @@ actor InlineImageStore {
 
     /// Cached images of one message's current body (see
     /// `InlineImageCache.parts`). Empty on any error: a miss, never a failure.
-    nonisolated func cachedParts(messageId: String, accountId: String,
-                                 bodyHTML: String) async -> [String: InlineImageCache.Part] {
-        (try? await db.read { db in
-            try InlineImageCache.parts(db, messageId: messageId,
-                                       accountId: accountId, bodyHTML: bodyHTML)
+    nonisolated func cachedParts(for lookup: InlineImageCache.Lookup) async
+        -> [String: InlineImageCache.Part] {
+        (try? await db.read { db in try InlineImageCache.parts(db, lookup) }) ?? [:]
+    }
+
+    /// See `InlineImageCache.completeParts`. Empty on any error.
+    nonisolated func completeParts(for lookups: [InlineImageCache.Lookup]) async
+        -> [String: [String: InlineImageCache.Part]] {
+        guard !lookups.isEmpty else { return [:] }
+        return (try? await db.read { db in
+            try InlineImageCache.completeParts(db, lookups)
         }) ?? [:]
     }
 
     /// Queue a complete resolve result. The caller checked
     /// `InlineImageCachePolicy`; the write checks again that the message,
     /// body and attachment rows are still the ones it was resolved from.
-    func remember(messageId: String, accountId: String, bodyHTML: String,
-                  parts: [InlineImageCache.Part]) {
+    func remember(_ pending: InlineImageCache.Pending) {
         guard !isClosed else { return }
-        pendingStores[messageId] = InlineImageCache.Pending(
-            messageId: messageId, accountId: accountId,
-            bodyDigest: InlineImageCache.bodyDigest(bodyHTML),
-            parts: parts.sorted { $0.attachmentId < $1.attachmentId })
+        var sorted = pending
+        sorted.parts.sort { $0.attachmentId < $1.attachmentId }
+        pendingStores[pending.messageId] = sorted
         scheduleFlush()
     }
 
-    /// Mark messages whose images were just served from the cache.
+    /// Mark messages whose images the reading pane just showed. Prefetch
+    /// must not call this.
     func noteUsed(_ messageIds: [String]) {
         guard !isClosed, !messageIds.isEmpty else { return }
         pendingTouches.formUnion(messageIds)
@@ -382,23 +510,25 @@ actor InlineImageStore {
     }
 
     /// Stop for good: queued work is dropped, a pending or running write is
-    /// cancelled (GRDB rolls a cancelled write back) and awaited. Call
-    /// before the pool closes.
+    /// cancelled and awaited. Call before the pool closes.
     func shutDown() async {
         isClosed = true
         pendingStores = [:]
         pendingTouches = []
         let timer = timerTask
-        let running = writeTask
         timer?.cancel()
-        running?.cancel()
         await timer?.value
-        await running?.value
         timerTask = nil
-        writeTask = nil
+        // A write that started meanwhile is cancelled and awaited too.
+        while let running = writeTask {
+            running.cancel()
+            await running.value
+            if writeTask == running { writeTask = nil }
+        }
     }
 
     var queuedMessageCount: Int { pendingStores.count }
+    var isWriting: Bool { writeTask != nil }
 
     private func scheduleFlush() {
         guard timerTask == nil, !isClosed else { return }
@@ -418,9 +548,16 @@ actor InlineImageStore {
         await write()
     }
 
-    /// One transaction for everything queued. Writes run one at a time.
+    private func countTransaction() { writeTransactionCount += 1 }
+    private func batchDidFinish() { batchesFinished += 1 }
+
+    /// Everything queued, one transaction per stored message. Writes run
+    /// one at a time.
     private func write() async {
-        if let running = writeTask { await running.value }
+        while let running = writeTask {
+            await running.value
+            if writeTask == running { writeTask = nil }
+        }
         guard !isClosed, !pendingStores.isEmpty || !pendingTouches.isEmpty else { return }
         let stores = pendingStores.values.sorted { $0.messageId < $1.messageId }
         let touches = pendingTouches.subtracting(pendingStores.keys).sorted()
@@ -429,16 +566,34 @@ actor InlineImageStore {
         let stamp = now()
         let budget = budget
         let db = db
-        // A failed or cancelled write rolls back as a whole; the results are
-        // only a cache, so they are not queued again.
-        let task = Task<Void, Never> {
-            _ = try? await db.write { db in
-                for pending in stores {
+        batchesStarted += 1
+        // A failed or cancelled write rolls back; the results are only a
+        // cache, so they are not queued again.
+        let task = Task<Void, Never> { [weak self] in
+            var stored = false
+            for pending in stores {
+                guard !Task.isCancelled else { break }
+                await self?.countTransaction()
+                let ok = (try? await db.write { db in
                     try InlineImageCache.store(db, pending, now: stamp)
-                }
-                try InlineImageCache.touch(db, messageIds: touches, now: stamp)
-                try InlineImageCache.evict(db, budget: budget)
+                }) ?? false
+                stored = stored || ok
             }
+            var stale: [String] = []
+            if !touches.isEmpty, !Task.isCancelled {
+                let cutoff = stamp.addingTimeInterval(-InlineImageCache.touchInterval)
+                stale = (try? await db.read { db in
+                    try InlineImageCache.staleMessageIds(db, touches, cutoff: cutoff)
+                }) ?? []
+            }
+            if (stored || !stale.isEmpty), !Task.isCancelled {
+                await self?.countTransaction()
+                _ = try? await db.write { db in
+                    try InlineImageCache.touch(db, messageIds: stale, now: stamp)
+                    try InlineImageCache.evict(db, budget: budget)
+                }
+            }
+            await self?.batchDidFinish()
         }
         writeTask = task
         await task.value

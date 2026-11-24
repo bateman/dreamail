@@ -4179,8 +4179,24 @@ struct ComposeRequest: Identifiable {
         guard openedThreadId != id else { return }
         PerfMetrics.measure(.navDetailOpen, meta: id == nil ? "close" : "open") {
             openedThreadId = id
+            noteCachedImagesShown(threadId: id)
             scheduleNeighborPrefetch(openedId: id)
         }
+    }
+
+    /// The pane is about to show this conversation from its warmed payload:
+    /// mark the cached images it carries as used (least-recently-used
+    /// order). A cold open marks them in `inlineCIDImages` instead; the
+    /// prefetch never marks anything. At most one write a day per message.
+    private func noteCachedImagesShown(threadId: String?) {
+        guard let threadId, let store = inlineImageStore,
+              let warm = payloadMirror.payload(
+                  for: threadId,
+                  revision: contentRevisions.revision(of: threadId),
+                  suppressing: suppressedDraftMessageIds),
+              !warm.cidInlineByMessageId.isEmpty else { return }
+        let ids = Array(warm.cidInlineByMessageId.keys)
+        Task { await store.noteUsed(ids) }
     }
 
     func clearSelection() {
@@ -4256,12 +4272,24 @@ struct ComposeRequest: Identifiable {
                     threadId: target.id, suppressingDrafts: suppressed,
                     revision: target.revision,
                     fontScale: fontScale)
+                guard !Task.isCancelled else { return }
+                // Images resolved before (this run or an earlier one) from
+                // the encrypted local cache, never from Gmail: the warmed
+                // conversation paints them in its first frame.
+                let images = await repository.warmCachedCIDBodies(
+                    threadId: target.id, revision: target.revision,
+                    fontScale: fontScale)
                 guard !Task.isCancelled, let self else { return }
+                var payload = load.payload
+                for (id, body) in images
+                where payload.messages.contains(where: { $0.id == id }) {
+                    payload.cidInlineByMessageId[id] = body
+                }
                 // Mirror onto the main actor. This is what makes the landing
                 // synchronous: without it the warmed payload still costs an
                 // actor round-trip at exactly the moment MainActor is busiest.
                 self.payloadMirror.store(
-                    load.payload, for: target.id,
+                    payload, for: target.id,
                     revision: target.revision,
                     current: self.contentRevisions.revision(of: target.id),
                     suppressing: suppressed)
@@ -4471,28 +4499,15 @@ struct ComposeRequest: Identifiable {
         // sanitizeMIME here: its fallback is image/jpeg, so it would pass
         // everything.) A part that fails to download stays unresolved; the
         // other images can still load.
-        let cached = await inlineImageStore?.cachedParts(
+        // Only a complete result for the body as stored (no re-fetch
+        // rewrote it meanwhile) is kept.
+        let outcome = await CIDPartResolver.resolveUsingCache(
             messageId: message.id, accountId: message.accountId,
-            bodyHTML: workingHTML) ?? [:]
-        let outcome = await CIDPartResolver.resolve(
-            references: refs, attachmentsByCID: byCID, cached: cached
+            bodyHTML: workingHTML, references: refs, attachmentsByCID: byCID,
+            didRefetch: didRefetch, store: inlineImageStore
         ) { [weak self] att in
             guard let self else { throw CancellationError() }
             return try await self.downloadAttachment(att, message: message)
-        }
-        if let imageStore = inlineImageStore {
-            if outcome.fetchedCount > 0 {
-                // Only a complete result for the body as stored (no re-fetch
-                // rewrote it meanwhile) is kept.
-                if InlineImageCachePolicy.shouldStore(
-                    references: refs, parts: outcome.parts, didRefetch: didRefetch) {
-                    await imageStore.remember(
-                        messageId: message.id, accountId: message.accountId,
-                        bodyHTML: workingHTML, parts: Array(outcome.parts.values))
-                }
-            } else if !outcome.parts.isEmpty {
-                await imageStore.noteUsed([message.id])
-            }
         }
         let parts = outcome.parts.mapValues { (mimeType: $0.mimeType, data: $0.data) }
         guard !parts.isEmpty else {

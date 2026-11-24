@@ -46,17 +46,21 @@ account removed, a cached inline image evicted), this is what happens to it:
   joins the freelist. Freed pages are then truncated off the end of the file
   in batches (`auto_vacuum = INCREMENTAL`).
 - **Cached inline images: inside the database, deleted with their mail.**
-  The images a message's HTML embeds as `cid:` parts (not remote images,
-  which are never cached) are kept in the encrypted database once they have
-  been downloaded, so the conversation opens with them later, after a
-  relaunch too. Each image is tied to its message, attachment part and
-  account, and to the exact body it was resolved from: it is deleted with
-  the message, its thread, its account, a local prune, or a re-fetch that
-  changes the message's content, and the same overwrite and log truncation
-  apply. The cache holds at most 200 MiB (3 MiB of images per message);
-  beyond that the least recently used messages' images are deleted, the
-  same way. Images are never written outside the database (no on-disk HTTP
-  cache, no temporary file).
+  The images a message's HTML embeds as `cid:` parts (raster images only,
+  never SVG; not remote images, which are never cached) are kept in the
+  encrypted database once they have been downloaded, so the conversation
+  opens with them later, after a relaunch too. Each image is tied to its
+  message, attachment part and account, and to the exact body it was
+  resolved from. It goes with its message: a deletion, a local prune, the
+  deletion of its thread, or a re-fetch that changes the message's content
+  (all through the database's cascading deletes), and with its account
+  (removal also deletes them by name); the same overwrite and log
+  truncation apply. The cache holds at most 200 MiB (3 MiB of images per
+  message); beyond that the least recently used messages' images are
+  deleted, the same way. The cache itself writes nothing outside the
+  database (no on-disk HTTP cache, no temporary file); the same image
+  opened as an attachment or in Quick Look is a copy in the temporary
+  folder, as described below.
 - **The full-text index: overwritten.** FTS5's `secure-delete` removes a
   deleted message's terms from the index at delete time. A bulk delete
   rebuilds the index from the remaining messages instead, which leaves no
