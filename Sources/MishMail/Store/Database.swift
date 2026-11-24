@@ -765,7 +765,7 @@ final class AppDatabase: @unchecked Sendable {
     /// is 16× the default and keeps the worst case under 200 MB.
     static let pageCacheKiB = 32_768
 
-    private static func openAndMigrate(
+    static func openAndMigrate(
         path: String, key: String, scheme: KeyScheme
     ) throws -> DatabasePool {
         let keyString = scheme.keyString(for: key)
