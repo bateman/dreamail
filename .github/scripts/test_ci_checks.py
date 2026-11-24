@@ -5,8 +5,6 @@ Run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
 import importlib.util
 import io
-import json
-import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -227,128 +225,112 @@ class CheckTestSkipsTests(TempFiles):
 class CheckPackagePinsTests(TempFiles):
     URL = "https://github.com/duckduckgo/GRDB.swift"
     REV = "46098847eeabdb008f238bef5750a8e64097b6ed"
-    SUM = "41f01022f6a35986393e063e1ef386fd896646ed032f7d0419c4b02fa3afe61d"
-    PINS = (f"# comment\nGRDB url {URL}\nGRDB revision {REV}\n"
-            f"GRDB checksum {SUM}\n")
+    PACKAGE = f"  GRDB:\n    url: {URL}\n    revision: {REV}\n"
     PROJECT = textwrap.dedent(f"""\
         name: MishMail
+        options:
+          bundleIdPrefix: io.github.bateman
         packages:
           # GRDB 3.0.0
           GRDB:
             url: {URL}
-            revision: {REV}
+            revision: {REV}  # tag 3.0.0
         targets:
           MishMail:
             type: application
+            dependencies:
+              - package: GRDB
+              - target: MishMailRelauncher
+              - sdk: Security.framework
         """)
 
-    def static_errors(self, project: str = PROJECT, pins: str = PINS) -> list[str]:
-        return check_package_pins.check_static(self.write("pins.txt", pins),
-                                               self.write("project.yml", project))
+    def errors(self, text: str) -> list[str]:
+        return check_package_pins.check(self.write("project.yml", text))
 
-    def test_repository_pins_pass(self):
-        errors = check_package_pins.check_static(REPO / ".github/package-pins.txt",
-                                                 REPO / "project.yml")
-        self.assertEqual(errors, [])
+    def assertRejected(self, text: str, fragment: str = ""):
+        errors = self.errors(text)
+        self.assertTrue(errors, "accepted:\n" + text)
+        if fragment:
+            self.assertTrue(any(fragment in e for e in errors), errors)
+
+    def test_repository_project_passes(self):
+        self.assertEqual(check_package_pins.check(REPO / "project.yml"), [])
 
     def test_pinned_project_passes(self):
-        self.assertEqual(self.static_errors(), [])
+        self.assertEqual(self.errors(self.PROJECT), [])
 
     def test_version_rules_fail(self):
         # The shape of project.yml before this check: a movable tag.
         for rule in ("exactVersion: 3.0.0", "from: 3.0.0", "branch: main",
-                     "minorVersion: 3.0.0", "version: 3.0.0"):
+                     "minorVersion: 3.0.0", "version: 3.0.0", "path: ../GRDB"):
             with self.subTest(rule=rule):
-                project = self.PROJECT.replace(f"revision: {self.REV}", rule)
-                errors = self.static_errors(project)
-                self.assertTrue(any("tags and branches can move" in e for e in errors), errors)
-                self.assertTrue(any("no `revision:`" in e for e in errors), errors)
+                text = self.PROJECT.replace(f"revision: {self.REV}", rule)
+                self.assertRejected(text, "tags and branches can move")
+                self.assertRejected(text, "has no `revision:`")
 
     def test_extra_rule_next_to_revision_fails(self):
-        project = self.PROJECT.replace(f"revision: {self.REV}\n",
-                                       f"revision: {self.REV}\n    exactVersion: 3.0.0\n")
-        self.assertTrue(self.static_errors(project))
+        self.assertRejected(self.PROJECT.replace(
+            f"revision: {self.REV}", f"revision: {self.REV}\n    exactVersion: 3.0.0"),
+            "unsupported form")
 
-    def test_revision_or_url_differing_from_pins_fails(self):
-        for old, new in ((self.REV, "0" * 40), (self.URL, "https://github.com/x/GRDB.swift")):
+    def test_bad_values_fail(self):
+        for old, new, fragment in (
+                (self.REV, self.REV[:12], "40-hex"), (self.REV, "3.0.0", "40-hex"),
+                (self.REV, f'"{self.REV}"', "40-hex"), (self.REV, "*pinned", "40-hex"),
+                (self.URL, "http://github.com/x/y", "https://"),
+                (self.URL, "*url", "https://")):
             with self.subTest(new=new):
-                errors = self.static_errors(self.PROJECT.replace(old, new))
-                self.assertTrue(any("docs/DEPENDENCIES.md" in e for e in errors), errors)
+                self.assertRejected(self.PROJECT.replace(old, new, 1), fragment)
 
-    def test_unpinned_or_missing_package_fails(self):
-        extra = self.PROJECT.replace("targets:", "  Other:\n    url: https://x/y\n"
-                                     f"    revision: {self.REV}\ntargets:")
-        self.assertTrue(any("no entry in" in e for e in self.static_errors(extra)))
-        no_packages = self.PROJECT.split("packages:")[0] + "targets: {}\n"
-        self.assertTrue(any("no such package" in e for e in self.static_errors(no_packages)))
+    def test_duplicate_keys_fail(self):
+        cases = {
+            "package": self.PROJECT.replace("targets:", self.PACKAGE + "targets:"),
+            "url": self.PROJECT.replace(f"    url: {self.URL}\n",
+                                        f"    url: {self.URL}\n    url: https://x.org/y\n"),
+            "revision": self.PROJECT.replace(f"    revision: {self.REV}",
+                                             f"    revision: {self.REV}\n"
+                                             f"    revision: {'0' * 40}"),
+            "top-level": self.PROJECT + "packages:\n" + self.PACKAGE,
+        }
+        for what, text in cases.items():
+            with self.subTest(what=what):
+                self.assertRejected(text, "twice")
 
-    def test_flow_forms_fail(self):
-        for form in ("packages: {GRDB: {url: x, exactVersion: 3.0.0}}",):
-            with self.subTest(form=form):
-                project = self.PROJECT.split("packages:")[0] + form + "\n"
-                self.assertTrue(any("block `packages:`" in e for e in self.static_errors(project)))
-        inline = self.PROJECT.replace(f"    url: {self.URL}\n    revision: {self.REV}\n",
-                                      f"    {{url: {self.URL}, exactVersion: 3.0.0}}\n")
-        self.assertTrue(any("unsupported form" in e for e in self.static_errors(inline)))
+    def test_package_key_variants_fail(self):
+        for key in ("'packages':", '"packages":', '"packages" :', "packages :",
+                    "!!str packages:", "<<:", "? packages", "packages: {GRDB: {url: x}}"):
+            with self.subTest(key=key):
+                self.assertRejected(self.PROJECT.replace("packages:", key, 1))
 
-    def test_malformed_pins_fail(self):
-        for pins in (self.PINS.replace(self.REV, "v3.0.0"), self.PINS.replace(self.SUM, "abc"),
-                     self.PINS.replace(f"GRDB checksum {self.SUM}\n", ""),
-                     self.PINS + "GRDB tag 3.0.0\n", self.PINS + f"GRDB revision {self.REV}\n"):
-            with self.subTest(pins=pins):
-                self.assertTrue(self.static_errors(pins=pins))
+    def test_anchors_and_merges_in_packages_fail(self):
+        for old, new in (("  GRDB:", "  GRDB: &grdb"), ("  GRDB:", "  <<: *base"),
+                         ("  GRDB:", "  'GRDB':"), ("  GRDB:", "  GRDB: {url: x}"),
+                         (f"    url: {self.URL}", f"    url: {self.URL}\n    <<: *base")):
+            with self.subTest(new=new):
+                self.assertRejected(self.PROJECT.replace(old, new, 1))
 
-    # --resolved: a fake derived-data directory with a real git checkout.
+    def test_imports_fail(self):
+        for key in ("include:\n  - other.yml", "include: [other.yml]",
+                    "localPackages:\n  - ../GRDB", "projectReferences:\n  Other: {}"):
+            with self.subTest(key=key):
+                self.assertRejected(self.PROJECT + key + "\n", "not allowed")
 
-    def make_resolved(self, manifest_sum: str = SUM, resolved_rev: str = REV):
-        root = Path(self._dir.name)
-        checkout = root / "dd/SourcePackages/checkouts/GRDB.swift"
-        checkout.mkdir(parents=True)
-        (checkout / "Package.swift").write_text(
-            f'.binaryTarget(name: "GRDB", url: "https://x/GRDB.xcframework.zip",\n'
-            f'              checksum: "{manifest_sum}")\n')
-        git = ["git", "-C", str(checkout), "-c", "user.name=t", "-c", "user.email=t@t",
-               "-c", "commit.gpgsign=false"]
-        subprocess.run(git[:3] + ["init", "-q"], check=True)
-        subprocess.run(git + ["add", "."], check=True)
-        subprocess.run(git + ["commit", "-qm", "manifest"], check=True)
-        head = subprocess.run(git[:3] + ["rev-parse", "HEAD"], check=True,
-                              capture_output=True, text=True).stdout.strip()
-        resolved = {"pins": [{"identity": "grdb.swift", "kind": "remoteSourceControl",
-                              "location": self.URL,
-                              "state": {"revision": resolved_rev or head}}], "version": 3}
-        pins = self.PINS.replace(self.REV, head) if not resolved_rev else self.PINS
-        return (root / "dd", self.write("pins.txt", pins),
-                self.write("Package.resolved", json.dumps(resolved)), head)
+    def test_binary_dependencies_fail(self):
+        for dep in ("- framework: Vendor/SQLCipher.xcframework", "- carthage: GRDB",
+                    "- {framework: x.framework}", '- "carthage": GRDB'):
+            with self.subTest(dep=dep):
+                self.assertRejected(self.PROJECT + f"      {dep}\n", "`framework:`")
 
-    def test_resolved_at_pinned_commit_passes(self):
-        derived, pins, resolved, _ = self.make_resolved(resolved_rev="")
-        self.assertEqual(check_package_pins.check_resolved(derived, pins, resolved), [])
+    def test_comments_are_ignored(self):
+        text = self.PROJECT + "# include: other.yml\n      # - framework: x\n"
+        self.assertEqual(self.errors(text), [])
 
-    def test_checkout_at_other_commit_fails(self):
-        # The pin names REV; the checkout is at a different commit.
-        derived, pins, resolved, head = self.make_resolved()
-        errors = check_package_pins.check_resolved(derived, pins, resolved)
-        self.assertTrue(any(f"is at {head}" in e for e in errors), errors)
-
-    def test_resolved_file_at_other_commit_fails(self):
-        derived, pins, _, head = self.make_resolved(resolved_rev="")
-        moved = self.write("moved.resolved", json.dumps({"pins": [{
-            "location": self.URL + ".git", "state": {"revision": "0" * 40}}]}))
-        errors = check_package_pins.check_resolved(derived, pins, moved)
-        self.assertTrue(any("Package.resolved records revision 000" in e for e in errors), errors)
-
-    def test_other_binary_checksum_fails(self):
-        derived, pins, resolved, _ = self.make_resolved(manifest_sum="f" * 64, resolved_rev="")
-        errors = check_package_pins.check_resolved(derived, pins, resolved)
-        self.assertTrue(any("binary checksum(s) fff" in e for e in errors), errors)
-
-    def test_missing_checkout_or_resolved_fails(self):
-        pins = self.write("pins.txt", self.PINS)
-        errors = check_package_pins.check_resolved(Path(self._dir.name) / "none", pins,
-                                                   Path(self._dir.name) / "none.resolved")
-        self.assertTrue(any("not found" in e for e in errors), errors)
-        self.assertTrue(any("no SwiftPM checkout" in e for e in errors), errors)
+    def test_main_reports_and_exits_nonzero(self):
+        path = self.write("bad.yml", self.PROJECT.replace(f"revision: {self.REV}", "from: 3.0.0"))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(check_package_pins.main([str(path)]), 1)
+        self.assertIn("package pin violation", out.getvalue())
 
 
 if __name__ == "__main__":
