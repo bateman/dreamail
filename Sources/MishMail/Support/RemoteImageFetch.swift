@@ -233,7 +233,7 @@ struct RemoteImageTransport: Sendable {
     var resolve: @Sendable (String) async -> [[UInt8]]?
 
     static let live = streaming(session: RemoteImageSession.session,
-                                resolve: RemoteImageHostPolicy.resolveLive)
+                                resolve: { host in await RemoteImageHostPolicy.resolveLive(host) })
 
     static func streaming(session: URLSession,
                           resolve: @escaping @Sendable (String) async -> [[UInt8]]?)
