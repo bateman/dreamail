@@ -2377,7 +2377,7 @@ struct AccountSwitcher: View {
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
                         if let account = activeAccount, let label = labelText(account) {
-                            labelPill(label, account: account)
+                            labelPill(label, account: account, surface: .sidebar)
                         }
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .semibold))
@@ -2392,6 +2392,7 @@ struct AccountSwitcher: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("accountSwitcher")
         .popover(isPresented: $showMenu, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 1) {
                 accountRow(nil, shortcut: 1)
@@ -2427,6 +2428,7 @@ struct AccountSwitcher: View {
                     showMenu = false
                     store.editingAccountLabels = true
                 }
+                .accessibilityIdentifier("editAccountLabels")
             }
             .padding(8)
             .frame(width: 280)
@@ -2495,7 +2497,7 @@ struct AccountSwitcher: View {
                 }
                 Spacer(minLength: 0)
                 if let account, let label = labelText(account) {
-                    labelPill(label, account: account)
+                    labelPill(label, account: account, surface: .content)
                 }
                 if selected {
                     Image(systemName: "checkmark")
@@ -2554,14 +2556,14 @@ struct AccountSwitcher: View {
         return label
     }
 
-    /// Small capsule tinted with the account's avatar color ("Fund", "Personal").
-    private func labelPill(_ label: String, account: Account) -> some View {
-        let tint = Color.stable(for: account.id)
-        return Text(label)
-            .font(.system(size: 9.5, weight: .medium))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 7).padding(.vertical, 2)
-            .background(tint.opacity(0.14), in: Capsule())
+    /// Small pill with the account's label ("Fund", "Personal") in the
+    /// color chosen in "Edit Account Labels…" (default: the avatar's hue),
+    /// drawn with the same readable rule as Gmail label pills.
+    private func labelPill(_ label: String, account: Account,
+                           surface: LabelPillStyle.Surface) -> some View {
+        LabelPill(name: label, colors: AccountLabelColor.colors(for: account),
+                  surface: surface, font: .system(size: 9.5, weight: .medium),
+                  verticalPadding: 2)
             .fixedSize()
     }
 
@@ -2603,12 +2605,15 @@ private struct AccountDropDelegate: DropDelegate {
     }
 }
 
-/// Rename accounts ("Personal", "Fund", …); labels are local only.
+/// Rename accounts ("Personal", "Fund", …) and color their label pills;
+/// labels and colors are local only.
 struct AccountLabelsEditor: View {
     @Environment(MailStore.self) var store
     @Environment(\.dismiss) private var dismiss
     @State private var labels: [String: String] = [:]
     @State private var senderNames: [String: String] = [:]
+    /// Edited label colors by account: `#rrggbb`, or "" for the default.
+    @State private var labelColors: [String: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2626,6 +2631,7 @@ struct AccountLabelsEditor: View {
                             get: { senderNames[account.id] ?? account.senderName },
                             set: { senderNames[account.id] = $0 }
                         ), prompt: Text("e.g. Jane Doe"))
+                        colorRows(account)
                     }
                 }
             }
@@ -2637,6 +2643,9 @@ struct AccountLabelsEditor: View {
                 Button("Save") {
                     for (id, label) in labels { store.renameAccount(id, label: label) }
                     for (id, name) in senderNames { store.setSenderName(id, name: name) }
+                    for (id, hex) in labelColors {
+                        store.setAccountLabelColor(id, hex: hex.isEmpty ? nil : hex)
+                    }
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -2646,5 +2655,70 @@ struct AccountLabelsEditor: View {
         }
         .padding(16)
         .frame(width: 420)
+    }
+
+    /// The account's color as edited so far: `#rrggbb`, or nil for the default.
+    private func editedColor(_ account: Account) -> String? {
+        LabelRGB.normalizedHex(labelColors[account.id] ?? account.labelColor)
+    }
+
+    /// Label color: a preview pill and the system color picker, then the
+    /// organizer's swatches for one-click choices and "Default".
+    @ViewBuilder
+    private func colorRows(_ account: Account) -> some View {
+        let chosen = editedColor(account)
+        let pillColors = LabelColors(
+            background: AccountLabelColor.resolvedHex(stored: chosen, accountId: account.id),
+            text: nil)
+        let name = labels[account.id] ?? account.displayName
+        HStack {
+            Text("Label color")
+            Spacer()
+            LabelPill(name: name.isEmpty ? account.id : name, colors: pillColors,
+                      font: .system(size: 9.5, weight: .medium), verticalPadding: 2)
+                .fixedSize()
+                .accessibilityHidden(true)
+            ColorPicker("Label color", selection: Binding(
+                get: {
+                    Color(nsColor: AccountLabelColor.nsColor(hex: chosen, accountId: account.id))
+                },
+                set: { color in
+                    if let hex = AccountLabelColor.hex(from: color) {
+                        labelColors[account.id] = hex
+                    }
+                }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .accessibilityLabel("Label color for \(account.id)")
+            .accessibilityIdentifier("accountLabelColorPicker.\(account.id)")
+        }
+        HStack(spacing: 5) {
+            ForEach(Color.labelPalette, id: \.hex) { swatch in
+                let selected = chosen == LabelRGB.normalizedHex(swatch.hex)
+                Button {
+                    labelColors[account.id] = LabelRGB.normalizedHex(swatch.hex) ?? ""
+                } label: {
+                    LabelDot(colors: LabelColors(background: swatch.hex, text: nil), size: 14)
+                        .padding(2)
+                        .overlay {
+                            if selected {
+                                Circle().strokeBorder(Color.primary, lineWidth: 1.5)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .help(swatch.name)
+                .accessibilityLabel(swatch.name)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier("accountLabelSwatch.\(account.id).\(swatch.name)")
+            }
+            Spacer(minLength: 4)
+            Button("Default") { labelColors[account.id] = "" }
+                .controlSize(.small)
+                .disabled(chosen == nil)
+                .help("Use the account's default color")
+                .accessibilityLabel("Default label color")
+                .accessibilityIdentifier("accountLabelColorDefault.\(account.id)")
+        }
     }
 }
