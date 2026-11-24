@@ -9,8 +9,16 @@ minor versions may still change behavior.
 - **Crisper, monochrome sidebar icons.** Sidebar, Settings sidebar and
   list-header icons are drawn at the row title's size, in medium weight and
   the standard (not rounded) design, so they read less soft. The selected
-  row's icon is the filled glyph in the text colour, no longer tinted with the
-  accent colour, in active and inactive windows and with any accent colour.
+  row's icon is the filled glyph in the text colour (white on the accent
+  selection of a focused sidebar), no longer tinted with the accent colour, in
+  active and inactive windows and with any accent colour.
+- **Choose the colour of each account's label.** "Edit Account Labels…" now
+  has a colour per account: the system colour picker, the label organizer's
+  swatches for one click, and "Default" (the avatar's hue). The account pill in
+  the switcher is drawn like Gmail label pills: a solid fill with black or white
+  text that is readable on it, and a thin outline when the fill is close to the
+  background, so the pale-on-pale pill is gone. The colour stays on this Mac,
+  is never sent to Google, and is removed with the account.
 - **Faster first open, and inline images are not downloaded twice.** The first
   conversation you open is ready sooner, and re-opening a conversation with
   inline images no longer downloads the images again. Deleted mail leaves the

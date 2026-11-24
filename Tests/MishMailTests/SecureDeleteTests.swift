@@ -66,9 +66,11 @@ final class SecureDeleteTests: XCTestCase {
             .contains { $0.range(of: needle) != nil }
     }
 
+    /// Plain SQL, not the `Account` record: some tests insert on an older
+    /// schema (before v52's `labelColor`), which the record would not fit.
     private func insertAccount(_ db: Database, _ id: String) throws {
-        try Account(id: id, displayName: id, historyId: nil,
-                    lastSyncAt: nil, senderName: "").insert(db)
+        try db.execute(sql: "INSERT INTO account (id, displayName, senderName) VALUES (?, ?, '')",
+                       arguments: [id, id])
     }
 
     private func insertMessage(_ db: Database, account: String, gmailId: String,
