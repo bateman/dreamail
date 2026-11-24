@@ -42,6 +42,13 @@ everyone." This doc is about `make release`.
   certificate, no paid program) — see [Signing tiers](#signing-tiers). Run
   `make signing-doctor` to check. Pure ad-hoc (no team at all) is refused:
   an ad-hoc signature provides no publisher identity for the updater.
+- **Dependencies**: GRDB/SQLCipher is pinned by commit in `project.yml`.
+  `make release` checks that pin and deletes
+  `build/ddship.noindex/SourcePackages` before building, so the shipped
+  binary is downloaded again and SwiftPM verifies its checksum. Provenance,
+  licences and upgrade steps are in [DEPENDENCIES.md](DEPENDENCIES.md). A
+  published build should carry the GRDB (MIT) and SQLCipher (BSD 3-Clause)
+  notices.
 
 ## Release checklist
 

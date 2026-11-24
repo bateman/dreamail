@@ -355,6 +355,10 @@ release: require-pushed test ui-test-ci
 		echo "Release signing team $(TEAM) with Apple Development (free Personal Team, no notarization)."; \
 		echo "Existing installs on team $(TEAM) update fine; strangers' Macs will see Gatekeeper warnings."; \
 	fi
+	@# The shipped binary gets the CI guarantee: GRDB pinned by commit, and
+	@# downloaded afresh so SwiftPM verifies its checksum (docs/DEPENDENCIES.md).
+	python3 .github/scripts/check-package-pins.py
+	rm -rf $(SHIP_DD)/SourcePackages
 	@if [ "$(VALID_DEVELOPER_IDENTITY)" = "yes" ]; then \
 		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \

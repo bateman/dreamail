@@ -25,6 +25,7 @@ def load(name: str):
 
 check_workflows = load("check-workflows")
 check_test_skips = load("check-test-skips")
+check_package_pins = load("check-package-pins")
 
 
 class TempFiles(unittest.TestCase):
@@ -219,6 +220,117 @@ class CheckTestSkipsTests(TempFiles):
         self.assertTrue(entries)
         for entry in entries:
             self.assertRegex(entry, r"^\w+\.test\w+$")
+
+
+class CheckPackagePinsTests(TempFiles):
+    URL = "https://github.com/duckduckgo/GRDB.swift"
+    REV = "46098847eeabdb008f238bef5750a8e64097b6ed"
+    PACKAGE = f"  GRDB:\n    url: {URL}\n    revision: {REV}\n"
+    PROJECT = textwrap.dedent(f"""\
+        name: MishMail
+        options:
+          bundleIdPrefix: io.github.bateman
+        packages:
+          # GRDB 3.0.0
+          GRDB:
+            url: {URL}
+            revision: {REV}  # tag 3.0.0
+        targets:
+          MishMail:
+            type: application
+            dependencies:
+              - package: GRDB
+              - target: MishMailRelauncher
+              - sdk: Security.framework
+        """)
+
+    def errors(self, text: str) -> list[str]:
+        return check_package_pins.check(self.write("project.yml", text))
+
+    def assertRejected(self, text: str, fragment: str = ""):
+        errors = self.errors(text)
+        self.assertTrue(errors, "accepted:\n" + text)
+        if fragment:
+            self.assertTrue(any(fragment in e for e in errors), errors)
+
+    def test_repository_project_passes(self):
+        self.assertEqual(check_package_pins.check(REPO / "project.yml"), [])
+
+    def test_pinned_project_passes(self):
+        self.assertEqual(self.errors(self.PROJECT), [])
+
+    def test_version_rules_fail(self):
+        # The shape of project.yml before this check: a movable tag.
+        for rule in ("exactVersion: 3.0.0", "from: 3.0.0", "branch: main",
+                     "minorVersion: 3.0.0", "version: 3.0.0", "path: ../GRDB"):
+            with self.subTest(rule=rule):
+                text = self.PROJECT.replace(f"revision: {self.REV}", rule)
+                self.assertRejected(text, "tags and branches can move")
+                self.assertRejected(text, "has no `revision:`")
+
+    def test_extra_rule_next_to_revision_fails(self):
+        self.assertRejected(self.PROJECT.replace(
+            f"revision: {self.REV}", f"revision: {self.REV}\n    exactVersion: 3.0.0"),
+            "unsupported form")
+
+    def test_bad_values_fail(self):
+        for old, new, fragment in (
+                (self.REV, self.REV[:12], "40-hex"), (self.REV, "3.0.0", "40-hex"),
+                (self.REV, f'"{self.REV}"', "40-hex"), (self.REV, "*pinned", "40-hex"),
+                (self.URL, "http://github.com/x/y", "https://"),
+                (self.URL, "*url", "https://")):
+            with self.subTest(new=new):
+                self.assertRejected(self.PROJECT.replace(old, new, 1), fragment)
+
+    def test_duplicate_keys_fail(self):
+        cases = {
+            "package": self.PROJECT.replace("targets:", self.PACKAGE + "targets:"),
+            "url": self.PROJECT.replace(f"    url: {self.URL}\n",
+                                        f"    url: {self.URL}\n    url: https://x.org/y\n"),
+            "revision": self.PROJECT.replace(f"    revision: {self.REV}",
+                                             f"    revision: {self.REV}\n"
+                                             f"    revision: {'0' * 40}"),
+            "top-level": self.PROJECT + "packages:\n" + self.PACKAGE,
+        }
+        for what, text in cases.items():
+            with self.subTest(what=what):
+                self.assertRejected(text, "twice")
+
+    def test_package_key_variants_fail(self):
+        for key in ("'packages':", '"packages":', '"packages" :', "packages :",
+                    "!!str packages:", "<<:", "? packages", "packages: {GRDB: {url: x}}"):
+            with self.subTest(key=key):
+                self.assertRejected(self.PROJECT.replace("packages:", key, 1))
+
+    def test_anchors_and_merges_in_packages_fail(self):
+        for old, new in (("  GRDB:", "  GRDB: &grdb"), ("  GRDB:", "  <<: *base"),
+                         ("  GRDB:", "  'GRDB':"), ("  GRDB:", "  GRDB: {url: x}"),
+                         (f"    url: {self.URL}", f"    url: {self.URL}\n    <<: *base")):
+            with self.subTest(new=new):
+                self.assertRejected(self.PROJECT.replace(old, new, 1))
+
+    def test_imports_fail(self):
+        for key in ("include:\n  - other.yml", "include: [other.yml]",
+                    "localPackages:\n  - ../GRDB", "projectReferences:\n  Other: {}"):
+            with self.subTest(key=key):
+                self.assertRejected(self.PROJECT + key + "\n", "not allowed")
+
+    def test_binary_dependencies_fail(self):
+        for dep in ("- framework: Vendor/SQLCipher.xcframework", "- carthage: GRDB",
+                    "- {framework: x.framework}", '- "carthage": GRDB'):
+            with self.subTest(dep=dep):
+                self.assertRejected(self.PROJECT + f"      {dep}\n", "`framework:`")
+
+    def test_comments_are_ignored(self):
+        text = self.PROJECT + "# include: other.yml\n      # - framework: x\n"
+        self.assertEqual(self.errors(text), [])
+
+    def test_main_reports_and_exits_nonzero(self):
+        path = self.write("bad.yml", self.PROJECT.replace(f"revision: {self.REV}", "from: 3.0.0"))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(check_package_pins.main([str(path)]), 1)
+        self.assertIn("package pin violation", out.getvalue())
 
 
 if __name__ == "__main__":
