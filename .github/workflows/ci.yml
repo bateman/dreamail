@@ -33,6 +33,11 @@ jobs:
       - name: Check workflow pinning and token scope
         run: python3 .github/scripts/check-workflows.py
 
+      # Swift packages pinned by full commit SHA in project.yml: a version or
+      # branch rule would let a moved tag change what is built.
+      - name: Check Swift package pins
+        run: python3 .github/scripts/check-package-pins.py
+
       - name: Test the CI checks
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
@@ -62,8 +67,8 @@ jobs:
           defaults write com.apple.dt.XCBuild IgnoreFileSystemDeviceInodeChanges -bool YES
           echo "xcode=$(xcodebuild -version | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
 
-      # DerivedData and the GRDB package checkout. Runs read the newest cache
-      # for this Xcode and project file; only main (and manual runs) write one.
+      # DerivedData. Runs read the newest cache for this Xcode and project
+      # file; only main (and manual runs) write one.
       - name: Restore the build cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -71,6 +76,16 @@ jobs:
           key: dd-${{ runner.os }}-${{ steps.cache-key.outputs.xcode }}-${{ hashFiles('project.yml') }}-${{ github.sha }}
           restore-keys: |
             dd-${{ runner.os }}-${{ steps.cache-key.outputs.xcode }}-${{ hashFiles('project.yml') }}-
+
+      # SwiftPM checks a binary target's SHA-256 against the pinned manifest
+      # only when it downloads the archive. Drop the restored package checkout
+      # and artifacts so every run downloads GRDB again and SwiftPM verifies it.
+      - name: Drop cached Swift packages
+        run: |
+          if [ -d build/dd.noindex/SourcePackages ]; then
+            echo "Removing restored $(du -sh build/dd.noindex/SourcePackages | cut -f1) of Swift packages"
+          fi
+          rm -rf build/dd.noindex/SourcePackages
 
       # Build first: the unit suite has tests that inspect the built Debug
       # app (signature, zip round trip, embedded relauncher, ad-hoc trust).
