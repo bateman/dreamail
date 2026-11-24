@@ -3,7 +3,7 @@ import AppKit
 /// NSTextView whose caret-following scroll does not fight a SwiftUI frame
 /// that hugs the text. Base class of the compose body text view; it lives
 /// in Support so the unit tests can drive it.
-class ComposeCaretSettlingTextView: NSTextView {
+class ComposeCaretSettlingTextView: MultilingualSpellTextView {
     /// `scrollRangeToVisible` (caret after Return) can nudge the clip view
     /// horizontally when document width and clip width disagree by a pixel —
     /// classic NSTextView "body jumps sideways while typing" failure mode.
