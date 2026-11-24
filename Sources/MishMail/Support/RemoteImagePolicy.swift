@@ -2,9 +2,13 @@ import Foundation
 
 /// How remote images in HTML mail are allowed without a per-message click.
 ///
-/// Default stays `.ask` (privacy-first: tracking pixels blocked until opt-in).
-/// `.vip` is the middle ground — trusted senders get images automatically;
-/// everyone else still needs Load images. `.always` is the full open policy.
+/// Default is `.always` (`defaultPolicy`, the only place it is defined):
+/// HTTPS images load when the user opens a message. `.vip` is the middle
+/// ground — trusted senders get images automatically; everyone else needs
+/// Load images. `.ask` blocks every message until the user clicks.
+///
+/// Whatever the policy, mail in Spam never auto-loads (as in Gmail), and
+/// neighbour pre-render never loads remote images (`HTMLBodyPrerenderPolicy`).
 enum RemoteImagePolicy: String, CaseIterable, Identifiable {
     case ask
     case vip
@@ -15,6 +19,15 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
     static let defaultsKey = "remoteImagePolicy"
     /// Brief boolean toggle shipped before the three-way picker.
     static let legacyBoolKey = "loadRemoteImagesByDefault"
+
+    /// The policy of an install that never chose one. Single definition:
+    /// `stored`, `from(raw:)` and the `@AppStorage` fallbacks all read it.
+    static let defaultPolicy: RemoteImagePolicy = .always
+
+    /// Parses a stored raw value; an unknown value falls back to the default.
+    static func from(raw: String?) -> RemoteImagePolicy {
+        raw.flatMap(RemoteImagePolicy.init(rawValue:)) ?? defaultPolicy
+    }
 
     var title: String {
         switch self {
@@ -28,16 +41,30 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
     var footer: String {
         switch self {
         case .ask:
-            return "Each message shows Load images (and the thread can load all at once). Remote images can track opens."
+            return "No remote image loads until you click Load images on a message (or load all for the conversation). Senders can't see when you open their mail through images."
         case .vip:
-            return "HTTPS images load automatically only from VIP senders that pass Gmail's authentication checks. Other messages still need a click."
+            return "HTTPS images load automatically only from VIP senders that pass Gmail's authentication checks. Other messages need a click."
         case .always:
-            return "HTTPS images load in every message."
+            return "HTTPS images load when you open a message. The sender's servers can then see when you opened it and your IP address, which reveals your approximate location."
         }
+    }
+
+    /// Note shown under every policy: what stays blocked regardless.
+    static let alwaysBlockedNote =
+        "Messages in Spam always need a click. Cleartext (http) image URLs stay blocked either way."
+
+    /// Whether `labelIds` (space-separated Gmail label ids) put the message
+    /// in Spam.
+    static func isSpam(labelIds: String) -> Bool {
+        labelIds.split(whereSeparator: \.isWhitespace).contains { $0 == "SPAM" }
     }
 
     /// Whether this message may fetch remote images without a further click.
     /// `messageOptIn` / `threadOptIn` are explicit UI loads for this session.
+    ///
+    /// `inSpam` blocks auto-load under every policy (Gmail does the same):
+    /// spam is where tracking pixels and address-validation beacons live.
+    /// The explicit opt-ins still win, so Load images works there.
     ///
     /// `senderAuthenticated` is the verdict parsed from Gmail's own
     /// `Authentication-Results` header at ingest: the `From:` header itself
@@ -52,9 +79,11 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
         vipEmails: Set<String>,
         messageOptIn: Bool,
         threadOptIn: Bool,
-        senderAuthenticated: Bool? = nil
+        senderAuthenticated: Bool? = nil,
+        inSpam: Bool = false
     ) -> Bool {
         if messageOptIn || threadOptIn { return true }
+        if inSpam { return false }
         switch policy {
         case .ask: return false
         case .always: return true
@@ -67,11 +96,12 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
 
     /// One-shot migration from the old boolean default onto the string key.
     ///
-    /// Only writes when the legacy key was actually present — fresh installs
-    /// leave `remoteImagePolicy` unset so a future default change still applies.
-    /// MessageCard reads the key via `@AppStorage` with an `.ask` fallback;
-    /// the main window runs this in `onAppear` before threads are usually open,
-    /// so a legacy-always user only theoretically sees a brief ask window.
+    /// Only writes when the legacy key was actually present — installs that
+    /// never chose leave `remoteImagePolicy` unset so they follow
+    /// `defaultPolicy` (this is how the move from `.ask` to `.always` reaches
+    /// them). An explicit stored choice, `ask` included, is never touched.
+    /// `MishMailApp.init` runs it before any window exists, so a legacy
+    /// "don't load" user never renders a message under the `.always` default.
     static func migrateIfNeeded(_ defaults: UserDefaults = .standard) {
         guard defaults.object(forKey: defaultsKey) == nil else { return }
         guard defaults.object(forKey: legacyBoolKey) != nil else { return }
@@ -85,7 +115,6 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
 
     static func stored(_ defaults: UserDefaults = .standard) -> RemoteImagePolicy {
         migrateIfNeeded(defaults)
-        let raw = defaults.string(forKey: defaultsKey) ?? RemoteImagePolicy.ask.rawValue
-        return RemoteImagePolicy(rawValue: raw) ?? .ask
+        return from(raw: defaults.string(forKey: defaultsKey))
     }
 }

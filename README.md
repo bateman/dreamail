@@ -376,11 +376,16 @@ OAuth client and you want to keep the grant.
   256-bit key held only in the Keychain.
 - **HTML email is sandboxed** — rendered with JavaScript disabled, a strict CSP
   (`default-src 'none'`, `base-uri 'none'`, no forms/frames/objects), remote
-  images blocked until you opt in (per message, per conversation, or via the
-  Settings image policy: Ask / VIP senders / Always; HTTPS only — no cleartext
-  tracking pixels), an ephemeral web data store, and a default-deny navigation
-  policy so crafted mail can't redirect, auto-submit forms, or reach the
-  network. Links open in your default browser.
+  images over HTTPS only (no cleartext tracking pixels), an ephemeral web data
+  store, and a default-deny navigation policy so crafted mail can't redirect,
+  auto-submit forms, or reach the network. Links open in your default browser.
+- **Remote images** load by default when you open a message, so the sender's
+  servers can see when you opened it and your IP address. Settings →
+  Appearance → Load remote images can instead load them only for VIP senders
+  that pass Gmail's authentication checks, or ask each time (Load images per
+  message or per conversation). Whatever the setting, mail in Spam needs a
+  click, and conversations you have not opened (the neighbors MishMail
+  pre-renders for fast navigation) never load remote images.
 - **Attachments** written to disk are tagged with the quarantine attribute, so
   Gatekeeper's first-open checks still apply; opening app/script/installer-like
   filenames asks for confirmation first.

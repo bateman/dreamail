@@ -1577,9 +1577,9 @@ struct DraftMessageCard: View {
 struct MessageCard: View {
     @Environment(MailStore.self) var store
     @AppStorage("fontScale") private var fontScale = 1.0
-    /// Settings → Appearance. Default `.ask` so tracking pixels stay blocked.
+    /// Settings → Appearance. Unset follows `RemoteImagePolicy.defaultPolicy`.
     @AppStorage(RemoteImagePolicy.defaultsKey) private var remoteImagePolicyRaw =
-        RemoteImagePolicy.ask.rawValue
+        RemoteImagePolicy.defaultPolicy.rawValue
     let message: Message
     let isLast: Bool
     let attachments: [AttachmentRow]
@@ -1825,11 +1825,12 @@ struct MessageCard: View {
     }
 
     private var remoteImagePolicy: RemoteImagePolicy {
-        RemoteImagePolicy(rawValue: remoteImagePolicyRaw) ?? .ask
+        RemoteImagePolicy.from(raw: remoteImagePolicyRaw)
     }
 
     /// Policy + VIP list + per-message / per-thread opt-in. VIP auto-load is
-    /// gated on Gmail's auth verdict so a spoofed From: can't fire trackers.
+    /// gated on Gmail's auth verdict so a spoofed From: can't fire trackers;
+    /// mail in Spam never auto-loads.
     private var allowRemoteImages: Bool {
         RemoteImagePolicy.allows(
             policy: remoteImagePolicy,
@@ -1837,7 +1838,8 @@ struct MessageCard: View {
             vipEmails: store.vipEmails,
             messageOptIn: loadRemoteImages,
             threadOptIn: loadImagesForThread,
-            senderAuthenticated: message.senderAuth)
+            senderAuthenticated: message.senderAuth,
+            inSpam: RemoteImagePolicy.isSpam(labelIds: message.labelIds))
     }
 
     var body: some View {
@@ -1895,7 +1897,7 @@ struct MessageCard: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .help("Remote images can track opens. Click for this message; menu for the whole conversation. VIP auto-load and Always are in Settings → Appearance.")
+                    .help("Remote images can track opens. Click for this message; menu for the whole conversation. The image policy is in Settings → Appearance; mail in Spam always needs a click.")
                 }
                 if expanded {
                     Button {

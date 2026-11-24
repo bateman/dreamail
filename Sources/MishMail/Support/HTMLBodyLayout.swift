@@ -6,8 +6,8 @@ import Foundation
 ///
 /// ## Why preserve dimensions?
 /// Transactional templates (2FA, receipts) often use remote logos / spacer GIFs
-/// with HTML `width`/`height` attributes to hold vertical space. MishMail's
-/// default privacy policy blocks remote images, and CSS `img { height: auto }`
+/// with HTML `width`/`height` attributes to hold vertical space. Remote images
+/// are often blocked (Ask / VIP policy, Spam, pre-render), and CSS `img { height: auto }`
 /// then collapses those boxes — the card looks "vertically compressed" and
 /// authored text can bunch up or sit under empty shell chrome.
 ///
