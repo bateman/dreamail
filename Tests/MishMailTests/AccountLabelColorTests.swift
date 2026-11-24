@@ -186,10 +186,8 @@ final class AccountLabelColorTests: XCTestCase {
                             XCTAssertGreaterThanOrEqual(style.border.contrast(with: behind), 3,
                                                         "\(hex) \(appearance) \(surface) border")
                         } else {
-                            XCTAssertGreaterThanOrEqual(
-                                style.fill.contrast(with: behind),
-                                LabelPillStyle.minimumEdgeContrast,
-                                "\(hex) \(appearance) \(surface) edge")
+                            XCTAssertTrue(LabelPillStyle.fillStandsOut(style.fill, on: behind),
+                                          "\(hex) \(appearance) \(surface) edge")
                         }
                     }
                 }
