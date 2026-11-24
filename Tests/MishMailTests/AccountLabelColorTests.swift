@@ -133,20 +133,30 @@ final class AccountLabelColorTests: XCTestCase {
 
     // MARK: - Default color
 
-    func testDefaultFollowsTheAvatarHue() {
-        XCTAssertEqual(AccountLabelColor.defaultPalette.count, 8,
-                       "one hex per Color.stable palette entry")
-        for hex in AccountLabelColor.defaultPalette {
-            XCTAssertEqual(LabelRGB.normalizedHex(hex), hex)
+    /// The system color under the light appearance, as `#rrggbb`.
+    private static func lightHex(_ color: Color) throws -> String {
+        let aqua = try XCTUnwrap(NSAppearance(named: .aqua))
+        var hex: String?
+        aqua.performAsCurrentDrawingAppearance { hex = AccountLabelColor.hex(from: NSColor(color)) }
+        return try XCTUnwrap(hex)
+    }
+
+    /// Each default stands for the avatar color at the same index: its
+    /// light-appearance sRGB value.
+    func testDefaultPaletteIsTheAvatarPaletteInLightAppearance() throws {
+        XCTAssertEqual(AccountLabelColor.defaultPalette.count, Color.stablePalette.count)
+        for (index, color) in Color.stablePalette.enumerated() {
+            XCTAssertEqual(AccountLabelColor.hex(AccountLabelColor.defaultPalette[index]),
+                           try Self.lightHex(color), "default \(index) vs \(color)")
         }
-        for id in ["a@x.com", "fabio@example.com", "you@example.com", ""] {
-            let index = Color.stableIndex(for: id, count: 8)
+    }
+
+    /// End to end: an account's default pill color is its avatar's color.
+    func testDefaultColorIsTheAccountsAvatarColor() throws {
+        for id in ["a@x.com", "fabio@example.com", "you@example.com", "z@y.org", ""] {
             XCTAssertEqual(AccountLabelColor.defaultHex(for: id),
-                           AccountLabelColor.defaultPalette[index], id)
+                           try Self.lightHex(Color.stable(for: id)), id)
         }
-        // Deterministic: the same account always gets the same default.
-        XCTAssertEqual(AccountLabelColor.defaultHex(for: "a@x.com"),
-                       AccountLabelColor.defaultHex(for: "a@x.com"))
     }
 
     // MARK: - Pill style
@@ -155,7 +165,7 @@ final class AccountLabelColorTests: XCTestCase {
     /// organizer swatches) plus a sample of picker colors, including
     /// near-white and near-black.
     private static var pillColors: [String] {
-        AccountLabelColor.defaultPalette
+        AccountLabelColor.defaultPalette.map { AccountLabelColor.hex($0) }
             + Color.labelPalette.map { $0.hex }
             + ["#ffffff", "#f7f7f5", "#000000", "#232323", "#191919", "#808080",
                "#ffff00", "#00ff00", "#e4d7f5", "#7f7f7f"]
@@ -258,6 +268,38 @@ final class AccountLabelColorTests: XCTestCase {
             XCTAssertEqual(rgb.r, rgb.g, accuracy: 1.5 / 255, hex)
             XCTAssertEqual(rgb.g, rgb.b, accuracy: 1.5 / 255, hex)
         }
+    }
+
+    func testPickerEchoOfTheShownColorIsNotAPick() {
+        let shown = "#336699"
+        let same = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 1)
+        XCTAssertNil(AccountLabelColor.pickedHex(same, shown: shown))
+        XCTAssertNil(AccountLabelColor.pickedHex(same, shown: "#336699".uppercased()))
+        XCTAssertNil(AccountLabelColor.pickedHex(Color(nsColor: same), shown: shown))
+        // The default shown in the well, echoed back: still the default.
+        let defaultHex = AccountLabelColor.defaultHex(for: "a@x.com")
+        let defaultColor = AccountLabelColor.nsColor(hex: nil, accountId: "a@x.com")
+        XCTAssertNil(AccountLabelColor.pickedHex(defaultColor, shown: defaultHex))
+        // A different color is a pick.
+        let other = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.62, alpha: 1)
+        XCTAssertEqual(AccountLabelColor.pickedHex(other, shown: shown), "#33669e")
+        XCTAssertEqual(AccountLabelColor.pickedHex(Color(nsColor: other), shown: shown), "#33669e")
+    }
+
+    // MARK: - When the pill is shown
+
+    func testPillLabelOnlyWhenItAddsSomething() {
+        func label(_ name: String, _ sender: String) -> String? {
+            AccountLabelColor.pillLabel(displayName: name, senderName: sender, accountId: "a@x.com")
+        }
+        XCTAssertEqual(label("Personal", "Jane"), "Personal")
+        XCTAssertNil(label("Personal", ""), "no sender name: the label is the title")
+        XCTAssertNil(label("", "Jane"))
+        XCTAssertNil(label("a@x.com", "Jane"), "label equal to the address")
+        XCTAssertNil(label("Jane", "Jane"), "label equal to the sender name")
+        XCTAssertEqual(AccountLabelColor.pillLabel(Account(
+            id: "a@x.com", displayName: "Fund", historyId: nil, lastSyncAt: nil,
+            senderName: "Jane")), "Fund")
     }
 
     func testEveryResultIsAValidStoredValue() {

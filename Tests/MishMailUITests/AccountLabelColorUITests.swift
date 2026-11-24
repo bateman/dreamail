@@ -36,7 +36,7 @@ final class AccountLabelColorUITests: XCTestCase {
         green.click()
         XCTAssertTrue(defaultButton.isEnabled, "a chosen color can be reset")
         app.buttons["Save"].click()
-        XCTAssertTrue(waitForNonExistence(picker, timeout: 5), "Save closes the editor")
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 5), "Save closes the editor")
 
         openEditor(app)
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
@@ -44,7 +44,7 @@ final class AccountLabelColorUITests: XCTestCase {
         defaultButton.click()
         XCTAssertFalse(defaultButton.isEnabled)
         app.buttons["Save"].click()
-        XCTAssertTrue(waitForNonExistence(picker, timeout: 5))
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
 
         openEditor(app)
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
@@ -63,13 +63,5 @@ final class AccountLabelColorUITests: XCTestCase {
         let edit = element(app, "editAccountLabels")
         XCTAssertTrue(edit.waitForExistence(timeout: 5), "switcher offers Edit Account Labels…")
         edit.click()
-    }
-
-    private func waitForNonExistence(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while element.exists, Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        return !element.exists
     }
 }

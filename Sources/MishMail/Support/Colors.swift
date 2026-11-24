@@ -40,9 +40,12 @@ extension Color {
 
     /// Deterministic pleasant color for a string (sender avatars, etc.).
     static func stable(for string: String) -> Color {
-        let palette: [Color] = [.blue, .purple, .pink, .orange, .teal, .indigo, .green, .cyan]
-        return palette[stableIndex(for: string, count: palette.count)]
+        stablePalette[stableIndex(for: string, count: stablePalette.count)]
     }
+
+    /// The colors `stable(for:)` picks from, in order. The default account
+    /// label colors (`AccountLabelColor.defaultPalette`) mirror it.
+    static let stablePalette: [Color] = [.blue, .purple, .pink, .orange, .teal, .indigo, .green, .cyan]
 
     /// The index `stable(for:)` picks (djb2 hash), shared with the default
     /// account label color so the pill keeps the avatar's hue.

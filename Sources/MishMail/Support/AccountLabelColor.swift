@@ -8,23 +8,49 @@ import SwiftUI
 /// (`labelColor`, NULL = default), never sent to Google, and gone with the
 /// account row when the account is removed.
 enum AccountLabelColor {
-    /// Hex stand-ins for the system colors `Color.stable(for:)` picks for
-    /// the account avatar, in the same order, so the default pill keeps the
-    /// avatar's hue. Light-appearance values of the macOS system colors.
-    static let defaultPalette: [String] = [
-        "#007aff", // blue
-        "#af52de", // purple
-        "#ff2d55", // pink
-        "#ff9500", // orange
-        "#30b0c7", // teal
-        "#5856d6", // indigo
-        "#28cd41", // green
-        "#32ade6", // cyan
+    /// sRGB stand-ins for the system colors `Color.stable(for:)` picks for
+    /// the account avatar (`Color.stablePalette`), in the same order, so the
+    /// default pill keeps the avatar's hue. The light-appearance values: a
+    /// fixed table, so the pill does not change with the system. Tests pin
+    /// each entry to the system color it stands for.
+    static let defaultPalette: [UInt32] = [
+        0x007AFF, // blue
+        0xAF52DE, // purple
+        0xFF2D55, // pink
+        0xFF9500, // orange
+        0x30B0C7, // teal
+        0x5856D6, // indigo
+        0x28CD41, // green
+        0x32ADE6, // cyan
     ]
+
+    static func hex(_ value: UInt32) -> String {
+        String(format: "#%06x", value & 0xFFFFFF)
+    }
+
+    private static func defaultRGB(for accountId: String) -> LabelRGB {
+        LabelRGB(hex: defaultPalette[Color.stableIndex(for: accountId, count: defaultPalette.count)])
+    }
 
     /// The default color for an account: the avatar's hue.
     static func defaultHex(for accountId: String) -> String {
-        defaultPalette[Color.stableIndex(for: accountId, count: defaultPalette.count)]
+        hex(defaultPalette[Color.stableIndex(for: accountId, count: defaultPalette.count)])
+    }
+
+    /// The label the switcher shows as a pill, or nil when it adds nothing:
+    /// no sender name (the label is then the title), or a label equal to
+    /// the address or the sender name.
+    static func pillLabel(displayName: String, senderName: String, accountId: String) -> String? {
+        guard !senderName.isEmpty else { return nil }
+        guard !displayName.isEmpty, displayName != accountId, displayName != senderName else {
+            return nil
+        }
+        return displayName
+    }
+
+    static func pillLabel(_ account: Account) -> String? {
+        pillLabel(displayName: account.displayName, senderName: account.senderName,
+                  accountId: account.id)
     }
 
     /// The stored color when it is a valid `#rrggbb`, else the default.
@@ -64,10 +90,24 @@ enum AccountLabelColor {
         hex(from: NSColor(color))
     }
 
+    /// What a color picker `set` means for the edit: the new `#rrggbb`, or
+    /// nil when it is the color already shown. Opening the color well
+    /// echoes the current color back; that must not turn the default into
+    /// an explicit pick.
+    static func pickedHex(_ color: NSColor, shown shownHex: String) -> String? {
+        guard let picked = hex(from: color), picked != LabelRGB.normalizedHex(shownHex) else {
+            return nil
+        }
+        return picked
+    }
+
+    static func pickedHex(_ color: Color, shown shownHex: String) -> String? {
+        pickedHex(NSColor(color), shown: shownHex)
+    }
+
     /// The opaque sRGB color for a stored hex (default when malformed).
     static func nsColor(hex: String?, accountId: String) -> NSColor {
-        let rgb = LabelRGB(hexString: resolvedHex(stored: hex, accountId: accountId))
-            ?? LabelRGB(hex: 0x787774)
+        let rgb = LabelRGB(hexString: hex) ?? defaultRGB(for: accountId)
         return NSColor(srgbRed: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1)
     }
 }

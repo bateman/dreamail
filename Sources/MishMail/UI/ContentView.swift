@@ -2550,10 +2550,7 @@ struct AccountSwitcher: View {
     /// The local label, when it adds information beyond the title/address.
     /// Rendered as a tinted pill next to the name, never as part of it.
     private func labelText(_ account: Account) -> String? {
-        guard !account.senderName.isEmpty else { return nil }
-        let label = account.displayName
-        guard !label.isEmpty, label != account.id, label != account.senderName else { return nil }
-        return label
+        AccountLabelColor.pillLabel(account)
     }
 
     /// Small pill with the account's label ("Fund", "Personal") in the
@@ -2655,6 +2652,11 @@ struct AccountLabelsEditor: View {
         }
         .padding(16)
         .frame(width: 420)
+        // The system color panel is shared and outlives the sheet: close it
+        // on Save, Cancel or Esc so it does not linger over the app.
+        .onDisappear {
+            if NSColorPanel.sharedColorPanelExists { NSColorPanel.shared.close() }
+        }
     }
 
     /// The account's color as edited so far: `#rrggbb`, or nil for the default.
@@ -2667,10 +2669,13 @@ struct AccountLabelsEditor: View {
     @ViewBuilder
     private func colorRows(_ account: Account) -> some View {
         let chosen = editedColor(account)
-        let pillColors = LabelColors(
-            background: AccountLabelColor.resolvedHex(stored: chosen, accountId: account.id),
-            text: nil)
+        let shownHex = AccountLabelColor.resolvedHex(stored: chosen, accountId: account.id)
+        let pillColors = LabelColors(background: shownHex, text: nil)
         let name = labels[account.id] ?? account.displayName
+        // The switcher shows the pill only when the label adds something
+        // (see `AccountLabelColor.pillLabel`); otherwise the color has
+        // nothing to apply to, so the rows are disabled with a hint.
+        let showsPill = editedPillLabel(account) != nil
         HStack {
             Text("Label color")
             Spacer()
@@ -2683,7 +2688,7 @@ struct AccountLabelsEditor: View {
                     Color(nsColor: AccountLabelColor.nsColor(hex: chosen, accountId: account.id))
                 },
                 set: { color in
-                    if let hex = AccountLabelColor.hex(from: color) {
+                    if let hex = AccountLabelColor.pickedHex(color, shown: shownHex) {
                         labelColors[account.id] = hex
                     }
                 }
@@ -2692,6 +2697,7 @@ struct AccountLabelsEditor: View {
             .accessibilityLabel("Label color for \(account.id)")
             .accessibilityIdentifier("accountLabelColorPicker.\(account.id)")
         }
+        .disabled(!showsPill)
         HStack(spacing: 5) {
             ForEach(Color.labelPalette, id: \.hex) { swatch in
                 let selected = chosen == LabelRGB.normalizedHex(swatch.hex)
@@ -2720,5 +2726,21 @@ struct AccountLabelsEditor: View {
                 .accessibilityLabel("Default label color")
                 .accessibilityIdentifier("accountLabelColorDefault.\(account.id)")
         }
+        .disabled(!showsPill)
+        if !showsPill {
+            Text("Shown when \u{201C}Send as\u{201D} is set and differs from the label.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The pill label with the edits so far, as Save would store them.
+    private func editedPillLabel(_ account: Account) -> String? {
+        let label = (labels[account.id] ?? account.displayName)
+            .trimmingCharacters(in: .whitespaces)
+        let sender = (senderNames[account.id] ?? account.senderName)
+            .trimmingCharacters(in: .whitespaces)
+        return AccountLabelColor.pillLabel(displayName: label.isEmpty ? account.id : label,
+                                           senderName: sender, accountId: account.id)
     }
 }
