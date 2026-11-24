@@ -289,9 +289,18 @@ extension MailStore {
     private func applyOptimisticSidebarCountDelta(
         from old: MailThread, to updated: MailThread
     ) {
-        if let activeAccountId, old.accountId != activeAccountId { return }
         let now = Date()
         let hide = inboxBadgeHideCategories
+        // Dock badge first: its scope is not the sidebar's (an "All
+        // accounts" badge moves for mail of an account the sidebar hides).
+        // Without this it waited for the reconciliation recount.
+        let badgeDelta = DockBadge.delta(
+            from: old, to: updated, badgeAccount: dockBadgeAccount,
+            now: now, hideCategories: hide)
+        if badgeDelta != 0, let current = dockBadgeCount {
+            publishDockBadge(current + badgeDelta)
+        }
+        if let activeAccountId, old.accountId != activeAccountId { return }
         let before = SidebarCounts.memberships(of: old, now: now, hideCategories: hide)
         let after = SidebarCounts.memberships(of: updated, now: now, hideCategories: hide)
         for key in before.subtracting(after) {

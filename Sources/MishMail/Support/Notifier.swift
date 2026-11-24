@@ -43,17 +43,32 @@ enum Notifier {
         center.removePendingNotificationRequests(withIdentifiers: ids)
     }
 
+    /// Newest `setBadge` call; an older call's late callback must not
+    /// repaint over it.
+    @MainActor private static var badgeRequest = 0
+
+    /// Paints `count` on the Dock. Call through `MailStore.publishDockBadge`.
+    @MainActor
     static func setBadge(_ count: Int) {
-        DispatchQueue.main.async {
-            // Classic Dock badge: always works, no permission needed.
-            // Capped so a neglected inbox doesn't swallow the whole icon.
-            let label = count > 999 ? "999+" : String(count)
-            NSApplication.shared.dockTile.badgeLabel = count > 0 ? label : ""
-        }
+        badgeRequest += 1
+        let request = badgeRequest
+        let label = DockBadge.label(for: count)
+        // Classic Dock badge: works without the notification grant. Capped
+        // so a neglected inbox doesn't swallow the whole icon.
+        NSApplication.shared.dockTile.badgeLabel = label
         // Notification-center badge: the channel newer system UI (e.g. the
         // Cmd-Tab switcher) reads. Needs the .badge grant requested at
-        // launch; harmless no-op if the user declined notifications.
-        // (Numeric API, so the cap is 999 rather than "999+".)
-        UNUserNotificationCenter.current().setBadgeCount(min(count, 999)) { _ in }
+        // launch; harmless no-op if the user declined notifications. It
+        // takes a number, so above the cap it would repaint the tile as
+        // "999": once it is done, the label goes back on, unless a newer
+        // count has been painted meanwhile.
+        UNUserNotificationCenter.current().setBadgeCount(
+            DockBadge.systemCount(for: count)
+        ) { _ in
+            Task { @MainActor in
+                guard request == badgeRequest else { return }
+                NSApplication.shared.dockTile.badgeLabel = label
+            }
+        }
     }
 }
