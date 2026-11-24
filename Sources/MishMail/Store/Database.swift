@@ -11,7 +11,7 @@ struct Account: Codable, Identifiable, Hashable, FetchableRecord, PersistableRec
     var historyId: String?  // last synced Gmail historyId
     var lastSyncAt: Date?
     var senderName: String = ""   // real name shown to recipients on outgoing mail
-    /// Local color of the label pill, `#rrggbb`; nil = default (`AccountLabelColor`).
+    /// Local color of the account label (the avatar ring), `#rrggbb`; nil = default (`AccountLabelColor`).
     var labelColor: String? = nil
 }
 

@@ -3,9 +3,9 @@ import GRDB
 import SwiftUI
 import XCTest
 
-/// The color of an account's label pill: stored on the account row as
-/// `#rrggbb` (NULL = default), drawn with `LabelPillStyle.resolve`, and
-/// converted from the system color picker.
+/// The color of an account's label: stored on the account row as
+/// `#rrggbb` (NULL = default), drawn as the avatar ring
+/// (`AccountRingStyleTests`), and converted from the system color picker.
 final class AccountLabelColorTests: XCTestCase {
 
     private func makeDB() throws -> DatabaseQueue {
@@ -36,7 +36,7 @@ final class AccountLabelColorTests: XCTestCase {
             XCTAssertEqual(try self.stored(db, "a@x.com"), "#aabbcc")
             let account = try XCTUnwrap(Account.fetchOne(db, key: "a@x.com"))
             XCTAssertEqual(account.labelColor, "#aabbcc")
-            XCTAssertEqual(AccountLabelColor.colors(for: account).background, "#aabbcc")
+            XCTAssertEqual(AccountLabelColor.resolvedHex(stored: account.labelColor, accountId: account.id), "#aabbcc")
         }
     }
 
@@ -55,7 +55,7 @@ final class AccountLabelColorTests: XCTestCase {
         }
         try q.read { db in
             let account = try XCTUnwrap(Account.fetchOne(db, key: "a@x.com"))
-            XCTAssertEqual(AccountLabelColor.colors(for: account).background,
+            XCTAssertEqual(AccountLabelColor.resolvedHex(stored: account.labelColor, accountId: account.id),
                            AccountLabelColor.defaultHex(for: "a@x.com"))
         }
     }
@@ -69,7 +69,7 @@ final class AccountLabelColorTests: XCTestCase {
         }
         try q.read { db in
             let account = try XCTUnwrap(Account.fetchOne(db, key: "a@x.com"))
-            XCTAssertEqual(AccountLabelColor.colors(for: account).background,
+            XCTAssertEqual(AccountLabelColor.resolvedHex(stored: account.labelColor, accountId: account.id),
                            AccountLabelColor.defaultHex(for: "a@x.com"))
         }
         for bad in ["", "#12345", "#1234567", "#gggggg", "blue", "#12 456"] {
@@ -151,7 +151,7 @@ final class AccountLabelColorTests: XCTestCase {
         }
     }
 
-    /// End to end: an account's default pill color is its avatar's color.
+    /// End to end: an account's default label color is its avatar's color.
     func testDefaultColorIsTheAccountsAvatarColor() throws {
         for id in ["a@x.com", "fabio@example.com", "you@example.com", "z@y.org", ""] {
             XCTAssertEqual(AccountLabelColor.defaultHex(for: id),
@@ -159,64 +159,17 @@ final class AccountLabelColorTests: XCTestCase {
         }
     }
 
-    // MARK: - Pill style
+    // MARK: - Picker conversion
 
     /// Every color the editor offers by default (account defaults and the
     /// organizer swatches) plus a sample of picker colors, including
     /// near-white and near-black.
-    private static var pillColors: [String] {
+    static var sampleColors: [String] {
         AccountLabelColor.defaultPalette.map { AccountLabelColor.hex($0) }
             + Color.labelPalette.map { $0.hex }
             + ["#ffffff", "#f7f7f5", "#000000", "#232323", "#191919", "#808080",
                "#ffff00", "#00ff00", "#e4d7f5", "#7f7f7f"]
     }
-
-    func testPillTextIsReadableAndPillIsVisibleInBothAppearances() {
-        for appearance in LabelPillStyle.Appearance.allCases {
-            for surface in [LabelPillStyle.Surface.sidebar, .content] {
-                for hex in Self.pillColors {
-                    let style = LabelPillStyle.resolve(LabelColors(background: hex, text: nil),
-                                                       appearance: appearance, surface: surface)
-                    XCTAssertEqual(style.fill, LabelRGB(hexString: hex), "solid fill \(hex)")
-                    let text = style.text.contrast(with: style.fill)
-                    XCTAssertGreaterThanOrEqual(text, LabelPillStyle.minimumTextContrast,
-                                                "\(hex) \(appearance) \(surface)")
-                    for behind in LabelPillStyle.surfaceColors(surface, appearance) {
-                        if style.needsBorder {
-                            XCTAssertGreaterThanOrEqual(style.border.contrast(with: behind), 3,
-                                                        "\(hex) \(appearance) \(surface) border")
-                        } else {
-                            XCTAssertTrue(LabelPillStyle.fillStandsOut(style.fill, on: behind),
-                                          "\(hex) \(appearance) \(surface) edge")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    func testDefaultPillIsNoLongerPaleOnPale() {
-        for id in ["a@x.com", "fabio@example.com", "you@example.com"] {
-            let colors = AccountLabelColor.colors(for: Account(
-                id: id, displayName: "Personale", historyId: nil, lastSyncAt: nil,
-                senderName: "F"))
-            XCTAssertNil(colors.text, "text color is left to the contrast rule")
-            for appearance in LabelPillStyle.Appearance.allCases {
-                let style = LabelPillStyle.resolve(colors, appearance: appearance,
-                                                   surface: .sidebar)
-                XCTAssertEqual(style.fill, LabelRGB(hexString: AccountLabelColor.defaultHex(for: id)))
-                XCTAssertTrue(style.text == .black || style.text == .white)
-                XCTAssertGreaterThanOrEqual(style.text.contrast(with: style.fill), 4.5)
-            }
-        }
-    }
-
-    func testSidebarSurfaceMatchesTheSidebarBackground() {
-        XCTAssertEqual(LabelPillStyle.surfaceColors(.sidebar, .light), [LabelRGB(hex: 0xF7F7F5)])
-        XCTAssertEqual(LabelPillStyle.surfaceColors(.sidebar, .dark), [LabelRGB(hex: 0x232323)])
-    }
-
-    // MARK: - Picker conversion
 
     func testSRGBColorsConvertExactly() {
         XCTAssertEqual(AccountLabelColor.hex(from: NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6,
@@ -225,11 +178,11 @@ final class AccountLabelColorTests: XCTestCase {
                        "#336699")
         XCTAssertEqual(AccountLabelColor.hex(from: NSColor(srgbRed: 1, green: 0, blue: 0,
                                                            alpha: 0.3)), "#ff0000",
-                       "alpha is ignored: pills are opaque")
+                       "alpha is ignored: rings are opaque")
     }
 
     func testStoredColorsRoundTripThroughThePicker() {
-        for hex in Self.pillColors {
+        for hex in Self.sampleColors {
             let normalized = LabelRGB.normalizedHex(hex)
             let ns = AccountLabelColor.nsColor(hex: hex, accountId: "a@x.com")
             XCTAssertEqual(AccountLabelColor.hex(from: ns), normalized, hex)
@@ -282,22 +235,6 @@ final class AccountLabelColorTests: XCTestCase {
         let other = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.62, alpha: 1)
         XCTAssertEqual(AccountLabelColor.pickedHex(other, shown: shown), "#33669e")
         XCTAssertEqual(AccountLabelColor.pickedHex(Color(nsColor: other), shown: shown), "#33669e")
-    }
-
-    // MARK: - When the pill is shown
-
-    func testPillLabelOnlyWhenItAddsSomething() {
-        func label(_ name: String, _ sender: String) -> String? {
-            AccountLabelColor.pillLabel(displayName: name, senderName: sender, accountId: "a@x.com")
-        }
-        XCTAssertEqual(label("Personal", "Jane"), "Personal")
-        XCTAssertNil(label("Personal", ""), "no sender name: the label is the title")
-        XCTAssertNil(label("", "Jane"))
-        XCTAssertNil(label("a@x.com", "Jane"), "label equal to the address")
-        XCTAssertNil(label("Jane", "Jane"), "label equal to the sender name")
-        XCTAssertEqual(AccountLabelColor.pillLabel(Account(
-            id: "a@x.com", displayName: "Fund", historyId: nil, lastSyncAt: nil,
-            senderName: "Jane")), "Fund")
     }
 
     func testEveryResultIsAValidStoredValue() {
