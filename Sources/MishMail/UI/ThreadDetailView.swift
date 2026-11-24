@@ -228,10 +228,10 @@ struct ThreadDetailView: View {
                                 Spacer(minLength: 8)
                                 Text("Continue")
                                     .font(.system(size: 12.5 * fontScale, weight: .medium))
-                                    .foregroundStyle(Color.notionAccent)
+                                    .foregroundStyle(Color.mailAccent)
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 10 * fontScale, weight: .semibold))
-                                    .foregroundStyle(Color.notionAccent)
+                                    .foregroundStyle(Color.mailAccent)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 9)
@@ -1000,7 +1000,7 @@ struct ThreadDetailView: View {
             })
     }
 
-    /// Notion Mail-style meta row under the subject: an attachments menu
+    /// Meta row under the subject: an attachments menu
     /// (every file in the thread, one click to Quick Look), removable
     /// category chips (Gmail categories, Important, and user labels), and
     /// "Add category" opening the label picker.
@@ -1070,7 +1070,7 @@ struct ThreadDetailView: View {
         }
     }
 
-    /// Everything categorizing this thread, Notion Mail-style: Gmail's own
+    /// Everything categorizing this thread: Gmail's own
     /// classification (Important, Updates, …) plus the user's labels, all
     /// removable in place.
     private var categoryChipItems: [(id: String, name: String, tint: Color?)] {
@@ -1130,7 +1130,7 @@ struct ThreadDetailView: View {
                         .foregroundStyle(.secondary)
                     }
                     .padding(10)
-                    .background(Color.notionAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: PMRadius.md))
+                    .background(Color.mailAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: PMRadius.md))
                     .accessibilityIdentifier("thread.summary")
                 } else {
                     HStack(spacing: 8) {
@@ -1370,7 +1370,7 @@ struct ThreadDetailView: View {
 
 /// Saved Gmail draft rendered in the thread — not a regular MessageCard.
 ///
-/// Gmail/Notion cues: orange "Draft" pill, warm tint, left accent, compact
+/// Gmail-style cues: orange "Draft" pill, warm tint, left accent, compact
 /// authored preview (no HTML quote trail / "…" gap), and Continue/Discard
 /// actions on the card itself so edit isn't only at the top of the pane.
 struct DraftMessageCard: View {
@@ -1536,7 +1536,7 @@ struct MessageCard: View {
     let onUnsubscribe: () -> Void
     /// Parent fills List-Unsubscribe on pre-v37 rows (nil).
     let onNeedUnsubscribeHeaders: () -> Void
-    // Full FROM/TO/CC rows (Notion Mail's "Show more"); compact by default.
+    // Full FROM/TO/CC rows ("Show more"); compact by default.
     @State private var recipientsExpanded = false
     @State private var htmlHeight: CGFloat = 120
     /// Per-message opt-in when policy is ask/vip and the sender isn't allowed.
@@ -1753,7 +1753,7 @@ struct MessageCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
-                // Notion Mail-style header: sender name + address, with a
+                // Header: sender name + address, with a
                 // compact "To me ⌄" summary that expands into full FROM/TO/CC
                 // rows. Every participant is clickable (draft/search/copy).
                 // Claim remaining width so long From names/emails can use the
@@ -1957,7 +1957,7 @@ struct MessageCard: View {
                     .help(showQuoted ? "Hide quoted text" : "Show quoted text")
                     .accessibilityLabel(showQuoted ? "Hide quoted text" : "Show quoted text")
                 }
-                // Calendar invites get a Gmail/Notion-style Accept card; the
+                // Calendar invites get a Gmail-style Accept card; the
                 // .ics itself is hidden from the generic attachment chips so
                 // it isn't double-presented as a dumb file. uniqueCalendar…
                 // collapses Google's text/calendar + application/ics pair
@@ -1988,7 +1988,7 @@ struct MessageCard: View {
                                             .font(.system(size: 12, weight: .medium))
                                     }
                                     .padding(.horizontal, 10).padding(.vertical, 8)
-                                    .background(Color.notionAccent.opacity(0.15),
+                                    .background(Color.mailAccent.opacity(0.15),
                                                 in: RoundedRectangle(cornerRadius: 8))
                                     .contentShape(RoundedRectangle(cornerRadius: 8))
                                 }
@@ -2015,7 +2015,7 @@ struct MessageCard: View {
                         .padding(.vertical, 2)
                     }
                 }
-                // Notion Mail-style action bar on every message.
+                // Action bar on every message.
                 HStack(spacing: 8) {
                     Button {
                         store.openCompose(.init(replyTo: message))
@@ -2264,7 +2264,7 @@ struct MessageCard: View {
             .gridColumnAlignment(.leading)
     }
 
-    /// Full participant details, Notion Mail-style: FROM / TO / CC rows with
+    /// Full participant details: FROM / TO / CC rows with
     /// one clickable participant per line, and "Show less" to tuck it back.
     private var recipientGrid: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 5) {
@@ -2305,8 +2305,8 @@ struct MessageCard: View {
         }
     }
 
-    /// A clickable participant: name + address, opening a Notion Mail-style
-    /// menu (draft to them, search their mail, copy, VIP, split, block).
+    /// A clickable participant: name + address, opening a menu
+    /// (draft to them, search their mail, copy, VIP, split, block).
     @ViewBuilder
     private func participantMenu(_ raw: String, nameSize: CGFloat = 12.5,
                                  nameWeight: Font.Weight = .regular) -> some View {
@@ -2462,7 +2462,7 @@ struct MessageCard: View {
 
 /// A plain-text message body. Web links and addresses in it are clickable
 /// (`PlainTextLinks`): only http, https and mailto, and a link always shows
-/// its own destination. Link runs carry Notion blue themselves; `.tint`
+/// its own destination. Link runs carry the accent blue themselves; `.tint`
 /// alone does not color them while text selection is on.
 private struct PlainTextBody: View {
     let text: String
@@ -2473,7 +2473,7 @@ private struct PlainTextBody: View {
             .font(.system(size: 14.5 * fontScale))
             .lineSpacing(4)
             .textSelection(.enabled)
-            .tint(Color.notionAccent)
+            .tint(Color.mailAccent)
             .environment(\.openURL, OpenURLAction { url in
                 // Hand the link to the system, as the HTML body does; never
                 // navigate inside the app. Anything off the allow-list is inert.

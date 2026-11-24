@@ -193,7 +193,7 @@ enum ThreadListNavigation {
 /// immediately or through a short key-repeat coalesce.
 ///
 /// Single j/k / ↑/↓ presses open the detail with no artificial delay
-/// (Notion Mail–style live preview). Auto-repeating keys still coalesce so a
+/// (live preview). Auto-repeating keys still coalesce so a
 /// held arrow does not thrash the pane on every keyDown. When the selection
 /// moved because the opened row left the list (trash/archive/spam
 /// auto-advance), open immediately so the pane hands off to the neighbor in

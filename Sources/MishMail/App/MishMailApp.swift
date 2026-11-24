@@ -135,7 +135,7 @@ struct MishMailApp: App {
             ContentView()
                 .environment(store)
                 .environmentObject(store.listFocus)
-                .tint(.notionAccent)
+                .tint(Color.mailAccent)
                 .frame(minWidth: 900, minHeight: 560)
                 .onChange(of: appThemeRaw) {
                     AppTheme.apply(.from(raw: appThemeRaw))
@@ -157,7 +157,7 @@ struct MishMailApp: App {
                 .onOpenURL { store.handleOpenURL($0) }
                 // Route external URLs to the window that is already open.
                 // Without this a WindowGroup answers a mailto: from another
-                // app (browser, Notion Calendar, …) by spawning a second
+                // app (browser, calendar app, …) by spawning a second
                 // MishMail window — and since both observe the same store,
                 // the compose card shows up twice.
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])

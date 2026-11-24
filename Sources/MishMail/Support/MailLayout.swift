@@ -8,7 +8,7 @@ enum ThreadOpenStyle: String, CaseIterable {
     /// Outlook/Apple Mail-style: the conversation shows in a pane beside
     /// the list.
     case readingPane
-    /// Notion Mail-style: the conversation opens in a centered card over
+    /// Center peek: the conversation opens in a centered card over
     /// the list; Esc (or clicking the backdrop) returns to it.
     case centerPeek
 

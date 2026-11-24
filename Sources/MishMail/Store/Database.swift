@@ -597,8 +597,8 @@ struct VIPGroupRow: Codable, Identifiable, Hashable, FetchableRecord, Persistabl
     var id: String { name }
 }
 
-/// A blocked sender: their threads are moved to Spam on sight (Notion
-/// Mail-style "Block"). Emails are stored lowercased; global across accounts.
+/// A blocked sender: their threads are moved to Spam on sight
+/// ("Block"). Emails are stored lowercased; global across accounts.
 struct BlockedSender: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "blockedSender"
     var email: String

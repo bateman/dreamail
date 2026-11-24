@@ -9,7 +9,7 @@ private final class ChipKeyboardState {
     var selection: TokenAddressEditing.ChipSelection?
 }
 
-/// Notion Mail-style recipient field: accepted addresses render as chips,
+/// Recipient field: accepted addresses render as chips,
 /// with autocomplete backed by contacts mined from synced mail.
 ///
 /// Chips are clickable: click the address to re-open it in the text field for
@@ -176,7 +176,7 @@ struct TokenAddressField: View {
                                 Spacer()
                             }
                             .padding(.horizontal, 8).padding(.vertical, 5)
-                            .background(idx == highlighted ? Color.notionAccent.opacity(0.18) : .clear)
+                            .background(idx == highlighted ? Color.mailAccent.opacity(0.18) : .clear)
                             .contentShape(Rectangle())
                         }
                         .accessibilityIdentifier("addressSuggestion.\(label).\(contact.email)")
@@ -260,7 +260,7 @@ struct TokenAddressField: View {
     }
 
     private func chipFill(isSelected: Bool, isHovered: Bool) -> Color {
-        if isSelected { return Color.notionAccent }
+        if isSelected { return Color.mailAccent }
         return Color.secondary.opacity(isHovered ? 0.22 : 0.14)
     }
 

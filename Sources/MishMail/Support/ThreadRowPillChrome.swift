@@ -2,7 +2,7 @@ import Foundation
 
 /// Chrome for colored pills in a thread list row (user labels, AI categories).
 ///
-/// Idle rows use a soft tinted capsule (Notion Mail-style). Selected rows sit
+/// Idle rows use a soft tinted capsule. Selected rows sit
 /// on the system blue list highlight, where a 16% tint wash disappears and
 /// the colored text clashes — so focus flips to a stronger tint fill with a
 /// high-contrast title (white on dark tints, near-black on pale ones).
@@ -27,7 +27,7 @@ enum ThreadRowPillChrome: Equatable, Sendable {
     /// Max relative luminance (WCAG, 0…1) at which selection chrome still uses
     /// white title text. Pale yellow / light gray Gmail tints sit above this
     /// and get near-black text instead. Tuned between saturated mid-tones
-    /// (Notion yellow ~0.45) and light grays (~0.54).
+    /// (the palette yellow ~0.45) and light grays (~0.54).
     static let lightForegroundMaxLuminance: Double = 0.52
 
     /// WCAG relative luminance of an sRGB color (`r`/`g`/`b` in 0…1).

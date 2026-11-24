@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Notion Mail / Gmail-style calendar invite card: title, when, where, and
+/// Gmail-style calendar invite card: title, when, where, and
 /// Accept / Decline / Maybe. Loads the `.ics` attachment, parses it, and
 /// posts an iTIP METHOD:REPLY via `MailStore.rsvpToInvite`.
 ///
@@ -70,10 +70,10 @@ struct CalendarInviteCard: View {
                 Image(systemName: invite.isCancelled
                       ? "calendar.badge.minus" : "calendar")
                     .font(.system(size: 18 * fontScale, weight: .semibold))
-                    .foregroundStyle(invite.isCancelled ? Color.secondary : Color.notionAccent)
+                    .foregroundStyle(invite.isCancelled ? Color.secondary : Color.mailAccent)
                     .frame(width: 28, height: 28)
                     .background(
-                        (invite.isCancelled ? Color.secondary : Color.notionAccent)
+                        (invite.isCancelled ? Color.secondary : Color.mailAccent)
                             .opacity(0.12),
                         in: RoundedRectangle(cornerRadius: PMRadius.sm)
                     )
@@ -137,7 +137,7 @@ struct CalendarInviteCard: View {
             RoundedRectangle(cornerRadius: PMRadius.md)
                 .strokeBorder(
                     invite.isActionable
-                        ? Color.notionAccent.opacity(0.22)
+                        ? Color.mailAccent.opacity(0.22)
                         : Color.primary.opacity(0.08),
                     lineWidth: 1)
         }

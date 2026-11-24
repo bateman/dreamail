@@ -30,7 +30,7 @@ final class SnippetExpanderTests: XCTestCase {
         XCTAssertEqual(SnippetExpander.expand("Hi {{first_name}}!", empty), "Hi !")
     }
 
-    // MARK: - Single-brace (Notion Mail) syntax
+    // MARK: - Single-brace syntax
 
     func testSingleBraceVariables() {
         XCTAssertEqual(SnippetExpander.expand("Hi {first_name},", ctx), "Hi Alice,")

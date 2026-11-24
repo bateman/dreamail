@@ -88,7 +88,7 @@ struct ThreadDetailToolbar: ViewModifier {
                 // the sidebar.
                 .toolbarRole(.editor)
                 .toolbar {
-                // Notion Mail-style left cluster: close the pane, prev/next thread.
+                // Left cluster: close the pane, prev/next thread.
                 // Separate ToolbarItems (not a group) + hidden shared glass on
                 // macOS 26 so they don't merge into one capsule that lights up
                 // when the thread scrolls. Spacers keep the trio off the title.
@@ -278,7 +278,7 @@ struct ThreadDetailToolbar: ViewModifier {
                             .help("Mark as spam (\(store.keyBindings.key(for: .markSpam)))")
                         }
                         // Report phishing deferred — public Gmail API has no
-                        // phishing endpoint (Notion may soft-map to spam). See
+                        // phishing endpoint (other clients may soft-map to spam). See
                         // docs/plans/2026-07-11-report-phishing-deferred.md.
                         // Block is the local equivalent (From → Spam on sight).
                         let blockEmail = thread.fromEmail

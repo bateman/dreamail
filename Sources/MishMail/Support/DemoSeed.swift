@@ -13,7 +13,7 @@ import GRDB
 enum DemoSeed {
     private static let defaultsKey = "demoModeEnabled"
 
-    /// Two deliberately different notions of "demo" live here:
+    /// Two deliberately different meanings of "demo" live here:
     /// - `isActive` (env var OR this persisted flag) drives the fictional
     ///   inbox itself, including onboarding's "Try demo inbox" in a real,
     ///   signed build — where adding a real account must stay possible.

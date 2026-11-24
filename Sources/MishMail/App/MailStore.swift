@@ -137,7 +137,7 @@ final class MailStore {
     /// Purely a render-time hide for the in-thread draft card — the rows stay
     /// in the payload, unlike undo-send suppression above.
     var composingDraftIdsByRequest: [UUID: Set<String>] = [:]
-    /// Multi-select checkboxes (Gmail `x` / Notion-style toggle). Bulk
+    /// Multi-select checkboxes (Gmail `x` / click toggle). Bulk
     /// archive/trash/star/read act on this set when non-empty; the focused
     /// `selectedThreadId` still drives the reading pane.
     var checkedThreadIds: Set<String> = []
@@ -348,7 +348,7 @@ final class MailStore {
     }
     enum ComposeMode { case expanded, minimized, finishing }
     var composeMode: ComposeMode = .expanded
-    /// Compose card is collapsed to a title strip (Notion Mail-style). Draft
+    /// Compose card is collapsed to a title strip. Draft
     /// state stays mounted; inbox shortcuts work again while minimized.
     var composeMinimized: Bool { composeMode == .minimized }
     /// Send / discard / save-and-close claimed the card. Send unmounts in the
@@ -924,8 +924,8 @@ final class MailStore {
         NSWorkspace.shared.open(url)
     }
 
-    /// ⌘L / Copy link: put a gmail.com conversation URL on the clipboard
-    /// (Notion-style). Paste it in a browser to open the thread on the web.
+    /// ⌘L / Copy link: put a gmail.com conversation URL on the clipboard.
+    /// Paste it in a browser to open the thread on the web.
     func copyThreadLink(_ thread: MailThread) {
         guard let string = GmailWebLinks.copyPasteboardString(
             accountEmail: thread.accountId, gmailThreadId: thread.gmailThreadId)
@@ -3602,7 +3602,7 @@ struct ComposeRequest: Identifiable {
         reloadSavedViews()
     }
 
-    /// Notion Mail-style "Split from Inbox": a new saved view holding all
+    /// "Split from Inbox": a new saved view holding all
     /// mail whose From header matches `sender` (an address, or "@domain"),
     /// then jump straight into it.
     func splitFromInbox(matching sender: String, named name: String) {
@@ -4183,7 +4183,7 @@ struct ComposeRequest: Identifiable {
     // MARK: - Calendar invite RSVP
 
     /// Send an iTIP METHOD:REPLY for a calendar invite attachment and
-    /// remember the local RSVP state. Mirrors Gmail / Notion Mail Accept /
+    /// remember the local RSVP state. Mirrors Gmail's Accept /
     /// Decline / Maybe without requiring a Calendar OAuth scope.
     func rsvpToInvite(_ invite: CalendarInvite,
                       status: CalendarInvite.RSVP,
@@ -4643,9 +4643,9 @@ struct ComposeRequest: Identifiable {
         reloadSnippets()
     }
 
-    /// Imports snippets from JSON or CSV (MishMail array, Notion `{snippets}`,
-    /// shortcut/content keys, CSV headers). Skips names that already exist so
-    /// re-importing is harmless.
+    /// Imports snippets from JSON or CSV (MishMail array or single object,
+    /// shortcut/content keys, CSV headers). Skips names that already exist
+    /// so re-importing is harmless.
     /// `unknownAccountIds` counts scope emails that don't match a signed-in
     /// account (typos hide the snippet until fixed).
     func importSnippets(from url: URL) throws -> (added: Int, skipped: Int, unknownAccountIds: Int) {

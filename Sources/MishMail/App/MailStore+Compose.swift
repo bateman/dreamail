@@ -1044,7 +1044,7 @@ extension MailStore {
     }
 
     /// A thread that is nothing but an unsent draft — opening it should hop
-    /// straight into compose (Notion Mail-style), not the reading pane.
+    /// straight into compose, not the reading pane.
     /// Draft replies inside real conversations still open the thread.
     /// Discarded `DRAFT TRASH` rows alone are trash, not a live draft-only hop.
     func isDraftOnly(_ thread: MailThread) -> Bool {

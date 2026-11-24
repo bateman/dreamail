@@ -76,7 +76,7 @@ final class ComposeTabFocusUITests: XCTestCase {
     }
 
     /// Tab while the contact autocomplete is showing: accept the pick AND
-    /// move to the subject (Gmail/Notion behavior).
+    /// move to the subject (Gmail behavior).
     func testTabWithSuggestionAcceptsAndMovesToSubject() {
         let app = launchDemo()
         let (to, subject) = openCompose(app)

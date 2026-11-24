@@ -13,9 +13,9 @@ final class PlainTextLinksTests: XCTestCase {
     }
 
     func testCalendarURLIsOneLink() {
-        let text = "Here's my cal: https://calendar.notion.so/meet/rboger/rb30\n\nRon"
-        XCTAssertEqual(urls(text), ["https://calendar.notion.so/meet/rboger/rb30"])
-        XCTAssertEqual(linkedText(text), ["https://calendar.notion.so/meet/rboger/rb30"])
+        let text = "Here's my cal: https://calendar.example.com/meet/rboger/rb30\n\nRon"
+        XCTAssertEqual(urls(text), ["https://calendar.example.com/meet/rboger/rb30"])
+        XCTAssertEqual(linkedText(text), ["https://calendar.example.com/meet/rboger/rb30"])
     }
 
     func testHTTPAndHTTPSLinks() {

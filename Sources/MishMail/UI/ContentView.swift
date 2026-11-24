@@ -227,7 +227,7 @@ struct ContentView: View {
             store.demoteInlineComposeIfPaneTooShort(paneHeight: frame.height)
         }
         .onPreferenceChange(ComposeHostFrameKey.self) { composeHostFrame = $0 }
-        // Search lives in the sidebar (Notion Mail-style), not the toolbar.
+        // Search lives in the sidebar, not the toolbar.
         // Typing only feeds the dropdown preview; the list follows
         // committedSearch. Clearing the field also clears an active search.
         .onChange(of: store.searchText) {
@@ -238,7 +238,7 @@ struct ContentView: View {
         }
         // A clicked (not keyboard-browsed) selection reopens the reading pane.
         // Clicking a pure draft skips the pane entirely and hops straight
-        // into compose at the bottom (Notion Mail-style).
+        // into compose at the bottom.
         // Selection changes publish only through ListFocusState, so the
         // observer child is the trigger that consumes the one-shot
         // selection intent.
@@ -665,7 +665,7 @@ struct ContentView: View {
         }
     }
 
-    /// Notion Mail-style center peek: the conversation floats in a card over
+    /// Center peek: the conversation floats in a card over
     /// the (still-mounted) list. Reuses detailPane, so the WebView pool,
     /// warm payloads, and inline-compose pinning all behave as in focus mode.
     private var centerPeekOverlay: some View {
@@ -740,7 +740,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.notionContent)
+            .background(Color.mailContent)
             Color.clear
                 .frame(width: composeWidth)
                 // Reserve width only — clicks land on the trailing compose
@@ -1013,7 +1013,7 @@ private struct DetailPaneHost: View, Equatable {
                     .foregroundStyle(.secondary)
             }
         }
-        .background(Color.notionContent)
+        .background(Color.mailContent)
         // Keep the last messages above the overlay card.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Color.clear
@@ -1137,7 +1137,7 @@ private extension ContentView {
             // Expanded compose + typing: every chord belongs to the text system
             // / compose handlers (⌘K insert-link, ⌃F/⌃K caret motion, …), not
             // app-level shortcuts. Minimized compose resigns focus so inbox
-            // keys work again (Notion Mail-style). Mid-finish (Send awaiting
+            // keys work again. Mid-finish (Send awaiting
             // persist) also yields so `g i` is not typed into the body. Esc
             // for compose is handled above so it is not trapped here.
             if ComposeKeyOwnership.claimsTyping(
@@ -1183,7 +1183,7 @@ private extension ContentView {
                 return nil
             }
             // ⌘1 = All accounts, ⌘2… = individual accounts, in popover order
-            // (Notion Mail-style inbox switching).
+            // (one shortcut per inbox).
             if mods == .command, let chars = event.charactersIgnoringModifiers,
                chars.count == 1, let digit = Int(chars), (1...9).contains(digit) {
                 if digit == 1 {
@@ -1259,7 +1259,7 @@ private extension ContentView {
                 return nil
             }
             // ⌘L copies a gmail.com conversation URL for the focused
-            // thread (Notion-style copy page). Yield to typing in
+            // thread. Yield to typing in
             // search/compose/Settings (`isEditing`), but fire while reading
             // the conversation — unlike ⌘A, ⌘L is not a text-system chord.
             if mods == .command,
@@ -1377,8 +1377,8 @@ private extension ContentView {
                 }
             }
             // Esc: first press while typing (e.g. in search) drops focus back
-            // to the list; otherwise it closes the reading pane (Notion
-            // Mail-style) but KEEPS the selection, so you stay where you are.
+            // to the list; otherwise it closes the reading pane
+            // but KEEPS the selection, so you stay where you are.
             // Expanded compose / view editor keep their own Esc behavior;
             // minimized / mid-finish compose does not block Esc.
             if event.keyCode == 53,
@@ -1749,7 +1749,7 @@ struct Sidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Notion Mail-style header: account (avatar, name, address) with
+            // Header: account (avatar, name, address) with
             // compose right next to it, search on its own row below.
             HStack(spacing: 6) {
                 AccountSwitcher()
@@ -1813,7 +1813,7 @@ struct Sidebar: View {
                 Section("Mail") {
                     sidebarItem(.allMail)
                     sidebarItem(.sent)
-                    // Count is total drafts (not unread) — Notion Mail-style.
+                    // Count is total drafts (not unread).
                     sidebarItem(.drafts, badge: store.unreadCounts["drafts"])
                     // Only surfaces once something is scheduled (Gmail-style).
                     if !store.scheduledSends.isEmpty || store.selectedView == .scheduled {
@@ -1837,7 +1837,7 @@ struct Sidebar: View {
                 HStack(spacing: 7) {
                     Image(systemName: "sparkles.rectangle.stack")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.notionAccent)
+                        .foregroundStyle(Color.mailAccent)
                     Text("Demo inbox")
                         .font(.system(size: 12.5, weight: .medium))
                     Spacer()
@@ -1886,7 +1886,7 @@ struct Sidebar: View {
             .padding(.horizontal, 12).padding(.vertical, 8)
             .help("Settings (⌘,)")
         }
-        .background(Color.notionSidebar)
+        .background(Color.mailSidebar)
         .confirmationDialog(
             "Delete saved view?",
             isPresented: confirmingViewDeleteShown,
@@ -1903,7 +1903,7 @@ struct Sidebar: View {
     }
 
 
-    /// Notion Mail-style row: each view keeps its own icon color.
+    /// Sidebar row: each view keeps its own icon color.
     private func sidebarItem(_ view: MailboxView, badge: Int? = nil) -> some View {
         // List(selection:) only fires onChange when the value *changes*, so
         // re-clicking the already-selected row (e.g. Inbox while a committed
@@ -1959,7 +1959,7 @@ private struct SearchPanelContentHeightKey: PreferenceKey {
 
 /// Wide command-K-style search results panel. Floats at the window level (see
 /// ContentView) so it can be much wider than the sidebar, spilling over the
-/// message list like Notion Mail. Shows recent searches when the query is
+/// message list. Shows recent searches when the query is
 /// empty; otherwise a "View all results" row plus Contacts and Threads.
 /// ↑/↓/Enter come in from the global key monitor via searchHighlight /
 /// searchActivateToken, so the flow is fully keyboard-driven after `/`.
@@ -1997,7 +1997,7 @@ struct SearchResultsPanel: View {
     }
 
     /// Contacts shown in the panel: matches while typing, top senders when the
-    /// query is empty (so `/` opens a full panel immediately, Notion-style).
+    /// query is empty (so `/` opens a full panel immediately).
     private var shownContacts: [MailStore.Contact] {
         trimmedSearch.isEmpty ? Array(store.contacts.prefix(3)) : contactPreview
     }
@@ -2109,7 +2109,7 @@ struct SearchResultsPanel: View {
     }
 
     private func rowBackground(_ index: Int) -> some View {
-        (index == highlight ? Color.notionAccent.opacity(0.18) : Color.clear)
+        (index == highlight ? Color.mailAccent.opacity(0.18) : Color.clear)
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -2140,7 +2140,7 @@ struct SearchResultsPanel: View {
 
     private func contactRow(_ contact: MailStore.Contact, index: Int) -> some View {
         Button {
-            // Notion Mail-style: jump to everything from this person.
+            // Jump to everything from this person.
             runFullSearch("from:\(contact.email)")
         } label: {
             HStack(spacing: 9) {
@@ -2290,7 +2290,7 @@ struct SearchResultsPanel: View {
     }
 }
 
-/// Notion Mail-style account scope switcher: unified, or one account only.
+/// Account scope switcher: unified, or one account only.
 /// Accounts carry user-defined labels ("Personal", "Fund", …).
 /// A Button + popover, NOT a Menu: macOS flattens custom views in Menu
 /// labels, which drops the avatar and name entirely.
@@ -2443,7 +2443,7 @@ struct AccountSwitcher: View {
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.notionAccent)
+                        .foregroundStyle(Color.mailAccent)
                 }
                 if let shortcut, shortcut <= 9 {
                     Text("⌘\(shortcut)")
@@ -2465,7 +2465,7 @@ struct AccountSwitcher: View {
             .frame(width: size, height: size)
     }
 
-    /// Colored circle with the first initial, Notion Mail-style.
+    /// Colored circle with the first initial.
     private func avatar(for name: String, key: String, size: CGFloat) -> some View {
         Circle()
             .fill(Color.stable(for: key))
@@ -2481,7 +2481,7 @@ struct AccountSwitcher: View {
         store.activeAccountId.flatMap { id in store.accounts.first { $0.id == id } }
     }
 
-    /// Full name first, like Notion Mail's account header: the outgoing
+    /// Full name first in the account header: the outgoing
     /// sender name if set, then the local label, then the address.
     private func displayTitle(_ account: Account) -> String {
         if !account.senderName.isEmpty { return account.senderName }

@@ -107,8 +107,8 @@ extension ToolbarContent {
     }
 }
 
-/// Notion Mail-style switch: a proper pill, larger than the AppKit default.
-struct NotionSwitchStyle: ToggleStyle {
+/// Pill switch: a proper pill, larger than the AppKit default.
+struct PillSwitchStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button {
             configuration.isOn.toggle()
@@ -117,7 +117,7 @@ struct NotionSwitchStyle: ToggleStyle {
                 configuration.label
                 Spacer(minLength: 12)
                 Capsule()
-                    .fill(configuration.isOn ? Color.notionAccent : Color.secondary.opacity(0.3))
+                    .fill(configuration.isOn ? Color.mailAccent : Color.secondary.opacity(0.3))
                     .frame(width: 36, height: 21)
                     .overlay(alignment: configuration.isOn ? .trailing : .leading) {
                         Circle()
@@ -136,7 +136,7 @@ struct NotionSwitchStyle: ToggleStyle {
     }
 }
 
-/// Notion Mail-style inline search field: magnifier + plain text field on a
+/// Inline search field: magnifier + plain text field on a
 /// subtle rounded background, clear button when non-empty. `compact` is the
 /// smaller variant for tight spots like the compose snippets panel.
 struct SearchField: View {
@@ -180,7 +180,7 @@ struct SearchField: View {
         .overlay {
             if emphasized {
                 RoundedRectangle(cornerRadius: compact ? PMRadius.xs + 1 : PMRadius.sm)
-                    .strokeBorder(Color.notionAccent.opacity(0.7), lineWidth: 1.5)
+                    .strokeBorder(Color.mailAccent.opacity(0.7), lineWidth: 1.5)
             }
         }
         .animation(.easeOut(duration: 0.08), value: emphasized)
@@ -200,8 +200,8 @@ extension View {
     }
 }
 
-/// Notion Mail-style checkbox: bigger rounded square with a bold check.
-struct NotionCheckStyle: ToggleStyle {
+/// Checkbox: bigger rounded square with a bold check.
+struct RoundedCheckStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button {
             configuration.isOn.toggle()
@@ -210,7 +210,7 @@ struct NotionCheckStyle: ToggleStyle {
                 // Visible box stays 18×18. The whole row is the hit target via
                 // contentShape below — no layout-inflating frame on the box.
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(configuration.isOn ? Color.notionAccent : Color.secondary.opacity(0.18))
+                    .fill(configuration.isOn ? Color.mailAccent : Color.secondary.opacity(0.18))
                     .frame(width: 18, height: 18)
                     .overlay {
                         // Keep the check in the tree so enter/exit can animate

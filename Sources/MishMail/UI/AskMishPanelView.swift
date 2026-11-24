@@ -61,7 +61,7 @@ struct AskMishPanelView: View {
             Divider()
             composer
         }
-        .background(Color.notionSidebar)
+        .background(Color.mailSidebar)
         .task { await refreshConversations() }
         .onAppear { refreshProviderConfig() }
         .task {
@@ -93,7 +93,7 @@ struct AskMishPanelView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Color.notionAccent)
+                    .foregroundStyle(Color.mailAccent)
                 conversationMenu
                 Spacer(minLength: 8)
                 Button {
@@ -351,7 +351,7 @@ struct AskMishPanelView: View {
                     .textSelection(.enabled)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
-                    .background(Color.notionAccent.opacity(0.16),
+                    .background(Color.mailAccent.opacity(0.16),
                                 in: RoundedRectangle(cornerRadius: PMRadius.md))
                     .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
@@ -669,7 +669,7 @@ struct AskMishPanelView: View {
                     controller.confirmPendingTool(id: pending.id, allow: true)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(isSend ? .red : Color.notionAccent)
+                .tint(isSend ? .red : Color.mailAccent)
                 // Create and send put mail on the wire. Return would confirm
                 // a keystroke meant for the chat, so those need a click.
                 .keyboardShortcut(nil)
@@ -687,7 +687,7 @@ struct AskMishPanelView: View {
             }
         }
         .padding(12)
-        .background(Color.notionContent,
+        .background(Color.mailContent,
                     in: RoundedRectangle(cornerRadius: PMRadius.outer(
                         inner: PMRadius.sm, padding: 12)))
     }
@@ -720,7 +720,7 @@ struct AskMishPanelView: View {
                     .disabled(controller.isRunning)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 6)
-                    .background(Color.notionContent,
+                    .background(Color.mailContent,
                                 in: RoundedRectangle(cornerRadius: PMRadius.md))
                 if controller.isRunning {
                     Button {
@@ -817,7 +817,7 @@ struct AskMishPanelView: View {
             .font(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.notionAccent.opacity(0.16), in: Capsule())
+            .background(Color.mailAccent.opacity(0.16), in: Capsule())
         }
         .buttonStyle(.plain)
         .help("Stop sending this conversation")
@@ -905,7 +905,7 @@ struct AskMishPanelView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(controller.includeSelectedThread
-                        ? Color.notionAccent.opacity(0.16)
+                        ? Color.mailAccent.opacity(0.16)
                         : Color.primary.opacity(0.06),
                         in: Capsule())
         }
@@ -1159,7 +1159,7 @@ private struct ModelPickerPopover: View {
                     .font(.system(size: 12, weight: .medium))
                 Spacer(minLength: 4)
                 if provider.id == currentProviderID {
-                    Circle().fill(Color.notionAccent).frame(width: 5, height: 5)
+                    Circle().fill(Color.mailAccent).frame(width: 5, height: 5)
                 }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 8, weight: .semibold))
@@ -1251,7 +1251,7 @@ private struct ModelPickerPopover: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color.notionAccent)
+                        .foregroundStyle(Color.mailAccent)
                 }
             }
             .padding(.horizontal, 8)
@@ -1260,7 +1260,7 @@ private struct ModelPickerPopover: View {
         }
         .buttonStyle(.plain)
         .help(model)
-        .background(isSelected ? Color.notionAccent.opacity(0.10) : .clear,
+        .background(isSelected ? Color.mailAccent.opacity(0.10) : .clear,
                     in: RoundedRectangle(cornerRadius: PMRadius.sm))
         .contextMenu { modelActions(provider: provider, model: model,
                                     isDefault: isDefault,

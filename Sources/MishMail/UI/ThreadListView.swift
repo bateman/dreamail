@@ -282,7 +282,7 @@ struct ThreadListView: View {
         }
     }
 
-    /// Notion Mail-style Labels view: one section per user label, in the
+    /// Labels view: one section per user label, in the
     /// organizer's label order; a thread files under its first label in
     /// that order (each thread appears once so keyboard nav stays sane).
     private func labelSections(_ threads: [MailThread]) -> [(String, [MailThread])] {
@@ -339,12 +339,12 @@ struct ThreadListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Notion Mail-style: while a search is committed, a banner above
+            // While a search is committed, a banner above
             // the filter bar makes it unmistakable that the list is filtered.
             if !store.committedSearch.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11)).foregroundStyle(Color.notionAccent)
+                        .font(.system(size: 11)).foregroundStyle(Color.mailAccent)
                     Text("Results for")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     Text("\u{201C}\(store.committedSearch)\u{201D}")
@@ -365,7 +365,7 @@ struct ThreadListView: View {
                     .help("Back to \(store.selectedView.title) (Esc)")
                 }
                 .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(Color.notionAccent.opacity(0.08))
+                .background(Color.mailAccent.opacity(0.08))
                 Divider()
             }
             FilterBar()
@@ -408,10 +408,10 @@ struct ThreadListView: View {
             }
             } // ScrollViewReader
         }
-        .background(Color.notionContent)
+        .background(Color.mailContent)
         .navigationTitle(store.selectedView.title)
         .toolbar {
-            // Notion-style view glyph next to the title. Shared glass is
+            // View glyph next to the title. Shared glass is
             // hidden so it stays a bare colored icon — no capsule, no
             // scroll-edge flicker with the detail nav trio.
             ToolbarItem(placement: .navigation) {
@@ -471,7 +471,7 @@ struct ThreadListView: View {
         }
         .font(.system(size: 12 * fontScale))
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(Color.notionAccent.opacity(0.08))
+        .background(Color.mailAccent.opacity(0.08))
     }
 }
 
@@ -572,12 +572,12 @@ private struct ThreadListSections: View, Equatable {
                         .tag(thread.id)
                         .id(thread.id)
                         .accessibilityIdentifier("threadRow.\(thread.id)")
-                        // Notion Mail-style: READ rows recede on a
+                        // READ rows recede on a
                         // grey wash (adapts to dark mode); unread rows
                         // sit on the plain background and pop.
                         .listRowBackground(
                             checked
-                                ? Color.notionAccent.opacity(0.10)
+                                ? Color.mailAccent.opacity(0.10)
                                 : (thread.isUnread
                                     ? Color.clear : Color.primary.opacity(0.05)))
                         .swipeActions(edge: .trailing) {
@@ -644,7 +644,7 @@ private struct ThreadListSections: View, Equatable {
         }
     }
 
-    /// Labels view header: the label name as its colored Notion-style pill,
+    /// Labels view header: the label name as its colored pill,
     /// plus a count and a collapse chevron; clicking folds the section.
     private func labelSectionHeader(_ title: String, count: Int) -> some View {
         let tint = title == "No label" ? Color.secondary : store.labelTint(anyAccount: title)
@@ -783,7 +783,7 @@ private struct FocusedThreadRow: View {
     }
 }
 
-/// Notion Mail-style filter chips above the list, with click-to-refresh.
+/// Filter chips above the list, with click-to-refresh.
 struct FilterBar: View {
     @Environment(MailStore.self) var store
     /// `@Environment` has no projected value, so controls that need two-way
@@ -823,7 +823,7 @@ struct FilterBar: View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    // Categories — the one always-visible chip, like Notion Mail.
+                    // Categories — the one always-visible chip.
                     if showCategoryChip {
                         Button {
                             showCategoriesPopover = true
@@ -843,7 +843,7 @@ struct FilterBar: View {
                         }
                     }
 
-                    // Always-visible quick filters, Notion Mail-style:
+                    // Always-visible quick filters:
                     // Labels dropdown, Is unread, Show archived.
                     labelsChip
                     quickChip("Is unread", icon: "envelope.badge",
@@ -974,7 +974,7 @@ struct FilterBar: View {
         }
     }
 
-    /// Notion Mail-style filter menu: primary filters, "More filters"
+    /// Filter menu: primary filters, "More filters"
     /// expansion, and per-field editors.
     @ViewBuilder
     private var filterPopover: some View {
@@ -1216,7 +1216,7 @@ struct FilterBar: View {
                           text: $fieldDraft)
                     .onSubmit { apply(field) }
                 if field == .from {
-                    // Sender suggestions with favicons, Notion Mail-style.
+                    // Sender suggestions with favicons.
                     ForEach(store.contactSuggestions(for: fieldDraft), id: \.email) { contact in
                         Button {
                             store.chips.senderContains = contact.email
@@ -1474,7 +1474,7 @@ struct FilterBar: View {
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.notionAccent)
+                        .foregroundStyle(Color.mailAccent)
                 }
             }
             .padding(.horizontal, 6).padding(.vertical, 4)
@@ -1494,7 +1494,7 @@ struct FilterBar: View {
     }
 }
 
-/// Notion Mail-style filter chip: icon rests muted and lights up on hover,
+/// Filter chip: icon rests muted and lights up on hover,
 /// with a slightly brighter pill fill. Active chips stay accent-tinted and
 /// only lift the fill so the blue doesn't fight the hover cue.
 private struct FilterChipLabel: View {
@@ -1522,19 +1522,19 @@ private struct FilterChipLabel: View {
     }
 
     private var iconColor: Color {
-        if active { return .notionAccent }
-        // Rest muted → primary on hover: the Notion "icons light up" feedback.
+        if active { return .mailAccent }
+        // Rest muted → primary on hover: the "icons light up" feedback.
         return hovering ? .primary : .secondary
     }
 
     private var textColor: Color {
-        if active { return .notionAccent }
+        if active { return .mailAccent }
         return hovering ? .primary : .secondary
     }
 
     private var fill: Color {
         if active {
-            return Color.notionAccent.opacity(hovering ? 0.22 : 0.16)
+            return Color.mailAccent.opacity(hovering ? 0.22 : 0.16)
         }
         return Color.secondary.opacity(hovering ? 0.16 : 0.10)
     }
@@ -1549,7 +1549,7 @@ private struct ActiveFilterChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(Color.notionAccent)
+            Text(title).font(.caption).foregroundStyle(Color.mailAccent)
             Button(action: remove) {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
                     .pmHitTarget(extra: 8)
@@ -1557,7 +1557,7 @@ private struct ActiveFilterChip: View {
             .buttonStyle(PressScaleButtonStyle()).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(Color.notionAccent.opacity(hovering ? 0.22 : 0.16), in: Capsule())
+        .background(Color.mailAccent.opacity(hovering ? 0.22 : 0.16), in: Capsule())
         .contentShape(Capsule())
         .animation(PMMotion.interactive, value: hovering)
         .onHover { hovering = $0 }
@@ -1576,9 +1576,9 @@ private struct ActiveLabelChipLabel: View {
             Circle().fill(tint).frame(width: 8, height: 8)
             Text(name).font(.caption)
         }
-        .foregroundStyle(Color.notionAccent)
+        .foregroundStyle(Color.mailAccent)
         .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(Color.notionAccent.opacity(hovering ? 0.22 : 0.16), in: Capsule())
+        .background(Color.mailAccent.opacity(hovering ? 0.22 : 0.16), in: Capsule())
         .contentShape(Capsule())
         .animation(PMMotion.interactive, value: hovering)
         .onHover { hovering = $0 }
@@ -1601,7 +1601,7 @@ extension View {
     func hoverTint() -> some View { modifier(FilterRowHoverTint()) }
 }
 
-/// One row of the Notion Mail-style filter menu: icon + title, hover tint,
+/// One row of the filter menu: icon + title, hover tint,
 /// with an optional trailing glyph (e.g. a chevron for rows that open a
 /// submenu).
 struct FilterMenuRow: View {
@@ -1644,9 +1644,9 @@ struct FaviconView: View {
     var body: some View {
         Text(letter)
             .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(Color.notionAccent)
+            .foregroundStyle(Color.mailAccent)
             .frame(width: 16, height: 16)
-            .background(Color.notionAccent.opacity(0.12), in: Circle())
+            .background(Color.mailAccent.opacity(0.12), in: Circle())
     }
 
     private var letter: String {
@@ -1716,7 +1716,7 @@ struct ThreadRowModel: Equatable {
     var userLabels: [ThreadRowLabelChip] { display.labels }
 }
 
-/// Dense Notion Mail-style single-line row:
+/// Dense single-line row:
 /// [check] [dot] participants   subject  snippet…………  [ai] [icons] time
 ///
 /// No `@EnvironmentObject` — observing MailStore made every ↓ re-render every
@@ -1751,14 +1751,14 @@ struct ThreadRow: View, Equatable {
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            // Notion Mail-style select toggle; shift-click selects a range.
+            // Select toggle; shift-click selects a range.
             Button {
                 let shift = NSEvent.modifierFlags.contains(.shift)
                 onToggleCheck(shift)
             } label: {
                 Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 14 * fontScale))
-                    .foregroundStyle(isChecked ? Color.notionAccent : Color.secondary.opacity(0.55))
+                    .foregroundStyle(isChecked ? Color.mailAccent : Color.secondary.opacity(0.55))
                     .frame(width: 16 * fontScale, height: 16 * fontScale)
                     .contentShape(Rectangle())
             }
@@ -1767,7 +1767,7 @@ struct ThreadRow: View, Equatable {
             .help(isChecked ? "Deselect (x)" : "Select (x). Shift-click for a range.")
 
             Circle()
-                .fill(thread.isUnread ? Color.notionAccent : .clear)
+                .fill(thread.isUnread ? Color.mailAccent : .clear)
                 .frame(width: 7, height: 7)
 
             // Middle content: when this row is already selected (e.g. the
@@ -1826,8 +1826,7 @@ struct ThreadRow: View, Equatable {
             // hover so the row never changes size.
             ZStack(alignment: .trailing) {
                 HStack(spacing: 5) {
-                    // User labels as colored pills right before the date,
-                    // Notion Mail-style.
+                    // User labels as colored pills right before the date.
                     ForEach(model.userLabels.prefix(2), id: \.name) { chip in
                         labelPill(chip)
                     }
@@ -1890,7 +1889,7 @@ struct ThreadRow: View, Equatable {
         thread.participants.isEmpty ? thread.fromDisplay : thread.participants
     }
 
-    /// Gmail/Notion Mail draft cue in the sender column: an orange "Draft"
+    /// Gmail-style draft cue in the sender column: an orange "Draft"
     /// marker leads the participants ("Draft, Alice"); a thread whose only
     /// message is the draft shows just "Draft". Same orange as the detail
     /// pane's draft card. Concatenated Text so long names truncate at the
@@ -1914,7 +1913,7 @@ struct ThreadRow: View, Equatable {
         return marker + Text(", ").foregroundColor(.secondary) + names
     }
 
-    /// Notion-style label pill: soft tinted capsule when idle; high-contrast
+    /// Label pill: soft tinted capsule when idle; high-contrast
     /// text on a stronger tint fill when selected so the chip stays legible
     /// on the blue list highlight (white on dark tints, near-black on pale).
     private func labelPill(_ chip: ThreadRowLabelChip) -> some View {
@@ -1958,7 +1957,7 @@ struct ThreadRow: View, Equatable {
     }
 }
 
-/// Notion Mail-style categories popover: contains / does-not-contain mode,
+/// Categories popover: contains / does-not-contain mode,
 /// a 2×2 grid of tappable category pills (all visible — no horizontal scroll),
 /// and a clear action.
 struct CategoriesPopover: View {
@@ -2033,7 +2032,7 @@ struct CategoriesPopover: View {
                 if on {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.notionAccent)
+                        .foregroundStyle(Color.mailAccent)
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 7)

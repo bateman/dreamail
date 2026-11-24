@@ -75,7 +75,7 @@ enum SnippetExpander {
         var result = template
         for (key, value) in values {
             // Double braces first so `{{name}}` is never half-eaten by the
-            // single-brace pass; both tolerate inner spaces (Notion style).
+            // single-brace pass; both tolerate inner spaces.
             for variant in ["{{\(key)}}", "{{ \(key) }}", "{\(key)}", "{ \(key) }"] {
                 result = result.replacingOccurrences(
                     of: variant, with: value, options: .caseInsensitive)

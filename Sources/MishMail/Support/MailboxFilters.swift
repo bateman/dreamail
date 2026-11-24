@@ -6,7 +6,7 @@ enum MailboxView: Hashable {
     case social
     case starred
     case snoozed
-    case labels         // all labeled mail, one section per label (Notion-style)
+    case labels         // all labeled mail, one section per label
     case reminders
     case drafts
     case scheduled      // locally scheduled sends (not Gmail threads)
@@ -64,7 +64,7 @@ enum MailboxView: Hashable {
     }
 }
 
-/// Notion Mail-style category filter: a set of Gmail categories that the
+/// Category filter: a set of Gmail categories that the
 /// inbox either must not contain (default) or must contain.
 struct CategoryFilter: Equatable, Codable {
     var exclude = true                 // which set the Categories popover edits

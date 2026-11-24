@@ -170,7 +170,7 @@ final class ComposeBodyLayoutTests: XCTestCase {
         let body = """
         August is open! When is good for you?
 
-        Here's my cal if easier: https://calendar.notion.so/meet/rboger/rb30
+        Here's my cal if easier: https://calendar.example.com/meet/rboger/rb30
         """
         let h = ComposeBodyLayout.editorHeights(
             body: body, hasCollapsedQuote: true, slashActive: false)

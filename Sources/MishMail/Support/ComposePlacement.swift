@@ -3,7 +3,7 @@ import Foundation
 
 /// Where the compose UI mounts relative to the mailbox chrome.
 enum ComposePresentation: String, Equatable {
-    /// Bottom-right floating card (Gmail/Notion dock).
+    /// Bottom-right floating card (Gmail-style dock).
     case floating
     /// Docked at the bottom of the reading pane so the thread stays visible.
     case inline
@@ -224,7 +224,7 @@ enum ComposePlacement {
 
     // MARK: Card chrome (single choke-point for on-screen fit)
 
-    /// Preferred floating / unmeasured-inline card width (Notion/Gmail dock).
+    /// Preferred floating / unmeasured-inline card width (Gmail-style dock).
     static let preferredFloatingWidth: CGFloat = 620
     /// Minimized strip width before host clamp.
     static let preferredMinimizedWidth: CGFloat = 300
