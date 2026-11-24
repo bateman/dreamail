@@ -6,6 +6,12 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Dock badge follows your actions and tells you when macOS hides it.**
+  Reading, archiving, deleting or snoozing a conversation updates the unread
+  count on the Dock icon immediately, also for accounts not shown in the
+  sidebar, and it is repainted when you return to the app; above 999 it reads
+  "999+". Settings ▸ Dock badge shows whether macOS allows the badge, with a
+  button to System Settings ▸ Notifications.
 - **Remote images now load by default when you open a message.** Opening
   includes moving to a conversation in the list while the reading pane is
   showing, and landing on one after archive or delete. The sender can then see
