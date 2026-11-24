@@ -138,7 +138,7 @@ final class SecureDeleteCostTests: XCTestCase {
                           pragma: true, searchIndex: false, appPath: false, messages: pruned),
             Scenario(label: "prune pragma on + fts secure-delete per row",
                           pragma: true, searchIndex: true, appPath: false, messages: pruned),
-            Scenario(label: "prune as shipped (pragma on, bulk: fts optimize)",
+            Scenario(label: "prune as shipped (pragma on, bulk: fts rebuild)",
                           pragma: true, searchIndex: true, appPath: true, messages: pruned),
             Scenario(label: "sync batch baseline",
                           pragma: false, searchIndex: false, appPath: false, messages: sync),

@@ -162,8 +162,10 @@ final class SecureDeleteTests: XCTestCase {
     }
 
     /// A bulk delete (local prune) suspends the per-row index work and
-    /// optimizes once at the end: the deleted terms must still be gone, and
-    /// the index must delete securely again afterwards.
+    /// rebuilds the index at the end: the deleted terms must still be gone,
+    /// and the index must delete securely again afterwards. The index here
+    /// is filled row by row by the sync triggers, as in the app; an
+    /// `optimize` in place of the rebuild left the term behind on it.
     func testBulkPruneLeavesNoTermInTheSearchIndex() throws {
         let pool = try openUnkeyedPool()
         let term = marker("qxjbulk")
@@ -198,6 +200,18 @@ final class SecureDeleteTests: XCTestCase {
         XCTAssertFalse(try onDisk(tail), "pruned term still on disk")
         XCTAssertFalse(try onDisk("old body \(old / 2)"), "pruned body still on disk")
         try pool.close()
+    }
+
+    func testBulkPathOnlyWhenTheRebuildIsCheaper() {
+        let threshold = SearchIndexDeletes.bulkThreshold
+        XCTAssertFalse(SearchIndexDeletes.usesBulkPath(deleting: 20, of: 1_000))
+        XCTAssertFalse(SearchIndexDeletes.usesBulkPath(deleting: threshold - 1, of: threshold))
+        XCTAssertTrue(SearchIndexDeletes.usesBulkPath(deleting: threshold, of: threshold))
+        XCTAssertTrue(SearchIndexDeletes.usesBulkPath(deleting: 2_000, of: 3_000))
+        // A few hundred deletes in a very large mailbox: rebuilding every
+        // remaining row would cost more than deleting securely.
+        XCTAssertFalse(SearchIndexDeletes.usesBulkPath(
+            deleting: threshold, of: threshold * (SearchIndexDeletes.rebuildCostRatio + 2)))
     }
 
     /// The setting lives in the index's own config table, so a migration
