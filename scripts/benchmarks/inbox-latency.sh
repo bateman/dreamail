@@ -68,4 +68,4 @@ xcodebuild "$action" -project MishMail.xcodeproj -scheme MishMailUITests \
     > "$RUNNER_TEMP/mail-benchmark-$name-$block.log" 2>&1 || {
         tail -100 "$RUNNER_TEMP/mail-benchmark-$name-$block.log"; exit 1
     }
-grep -E '^MAIL_(NATIVE|LATENCY) ' "$RUNNER_TEMP/mail-benchmark-$name-$block.log"
+grep -E '^MAIL_(NATIVE|LATENCY|STAGES) ' "$RUNNER_TEMP/mail-benchmark-$name-$block.log"

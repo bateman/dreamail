@@ -99,6 +99,15 @@ final class InboxLatencyTests: XCTestCase {
                 for key in ["inbox", "short", "long", "scroll", "reopen"] {
                     if let ms = native(key) { print("MAIL_NATIVE trial=\(trial) \(key)=\(ms)") }
                 }
+                // Where an open's time goes: "event@start+duration" in ms
+                // from the click. Not part of the comparison table.
+                for key in ["short", "long", "reopen"] {
+                    let board = NSPasteboard(name: .init("mishmail.benchmark.stages.\(key)"))
+                    let fields = board.string(forType: .string)?.split(separator: " ") ?? []
+                    if fields.count == 2, String(fields[0]) == token {
+                        print("MAIL_STAGES trial=\(trial) \(key) \(fields[1])")
+                    }
+                }
                 print("MAIL_LATENCY trial=\(trial) inbox=\(launch) short=\(short) long=\(long) scroll=\(scroll) reopen=\(reopen)")
             }
         }
