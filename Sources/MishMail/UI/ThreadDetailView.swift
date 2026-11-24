@@ -202,25 +202,47 @@ struct ThreadDetailView: View {
                 in: initialPayload.messages)))
     }
 
+    /// Space below each block above the messages (subject, chips, summary,
+    /// draft banner). Messages themselves are split by a hairline only.
+    static let headerBlockSpacing: CGFloat = 12
+
+    /// The first message the pane actually draws: a live draft hidden while
+    /// its compose editor is open does not count, so no hairline sits on top
+    /// of the first row.
+    private var firstRenderedMessageId: String? {
+        messages.first { message in
+            !(messageRoles.isLiveDraft(message.id)
+              && ComposingDraftVisibility.hidesDraftCard(
+                  messageId: message.id,
+                  composingDraftIds: store.composingDraftMessageIds))
+        }?.id
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // Message cards are cheap while collapsed and only expanded cards
+                // Message rows are cheap while collapsed and only expanded rows
                 // mount WKWebView. An eager stack avoids LazyVStack's geometry
                 // cache repeatedly invalidating around dynamically sized WebViews.
-                VStack(alignment: .leading, spacing: 12) {
+                // No stack spacing: the blocks above the messages carry their
+                // own bottom padding, and message rows touch (hairline only),
+                // so each row's id sits on its real top edge.
+                VStack(alignment: .leading, spacing: 0) {
                     Text(thread.subject.isEmpty ? "(no subject)" : thread.subject)
                         .font(.system(size: 19 * fontScale, weight: .semibold))
                         .textSelection(.enabled)
                         .padding(.horizontal)
                         .accessibilityIdentifier("threadSubject")
                         .id(ComposePlacement.threadTopScrollId)
+                        .padding(.bottom, Self.headerBlockSpacing)
 
                     threadMetaRow
+                        .padding(.bottom, Self.headerBlockSpacing)
 
                     // Its .task is the auto-summary: gone with the section.
                     if AIFeatures.isEnabled {
                         summarySection
+                            .padding(.bottom, Self.headerBlockSpacing)
                     }
 
                     // Slim cue for long threads only: on short threads the draft
@@ -264,8 +286,13 @@ struct ThreadDetailView: View {
                         .buttonStyle(.plain)
                         .help("Continue editing the unsent draft")
                         .padding(.horizontal)
+                        .padding(.bottom, Self.headerBlockSpacing)
                     }
 
+                    // Flat rows split by a hairline (Gmail on the web), drawn
+                    // over the top edge of every row but the first. Rows stay
+                    // direct children of this stack: they are the scroll
+                    // position's targets.
                     ForEach(messages) { message in
                         if messageRoles.isLiveDraft(message.id) {
                             // Live unsent drafts only — DRAFT+TRASH (discarded)
@@ -280,12 +307,16 @@ struct ThreadDetailView: View {
                                     message: message,
                                     onNeedBody: { loadBodyIfNeeded(id: message.id) })
                                     .padding(.horizontal)
+                                    .padding(.vertical, 12)
+                                    .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
                                     .id(message.id)
                                     .background { pinnedHeightReader(id: message.id, proxy: proxy) }
                             }
                         } else {
                             messageCard(for: message,
                                         lastNonDraftId: messageRoles.lastNonDraftId)
+                                .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
+                                .id(message.id)
                                 .background { pinnedHeightReader(id: message.id, proxy: proxy) }
                         }
                     }
@@ -582,8 +613,6 @@ struct ThreadDetailView: View {
                     onNeedUnsubscribeHeaders: {
                         Task { await refreshUnsubscribeHeaders(message) }
                     })
-            .padding(.horizontal)
-            .id(message.id)
     }
 
     /// Only the inline reply's target needs height updates as its HTML settles.
@@ -1642,7 +1671,11 @@ struct MessageCard: View {
     /// Offset of the body from the card's top (header and banners), so the
     /// reservation makes the card, not just its body, end at the pane bottom.
     @State private var bodyTopInCard: CGFloat = 0
+    /// The row's width, for the date's narrow-pane rule; nil until measured.
+    @State private var rowWidth: CGFloat?
     private static let cardSpace = "messageCard"
+    private static let exposesRowFrame =
+        ProcessInfo.processInfo.environment["MISHMAIL_UI_TEST"] == "1"
     /// Per-message opt-in when policy is ask/vip and the sender isn't allowed.
     @State private var loadRemoteImages = false
     /// Manual escape hatch: render multipart plain text instead of HTML.
@@ -1861,366 +1894,251 @@ struct MessageCard: View {
             threadOptIn: loadImagesForThread)
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                // Header: sender name + address, with a
-                // compact "To me ⌄" summary that expands into full FROM/TO/CC
-                // rows. Every participant is clickable (draft/search/copy).
-                // Claim remaining width so long From names/emails can use the
-                // space left of the action cluster instead of middle-truncating
-                // into "Ale…sque abda…y.edu" while Spacer steals the free room.
-                VStack(alignment: .leading, spacing: 3) {
-                    if expanded {
-                        if recipientsExpanded {
-                            recipientGrid
+    private var metrics: ThreadMessageRowMetrics {
+        ThreadMessageRowMetrics(fontScale: fontScale)
+    }
+
+    private var senderName: String {
+        store.participantDisplayName(fromHeader: message.fromHeader)
+    }
+
+    /// The name line's date: full, absolute or compact by the row's width
+    /// (`MessageRowDateStyle`). Absolute until the row has been measured.
+    private func dateText(now: Date) -> String {
+        let style = rowWidth.map {
+            MessageRowDateStyle.forTextColumn(
+                width: metrics.textColumnWidth(rowWidth: $0), fontScale: fontScale)
+        } ?? .absolute
+        return MessageRowDate.text(message.date, style: style, now: now)
+    }
+
+    /// The account's photo for the user's own mail, else an initial disc.
+    @ViewBuilder
+    private var senderAvatar: some View {
+        let choice = MessageAvatar.resolve(
+            senderEmail: MessageParser.emailAddress(message.fromHeader),
+            senderName: senderName,
+            labelIds: message.labelIds,
+            owners: MessageAvatar.ownerMap(
+                accountIds: store.accounts.map(\.id),
+                aliases: store.sendIdentities.map { (email: $0.email, accountId: $0.accountId) }),
+            // The account switcher's title, so the initial matches it.
+            accountNames: Dictionary(
+                store.accounts.map { ($0.id, AccountLabelColor.title($0)) },
+                uniquingKeysWith: { first, _ in first }),
+            accountsWithPhoto: Set(store.accountPhotos.keys))
+        switch choice {
+        case .accountPhoto(let accountId):
+            AccountAvatarView(name: senderName, key: accountId,
+                              size: metrics.avatarSize,
+                              photo: store.accountPhotos[accountId],
+                              decorative: true)
+        case .initial(let name, let key):
+            AccountAvatarView(name: name, key: key, size: metrics.avatarSize,
+                              decorative: true)
+        }
+    }
+
+    /// Avatar, then the name line (bold sender, date on the right) and one
+    /// line below it: the snippet when collapsed, the recipients and the
+    /// message's actions when open. The name line is the same view in both
+    /// states, so opening a message does not move its header.
+    private var header: some View {
+        HStack(alignment: .top, spacing: metrics.avatarGap) {
+            senderAvatar
+            VStack(alignment: .leading, spacing: metrics.lineSpacing) {
+                HStack(alignment: .center, spacing: 8) {
+                    // Sole flexible child: the name takes the width the date
+                    // leaves and truncates at its tail.
+                    Group {
+                        if expanded {
+                            participantMenu(message.fromHeader, nameSize: 14,
+                                            nameWeight: .semibold)
                         } else {
-                            compactRecipientGrid
+                            Text(senderName)
+                                .font(.system(size: metrics.nameFontSize,
+                                              weight: .semibold))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                    } else {
-                        Text(store.participantDisplayName(fromHeader: message.fromHeader))
-                            .font(.system(size: 14 * fontScale, weight: .semibold))
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("messageSender")
+                    // Redrawn every minute so "(12 hours ago)" stays true.
+                    TimelineView(.everyMinute) { context in
+                        Text(dateText(now: context.date))
+                            .font(.system(size: metrics.dateFontSize).monospacedDigit())
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
-                            .truncationMode(.tail)
-                            .textSelection(.enabled)
+                            .fixedSize()
+                            .help(message.date.formatted(date: .complete, time: .shortened))
+                            .accessibilityIdentifier("messageHeaderDate")
                     }
-                }
-                // Sole infinite-flex child of the header HStack so leftover
-                // width goes entirely to the From/To column. A trailing
-                // Spacer would split free space 50/50 and reintroduce the
-                // "truncated name + blank gap" symptom at half magnitude.
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if expanded, message.bodyHTML != nil, !message.bodyText.isEmpty {
-                    Button {
-                        showPlainText.toggle()
-                    } label: {
-                        Text(showPlainText ? "Show HTML" : "Show plain text")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-                    .help(showPlainText
-                          ? "Render the HTML body again"
-                          : "Show the multipart plain-text alternative (no remote images; useful when HTML is unreadable)")
-                }
-                if expanded, message.bodyHTML != nil, !allowRemoteImages, !showPlainText {
-                    // Click loads this message; chevron / long-press offers the thread.
-                    Menu {
-                        Button("This conversation") { loadImagesForThread = true }
-                    } label: {
-                        Text("Load images")
-                            .font(.caption)
-                    } primaryAction: {
-                        loadRemoteImages = true
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("Remote images can track opens. Click for this message; menu for the whole conversation (Spam messages still need their own click). The image policy is in Settings → Appearance.")
                 }
                 if expanded {
-                    Button {
-                        store.openCompose(.init(replyTo: message))
-                    } label: {
-                        Image(systemName: "arrowshape.turn.up.left")
-                            .font(.system(size: 12 * fontScale))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
-                    .accessibilityLabel("Reply")
-                    if ReplyComposer.hasAdditionalReplyAllRecipients(
-                        message, ownAddresses: store.ownEmailAddresses) {
-                        Button {
-                            store.openCompose(.init(replyTo: message, replyAll: true))
-                        } label: {
-                            Image(systemName: "arrowshape.turn.up.left.2")
-                                .font(.system(size: 12 * fontScale))
-                        }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
-                        .accessibilityLabel("Reply all")
-                    }
-                    Button {
-                        store.openCompose(.init(replyTo: message, forward: true))
-                    } label: {
-                        Image(systemName: "arrowshape.turn.up.right")
-                            .font(.system(size: 12 * fontScale))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Forward this message (\(store.keyBindings.displayKey(for: .forward))) · starts a new conversation")
-                    .accessibilityLabel("Forward this message")
-                }
-                Text(message.date, format: message.date.messageHeaderFormat)
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("messageHeaderDate")
-                if isCollapsible || !expanded {
-                    Button {
-                        toggleExpanded()
-                    } label: {
-                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help(expanded ? "Collapse" : "Expand")
-                    .accessibilityLabel(expanded ? "Collapse" : "Expand")
+                    expandedHeaderDetails
+                } else {
+                    Text(message.snippet.decodingHTMLEntities())
+                        .font(.system(size: metrics.secondaryFontSize))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("messageSnippet")
                 }
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                toggleExpanded()
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, metrics.leadingInset)
+        .padding(.trailing, metrics.trailingInset)
+        .padding(.top, metrics.verticalPadding)
+        .padding(.bottom, expanded ? 3 * metrics.lineSpacing : metrics.verticalPadding)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded() } action: { width in
+            if width != rowWidth { rowWidth = width }
+        }
+        .contentShape(Rectangle())
+        // Open: a click on the header collapses it (not the only message).
+        .onTapGesture {
+            if expanded { toggleExpanded() }
+        }
+        .overlay {
+            // Collapsed: the whole row is one plain button, focusable from
+            // the keyboard and announced by VoiceOver. An overlay rather than
+            // a Button around the header, so the name, date and snippet stay
+            // separate accessibility elements.
+            if !expanded {
+                Button {
+                    expandCard()
+                } label: {
+                    Color.clear.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open message from \(senderName)")
+                .accessibilityIdentifier("messageRowExpand")
             }
-            .pmPointingHandCursor(enabled: isCollapsible || !expanded)
+        }
+        .pmPointingHandCursor(enabled: isCollapsible || !expanded)
+    }
+
+    /// Below the open message's name: "to me ⌄" (or every participant),
+    /// with the message's own controls on the right.
+    private var expandedHeaderDetails: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Group {
+                if recipientsExpanded {
+                    recipientGrid
+                } else {
+                    compactRecipientGrid
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            headerActions
+        }
+    }
+
+    @ViewBuilder
+    private var headerActions: some View {
+        HStack(spacing: 10) {
+            if message.bodyHTML != nil, !message.bodyText.isEmpty {
+                Button {
+                    showPlainText.toggle()
+                } label: {
+                    Text(showPlainText ? "Show HTML" : "Show plain text")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .help(showPlainText
+                      ? "Render the HTML body again"
+                      : "Show the multipart plain-text alternative (no remote images; useful when HTML is unreadable)")
+            }
+            if message.bodyHTML != nil, !allowRemoteImages, !showPlainText {
+                // Click loads this message; chevron / long-press offers the thread.
+                Menu {
+                    Button("This conversation") { loadImagesForThread = true }
+                } label: {
+                    Text("Load images")
+                        .font(.caption)
+                } primaryAction: {
+                    loadRemoteImages = true
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Remote images can track opens. Click for this message; menu for the whole conversation (Spam messages still need their own click). The image policy is in Settings → Appearance.")
+            }
+            Button {
+                store.openCompose(.init(replyTo: message))
+            } label: {
+                Image(systemName: "arrowshape.turn.up.left")
+                    .font(.system(size: 12 * fontScale))
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
+            .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
+            .accessibilityLabel("Reply")
+            if ReplyComposer.hasAdditionalReplyAllRecipients(
+                message, ownAddresses: store.ownEmailAddresses) {
+                Button {
+                    store.openCompose(.init(replyTo: message, replyAll: true))
+                } label: {
+                    Image(systemName: "arrowshape.turn.up.left.2")
+                        .font(.system(size: 12 * fontScale))
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
+                .accessibilityLabel("Reply all")
+            }
+            Button {
+                store.openCompose(.init(replyTo: message, forward: true))
+            } label: {
+                Image(systemName: "arrowshape.turn.up.right")
+                    .font(.system(size: 12 * fontScale))
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
+            .help("Forward this message (\(store.keyBindings.displayKey(for: .forward))) · starts a new conversation")
+            .accessibilityLabel("Forward this message")
+            if isCollapsible {
+                Button {
+                    toggleExpanded()
+                } label: {
+                    Image(systemName: "chevron.up")
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Collapse")
+                .accessibilityLabel("Collapse")
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
 
             if expanded {
-                // Collapsed cards never mount HTMLBodyView (gated on expanded).
-                // Header-only rows show nothing until the parent hydrates the body.
-                //
-                // When we only have a plain-text head (no structured HTML quote),
-                // show that head while collapsed — even if bodyHTML exists —
-                // so nested `>` history doesn't stay visible by default.
-                if hasQuotedTrail, let head = textHead, !showQuoted {
-                    PlainTextBody(text: head, fontScale: fontScale)
-                } else if showPlainText, !message.bodyText.isEmpty {
-                    // Manual plain-text escape hatch (see header control).
-                    PlainTextBody(text: message.bodyText, fontScale: fontScale)
-                } else if let html = (cidInlinedHTML ?? message.bodyHTML), !html.isEmpty {
-                    // Structured quotes are removed before WebKit sees the
-                    // document. Besides avoiding repeated history parsing,
-                    // this gives head/full loads distinct constant-time ids.
-                    let useAuthoredHTML = textHead == nil && !showQuoted
-                        && htmlHead != nil
-                    let renderedHTML = useAuthoredHTML ? (htmlHead ?? html) : html
-                    let renderedBytes = useAuthoredHTML ? htmlHeadBytes : htmlBytes
-                    if HTMLBodyRenderPolicy.requiresExplicitLoad(
-                        byteCount: renderedBytes,
-                        userApproved: approvedOversizedHTML) {
-                        oversizedHTMLPlaceholder(byteCount: renderedBytes)
-                    } else {
-                        // `htmlDocuments` matches the HTML on screen: CID
-                        // prep for inlined bodies, repository prep otherwise.
-                        // Font-scale mismatch → no docs; HTMLBodyView then
-                        // assembles off-main from `html`.
-                        let docsForScale: MessageHTMLDocuments? = {
-                            guard let docs = htmlDocuments,
-                                  abs(docs.fontScale - fontScale) < 0.001
-                            else { return nil }
-                            return docs
-                        }()
-                        // Lookup only — an allowed variant that is not built
-                        // yet comes back nil and is built off-main by the
-                        // view (which also fills the shared memo).
-                        let preassembled = docsForScale?.readyDocument(
-                            authored: useAuthoredHTML,
-                            allowRemoteImages: allowRemoteImages)
-                        let bodyContentID = message.id
-                            + (useAuthoredHTML ? ":authored" : ":full")
-                            + (cidInlinedHTML != nil ? ":cid" : "")
-                        // Read in body, not onAppear: a known height (re-open,
-                        // or a pre-rendered neighbor) must size the very first
-                        // frame. Without one, the open card reserves the pane
-                        // until the first report instead of opening as a
-                        // short box that then jumps to the body's length.
-                        // At the pane's last measured width: a height measured
-                        // at another width (pane resized, or an estimate) would
-                        // paint clipped or over-tall and then resize.
-                        let cachedHeight = measuredHTMLHeight == nil
-                            ? HTMLBodyHeightCacheStore.height(
-                                contentID: bodyContentID,
-                                fontScale: fontScale,
-                                width: HTMLBodyHeightCacheStore.lastLayoutWidth)
-                            : nil
-                        let bodyHeight = MessageBodyHeight.webViewHeight(
-                            measured: measuredHTMLHeight, cached: cachedHeight)
-                        let containerHeight = MessageBodyHeight.containerHeight(
-                            measured: measuredHTMLHeight,
-                            cached: cachedHeight,
-                            reserve: htmlBodyEverMeasured ? nil
-                                : fillsPaneHeight.flatMap {
-                                    MessageBodyHeight.paneReserve(
-                                        viewportHeight: $0,
-                                        // Header above the body + the card's
-                                        // bottom padding.
-                                        chromeHeight: bodyTopInCard + 16)
-                                })
-                        HTMLBodyView(
-                            contentID: bodyContentID,
-                            html: renderedHTML,
-                            preassembledDocument: preassembled,
-                            documents: docsForScale,
-                            documentIsAuthored: useAuthoredHTML,
-                            allowRemoteImages: allowRemoteImages,
-                            fontScale: fontScale,
-                            height: Binding(
-                                get: { bodyHeight },
-                                set: {
-                                    measuredHTMLHeight = $0
-                                    htmlBodyEverMeasured = true
-                                }),
-                            onSettled: onBodySettled)
-                            // The web view keeps its own frame (measuring is
-                            // unchanged); only its container reserves space.
-                            .frame(height: bodyHeight)
-                            .frame(maxWidth: .infinity, minHeight: containerHeight,
-                                   maxHeight: containerHeight, alignment: .top)
-                            .onGeometryChange(for: CGFloat.self) {
-                                $0.frame(in: .named(Self.cardSpace)).minY.rounded()
-                            } action: { top in
-                                if top != bodyTopInCard { bodyTopInCard = top }
-                            }
-                            .accessibilityElement(children: .contain)
-                            .accessibilityIdentifier("messageBody")
-                    }
-                } else if !message.bodyText.isEmpty {
-                    // Collapsed plain-text heads are handled above; this branch
-                    // is full body (no trail, or showQuoted).
-                    PlainTextBody(text: message.bodyText, fontScale: fontScale)
+                VStack(alignment: .leading, spacing: 8) {
+                    expandedContent
                 }
-                if hasQuotedTrail {
-                    // Same pill as the compose card: the trail is one click
-                    // away, and one more click tucks it back.
-                    Button {
-                        // Collapsing shrinks the content, and a reloaded web
-                        // view can't measure below its current frame — drop
-                        // back to the head's cached height (or the
-                        // placeholder) and let it grow to fit.
-                        // Expanding only grows, so the height stays put until
-                        // the new load reports in (no visible snap).
-                        if showQuoted { measuredHTMLHeight = nil }
-                        // Showing the full trail is itself an explicit request
-                        // to load it. Keep the authored head visible instead of
-                        // replacing it with another confirmation placeholder.
-                        if !showQuoted,
-                           HTMLBodyRenderPolicy.quoteExpansionApprovesFullBody(
-                               byteCount: htmlBytes) {
-                            approvedOversizedHTML = true
-                        }
-                        withAnimation { showQuoted.toggle() }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 13 * fontScale, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 4)
-                            .background(Color.secondary.opacity(0.15), in: Capsule())
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help(showQuoted ? "Hide quoted text" : "Show quoted text")
-                    .accessibilityLabel(showQuoted ? "Hide quoted text" : "Show quoted text")
-                }
-                // Calendar invites get a Gmail-style Accept card; the
-                // .ics itself is hidden from the generic attachment chips so
-                // it isn't double-presented as a dumb file. uniqueCalendar…
-                // collapses Google's text/calendar + application/ics pair
-                // (and already-synced duplicate rows) to one card.
-                let calendarAtts = CalendarInvite.uniqueCalendarAttachments(attachments)
-                let fileAtts = attachments.filter {
-                    !CalendarInvite.isCalendarAttachment(
-                        mimeType: $0.mimeType, filename: $0.filename)
-                }
-                if !calendarAtts.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(calendarAtts, id: \.displayIdentity) { att in
-                            CalendarInviteCard(message: message, attachment: att,
-                                               fontScale: fontScale)
-                        }
-                    }
-                }
-                if !fileAtts.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            if fileAtts.count > 1 {
-                                Button {
-                                    store.saveAllAttachments(fileAtts, message: message)
-                                } label: {
-                                    HStack(spacing: 5) {
-                                        Image(systemName: "arrow.down.to.line")
-                                        Text("Download all (\(fileAtts.count))")
-                                            .font(.system(size: 12, weight: .medium))
-                                    }
-                                    .padding(.horizontal, 10).padding(.vertical, 8)
-                                    .background(Color.mailAccent.opacity(0.15),
-                                                in: RoundedRectangle(cornerRadius: 8))
-                                    .contentShape(RoundedRectangle(cornerRadius: 8))
-                                }
-                                .buttonStyle(.plain)
-                                .help("Save every attachment to a folder you choose")
-                            }
-                            ForEach(fileAtts, id: \.displayIdentity) { att in
-                                MessageAttachmentChip(
-                                    filename: att.filename,
-                                    sizeBytes: att.size,
-                                    iconName: iconName(for: att.mimeType),
-                                    onQuickLook: {
-                                        store.quickLookAttachment(att, message: message)
-                                    },
-                                    onSave: {
-                                        store.saveAttachment(att, message: message)
-                                    },
-                                    onOpen: {
-                                        store.openAttachment(att, message: message)
-                                    }
-                                )
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-                // Action bar on every message.
-                HStack(spacing: 8) {
-                    Button {
-                        store.openCompose(.init(replyTo: message))
-                    } label: {
-                        Label("Reply", systemImage: "arrowshape.turn.up.left")
-                            .font(.system(size: 12.5 * fontScale))
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("messageActionReply")
-                    if ReplyComposer.hasAdditionalReplyAllRecipients(
-                        message, ownAddresses: store.ownEmailAddresses) {
-                        Button {
-                            store.openCompose(.init(replyTo: message, replyAll: true))
-                        } label: {
-                            Label("Reply all", systemImage: "arrowshape.turn.up.left.2")
-                                .font(.system(size: 12.5 * fontScale))
-                        }
-                        .buttonStyle(.bordered)
-                        .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
-                    }
-                    Button {
-                        store.openCompose(.init(replyTo: message, forward: true))
-                    } label: {
-                        Label("Forward", systemImage: "arrowshape.turn.up.right")
-                            .font(.system(size: 12.5 * fontScale))
-                    }
-                    .buttonStyle(.bordered)
-                    .help("Forward this message · starts a new conversation")
-                }
-                .padding(.top, 4)
-
-                // Which of your Gmail filters match this message — collapsed
-                // by default; toggle the header to expand. Hidden until the
-                // account's filters have loaded and at least one hits.
-                MatchingFiltersSection(message: message, fontScale: fontScale)
-            } else {
-                Text(message.snippet.decodingHTMLEntities())
-                    .font(.system(size: 12.5 * fontScale)).foregroundStyle(.secondary).lineLimit(1)
+                .padding(.horizontal, metrics.bodyInset)
+                .padding(.bottom, metrics.verticalPadding)
             }
         }
-        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Flat row: no card fill or shadow. Hairlines between rows are drawn
+        // by the thread view. HTML bodies keep their own dark-mode styling
+        // over the pane's background (the web view draws no background).
+        .background {
+            // The row's whole frame for the UI tests (a container's frame is
+            // its children's). Absent outside UI tests: no VoiceOver noise.
+            if Self.exposesRowFrame {
+                Color.clear
+                    .accessibilityElement()
+                    .accessibilityLabel("Message row")
+                    .accessibilityIdentifier("messageRowFrame")
+            }
+        }
         .coordinateSpace(.named(Self.cardSpace))
-        .background(RoundedRectangle(cornerRadius: PMRadius.md).fill(Color(nsColor: .controlBackgroundColor)))
-        // Layered elevation reads cleaner than a hard separator ring on varied
-        // backgrounds (light/dark, reading-pane chrome).
-        .pmCardElevation(cornerRadius: PMRadius.md)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !expanded {
-                expandCard()
-            }
-        }
-        // Collapsed cards are clickable everywhere, so show the pointing hand
-        // over the whole card (the header row handles its own cursor when expanded).
-        .pmPointingHandCursor(enabled: !expanded)
+        // A collapsed row is all header, and its header is a button.
         .onAppear {
             // Parent seeds the open set on payload apply. Cards that land
             // already expanded (or the single last-card default before seed)
@@ -2236,6 +2154,243 @@ struct MessageCard: View {
                 onNeedUnsubscribeHeaders()
             }
         }
+    }
+
+    /// An open message below its header: body, quoted-text toggle,
+    /// invites, attachments, the action bar and matching filters.
+    @ViewBuilder
+    private var expandedContent: some View {
+        // Collapsed cards never mount HTMLBodyView (gated on expanded).
+        // Header-only rows show nothing until the parent hydrates the body.
+        //
+        // When we only have a plain-text head (no structured HTML quote),
+        // show that head while collapsed — even if bodyHTML exists —
+        // so nested `>` history doesn't stay visible by default.
+        if hasQuotedTrail, let head = textHead, !showQuoted {
+            PlainTextBody(text: head, fontScale: fontScale)
+        } else if showPlainText, !message.bodyText.isEmpty {
+            // Manual plain-text escape hatch (see header control).
+            PlainTextBody(text: message.bodyText, fontScale: fontScale)
+        } else if let html = (cidInlinedHTML ?? message.bodyHTML), !html.isEmpty {
+            // Structured quotes are removed before WebKit sees the
+            // document. Besides avoiding repeated history parsing,
+            // this gives head/full loads distinct constant-time ids.
+            let useAuthoredHTML = textHead == nil && !showQuoted
+                && htmlHead != nil
+            let renderedHTML = useAuthoredHTML ? (htmlHead ?? html) : html
+            let renderedBytes = useAuthoredHTML ? htmlHeadBytes : htmlBytes
+            if HTMLBodyRenderPolicy.requiresExplicitLoad(
+                byteCount: renderedBytes,
+                userApproved: approvedOversizedHTML) {
+                oversizedHTMLPlaceholder(byteCount: renderedBytes)
+            } else {
+                // `htmlDocuments` matches the HTML on screen: CID
+                // prep for inlined bodies, repository prep otherwise.
+                // Font-scale mismatch → no docs; HTMLBodyView then
+                // assembles off-main from `html`.
+                let docsForScale: MessageHTMLDocuments? = {
+                    guard let docs = htmlDocuments,
+                          abs(docs.fontScale - fontScale) < 0.001
+                    else { return nil }
+                    return docs
+                }()
+                // Lookup only — an allowed variant that is not built
+                // yet comes back nil and is built off-main by the
+                // view (which also fills the shared memo).
+                let preassembled = docsForScale?.readyDocument(
+                    authored: useAuthoredHTML,
+                    allowRemoteImages: allowRemoteImages)
+                let bodyContentID = message.id
+                    + (useAuthoredHTML ? ":authored" : ":full")
+                    + (cidInlinedHTML != nil ? ":cid" : "")
+                // Read in body, not onAppear: a known height (re-open,
+                // or a pre-rendered neighbor) must size the very first
+                // frame. Without one, the open card reserves the pane
+                // until the first report instead of opening as a
+                // short box that then jumps to the body's length.
+                // At the pane's last measured width: a height measured
+                // at another width (pane resized, or an estimate) would
+                // paint clipped or over-tall and then resize.
+                let cachedHeight = measuredHTMLHeight == nil
+                    ? HTMLBodyHeightCacheStore.height(
+                        contentID: bodyContentID,
+                        fontScale: fontScale,
+                        width: HTMLBodyHeightCacheStore.lastLayoutWidth)
+                    : nil
+                let bodyHeight = MessageBodyHeight.webViewHeight(
+                    measured: measuredHTMLHeight, cached: cachedHeight)
+                let containerHeight = MessageBodyHeight.containerHeight(
+                    measured: measuredHTMLHeight,
+                    cached: cachedHeight,
+                    reserve: htmlBodyEverMeasured ? nil
+                        : fillsPaneHeight.flatMap {
+                            MessageBodyHeight.paneReserve(
+                                viewportHeight: $0,
+                                // Header above the body + the row's
+                                // bottom padding.
+                                chromeHeight: bodyTopInCard
+                                    + metrics.verticalPadding)
+                        })
+                HTMLBodyView(
+                    contentID: bodyContentID,
+                    html: renderedHTML,
+                    preassembledDocument: preassembled,
+                    documents: docsForScale,
+                    documentIsAuthored: useAuthoredHTML,
+                    allowRemoteImages: allowRemoteImages,
+                    fontScale: fontScale,
+                    height: Binding(
+                        get: { bodyHeight },
+                        set: {
+                            measuredHTMLHeight = $0
+                            htmlBodyEverMeasured = true
+                        }),
+                    onSettled: onBodySettled)
+                    // The web view keeps its own frame (measuring is
+                    // unchanged); only its container reserves space.
+                    .frame(height: bodyHeight)
+                    .frame(maxWidth: .infinity, minHeight: containerHeight,
+                           maxHeight: containerHeight, alignment: .top)
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.frame(in: .named(Self.cardSpace)).minY.rounded()
+                    } action: { top in
+                        if top != bodyTopInCard { bodyTopInCard = top }
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("messageBody")
+            }
+        } else if !message.bodyText.isEmpty {
+            // Collapsed plain-text heads are handled above; this branch
+            // is full body (no trail, or showQuoted).
+            PlainTextBody(text: message.bodyText, fontScale: fontScale)
+        }
+        if hasQuotedTrail {
+            // Same pill as the compose card: the trail is one click
+            // away, and one more click tucks it back.
+            Button {
+                // Collapsing shrinks the content, and a reloaded web
+                // view can't measure below its current frame — drop
+                // back to the head's cached height (or the
+                // placeholder) and let it grow to fit.
+                // Expanding only grows, so the height stays put until
+                // the new load reports in (no visible snap).
+                if showQuoted { measuredHTMLHeight = nil }
+                // Showing the full trail is itself an explicit request
+                // to load it. Keep the authored head visible instead of
+                // replacing it with another confirmation placeholder.
+                if !showQuoted,
+                   HTMLBodyRenderPolicy.quoteExpansionApprovesFullBody(
+                       byteCount: htmlBytes) {
+                    approvedOversizedHTML = true
+                }
+                withAnimation { showQuoted.toggle() }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13 * fontScale, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.15), in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help(showQuoted ? "Hide quoted text" : "Show quoted text")
+            .accessibilityLabel(showQuoted ? "Hide quoted text" : "Show quoted text")
+        }
+        // Calendar invites get a Gmail-style Accept card; the
+        // .ics itself is hidden from the generic attachment chips so
+        // it isn't double-presented as a dumb file. uniqueCalendar…
+        // collapses Google's text/calendar + application/ics pair
+        // (and already-synced duplicate rows) to one card.
+        let calendarAtts = CalendarInvite.uniqueCalendarAttachments(attachments)
+        let fileAtts = attachments.filter {
+            !CalendarInvite.isCalendarAttachment(
+                mimeType: $0.mimeType, filename: $0.filename)
+        }
+        if !calendarAtts.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(calendarAtts, id: \.displayIdentity) { att in
+                    CalendarInviteCard(message: message, attachment: att,
+                                       fontScale: fontScale)
+                }
+            }
+        }
+        if !fileAtts.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if fileAtts.count > 1 {
+                        Button {
+                            store.saveAllAttachments(fileAtts, message: message)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "arrow.down.to.line")
+                                Text("Download all (\(fileAtts.count))")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 8)
+                            .background(Color.mailAccent.opacity(0.15),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                            .contentShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Save every attachment to a folder you choose")
+                    }
+                    ForEach(fileAtts, id: \.displayIdentity) { att in
+                        MessageAttachmentChip(
+                            filename: att.filename,
+                            sizeBytes: att.size,
+                            iconName: iconName(for: att.mimeType),
+                            onQuickLook: {
+                                store.quickLookAttachment(att, message: message)
+                            },
+                            onSave: {
+                                store.saveAttachment(att, message: message)
+                            },
+                            onOpen: {
+                                store.openAttachment(att, message: message)
+                            }
+                        )
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        // Action bar on every message.
+        HStack(spacing: 8) {
+            Button {
+                store.openCompose(.init(replyTo: message))
+            } label: {
+                Label("Reply", systemImage: "arrowshape.turn.up.left")
+                    .font(.system(size: 12.5 * fontScale))
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("messageActionReply")
+            if ReplyComposer.hasAdditionalReplyAllRecipients(
+                message, ownAddresses: store.ownEmailAddresses) {
+                Button {
+                    store.openCompose(.init(replyTo: message, replyAll: true))
+                } label: {
+                    Label("Reply all", systemImage: "arrowshape.turn.up.left.2")
+                        .font(.system(size: 12.5 * fontScale))
+                }
+                .buttonStyle(.bordered)
+                .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
+            }
+            Button {
+                store.openCompose(.init(replyTo: message, forward: true))
+            } label: {
+                Label("Forward", systemImage: "arrowshape.turn.up.right")
+                    .font(.system(size: 12.5 * fontScale))
+            }
+            .buttonStyle(.bordered)
+            .help("Forward this message · starts a new conversation")
+        }
+        .padding(.top, 4)
+
+        // Which of your Gmail filters match this message — collapsed
+        // by default; toggle the header to expand. Hidden until the
+        // account's filters have loaded and at least one hits.
+        MatchingFiltersSection(message: message, fontScale: fontScale)
     }
 
     private func oversizedHTMLPlaceholder(byteCount: Int) -> some View {
@@ -2344,53 +2499,45 @@ struct MessageCard: View {
         return extra > 0 ? "\(firstName) +\(extra)" : firstName
     }
 
-    /// The compact and expanded headers share the same fixed role column.
-    /// This keeps bare email addresses and the disclosure chevron optically
-    /// aligned instead of centering the glyph against a wrapped text block.
+    /// The open message's line below the name: "to me ⌄" (Gmail on the
+    /// web), Unsubscribe when the list offers it, and the "via" row when the
+    /// message reached an address To / Cc do not show. The sender itself is
+    /// on the name line above.
     private var compactRecipientGrid: some View {
         Grid(alignment: .leadingFirstTextBaseline,
              horizontalSpacing: 12,
              verticalSpacing: 3) {
             GridRow {
-                recipientRole("FROM")
+                recipientRole("TO")
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    participantMenu(
-                        message.fromHeader,
-                        nameSize: 14,
-                        nameWeight: .semibold)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            recipientsExpanded = true
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(recipientSummary)
+                                .font(.system(size: 12.5 * fontScale))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .layoutPriority(1)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8 * fontScale,
+                                              weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 12, height: 12,
+                                       alignment: .center)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("To \(recipientSummary)")
+                    .accessibilityHint("Show all senders and recipients")
+                    .help("Show all senders and recipients")
                     unsubscribeButton
                 }
-            }
-            GridRow {
-                recipientRole("TO")
-                Button {
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        recipientsExpanded = true
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(recipientSummary)
-                            .font(.system(size: 12.5 * fontScale))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .layoutPriority(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8 * fontScale,
-                                          weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 12, height: 12,
-                                   alignment: .center)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel("To \(recipientSummary)")
-                .accessibilityHint("Show all senders and recipients")
-                .help("Show all senders and recipients")
             }
             if showsDeliveredRow { deliveredRow }
         }
@@ -3399,6 +3546,19 @@ struct HTMLBodyView: NSViewRepresentable {
                 decisionHandler(.allow)
             } else {
                 decisionHandler(.cancel)
+            }
+        }
+    }
+}
+
+private extension View {
+    /// A message row in the conversation: a full-width hairline over the top
+    /// edge of every row but the first. An overlay, so the row's frame (and
+    /// its scroll id) starts at the hairline and rows touch.
+    func messageRowSeparator(isFirst: Bool) -> some View {
+        overlay(alignment: .top) {
+            if !isFirst {
+                Divider()
             }
         }
     }
