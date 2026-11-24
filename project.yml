@@ -3,10 +3,12 @@ options:
   bundleIdPrefix: io.github.bateman
   deploymentTarget:
     macOS: "14.0"
-# Compiler warnings fail the CI build of MishMail's own targets (app,
-# relauncher, unit and UI tests). Routed through a variable that only CI sets
-# (`make build WARNINGS_AS_ERRORS=1`, see the Makefile) so local builds,
-# `make install` and `make release` are unaffected. Project-level on purpose:
+# Compiler warnings fail the CI build of MishMail's own targets: app,
+# relauncher and unit tests (the UI-test target is not gated: CI does not
+# pass the flag to `make ui-test`). Routed through a variable that only CI
+# sets (`make build WARNINGS_AS_ERRORS=1`, see the Makefile) so local builds
+# and the Release builds of `make install` and `make release` are
+# unaffected. Project-level on purpose:
 # Swift package targets (GRDB/SQLCipher) are built in their own projects and
 # never see these settings, whereas a command-line
 # SWIFT_TREAT_WARNINGS_AS_ERRORS=YES would reach them too.

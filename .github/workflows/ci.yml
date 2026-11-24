@@ -38,21 +38,16 @@ jobs:
       - name: Check Swift package pins
         run: python3 .github/scripts/check-package-pins.py
 
-      - name: Test the CI checks
-        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      # The CI checks' own tests, and the MCP helpers' endpoint rules
+      # (finding F-05) with a throwaway HOME. The macOS job runs the latter
+      # too, inside ScriptEndpointTests.swift; here they fail in a minute and
+      # without a build. One definition, in the Makefile, for CI and local.
+      - name: Test the CI checks and the helper scripts
+        run: make script-tests
 
-      # Every tracked shell script (*.sh or a sh/bash shebang); the list is
-      # in the Makefile. shellcheck comes with the runner image.
+      # Every tracked *.sh file; shellcheck comes with the runner image.
       - name: Shellcheck the shell scripts
         run: make shellcheck
-
-      # The MCP helpers' endpoint rules (finding F-05). The macOS job runs
-      # them too, inside ScriptEndpointTests.swift; here they fail in a
-      # minute and without a build. HOME is a throwaway, as in that test.
-      - name: Test the helper scripts
-        run: |
-          mkdir -p "$RUNNER_TEMP/script-tests-home"
-          HOME="$RUNNER_TEMP/script-tests-home" python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
   test:
     name: Unit tests & build

@@ -186,8 +186,11 @@ gen: icon
 # CI builds with WARNINGS_AS_ERRORS=1: a compiler warning in MishMail's own
 # targets fails the build (project.yml routes it to
 # SWIFT/GCC_TREAT_WARNINGS_AS_ERRORS; Swift packages are not affected).
-# Only `build` and `test` take it; install and release never do.
-WARNINGS_AS_ERRORS ?=
+# `build` and `test` take it, and so does whatever runs them (run, demo, the
+# pre-commit hook, release's `test` prerequisite) when it is set. The Release
+# builds of install and release never take it. Note that `make release`
+# waits for a full CI run (`make ui-test-ci`), and that run fails on any
+# warning, e.g. a new deprecation after an Xcode update on the runner.
 WARNING_FLAGS = $(if $(filter 1,$(WARNINGS_AS_ERRORS)),MISHMAIL_WARNINGS_AS_ERRORS=YES)
 
 test: gen
@@ -428,23 +431,20 @@ checks: script-tests shellcheck
 # MCP token or config can be picked up.
 SCRIPT_TESTS_HOME = build/script-tests-home
 script-tests:
-	python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+	python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 	mkdir -p $(SCRIPT_TESTS_HOME)
-	HOME="$(CURDIR)/$(SCRIPT_TESTS_HOME)" python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+	HOME="$(CURDIR)/$(SCRIPT_TESTS_HOME)" python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
-# Every tracked shell script: *.sh, or a sh/bash/dash/ksh shebang (hooks and
-# scripts without the extension included). A finding judged a false positive
-# gets a `# shellcheck disable=SCxxxx` with its reason on that line, never a
-# global exclude. (`^.!` stands for the shebang's `#!`: make would read a
-# bare `#` as the start of a comment.)
-SHELL_SCRIPTS = $(shell git ls-files -z | xargs -0 awk 'FNR == 1 { \
-	if (FILENAME ~ /\.sh$$/ || $$0 ~ /^.!.*[\/ ](ba|da|k)?sh([ \t]|$$)/) print FILENAME; \
-	nextfile }')
+# Every tracked *.sh file (every shell script in the repository ends in .sh;
+# a new one must too). The names go NUL-separated from git to shellcheck and
+# are never expanded by a shell. A finding judged a false positive gets a
+# `# shellcheck disable=SCxxxx` with its reason on that line, never a global
+# exclude.
 shellcheck:
 	@command -v shellcheck >/dev/null || { echo "shellcheck not found: brew install shellcheck"; exit 1; }
-	@[ -n "$(strip $(SHELL_SCRIPTS))" ] || { echo "No shell scripts found."; exit 1; }
-	shellcheck --version | sed -n 2p
-	shellcheck $(SHELL_SCRIPTS)
+	@shellcheck --version | sed -n 2p
+	@[ -n "$$(git ls-files '*.sh')" ] || { echo "No shell scripts found."; exit 1; }
+	git ls-files -z '*.sh' | xargs -0 shellcheck
 
 # Install the git hooks (run once per clone).
 #   pre-commit   runs the unit tests.
