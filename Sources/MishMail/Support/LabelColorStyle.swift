@@ -89,6 +89,9 @@ struct LabelPillStyle: Equatable, Sendable {
         case readRow
         /// The focused row on the system selection highlight.
         case selection
+        /// The sidebar background (`Color.mailSidebar`): the account
+        /// switcher header.
+        case sidebar
     }
 
     let fill: LabelRGB
@@ -130,6 +133,8 @@ struct LabelPillStyle: Equatable, Sendable {
             return appearance == .light
                 ? [LabelRGB(hex: 0x0064E1), LabelRGB(hex: 0xDCDCDC)]
                 : [LabelRGB(hex: 0x0058D0), LabelRGB(hex: 0x464646)]
+        case .sidebar:
+            return [appearance == .light ? LabelRGB(hex: 0xF7F7F5) : LabelRGB(hex: 0x232323)]
         }
     }
 
