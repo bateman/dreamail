@@ -631,7 +631,17 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
 /// maintenance all reach the same pool. `dbPool` is itself thread-safe and the
 /// pool lifecycle is guarded by `closeLock`.
 final class AppDatabase: @unchecked Sendable {
-    static let shared = try! AppDatabase()
+    /// Not `try!`: a failed `try!` prints the error's full description (GRDB
+    /// SQL text, file paths with the user name) to stderr and into the crash
+    /// report. Log the category, then stop with a fixed message.
+    static let shared: AppDatabase = {
+        do {
+            return try AppDatabase()
+        } catch {
+            NSLog("MishMail: mail cache could not be opened: %@", DiagnosticLog.describe(error))
+            fatalError("MishMail: mail cache could not be opened")
+        }
+    }()
     // A pool (WAL), not a serial queue: concurrent readers (e.g. the live
     // search dropdown's per-keystroke FTS lookup) run on their own snapshot
     // connections instead of queuing behind a sync-engine write transaction.
@@ -710,7 +720,7 @@ final class AppDatabase: @unchecked Sendable {
             // nothing about the file, and wiping a healthy 400 MB cache for
             // them would be worse than failing this launch. Everything else,
             // including a migration that throws, still resets.
-            NSLog("MishMail: mail cache unreadable (%@); resetting", "\(error)")
+            NSLog("MishMail: mail cache unreadable (%@); resetting", DiagnosticLog.describe(error))
             try Self.setAsideUnreadable(path: path)
             dbPool = try Self.openAndMigrate(path: path, key: key, scheme: .raw)
             storageState = .writable
@@ -777,7 +787,7 @@ final class AppDatabase: @unchecked Sendable {
             try dbPool.close()
             phase = .closed
         } catch {
-            NSLog("MishMail: dbPool.close failed: %@", "\(error)")
+            NSLog("MishMail: dbPool.close failed: %@", DiagnosticLog.describe(error))
         }
     }
 
@@ -892,7 +902,7 @@ final class AppDatabase: @unchecked Sendable {
             // interrupt during termination) leaves a working — merely larger
             // — database. Leave auto_vacuum non-INCREMENTAL so a later launch
             // retries from the file's own state.
-            NSLog("MishMail: vacuum failed: %@", "\(error)")
+            NSLog("MishMail: vacuum failed: %@", DiagnosticLog.describe(error))
         }
     }
 
@@ -975,7 +985,7 @@ final class AppDatabase: @unchecked Sendable {
         } catch {
             // A checkpoint that loses a race with a reader is normal and
             // harmless — the next idle pass gets it.
-            NSLog("MishMail: wal checkpoint failed: %@", "\(error)")
+            NSLog("MishMail: wal checkpoint failed: %@", DiagnosticLog.describe(error))
         }
     }
 
@@ -1209,7 +1219,7 @@ final class AppDatabase: @unchecked Sendable {
             return .raw
         } catch {
             NSLog("MishMail: raw-key conversion failed (%@); opening with passphrase",
-                  "\(error)")
+                  DiagnosticLog.describe(error))
             return .passphrase
         }
     }
