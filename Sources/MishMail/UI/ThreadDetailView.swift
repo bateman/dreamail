@@ -2755,7 +2755,7 @@ private struct PlainTextBody: View {
             .font(.system(size: 14.5 * fontScale))
             .lineSpacing(4)
             .textSelection(.enabled)
-            .tint(.accentFill)
+            .tint(accent.foreground)
             .accessibilityIdentifier("messageBody")
             .environment(\.openURL, OpenURLAction { url in
                 // Hand the link to the system, as the HTML body does; never
