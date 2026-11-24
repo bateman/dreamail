@@ -96,7 +96,7 @@ final class SecureDeleteTests: XCTestCase {
         }
     }
 
-    private func foldAndTruncate(_ pool: DatabasePool, freePageLimit: Int?) throws -> Bool {
+    private func foldAndTruncate(_ pool: DatabasePool, freePageLimit: Int) throws -> Bool {
         try pool.writeWithoutTransaction { db in
             try AppDatabase.foldAndTruncateLog(db, freePageLimit: freePageLimit)
         }
