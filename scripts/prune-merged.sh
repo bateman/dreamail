@@ -50,6 +50,3 @@ printf '%s\n' "$candidates" | sort -u | while read -r branch; do
     # -D: `git branch -d` refuses a branch merged into main but not into HEAD.
     git branch -q -D "$branch" && echo "prune-merged: removed $branch"
 done
-
-# TEMPORARY (reverted): proves the shellcheck gate fails.
-echo $HOME
