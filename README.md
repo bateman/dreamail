@@ -274,6 +274,15 @@ Fixed shortcuts (not customizable):
 
 ## AI (optional)
 
+**In this fork the AI features and the MCP server are switched off.** The
+switch is a build setting (`MISHMAIL_AI_FEATURES` in
+[`Config/Signing.xcconfig`](Config/Signing.xcconfig)) whose tracked value is
+empty: no AI control is shown, no model provider, custom endpoint or Ollama
+daemon is contacted, no stored provider key is read, and the MCP server never
+starts, whatever an earlier build stored. Set `MISHMAIL_AI_FEATURES = YES` in
+`Config/Local.xcconfig` to build them in; the rest of this section and the
+MCP section describe that build.
+
 Mail text stays on this Mac unless you assign a task to a hosted model.
 
 In compose, **AI draft** opens a short instruction field (for example, “ask

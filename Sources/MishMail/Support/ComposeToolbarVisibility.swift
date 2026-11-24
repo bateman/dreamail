@@ -99,6 +99,17 @@ enum ComposeToolbarItem: String, CaseIterable, Identifiable, Codable {
 enum ComposeToolbarVisibility {
     static let storageKey = "composeToolbar.hidden"
 
+    /// Whether this build offers the item at all, whatever the user chose:
+    /// `.ai` exists only with the AI features on.
+    static func isOffered(_ item: ComposeToolbarItem, aiFeatures: Bool) -> Bool {
+        item != .ai || aiFeatures
+    }
+
+    /// The Settings list of toggles: only items this build offers.
+    static func settingsItems(aiFeatures: Bool) -> [ComposeToolbarItem] {
+        ComposeToolbarItem.displayOrder.filter { isOffered($0, aiFeatures: aiFeatures) }
+    }
+
     /// Parse the UserDefaults / `@AppStorage` string into a set of hidden raw values.
     /// Unknown tokens are kept so a future version's keys aren't wiped.
     static func hiddenSet(from raw: String) -> Set<String> {

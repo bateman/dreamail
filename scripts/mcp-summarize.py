@@ -11,6 +11,11 @@ Backends:
                      --model, and OPENAI_API_KEY (works for cheap hosted
                      models like Luna/Haiku-class endpoints)
 
+--api-base must be https://, or plain http:// to a loopback address
+(127.0.0.1 or ::1) only; redirects are held to the same rule and origin.
+The API key is read from the OPENAI_API_KEY environment variable, never
+from the command line.
+
 Examples:
   ./scripts/mcp-summarize.py --limit 10                    # llama3.2:3b, newest 10
   ./scripts/mcp-summarize.py --limit 600                   # whole Primary tab
@@ -25,7 +30,7 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from mcp_common import MCP, post_json
+from mcp_common import MCP, EndpointError, post_json, run, validate_endpoint
 
 PROMPT = (
     "Summarize this email thread in 1-2 crisp sentences for an inbox "
@@ -134,6 +139,11 @@ def main():
         model, base = args.model, args.api_base
         summarize = lambda t: summarize_openai(base, model, t)
         stored_model = model
+    # Before any mail is read from the MCP server.
+    try:
+        validate_endpoint(base)
+    except EndpointError as e:
+        sys.exit(f"--api-base: {e}")
 
     mcp = MCP()
     # Each scope is paged separately (the server caps a call at 100 rows) and
@@ -208,4 +218,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run(main)

@@ -10,6 +10,8 @@ extension MailStore {
     /// authoritative (classifyInbox updates it as it writes rows), so thread
     /// reloads don't re-read the table every time.
     func loadAICategories() async {
+        // Categories from an earlier AI build stay in the table, unshown.
+        guard AIFeatures.isEnabled else { return }
         if let existing = aiCategoriesLoad {
             await existing.value
             return
@@ -27,7 +29,7 @@ extension MailStore {
     /// and sequential (a small local model), skipping already-classified
     /// threads. Results persist in their own table so sync never wipes them.
     func classifyInbox() {
-        guard !classifying else { return }
+        guard AIFeatures.isEnabled, !classifying else { return }
         let targets = threads.filter { aiCategories[$0.id] == nil }
         guard !targets.isEmpty else {
             showNotice("All caught up — nothing new to sort.")
@@ -36,7 +38,9 @@ extension MailStore {
         classify(targets, quiet: false)
     }
     func autoClassifyNewMail() async {
-        guard AITriage.isAutoClassifyEnabled(UserDefaults.standard) else { return }
+        // Runs after every sync: with the AI features off, schedule nothing.
+        guard AIFeatures.isEnabled,
+              AITriage.isAutoClassifyEnabled(UserDefaults.standard) else { return }
         // Auto-sort is silent. A cloud triage model would upload every new
         // snippet; skip unless the assigned provider stays on this Mac or
         // on the LAN (RFC1918 / link-local Ollama).

@@ -32,4 +32,12 @@ CODE_SIGN_IDENTITY = -
 // yourself, e.g.  MISHMAIL_UPDATE_CHANNEL = owner/repo
 MISHMAIL_UPDATE_CHANNEL =
 
+// AI features and the local MCP server, expanded into Info.plist as
+// MishMailAIFeatures. Deliberately empty: with it off no AI surface is shown,
+// no model provider, custom endpoint or Ollama daemon is contacted, no stored
+// provider credential is read, and the MCP server never starts (whatever the
+// stored `mcp.enabled` preference says). Set it in Local.xcconfig to build
+// the AI features in:  MISHMAIL_AI_FEATURES = YES
+MISHMAIL_AI_FEATURES =
+
 #include? "Local.xcconfig"

@@ -84,7 +84,7 @@ enum Ollama {
         request.timeoutInterval = 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
+        guard let (data, _) = try? await send(request),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false } // unreachable Ollama: assume no, so the chat still runs
         let supported = (object["capabilities"] as? [String] ?? []).contains("thinking")
@@ -106,6 +106,14 @@ enum Ollama {
     static var allowRemoteEndpoint: Bool {
         get { UserDefaults.standard.bool(forKey: "ollama.allowRemote") }
         set { UserDefaults.standard.set(newValue, forKey: "ollama.allowRemote") }
+    }
+
+    /// The one way a request reaches the Ollama daemon (model list,
+    /// capabilities, unload). Chat goes through `LLMClient`. Both use the
+    /// gated `LLMTransport.live`, so with the AI features off nothing is sent.
+    static func send(_ request: URLRequest,
+                     transport: LLMTransport = .live) async throws -> (Data, URLResponse) {
+        try await transport.data(request)
     }
 
     enum OllamaError: LocalizedError {
@@ -138,7 +146,7 @@ enum Ollama {
         try validateEndpoint(url)
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
-        let (data, _) = try await URLSession.shared.data(for: request)
+        let (data, _) = try await send(request)
         return LLMEndpoint.modelNames(fromJSONObject: try? JSONSerialization.jsonObject(with: data))
     }
 
@@ -173,7 +181,7 @@ enum Ollama {
         request.timeoutInterval = 2 // quit calls this; never block the app on it
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        _ = try? await URLSession.shared.data(for: request)
+        _ = try? await send(request)
         await LoadedModels.shared.forget(model)
     }
 

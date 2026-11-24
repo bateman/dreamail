@@ -58,7 +58,10 @@ struct SettingsView: View {
                     row(.general)
                     row(.appearance)
                     row(.shortcuts)
-                    row(.ai)
+                    // The AI pane also holds the MCP server settings.
+                    if AIFeatures.isEnabled {
+                        row(.ai)
+                    }
                     row(.updates)
                 }
             }
@@ -97,7 +100,9 @@ struct SettingsView: View {
         case .general: GeneralSettings()
         case .appearance: AppearanceSettings()
         case .shortcuts: ShortcutsSettings(bindings: store.keyBindings)
-        case .ai: AISettings()
+        case .ai:
+            // A pane remembered from a build with AI features shows General.
+            if AIFeatures.isEnabled { AISettings() } else { GeneralSettings() }
         case .updates: UpdatesSettings()
         }
     }
@@ -1179,7 +1184,8 @@ struct AppearanceSettings: View {
                 }
 
                 Section {
-                    ForEach(ComposeToolbarItem.displayOrder) { item in
+                    ForEach(ComposeToolbarVisibility.settingsItems(
+                        aiFeatures: AIFeatures.isEnabled)) { item in
                         Toggle(isOn: Binding(
                             get: { ComposeToolbarVisibility.isVisible(item, hiddenRaw: composeToolbarHidden) },
                             set: { show in
@@ -1200,7 +1206,7 @@ struct AppearanceSettings: View {
                 } header: {
                     Text("Compose toolbar")
                 } footer: {
-                    Text("Hide buttons you don't use (math, AI draft, format tools…) so the footer stays roomy on narrow windows. Keyboard shortcuts (⌘B, ⌘⇧M, ⌘/, …) and markdown you type still work.")
+                    Text("Hide buttons you don't use (math, \(AIFeatures.isEnabled ? "AI draft, " : "")format tools…) so the footer stays roomy on narrow windows. Keyboard shortcuts (⌘B, ⌘⇧M, ⌘/, …) and markdown you type still work.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -2003,6 +2009,9 @@ struct AISettings: View {
             vendorStatus[vendor] = error.localizedDescription
             return
         }
+        // The sign-in belongs to the preset's origin and nowhere else.
+        LLMProviderStore.setCredentialOrigin(LLMRemotePolicy.origin(of: preset.baseURL),
+                                             for: id, .signIn)
         vendorStatus[vendor] = "Fetching models…"
         let fetched = (try? await LLMClient.shared.listModels(config: config)) ?? []
         var allModels = Set(fetched)
@@ -2145,6 +2154,7 @@ struct AISettings: View {
             Keychain.delete(LLMProviderStore.keychainKey(for: provider.id))
             Keychain.delete(LLMProviderStore.oauthKeychainKey(for: provider.id))
         }
+        LLMProviderStore.clearCredentialOrigins(for: provider.id)
         var list = LLMProviderStore.load()
         list.removeAll { $0.id == provider.id }
         LLMProviderStore.save(list)
@@ -2298,7 +2308,30 @@ private struct ProviderEditSheet: View {
     /// onAppear sets presetIndex programmatically, which fires onChange. Suppress
     /// the preset-applied reset once so a stored custom Base URL survives editing.
     @State private var suppressPresetApply = false
-    @State private var hostConsent = false
+    /// The custom origin the consent toggle was turned on for, if any. Kept
+    /// as an origin, not a flag, so consent can never carry over to another
+    /// scheme, host or port: the toggle reads as on only while the Base URL
+    /// still has this origin, and Save persists it only then (F-06).
+    @State private var confirmedOrigin: String?
+
+    private var hostConsent: Binding<Bool> {
+        Binding(
+            get: { customOrigin != nil && confirmedOrigin == customOrigin },
+            set: { confirmedOrigin = $0 ? customOrigin : nil })
+    }
+
+    /// The origin the stored provider's API key was given for.
+    private var storedCredentialOrigin: String? {
+        provider.flatMap { LLMProviderStore.authorizedCredentialOrigin(for: $0.id, .apiKey) }
+    }
+
+    /// Editing a provider to a new origin without entering its key (or
+    /// signing in) again would point the saved credential at that origin.
+    /// Save and Fetch models refuse until a new one is given (F-12).
+    private var needsNewCredential: Bool {
+        guard provider != nil, !useOAuth, apiKey.isEmpty else { return false }
+        return LLMRemotePolicy.origin(of: baseURL) != storedCredentialOrigin
+    }
 
     private var kind: LLMProviderKind { Self.presets[presetIndex].kind }
     private var oauthVendor: LLMOAuthVendor? {
@@ -2339,7 +2372,15 @@ private struct ProviderEditSheet: View {
     private var saveDisabled: Bool {
         !canStoreSecrets || label.isEmpty || modelID.isEmpty
             || (!useOAuth && apiKey.isEmpty && provider == nil)
-            || (customOrigin != nil && !hostConsent)
+            || (customOrigin != nil && !hostConsent.wrappedValue)
+            || needsNewCredential
+    }
+
+    /// Model listing sends the key too: same consent and credential rules.
+    private var fetchDisabled: Bool {
+        !canStoreSecrets
+            || (customOrigin != nil && !hostConsent.wrappedValue)
+            || needsNewCredential
     }
 
     var body: some View {
@@ -2389,25 +2430,18 @@ private struct ProviderEditSheet: View {
             }
             TextField("Label", text: $label)
             TextField("Base URL", text: $baseURL)
-                .onChange(of: customOrigin) { _, origin in
-                    if let existing = provider,
-                       let origin,
-                       let stored = LLMProviderStore.consentedHost(for: existing.id),
-                       stored == origin
-                        || stored == LLMRemotePolicy.host(of: existing.baseURL) {
-                        hostConsent = true
-                    } else if origin != nil {
-                        hostConsent = false
-                    }
-                }
             if let origin = customOrigin {
-                Toggle("Mail from this Mac will go to \(origin).", isOn: $hostConsent)
+                Toggle("Mail from this Mac will go to \(origin).", isOn: hostConsent)
                     .font(.caption)
+            }
+            if needsNewCredential {
+                Text("The saved key is for \(storedCredentialOrigin ?? "another address"). Enter the API key again to use it with this Base URL.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 TextField("Model", text: $modelID)
                 Button("Fetch models") { Task { await fetchModels() } }
-                    .disabled(!canStoreSecrets)
+                    .disabled(fetchDisabled)
             }
             if !models.isEmpty {
                 Picker("Available", selection: $modelID) {
@@ -2459,11 +2493,9 @@ private struct ProviderEditSheet: View {
                 presetIndex = matched
             }
             if case .oauth = existing.authMode { useOAuth = true } else { useOAuth = false }
-            if let origin = LLMRemotePolicy.origin(of: existing.baseURL),
-               let stored = LLMProviderStore.consentedHost(for: existing.id),
-               stored == origin || stored == LLMRemotePolicy.host(of: existing.baseURL) {
-                hostConsent = true
-            }
+            // Full origin only; a legacy host-only record binds to the saved
+            // row's origin (LLMProviderStore.consentedOrigin).
+            confirmedOrigin = LLMProviderStore.consentedOrigin(for: existing.id)
         }
     }
 
@@ -2487,14 +2519,18 @@ private struct ProviderEditSheet: View {
     }
 
     private func fetchModels() async {
-        guard canStoreSecrets else { return }
+        guard !fetchDisabled else { return }
         status = "Fetching…"
         let id = provider?.id ?? draftID
-        if !useOAuth, !apiKey.isEmpty {
-            try? Keychain.set(apiKey, forKey: LLMProviderStore.keychainKey(for: id))
-        }
+        let config = currentConfig(id: id)
         do {
-            let fetched = try await LLMClient.shared.listModels(config: currentConfig(id: id))
+            // A typed key is used for this one listing and stored only by
+            // Save, so a Cancel leaves the saved key and its origin as they were.
+            let fetched = try await LLMClient.shared.listModels(
+                config: config,
+                sheetConsent: LLMProviderStore.consentToSave(
+                    confirmed: confirmedOrigin, saving: customOrigin),
+                typedKey: useOAuth ? nil : apiKey)
             var combined = Set(fetched)
             if let vendor = oauthVendor {
                 let preset = LLMProviderStore.subscriptionPreset(for: vendor)
@@ -2514,26 +2550,37 @@ private struct ProviderEditSheet: View {
     }
 
     private func save() async {
-        guard canStoreSecrets else { return }
+        // Re-checked here, not only in the button state.
+        guard !saveDisabled else { return }
         let id = provider?.id ?? draftID
         let config = currentConfig(id: id)
+        let origin = LLMRemotePolicy.origin(of: config.baseURL)
+        // Captured before the sign-in await, so a later edit cannot change
+        // what is persisted.
+        let consent = LLMProviderStore.consentToSave(
+            confirmed: confirmedOrigin, saving: customOrigin)
         do {
+            // Each saved secret without a record yet is bound to the row's
+            // current origin before the row can move (both the key and the
+            // sign-in, whichever this Save replaces).
+            LLMProviderStore.pinCredentialOrigins(for: id)
             if useOAuth, let vendor = oauthVendor {
                 status = "Waiting for browser sign-in…"
                 try await LLMOAuthFlow.signIn(vendor: vendor, providerID: id) { code, uri in
                     status = "Enter code \(code) at \(uri) to finish sign-in…"
                 }
+                LLMProviderStore.setCredentialOrigin(origin, for: id, .signIn)
             } else if !apiKey.isEmpty {
                 try Keychain.set(apiKey, forKey: LLMProviderStore.keychainKey(for: id))
+                LLMProviderStore.setCredentialOrigin(origin, for: id, .apiKey)
             }
             var list = LLMProviderStore.load().filter { $0.id != id }
             list.append(config)
             LLMProviderStore.save(list)
-            if let origin = customOrigin, hostConsent {
-                LLMProviderStore.setConsentedHost(origin, for: id)
-            } else if customOrigin == nil {
-                LLMProviderStore.setConsentedHost(nil, for: id)
-            }
+            // Consent is bound to the full origin being saved; any other
+            // value (a changed scheme, host or port, or a preset host)
+            // clears it.
+            LLMProviderStore.setConsentedHost(consent, for: id)
             onSave(config)
             dismiss()
         } catch {

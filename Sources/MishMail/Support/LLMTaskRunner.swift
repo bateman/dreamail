@@ -52,8 +52,15 @@ enum LLMTaskRunner {
     static func stream(task: LLMTask, prompt: String,
                        using resolved: Resolved? = nil,
                        maxOutputTokens: Int? = nil,
-                       onNotice: (@MainActor @Sendable (String) -> Void)? = nil)
+                       onNotice: (@MainActor @Sendable (String) -> Void)? = nil,
+                       enabled: Bool = AIFeatures.isEnabled)
         -> AsyncThrowingStream<String, Error> {
+        // Every one-shot feature (drafts, inline edits, reply chips,
+        // summaries, sorting) starts here: with the AI features off it ends
+        // before a provider is even resolved.
+        guard enabled else {
+            return AsyncThrowingStream { $0.finish(throwing: LLMClientError.aiDisabled) }
+        }
         guard let resolved = resolved ?? resolve(task) else {
             return AsyncThrowingStream { continuation in
                 continuation.finish()

@@ -205,7 +205,10 @@ struct ThreadDetailView: View {
 
                     threadMetaRow
 
-                    summarySection
+                    // Its .task is the auto-summary: gone with the section.
+                    if AIFeatures.isEnabled {
+                        summarySection
+                    }
 
                     // Slim cue for long threads only: on short threads the draft
                     // card is already in the first viewport, so a second orange
