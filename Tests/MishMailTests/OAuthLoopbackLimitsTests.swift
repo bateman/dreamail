@@ -41,42 +41,65 @@ final class OAuthLoopbackLimitsTests: XCTestCase {
         XCTAssertFalse(events.contains(.closedAll))
     }
 
-    /// At the cap, a further connection is closed unread while the admitted
-    /// ones stay open; once one of them goes away, its slot is free again
-    /// and a real redirect is accepted.
-    func testConnectionsBeyondTheCapAreRefused() async throws {
-        let state = "cap-\(UUID().uuidString)"
+    /// At the cap, a newcomer evicts the oldest connection still waiting for
+    /// its request line; the others stay open and the count stays at the cap.
+    func testAtTheCapTheOldestWaitingConnectionIsEvicted() async throws {
         let events = LoopbackEventRecorder()
         let service = OAuthService()
         let (port, codeTask) = try service.startLoopbackListener(
-            expectedState: state,
+            expectedState: "cap-\(UUID().uuidString)",
             limits: LoopbackLimits(maxConnections: 2, connectionDeadline: .seconds(60)),
             onEvent: events.record)
         defer { codeTask.cancel() }
 
-        let full = events.expectation("cap reached") { $0 == .accepted(open: 2) }
+        let firstIn = events.expectation("first admitted") { $0 == .accepted(open: 1) }
         let first = SlowLocalClient(port: port)
+        await fulfillment(of: [firstIn], timeout: wait)
+        let full = events.expectation("cap reached") { $0 == .accepted(open: 2) }
         let second = SlowLocalClient(port: port)
         await fulfillment(of: [full], timeout: wait)
 
-        let refused = events.expectation("third refused") { $0 == .refused }
+        let evicted = events.expectation("oldest evicted") { $0 == .evicted }
+        let stillFull = events.expectation("third admitted at the cap") { $0 == .accepted(open: 2) }
         let third = SlowLocalClient(port: port)
-        await fulfillment(of: [third.closedByServer, refused], timeout: wait)
+        await fulfillment(of: [evicted, stillFull, first.closedByServer], timeout: wait)
+        XCTAssertFalse(events.contains(.refused))
         XCTAssertFalse(events.contains(.deadlineExpired))
-        XCTAssertEqual(events.count(where: \.isRelease), 0,
-                       "admitted connections must stay open when a later one is refused")
 
-        let freed = events.expectation("slot freed") { $0 == .released(open: 1) }
-        first.stop()
-        await fulfillment(of: [freed], timeout: wait)
+        // The next newcomer evicts the next oldest, not the newest.
+        let evictedAgain = events.expectation("second evicted") { $0 == .evicted }
+        let fourth = SlowLocalClient(port: port)
+        await fulfillment(of: [evictedAgain, second.closedByServer], timeout: wait)
+        _ = (third, fourth)
+    }
 
-        let code = "cap-code-\(UUID().uuidString)"
+    /// A local process that fills the cap with idle sockets can't lock the
+    /// browser's redirect out: it evicts one of them and completes the
+    /// sign-in. Uses the production limits.
+    func testRedirectSucceedsWhenIdleClientsFillTheStandardCap() async throws {
+        let state = "full-\(UUID().uuidString)"
+        let events = LoopbackEventRecorder()
+        let service = OAuthService()
+        let (port, codeTask) = try service.startLoopbackListener(
+            expectedState: state, onEvent: events.record)
+        defer { codeTask.cancel() }
+
+        let cap = LoopbackLimits.standard.maxConnections
+        let full = events.expectation("cap reached") { $0 == .accepted(open: cap) }
+        let idle = (0..<cap).map { index in
+            SlowLocalClient(port: port, partialRequest: index.isMultiple(of: 2) ? nil : "GET /oauth2/ca")
+        }
+        await fulfillment(of: [full], timeout: wait)
+
+        let evicted = events.expectation("idle client evicted") { $0 == .evicted }
+        let code = "full-code-\(UUID().uuidString)"
         let url = URL(string: "http://127.0.0.1:\(port)/oauth2/callback?code=\(code)&state=\(state)")!
         let (_, resp) = try await URLSession.shared.data(from: url)
         XCTAssertEqual((resp as? HTTPURLResponse)?.statusCode, 200)
         let received = try await codeTask.value
         XCTAssertEqual(received, code)
-        await fulfillment(of: [second.closedByServer], timeout: wait)
+        await fulfillment(of: [evicted] + idle.map(\.closedByServer), timeout: wait)
+        XCTAssertFalse(events.contains(.refused))
     }
 
     /// A real redirect still completes while slow clients sit on the
@@ -147,13 +170,17 @@ final class OAuthLoopbackLimitsTests: XCTestCase {
     func testSignInTimeoutClosesOpenConnections() async throws {
         OAuthService.loopbackTimeout = .milliseconds(300)
         let events = LoopbackEventRecorder()
+        // Before the listener starts: its 300 ms clock may run out at once
+        // on a stalled runner.
+        let closedAll = events.expectation("listener torn down") { $0 == .closedAll }
         let service = OAuthService()
         let (port, codeTask) = try service.startLoopbackListener(
             expectedState: "timeout-\(UUID().uuidString)",
             limits: LoopbackLimits(maxConnections: 4, connectionDeadline: .seconds(60)),
             onEvent: events.record)
 
-        let closedAll = events.expectation("listener torn down") { $0 == .closedAll }
+        // Admitted, or refused if the sign-in already timed out: either way
+        // the server closes it.
         let slow = SlowLocalClient(port: port)
         do {
             _ = try await codeTask.value
@@ -229,11 +256,6 @@ private final class LoopbackEventRecorder {
 private extension LoopbackListenerEvent {
     var isAdmission: Bool {
         if case .accepted = self { return true }
-        return false
-    }
-
-    var isRelease: Bool {
-        if case .released = self { return true }
         return false
     }
 }
