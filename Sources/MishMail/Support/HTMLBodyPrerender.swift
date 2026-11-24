@@ -20,6 +20,20 @@ enum HTMLBodyNeighborPrerender {
 
     private static var generation = 0
     private static var task: Task<Void, Never>?
+    /// Thread of each view this type parked (see `discard(threadIds:)`).
+    private static var ownership = PrerenderOwnership()
+    /// Neighbours the current task is painting.
+    private static var scheduledThreadIds: Set<String> = []
+
+    /// A content change made these threads' painted views stale (nil: all
+    /// threads). Discard their parked views, and stop a paint in flight for
+    /// one of them so it cannot park stale content after this returns.
+    static func discard(threadIds: Set<String>?) {
+        if threadIds.map({ !$0.isDisjoint(with: scheduledThreadIds) }) ?? true {
+            cancel()
+        }
+        HTMLWebViewPool.discardPrerenders(poolKeys: ownership.take(threadIds: threadIds))
+    }
 
     /// Cancel in-flight pre-render work. Parked painted views are left for
     /// the next open to claim — discarding here races thread-to-thread mounts.
@@ -62,6 +76,7 @@ enum HTMLBodyNeighborPrerender {
             let (prev, next) = NeighborPrefetch.neighbors(
                 selected: openedThreadId, in: displayOrder)
             let neighborIds = [prev, next].compactMap { $0 }
+            scheduledThreadIds = Set(neighborIds)
             for threadId in neighborIds {
                 guard gen == generation, !Task.isCancelled else { return }
                 let payload = await loadPayload(threadId)
@@ -83,6 +98,7 @@ enum HTMLBodyNeighborPrerender {
                     fontScale: fontScale)
                 if HTMLWebViewPool.hasPrerendered(for: key) { continue }
 
+                ownership.record(poolKey: key.poolKey, threadId: threadId)
                 await paintAndPark(candidate: candidate, key: key, generation: gen)
             }
         }

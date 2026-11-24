@@ -2915,24 +2915,16 @@ struct ComposeRequest: Identifiable {
     /// Record message-row changes reported by a sync (or server search) and
     /// wake the open reading pane. No-op when nothing moved.
     func applyThreadContentChange(_ change: ThreadContentChange) {
-        let epochBefore = contentRevisions.epoch
-        guard contentRevisions.apply(change) else { return }
-        // Payloads built before this change are unreachable by revision;
-        // release them now (both copies) instead of at eviction, so content
-        // that was just deleted does not stay decoded in memory.
-        let effective: ThreadContentChange =
-            contentRevisions.epoch != epochBefore ? .everything : change
-        payloadMirror.invalidate(effective)
-        let stale: ThreadContentStaleness
-        if case .threads(let ids) = effective {
-            stale = .threads(Dictionary(uniqueKeysWithValues: ids.map {
-                ($0, contentRevisions.revision(of: $0))
-            }))
-        } else {
-            stale = .before(epoch: contentRevisions.epoch)
-        }
+        // Payloads and painted views built before this change are
+        // unreachable by revision; release them now (mirror, repository,
+        // pre-render slots) instead of at eviction, so content that was
+        // just deleted does not stay decoded in memory.
+        guard let outcome = ThreadDetailInvalidation.apply(
+            change, revisions: &contentRevisions, mirror: &payloadMirror)
+        else { return }
         let repository = threadDetailRepository
-        Task { await repository.discardStale(stale) }
+        Task { await repository.discardStale(outcome.staleness) }
+        HTMLBodyNeighborPrerender.discard(threadIds: outcome.affectedThreadIds)
         threadContentToken &+= 1
     }
 
@@ -3511,7 +3503,8 @@ struct ComposeRequest: Identifiable {
             fontScale: fontScale)
         payloadMirror.store(
             load.payload, for: threadId,
-            revision: revision, suppressing: suppressed)
+            revision: revision, current: contentRevisions.revision(of: threadId),
+            suppressing: suppressed)
         return load
     }
 
@@ -3552,15 +3545,18 @@ struct ComposeRequest: Identifiable {
 
     /// Keep a resolved `cid:` body with the cached payload of its thread, so
     /// the next open of this conversation paints the images at once and
-    /// makes no attachment request. Stored only against the revision the
-    /// thread has now; both copies drop it with the payload.
+    /// makes no attachment request. `revision` is the one captured when the
+    /// resolve started: a change that landed meanwhile (the resolver's own
+    /// re-fetch included) leaves no matching entry, so nothing is stored.
+    /// Both copies drop it with the payload; `CIDInlineCachePolicy` decides
+    /// what is worth keeping.
     func rememberCIDInline(_ body: CIDInlinedBody, messageId: String,
-                           threadId: String) {
-        let revision = contentRevisions.revision(of: threadId)
-        payloadMirror.rememberCIDInline(
-            body, messageId: messageId, threadId: threadId, revision: revision)
-        let repository = threadDetailRepository
+                           threadId: String, revision: ThreadContentRevision) {
         let scale = Self.readingPaneFontScale()
+        payloadMirror.rememberCIDInline(
+            body, messageId: messageId, threadId: threadId, revision: revision,
+            fontScale: scale)
+        let repository = threadDetailRepository
         Task {
             await repository.rememberCIDInline(
                 body, messageId: messageId, threadId: threadId,
@@ -4231,7 +4227,9 @@ struct ComposeRequest: Identifiable {
                 // actor round-trip at exactly the moment MainActor is busiest.
                 self.payloadMirror.store(
                     load.payload, for: target.id,
-                    revision: target.revision, suppressing: suppressed)
+                    revision: target.revision,
+                    current: self.contentRevisions.revision(of: target.id),
+                    suppressing: suppressed)
             }
         }
     }

@@ -47,10 +47,16 @@ struct ThreadDetailMirror {
         return entry.payload
     }
 
+    /// `current` is the thread's revision *now*. A load stamped before a
+    /// change that landed while it was in flight is dropped here, so a
+    /// deleted conversation cannot come back into memory behind the
+    /// invalidation that removed it.
     mutating func store(_ payload: ThreadDetailPayload,
                         for threadId: String,
                         revision: ThreadContentRevision,
+                        current: ThreadContentRevision,
                         suppressing suppressedIds: Set<String>) {
+        guard revision == current else { return }
         lru.insert(
             Entry(revision: revision, suppressedIds: suppressedIds, payload: payload),
             for: threadId)
@@ -77,8 +83,10 @@ struct ThreadDetailMirror {
     /// is still current and the message is in it. Never creates an entry.
     mutating func rememberCIDInline(_ body: CIDInlinedBody, messageId: String,
                                     threadId: String,
-                                    revision: ThreadContentRevision) {
-        guard let entry = lru.values[threadId], entry.revision == revision,
+                                    revision: ThreadContentRevision,
+                                    fontScale: Double) {
+        guard CIDInlineCachePolicy.shouldRemember(body, fontScale: fontScale),
+              let entry = lru.values[threadId], entry.revision == revision,
               entry.payload.messages.contains(where: { $0.id == messageId })
         else { return }
         var payload = entry.payload
