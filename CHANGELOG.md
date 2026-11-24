@@ -6,6 +6,13 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Default shortcuts and layout follow Gmail on the web.** `u` now goes back to
+  the conversation list (it was mark read/unread: use Shift-I / Shift-U, or bind
+  the toggle again in Settings), `o` opens a conversation, `]` archives and
+  moves on, `g b` goes to Snoozed, `* a` / `* n` select and deselect all, and
+  ⌘⇧C / ⌘⇧B / ⌘⇧9 work in compose. Conversations open in a reading pane beside
+  the list unless you already chose another style. Custom keys are kept; a new
+  default that collides with one is left unbound.
 - **AI features and the local MCP server are off.** A build setting
   (`MISHMAIL_AI_FEATURES`, empty in the tracked configuration) decides it, not
   a preference. Off means no Ask Mish, summaries, AI drafting, suggested

@@ -1,11 +1,14 @@
 import XCTest
 
-/// Regression: Gmail's `g i` must leave a full-window (Superhuman-style)
+/// Regression: Gmail's `g i` (and `u`) must leave a full-window (Superhuman-style)
 /// conversation and land back on the inbox list. The store already exits
 /// `threadFocusMode` on every go-to; this covers the *event path* — the key
 /// has to reach `MailStore.handleKey` while the conversation fills the window.
 final class GoToMailboxUITests: XCTestCase {
-    func testGoToInboxExitsFullWindowConversation() {
+    /// Launches the demo in full-window style and opens a conversation with
+    /// the first responder parked on its selectable subject text.
+    private func openFullWindowConversation()
+        -> (app: XCUIApplication, row: XCUIElement, exitFocus: XCUIElement) {
         let app = XCUIApplication()
         app.launchEnvironment["MISHMAIL_DEMO"] = "1"
         app.launchEnvironment["MISHMAIL_UI_TEST"] = "1"
@@ -35,17 +38,40 @@ final class GoToMailboxUITests: XCTestCase {
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
         XCTAssertTrue(subject.waitForExistence(timeout: 5))
         subject.click()
+        return (app, demoThread, exitFocus)
+    }
+
+    private func waitForDisappearance(_ element: XCUIElement) {
+        let deadline = Date().addingTimeInterval(5)
+        while element.exists, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+    }
+
+    func testGoToInboxExitsFullWindowConversation() {
+        let (app, demoThread, exitFocus) = openFullWindowConversation()
 
         app.typeKey("g", modifierFlags: [])
         app.typeKey("i", modifierFlags: [])
 
-        let deadline = Date().addingTimeInterval(5)
-        while exitFocus.exists, Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
+        waitForDisappearance(exitFocus)
         XCTAssertFalse(exitFocus.exists,
                        "g i must exit the full-window conversation")
         XCTAssertTrue(demoThread.waitForExistence(timeout: 5),
                       "g i must land back on the inbox list")
+    }
+
+    /// Gmail's `u` ("back to threadlist") is the default for that action;
+    /// it used to be mark read / unread.
+    func testUReturnsFromFullWindowConversationToTheList() {
+        let (app, demoThread, exitFocus) = openFullWindowConversation()
+
+        app.typeKey("u", modifierFlags: [])
+
+        waitForDisappearance(exitFocus)
+        XCTAssertFalse(exitFocus.exists,
+                       "u must exit the full-window conversation")
+        XCTAssertTrue(demoThread.waitForExistence(timeout: 5),
+                      "u must land back on the list")
     }
 }

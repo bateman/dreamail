@@ -3678,32 +3678,47 @@ struct ComposeRequest: Identifiable {
 
     // MARK: - Keyboard shortcuts
 
-    private var pendingGoKey: Date?
+    /// An armed `g` / `*` prefix and when it was pressed.
+    @ObservationIgnored private var pendingPrefix: (prefix: ShortcutSequences.Prefix, at: Date)?
 
-    /// Drop an armed `g`-prefix so a later key isn't stolen as a go-to chord.
+    /// Drop an armed `g` / `*` prefix so a later key isn't stolen as the
+    /// second key of a sequence.
     func clearPendingGoKey() {
-        pendingGoKey = nil
+        pendingPrefix = nil
     }
 
+    /// Set by ContentView: runs the commands whose effect lives in view state
+    /// (`open`, `backToList` need the layout and the reading-pane flag).
+    @ObservationIgnored var viewCommandHandler: ((ShortcutCommand) -> Void)?
+
     /// Returns true if the key was handled. Gmail-style single keys,
-    /// including "g then …" navigation (g-i inbox, g-t sent, g-d drafts…).
+    /// including the `g` then … (go to) and `*` then … (select) sequences.
     func handleKey(_ chars: String) -> Bool {
-        if let started = pendingGoKey, Date().timeIntervalSince(started) < 1.5 {
-            pendingGoKey = nil
-            switch chars {
-            case "i": goTo(.inbox); return true
-            case "s": goTo(.starred); return true
-            case "t": goTo(.sent); return true
-            case "d": goTo(.drafts); return true
-            case "a": goTo(.allMail); return true
-            case "p": goTo(.promotions); return true
-            default: break   // fall through to normal handling
+        if let pending = pendingPrefix,
+           Date().timeIntervalSince(pending.at) < ShortcutSequences.timeout {
+            pendingPrefix = nil
+            switch pending.prefix {
+            case .goTo:
+                if let view = ShortcutSequences.goToTarget(chars) {
+                    goTo(view)
+                    return true
+                }
+            case .select:
+                switch ShortcutSequences.selection(chars) {
+                case .selectAll?: checkAllVisibleThreads(); return true
+                case .deselectAll?: clearCheckedThreads(); return true
+                case nil: break
+                }
             }
+            // Not a sequence key: fall through to normal handling.
         }
-        switch chars {
-        case "g": pendingGoKey = Date(); return true
-        case "?": showShortcutsHelp.toggle(); return true
-        default: break
+        if let prefix = ShortcutSequences.Prefix(rawValue: chars) {
+            pendingPrefix = (prefix, Date())
+            return true
+        }
+        if chars == "?" {
+            showShortcutsHelp.toggle()
+            return true
         }
         guard let command = keyBindings.command(for: chars) else { return false }
         perform(command)
@@ -3755,6 +3770,7 @@ struct ComposeRequest: Identifiable {
         case .label: if selectedThread != nil { openLabelPicker() }
         case .undo: if let undo = undoAction { undo.undo() }
         case .compose: openCompose(ComposeRequest(replyTo: nil))
+        case .open, .backToList: viewCommandHandler?(command)
         }
     }
 

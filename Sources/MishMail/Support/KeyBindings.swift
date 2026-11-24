@@ -2,6 +2,9 @@ import Foundation
 import Combine
 
 /// A user-rebindable single-key command (Gmail-style, no modifiers).
+///
+/// Raw values are the keys of stored overrides: never rename a case without
+/// migrating its stored override in `KeyBindings.init`.
 enum ShortcutCommand: String, CaseIterable, Codable {
     case archive, trash, toggleStar, toggleRead, snooze
     case markSpam
@@ -9,21 +12,37 @@ enum ShortcutCommand: String, CaseIterable, Codable {
     case next, prev
     /// Toggle multi-select checkbox on the focused conversation (Gmail `x`).
     case toggleCheck
+    /// Open the focused conversation (Gmail `o`; Return is a fixed second key).
+    case open
+    /// Leave the open conversation for the list (Gmail `u`).
+    case backToList
 }
 
 struct ShortcutSpec: Identifiable {
     let command: ShortcutCommand
     let title: String
     let category: KeyBindings.Category
-    let defaultKey: String
+    /// nil: the command ships without a key (Gmail has none for it); the
+    /// user can still bind one in Settings.
+    let defaultKey: String?
     var id: ShortcutCommand { command }
 }
 
 /// Single source of truth for the Gmail-style single-key shortcuts:
 /// defaults, user overrides (persisted to UserDefaults), and both
-/// key→command and command→key lookups. The `g` prefix, the `?` help key
-/// and the `/` search key are reserved and handled before this registry is
-/// consulted.
+/// key→command and command→key lookups. The `g` and `*` prefixes, the `?`
+/// help key and the `/` search key are reserved and handled before this
+/// registry is consulted.
+///
+/// Defaults follow Gmail on the web with keyboard shortcuts on
+/// (support.google.com/mail/answer/6594). `GmailShortcutReferenceTests`
+/// pins every default to that table.
+///
+/// Collision rule: a stored override always keeps its key. When it holds the
+/// default key of another command that has no override of its own, that
+/// command is left unbound (`key(for:)` is nil, Settings shows it as not
+/// set) rather than stealing the key back or being moved to another key.
+/// It regains its default as soon as the override moves elsewhere.
 @MainActor
 final class KeyBindings: ObservableObject {
     enum Category: String, CaseIterable {
@@ -31,7 +50,7 @@ final class KeyBindings: ObservableObject {
         case actions = "Actions"
     }
 
-    static let reservedKeys: Set<String> = ["g", "?", "/"]
+    static let reservedKeys: Set<String> = ["g", "*", "?", "/"]
 
     /// False for keys the main-window key monitor consumes before it asks
     /// this registry: Return, Tab, Delete and Esc (control characters), and
@@ -51,13 +70,17 @@ final class KeyBindings: ObservableObject {
     }
 
     static let catalog: [ShortcutSpec] = [
-        .init(command: .next, title: "Next conversation", category: .navigation, defaultKey: "j"),
-        .init(command: .prev, title: "Previous conversation", category: .navigation, defaultKey: "k"),
+        .init(command: .next, title: "Next (older) conversation", category: .navigation, defaultKey: "j"),
+        .init(command: .prev, title: "Previous (newer) conversation", category: .navigation, defaultKey: "k"),
+        .init(command: .open, title: "Open conversation", category: .navigation, defaultKey: "o"),
+        .init(command: .backToList, title: "Back to conversation list", category: .navigation, defaultKey: "u"),
         .init(command: .toggleCheck, title: "Select / deselect conversation", category: .navigation, defaultKey: "x"),
         .init(command: .archive, title: "Archive", category: .actions, defaultKey: "e"),
         .init(command: .trash, title: "Delete (Trash)", category: .actions, defaultKey: "#"),
         .init(command: .toggleStar, title: "Star / Unstar", category: .actions, defaultKey: "s"),
-        .init(command: .toggleRead, title: "Mark read / unread", category: .actions, defaultKey: "u"),
+        // Gmail has no single toggle: Shift+I / Shift+U (GmailMarkReadKeys)
+        // mark read / unread. The toggle stays bindable, with no default.
+        .init(command: .toggleRead, title: "Toggle read / unread", category: .actions, defaultKey: nil),
         .init(command: .snooze, title: "Snooze", category: .actions, defaultKey: "b"),
         // Gmail's Report spam key. When the thread is already in Spam the
         // same binding runs Not spam (toggle) — see MailStore.perform.
@@ -69,6 +92,10 @@ final class KeyBindings: ObservableObject {
         .init(command: .undo, title: "Undo", category: .actions, defaultKey: "z"),
         .init(command: .compose, title: "Compose", category: .actions, defaultKey: "c"),
     ]
+
+    static func defaultKey(for command: ShortcutCommand) -> String? {
+        catalog.first { $0.command == command }!.defaultKey
+    }
 
     static func title(for command: ShortcutCommand) -> String {
         catalog.first { $0.command == command }!.title
@@ -88,10 +115,6 @@ final class KeyBindings: ObservableObject {
 
     private let store: UserDefaults
     private static let defaultsKey = "keyBindings"
-    /// Candidate keys when a new catalog default collides with a stored
-    /// override (home-row leftovers not already in the catalog).
-    private static let freeKeyCandidates = Array("qwertyuiopasdfghjklzxcvbnm0123456789!@#$%^&*-=_+;:'\",.<>/?\\|`~")
-        .map(String.init)
 
     init(defaults: UserDefaults = .standard) {
         store = defaults
@@ -118,22 +141,44 @@ final class KeyBindings: ObservableObject {
         } else {
             overrides = [:]
         }
-        // New catalog defaults (e.g. toggleCheck → x) must not shadow an
-        // existing user rebind of that key. Prefer the override at lookup,
-        // and park the un-overridden command on a free key so Settings and
-        // command(for:) agree.
-        if migrateCollidingDefaults() || needsNormalizePersist {
+        // A new catalog default (e.g. backToList → u) never shadows an
+        // existing user rebind of that key: see the collision rule above.
+        // Nothing to rewrite for it, so only normalization persists.
+        if needsNormalizePersist {
             persist()
         }
     }
 
-    func key(for command: ShortcutCommand) -> String {
-        overrides[command] ?? Self.catalog.first { $0.command == command }!.defaultKey
+    /// The key that fires `command`, or nil when it has none: no default and
+    /// no override, or its default is held by another command's override.
+    func key(for command: ShortcutCommand) -> String? {
+        if let override = overrides[command] { return override }
+        guard let key = Self.defaultKey(for: command) else { return nil }
+        let shadowed = overrides.contains { $0.key != command && $0.value == key }
+        return shadowed ? nil : key
+    }
+
+    /// `key(for:)` for display: tooltips, the palette, Settings and the `?`
+    /// help show "—" for an unbound command.
+    func displayKey(for command: ShortcutCommand) -> String {
+        key(for: command) ?? Self.unboundLabel
+    }
+
+    static let unboundLabel = "—"
+
+    /// The command whose override holds `command`'s default key, if any —
+    /// Settings explains an unbound command with it.
+    func defaultKeyHolder(for command: ShortcutCommand) -> ShortcutCommand? {
+        guard overrides[command] == nil,
+              let key = Self.defaultKey(for: command) else { return nil }
+        return overrides.first { $0.key != command && $0.value == key }?.key
     }
 
     /// Secondary built-in keys that fire a command when the key isn't
     /// bound to anything else (a rebind to the key wins over the alias).
-    static let aliases: [String: ShortcutCommand] = ["h": .snooze]
+    /// `]` is Gmail's "archive and go to the next conversation", which is
+    /// what archive's auto-advance already does.
+    static let aliases: [String: ShortcutCommand] = ["h": .snooze, "]": .archive]
 
     func command(for key: String) -> ShortcutCommand? {
         let key = Self.normalizeKey(key)
@@ -182,37 +227,6 @@ final class KeyBindings: ObservableObject {
     func resetToDefaults() {
         overrides = [:]
         store.removeObject(forKey: Self.defaultsKey)
-    }
-
-    /// When a catalog default is already claimed by a stored override of a
-    /// different command, park the default-only command on a free key.
-    /// Returns true if `overrides` changed.
-    @discardableResult
-    private func migrateCollidingDefaults() -> Bool {
-        var claimed = Set(overrides.values)
-        // Defaults already held by un-overridden commands also claim slots.
-        for spec in Self.catalog where overrides[spec.command] == nil {
-            claimed.insert(spec.defaultKey)
-        }
-        var changed = false
-        for spec in Self.catalog {
-            guard overrides[spec.command] == nil else { continue }
-            // Recompute: is this default only "ours", or also an override?
-            let takenByOverride = overrides.contains { $0.key != spec.command && $0.value == spec.defaultKey }
-            guard takenByOverride else { continue }
-            // Park us elsewhere. Leave `spec.defaultKey` in `claimed` so it
-            // stays reserved for the override (must not re-park onto it).
-            guard let free = Self.firstFreeKey(excluding: claimed.union(Self.reservedKeys)) else { continue }
-            overrides[spec.command] = free
-            claimed.insert(free)
-            changed = true
-        }
-        return changed
-    }
-
-    /// First single-character candidate not in `excluding` and not reserved.
-    static func firstFreeKey(excluding: Set<String>) -> String? {
-        freeKeyCandidates.first { !excluding.contains($0) && !reservedKeys.contains($0) }
     }
 
     private func persist() {

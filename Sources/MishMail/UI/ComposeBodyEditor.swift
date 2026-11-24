@@ -802,11 +802,12 @@ final class ComposeBodyTextView: ComposeCaretSettlingTextView {
         }
         // Symbol keys: `charactersIgnoringModifiers` still reflects Shift, so
         // ⌘⇧8 arrives as "*" and ⌘⇧. as ">". Match keyCodes (ANSI layout).
-        // kVK_ANSI_8 = 28, kVK_ANSI_Period = 47.
+        // kVK_ANSI_8 = 28, kVK_ANSI_Period = 47, kVK_ANSI_9 = 25 (⌘⇧9 is
+        // Gmail's quote key; ⌘⇧. stays as MishMail's).
         if shift, !opt {
             switch event.keyCode {
             case 28: onFormat?(.bullet); return true
-            case 47: onFormat?(.quote); return true
+            case 47, 25: onFormat?(.quote); return true
             default: break
             }
         }

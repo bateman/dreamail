@@ -244,33 +244,45 @@ The defaults are Gmail's:
 
 | Key | Action | | Key | Action |
 |---|---|---|---|---|
-| j / k | Next / previous thread | | r | Reply |
-| e | Archive | | a | Reply all |
-| # | Trash | | f | Forward newest message (new conversation; use thread ⋮ → Forward all for the whole thread) |
-| s | Star / unstar | | l | Label… |
-| u | Toggle read / unread | | c | Compose |
-| b or h | Snooze… (picker) | | z | Undo last action |
+| j / k | Next (older) / previous (newer) thread | | r | Reply |
+| o | Open thread (Return also opens) | | a | Reply all |
+| u | Back to the thread list | | f | Forward newest message (new conversation; use thread ⋮ → Forward all for the whole thread) |
+| x | Select / deselect (multi-select) | | l | Label… |
+| e | Archive (] also archives and moves on) | | c | Compose |
+| # | Trash | | z | Undo last action |
+| s | Star / unstar | | ! | Report spam / not spam |
+| b or h | Snooze… (picker) | | — | Toggle read / unread (no default key; Gmail uses Shift-I / Shift-U) |
+
+A custom key always keeps its place: if it is a key that a later version makes
+the default of another command, that command is left without a key (shown as
+"—" in Settings) until you give it one.
 
 Fixed shortcuts (not customizable):
 
 | Key | Action |
 |---|---|
 | Shift-I / Shift-U | Mark as read (or unread if already read) / Mark as unread (Gmail) |
-| g then i / s / t / d / a / p | Go to Inbox / Starred / Sent / Drafts / All mail / Promotions |
+| g then i / s / b / t / d / a / p | Go to Inbox / Starred / Snoozed / Sent / Drafts / All mail / Promotions |
+| * then a / n | Select all / deselect all threads |
 | ↑ / ↓ | Browse threads (without opening the reading pane) |
 | Return | Open selected thread · Esc closes the reading pane |
+| / | Search |
 | ? | Show the keyboard-shortcut cheat sheet |
 | Cmd-K | Command palette · in compose body: insert/edit link |
 | Cmd-L | Copy Gmail link to the selected thread |
 | Ctrl-F | Filter menu |
 | Cmd-N | Compose · Cmd-Enter send |
+| Cmd-Shift-C / Cmd-Shift-B (in compose) | Show the Cc and Bcc fields |
 | / (in compose body) | Snippet picker — type `/name` to filter, Return inserts |
 | Cmd-/ (in compose) | Toggle the snippets panel |
 | ⌘B / ⌘I / ⌘⇧X / ⌘E | Bold / italic / strikethrough / code (compose body) |
-| ⌘⇧M / ⌘⌥1–3 / ⌘⇧. / ⌘⇧8 | Math / H1–H3 / quote / bullet (compose body) |
+| ⌘⇧M / ⌘⌥1–3 / ⌘⇧9 or ⌘⇧. / ⌘⇧8 | Math / H1–H3 / quote / bullet (compose body) |
 | Cmd-Shift-R | Sync all |
 | Cmd-+ / Cmd-− / Cmd-0 | Text size |
 | Cmd-, | Settings |
+
+Single-key shortcuts never fire while you are typing in a field (search,
+compose, Settings).
 
 ## AI (optional)
 

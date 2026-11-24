@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// How a conversation opens from the list (Settings → Appearance).
 enum ThreadOpenStyle: String, CaseIterable {
@@ -13,6 +14,21 @@ enum ThreadOpenStyle: String, CaseIterable {
     case centerPeek
 
     static let storageKey = "threadOpenStyle"
+
+    /// The style for an install with no stored choice: Gmail's reading pane
+    /// beside the list. A stored choice always wins.
+    static let defaultStyle: ThreadOpenStyle = .readingPane
+
+    /// The style for a stored raw value; nil or unrecognized (a value from a
+    /// newer or older build) falls back to `defaultStyle`.
+    static func resolved(storedRaw: String?) -> ThreadOpenStyle {
+        storedRaw.flatMap(ThreadOpenStyle.init(rawValue:)) ?? defaultStyle
+    }
+
+    /// The effective style read from `defaults` (what `@AppStorage` sees).
+    static func current(in defaults: UserDefaults = .standard) -> ThreadOpenStyle {
+        resolved(storedRaw: defaults.string(forKey: storageKey))
+    }
 }
 
 enum MailLayoutMode: Equatable {
@@ -27,6 +43,10 @@ enum MailLayout {
     /// Below this width, keeping sidebar + list + message visible makes the
     /// reading pane too narrow to read. Compact mode swaps list and message.
     static let threePaneMinimumWidth: CGFloat = 1_080
+
+    /// First-launch window width. Must fit three panes, since the default
+    /// open style is the reading pane (`ThreadOpenStyle.defaultStyle`).
+    static let defaultWindowWidth: CGFloat = 1_200
 
     static func mode(width: CGFloat, readingPaneHidden: Bool,
                      hasSelection: Bool,

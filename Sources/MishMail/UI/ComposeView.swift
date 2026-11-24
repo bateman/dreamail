@@ -2433,6 +2433,20 @@ struct ComposeView: View {
                 openLinkSheet()
                 return nil
             }
+            // Gmail's ⌘⇧C / ⌘⇧B: add Cc / Bcc recipients. Like the Cc and
+            // Bcc buttons, either one reveals both fields. Only for this
+            // expanded compose, in the main window (Settings keeps its keys).
+            if mods == .command,
+               event.modifierFlags.contains(.shift),
+               !isMinimized,
+               store.composeRequest?.id == request.id,
+               event.window == NSApp.mainWindow,
+               let key = event.charactersIgnoringModifiers?.lowercased(),
+               key == "c" || key == "b" {
+                showCc = true
+                showBcc = true
+                return nil
+            }
             guard mods.isEmpty else { return event }
             // Greeting Tab must run before the slash-picker gate: when the
             // picker is up it owns Tab, but otherwise Tab accepts "Hi Name,".

@@ -33,7 +33,7 @@ struct ShortcutsSettings: View {
                         }
                     }
                 } footer: {
-                    Text("Single character keys only — g, ? and / are reserved, Return, arrow and function keys can't be used, and ⌘ shortcuts can't be changed yet.")
+                    Text("Single character keys only — g, *, ? and / are reserved, Return, arrow and function keys can't be used, and ⌘ shortcuts can't be changed yet.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -47,7 +47,7 @@ struct ShortcutsSettings: View {
             Button {
                 if listening == spec.command { stopListening() } else { startListening(spec.command) }
             } label: {
-                Text(listening == spec.command ? "Press a key…" : bindings.key(for: spec.command))
+                Text(listening == spec.command ? "Press a key…" : bindings.displayKey(for: spec.command))
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .frame(minWidth: 44)
                     .padding(.vertical, 3).padding(.horizontal, 8)
@@ -57,7 +57,19 @@ struct ShortcutsSettings: View {
                                 in: RoundedRectangle(cornerRadius: 5))
             }
             .buttonStyle(.plain)
+            .help(unboundHelp(spec))
         }
+    }
+
+    /// Why a command shows "—": it ships without a key, or the user gave its
+    /// default key to another command (that override wins).
+    private func unboundHelp(_ spec: ShortcutSpec) -> String {
+        guard bindings.key(for: spec.command) == nil else { return "" }
+        if let holder = bindings.defaultKeyHolder(for: spec.command),
+           let key = spec.defaultKey {
+            return "Not set: its default “\(key)” is assigned to \(KeyBindings.title(for: holder)). Click to choose a key."
+        }
+        return "Not set. Click to choose a key."
     }
 
     private func startListening(_ command: ShortcutCommand) {
