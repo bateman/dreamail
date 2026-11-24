@@ -96,4 +96,22 @@ struct ThreadDetailMirror {
                   payload: payload),
             for: threadId)
     }
+
+    /// Record a body with remote images inlined on the mirrored payload,
+    /// under the same conditions as `rememberCIDInline`.
+    mutating func rememberRemoteInline(_ body: RemoteInlinedBody, messageId: String,
+                                       threadId: String,
+                                       revision: ThreadContentRevision,
+                                       fontScale: Double) {
+        guard RemoteInlineCachePolicy.shouldRemember(body, fontScale: fontScale),
+              let entry = lru.values[threadId], entry.revision == revision,
+              entry.payload.messages.contains(where: { $0.id == messageId })
+        else { return }
+        var payload = entry.payload
+        payload.remoteInlineByMessageId[messageId] = body
+        lru.insert(
+            Entry(revision: entry.revision, suppressedIds: entry.suppressedIds,
+                  payload: payload),
+            for: threadId)
+    }
 }

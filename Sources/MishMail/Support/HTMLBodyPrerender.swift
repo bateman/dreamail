@@ -51,9 +51,11 @@ enum HTMLBodyNeighborPrerender {
     /// Remote images are always blocked for neighbor pre-render (see
     /// `HTMLBodyPrerenderPolicy`) so focus-past-a-row never fires tracking
     /// pixels for mail the user never opened. `opensWithRemoteImages` (the
-    /// caller's image decision for that message) skips a neighbour whose
-    /// open would use the allowed variant: its blocked paint could never be
-    /// claimed.
+    /// caller's image decision for that message) picks the document the open
+    /// would show: for a message whose open loads remote images, the body
+    /// with the images already in the encrypted cache inlined (the rest
+    /// stay blocked and the open fetches them), never one that needs the
+    /// network (skipped: its blocked paint could never be claimed).
     static func schedule(
         openedThreadId: String,
         displayOrder: [String],
@@ -87,17 +89,33 @@ enum HTMLBodyNeighborPrerender {
                 guard gen == generation, !Task.isCancelled else { return }
                 guard let message = ForwardComposer.newestSentMessage(
                     in: payload.messages) else { continue }
-                guard HTMLBodyPrerenderSelection.paintsNeighbor(
-                    opensWithRemoteImages: opensWithRemoteImages(threadId, message))
-                else { continue }
                 // A body whose `cid:` images were already resolved opens
                 // with the inlined HTML (content id suffixed ":cid"), so
                 // paint that one or the open could never claim this view.
-                let inlined = payload.cidInlineByMessageId[message.id]?.html
+                let inlined = payload.cidInlineByMessageId[message.id]
+                // Remote images: only what the encrypted cache already holds
+                // is painted (inlined as data: URLs), always under the
+                // blocked CSP, and only the document the open would show
+                // (`RemoteImageRendering.prerender`); nil skips the
+                // neighbour, as for an open that needs the network.
+                let candidateCount = (inlined?.prep
+                    ?? payload.bodyPrepByMessageId[message.id])?.remoteImageCount ?? 0
+                guard let plan = RemoteImageRendering.prerender(
+                    opensWithRemoteImages: opensWithRemoteImages(threadId, message),
+                    remoteBody: payload.remoteInlineByMessageId[message.id],
+                    cidInlined: inlined != nil,
+                    remoteCandidateCount: candidateCount) else { continue }
+                var html = inlined?.html ?? message.bodyHTML
+                var remoteSuffix = ""
+                if case .remote(let body) = plan {
+                    html = body.html
+                    remoteSuffix = body.contentSuffix
+                }
                 guard let candidate = HTMLBodyPrerenderSelection.candidate(
                     messageId: message.id,
-                    bodyHTML: inlined ?? message.bodyHTML,
-                    cidInlined: inlined != nil) else { continue }
+                    bodyHTML: html,
+                    cidInlined: inlined != nil,
+                    remoteSuffix: remoteSuffix) else { continue }
 
                 let key = HTMLBodyLoadKey(
                     contentID: candidate.contentID,

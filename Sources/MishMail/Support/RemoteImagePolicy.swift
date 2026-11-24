@@ -51,7 +51,7 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
         case .vip:
             return "HTTPS images load automatically only from VIP senders that pass Gmail's authentication checks. Other messages need a click."
         case .always:
-            return "HTTPS images load when a message is opened: clicking it, moving to it in the list with the reading pane showing, or landing on it after archive or delete. The sender's servers then learn when you opened it, your IP address (approximate location and network), and details of your Mac's mail client (WebKit version, language). Choose Ask each time to stop this."
+            return "HTTPS images load when a message is opened: clicking it, moving to it in the list with the reading pane showing, or landing on it after archive or delete. The sender's servers then learn when you opened it, your IP address (approximate location and network), and details of your Mac's mail client. MishMail downloads each image once and keeps it encrypted with the message, so opening it again sends nothing. Choose Ask each time to stop this."
         }
     }
 

@@ -255,11 +255,14 @@ enum HTMLBodyPrerenderSelection {
     /// `cidInlined`: `bodyHTML` is the session copy with `cid:` images
     /// rewritten to `data:`; the content id then matches the one the card
     /// mounts (`…:cid`).
+    /// `remoteSuffix`: `RemoteInlinedBody.contentSuffix` when `bodyHTML`
+    /// carries cached remote images.
     static func candidate(messageId: String, bodyHTML: String?,
-                          cidInlined: Bool = false) -> Candidate? {
+                          cidInlined: Bool = false,
+                          remoteSuffix: String = "") -> Candidate? {
         guard let html = bodyHTML, !html.isEmpty else { return nil }
         let fullBytes = html.utf8.count
-        let suffix = cidInlined ? ":cid" : ""
+        let suffix = (cidInlined ? ":cid" : "") + remoteSuffix
 
         if fullBytes <= HTMLBodyRenderPolicy.maximumAutomaticBytes,
            let head = QuotedReply.authoredHTMLHead(html) {

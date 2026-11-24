@@ -1589,11 +1589,20 @@ struct ComposeRequest: Identifiable {
     let db = AppDatabase.shared.dbPool
     let threadDetailRepository = ThreadDetailRepository(
         db: AppDatabase.shared.dbPool,
-        inlineImages: InlineImageStore(db: AppDatabase.shared.dbPool))
+        inlineImages: InlineImageStore(db: AppDatabase.shared.dbPool),
+        remoteImages: RemoteImageStore(db: AppDatabase.shared.dbPool))
     /// Persistent, encrypted `cid:` image cache (`InlineImageCache`): read
     /// with the payload by the repository, written by `inlineCIDImages`,
     /// shut down before the pool closes.
     var inlineImageStore: InlineImageStore? { threadDetailRepository.inlineImages }
+    /// Persistent, encrypted remote-image cache (`RemoteImageCache`): read by
+    /// the prefetch (cache only), written by `resolveRemoteImages` (an open
+    /// message whose remote images are allowed), shut down before the pool
+    /// closes.
+    var remoteImageStore: RemoteImageStore? { threadDetailRepository.remoteImages }
+    /// The app's own remote-image client (`RemoteImageTransport.live`).
+    @ObservationIgnored
+    var remoteImageTransport: RemoteImageTransport = .live
     @ObservationIgnored
     var syncTimer: Timer?
     @ObservationIgnored
@@ -2446,6 +2455,7 @@ struct ComposeRequest: Identifiable {
         // in progress is cancelled (rolled back) and awaited before the
         // pool closes.
         await inlineImageStore?.shutDown()
+        await remoteImageStore?.shutDown()
 
         await DatabaseLifecycle.shutDown(
             tasks: tasks,
@@ -3598,6 +3608,44 @@ struct ComposeRequest: Identifiable {
         }
     }
 
+    /// Remember a body with remote images inlined on both payload copies.
+    func rememberRemoteInline(_ body: RemoteInlinedBody, messageId: String,
+                              threadId: String, revision: ThreadContentRevision) {
+        let scale = Self.readingPaneFontScale()
+        payloadMirror.rememberRemoteInline(
+            body, messageId: messageId, threadId: threadId, revision: revision,
+            fontScale: scale)
+        let repository = threadDetailRepository
+        Task {
+            await repository.rememberRemoteInline(
+                body, messageId: messageId, threadId: threadId,
+                revision: revision, fontScale: scale)
+        }
+    }
+
+    /// Resolves the remote images of one open message whose remote images
+    /// the card allowed (`allowed` is its `RemoteImagePolicy.autoLoads`
+    /// decision, opt-ins included): nothing at all happens otherwise. The
+    /// cache first, then the app's own fetch of the rest (`onPartial` gets
+    /// the cache-only body first when images are missing). Off the main
+    /// actor; never logs.
+    /// `preInlineBytes`: the stored body's size (the oversized-body gate
+    /// keys on it, not on the inlined one). A nonisolated async function, so
+    /// the string work runs off the main actor.
+    nonisolated static func resolveRemoteImages(
+        messageId: String, accountId: String, baseHTML: String, preInlineBytes: Int,
+        baseIsCIDInlined: Bool, allowed: Bool, fontScale: Double,
+        store: RemoteImageStore?, transport: RemoteImageTransport,
+        onPartial: @escaping @Sendable (RemoteInlinedBody) async -> Void
+    ) async -> RemoteInlinedBody? {
+        guard allowed else { return nil }
+        return await RemoteImageResolver.resolve(
+            messageId: messageId, accountId: accountId, baseHTML: baseHTML,
+            preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCIDInlined,
+            fontScale: fontScale, store: store, transport: transport,
+            onPartial: onPartial)
+    }
+
     /// Off-main body hydration for an expanded reading-pane card, including
     /// precomputed quote-trail + assembled HTML for the current font scale.
     func messageBodyForReadingPane(id: String) async -> MessageBodyLoad? {
@@ -4199,6 +4247,27 @@ struct ComposeRequest: Identifiable {
         Task { await store.noteUsed(ids) }
     }
 
+    /// The remote-image counterpart of `noteCachedImagesShown`, called by
+    /// the pane when a card shows a body whose remote images came from the
+    /// cache (a warmed payload). At most one write a day per message.
+    func noteCachedRemoteImagesShown(messageIds: [String]) {
+        guard let store = remoteImageStore, !messageIds.isEmpty else { return }
+        Task { await store.noteUsed(messageIds) }
+    }
+
+    /// Message ids of `payload` whose open would load remote images under
+    /// the current policy, without any click (the prefetch builds cached
+    /// bodies for these only; Spam never qualifies).
+    func remoteImageAutoLoadIds(in payload: ThreadDetailPayload, threadId: String) -> Set<String> {
+        let policy = RemoteImagePolicy.stored()
+        let vips = vipEmails
+        let inSpam = thread(withId: threadId)?.inSpam ?? false
+        return Set(payload.messages.filter {
+            RemoteImagePolicy.autoLoads(message: $0, threadInSpam: inSpam,
+                                        policy: policy, vipEmails: vips)
+        }.map(\.id))
+    }
+
     func clearSelection() {
         selectThread(nil, intent: .explicitOpen)
     }
@@ -4284,6 +4353,18 @@ struct ComposeRequest: Identifiable {
                 for (id, body) in images
                 where payload.messages.contains(where: { $0.id == id }) {
                     payload.cidInlineByMessageId[id] = body
+                }
+                // Remote images likewise, from the encrypted cache only and
+                // only for messages whose open would load them anyway: no
+                // request to any sender for mail that is not open.
+                let allowed = self.remoteImageAutoLoadIds(in: payload, threadId: target.id)
+                let remote = await repository.warmCachedRemoteBodies(
+                    threadId: target.id, revision: target.revision,
+                    fontScale: fontScale, allowedMessageIds: allowed)
+                guard !Task.isCancelled else { return }
+                for (id, body) in remote
+                where payload.messages.contains(where: { $0.id == id }) {
+                    payload.remoteInlineByMessageId[id] = body
                 }
                 // Mirror onto the main actor. This is what makes the landing
                 // synchronous: without it the warmed payload still costs an
