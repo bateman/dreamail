@@ -390,6 +390,7 @@ struct ThreadListView: View {
             ScrollViewReader { proxy in
             ThreadSelectionList(
                 topMargin: 40 * fontScale,
+                bottomMargin: 12 * fontScale,
                 onSelect: { store.selectThread($0, intent: .click) }
             ) {
                 ThreadListSections(
@@ -504,13 +505,16 @@ struct ThreadListView: View {
 private struct ThreadSelectionList<Content: View>: View {
     @EnvironmentObject private var listFocus: ListFocusState
     let topMargin: CGFloat
+    let bottomMargin: CGFloat
     let onSelect: (String?) -> Void
     let content: Content
 
     init(topMargin: CGFloat,
+         bottomMargin: CGFloat,
          onSelect: @escaping (String?) -> Void,
          @ViewBuilder content: () -> Content) {
         self.topMargin = topMargin
+        self.bottomMargin = bottomMargin
         self.onSelect = onSelect
         self.content = content()
     }
@@ -520,12 +524,14 @@ private struct ThreadSelectionList<Content: View>: View {
             content
         }
         .listStyle(.plain)
-        // Headers take their own height (see `ThreadListSectionMetrics`),
-        // not the taller system minimum.
+        // Section headers take their content's height, not the taller
+        // system minimum.
         .environment(\.defaultMinListHeaderHeight, 1)
         .scrollContentBackground(.hidden)
         // Matching air above the first group.
         .contentMargins(.top, topMargin, for: .scrollContent)
+        // Sections have no footer: keep the last row off the window edge.
+        .contentMargins(.bottom, bottomMargin, for: .scrollContent)
     }
 }
 
@@ -547,6 +553,11 @@ private struct ThreadListSections: View, Equatable {
     let onToggleCollapsed: (String) -> Void
 
     private static let prioritySection = "Priority"
+    /// Air between a section's last row and the next header's title,
+    /// times the font scale.
+    private static let sectionGap: CGFloat = 6
+    /// Header text's leading/trailing inset, aligned with the rows'.
+    private static let headerHorizontalInset: CGFloat = 8
 
     // `grouped` and `rowDisplay` only change inside a layout pass, which
     // bumps `layoutGeneration`. The closure mutates the parent's @State
@@ -611,34 +622,35 @@ private struct ThreadListSections: View, Equatable {
                 // Compact so the pinned (sticky) header stays a thin
                 // line while scrolling. Secondary gray adapts to the
                 // theme and sets headers clearly apart from thread text.
-                // The whole break between sections is this band: a small
-                // gap, then the title (`ThreadListSectionMetrics`).
+                // The whole break between sections is this header: a small
+                // gap, then the title at its own height. No footer: on macOS
+                // a footer is a row of its own (minimum height, no row
+                // background), which read as a missing white row.
                 Group {
-                if store.selectedView == .labels {
-                    labelSectionHeader(title, count: threads.count)
-                } else {
-                HStack(spacing: 4) {
-                    if title == Self.prioritySection {
-                        // Inherits the header's secondary colour: the word
-                        // "Priority" says what the section is.
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 9 * fontScale))
-                            .accessibilityHidden(true)
+                    if store.selectedView == .labels {
+                        labelSectionHeader(title, count: threads.count)
+                    } else {
+                        HStack(spacing: 4) {
+                            if title == Self.prioritySection {
+                                // Inherits the header's secondary colour: the
+                                // word "Priority" says what the section is.
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 9 * fontScale))
+                                    .accessibilityHidden(true)
+                            }
+                            Text(title)
+                        }
+                        .font(.system(size: 12 * fontScale, weight: .semibold))
+                        .foregroundStyle(.secondary)
                     }
-                    Text(title)
                 }
-                .font(.system(size: 12 * fontScale, weight: .semibold))
-                .foregroundStyle(.secondary)
-                }
-                }
-                .frame(height: ThreadListSectionMetrics.headerTitleHeight(fontScale: fontScale))
-                .padding(.top, ThreadListSectionMetrics.sectionGap(fontScale: fontScale))
-                .padding(.vertical, -ThreadListSectionMetrics.systemHeaderVerticalInset)
+                .accessibilityIdentifier("threadSectionHeader.\(title)")
+                .padding(.top, Self.sectionGap * fontScale)
+                // Without this the List pads header content above and
+                // below (about 4 pt each on macOS 26), on top of the gap.
+                .listRowInsets(EdgeInsets(top: 0, leading: Self.headerHorizontalInset,
+                                          bottom: 0, trailing: Self.headerHorizontalInset))
             }
-            // No footer: on macOS a footer is a row of its own (minimum
-            // height, no row background), which read as a missing white row.
-            // One line between sections at most: none under the last row.
-            .listSectionSeparator(.hidden, edges: .bottom)
         }
         if store.hasMoreThreads || store.isLoadingMore {
             Section {
