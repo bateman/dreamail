@@ -66,8 +66,8 @@ struct LabelPicker: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: applied ? "checkmark.square.fill" : "square")
                                             .foregroundStyle(applied ? Color.mailAccent : .secondary)
-                                        Circle().fill(store.labelTint(label.name, account: label.accountId))
-                                            .frame(width: 8, height: 8)
+                                        LabelDot(colors: store.labelColors(label.name, account: label.accountId),
+                                                 size: 8)
                                         Text(LabelSearch.highlighted(label.name, query: picker.query))
                                             .font(.system(size: 13))
                                         Spacer()

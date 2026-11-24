@@ -75,7 +75,7 @@ final class MailStore {
     /// labels, and both lookups used to be a linear scan of the account's
     /// label array — per label, per row, on every body pass. These are plain
     /// stored properties (not `@ObservationIgnored`) precisely so a view that
-    /// reads them through `labelName` / `labelTint` still re-renders when the
+    /// reads them through `labelName` / `labelColors` still re-renders when the
     /// labels change; `labelsByAccount`'s `didSet` is what republishes them.
     private(set) var labelsById: [String: [String: LabelRow]] = [:]
     private(set) var labelsByName: [String: [String: LabelRow]] = [:]
@@ -3865,7 +3865,9 @@ struct ComposeRequest: Identifiable {
                     try? self.db.write { db in
                         try LabelRow(id: "\(accountId):\(l.id)", accountId: accountId,
                                      gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
-                                     color: l.color?.backgroundColor).save(db)
+                                     color: nil,
+                                     gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
+                                     gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor)).save(db)
                     }
                     self.reloadAccounts()
                     self.labelPicker.query = ""
@@ -3923,35 +3925,34 @@ struct ComposeRequest: Identifiable {
         labelsById[accountId]?[labelId]?.name
     }
 
-    /// Name and display color for a label in a single lookup — what a thread
-    /// row needs for each of its chips.
+    /// Name and display colors for a label in a single lookup — what a
+    /// thread row needs for each of its chips.
     func labelChip(_ labelId: String, account accountId: String) -> ThreadRowLabelChip? {
         guard let row = labelsById[accountId]?[labelId] else { return nil }
-        return ThreadRowLabelChip(name: row.name, colorHex: row.color)
+        return ThreadRowLabelChip(name: row.name, colors: row.displayColors)
     }
 
-    /// Display color for a label within an account: the user-assigned (or
-    /// Gmail-seeded) color, falling back to the name-stable palette. Scoped by
-    /// account so two accounts' same-named labels can carry different colors.
-    func labelTint(_ name: String, account accountId: String) -> Color {
-        let hex = labelsByName[accountId]?[name]?.color
-        return hex.flatMap(Color.hexString) ?? Color.stable(for: name)
+    /// Display colors for a label within an account: the user's local pick,
+    /// else Gmail's label colors; `.none` (neutral grey) when it has neither.
+    /// Scoped by account so two accounts' same-named labels can differ.
+    func labelColors(_ name: String, account accountId: String) -> LabelColors {
+        labelsByName[accountId]?[name]?.displayColors ?? .none
     }
 
-    /// Tint for a label filter that isn't scoped to one account (the Labels
-    /// chip in unified mode): the color of any account's label with that name,
-    /// else the name-stable fallback.
-    func labelTint(anyAccount name: String) -> Color {
-        let hex = labelsByAccount.values.lazy.flatMap { $0 }.first { $0.name == name }?.color
-        return hex.flatMap(Color.hexString) ?? Color.stable(for: name)
+    /// Colors for a label filter that isn't scoped to one account (the Labels
+    /// chip in unified mode): any account's label with that name.
+    func labelColors(anyAccount name: String) -> LabelColors {
+        labelsByAccount.values.lazy.flatMap { $0 }.first { $0.name == name }?.displayColors ?? .none
     }
 
-    /// Sets (or clears, with nil) a label's display color.
+    /// Sets (or clears, with nil) a label's local color pick. Clearing it
+    /// shows Gmail's own label color again.
     func setLabelColor(_ label: LabelRow, hex: String?) {
+        // Only the one column: the row passed in may be older than the
+        // stored one (a sync may have renamed it or changed Gmail's colors).
         try? db.write { db in
-            var row = label
-            row.color = hex
-            try row.save(db)
+            try db.execute(sql: "UPDATE label SET color = ? WHERE id = ?",
+                           arguments: [hex, label.id])
         }
         reloadAccounts()
     }

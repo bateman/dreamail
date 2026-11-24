@@ -88,10 +88,7 @@ private struct LabelOrganizerRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Button { showPalette = true } label: {
-                Circle()
-                    .fill(store.labelTint(label.name, account: label.accountId))
-                    .frame(width: 18, height: 18)
-                    .overlay(Circle().strokeBorder(.separator, lineWidth: 0.5))
+                LabelDot(colors: label.displayColors, size: 18)
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showPalette, arrowEdge: .bottom) {
@@ -107,8 +104,8 @@ private struct LabelOrganizerRow: View {
     }
 }
 
-/// The color grid shown when picking a label's color, plus a "default" reset
-/// that falls back to the name-stable color.
+/// The color grid shown when picking a label's local color, plus a reset
+/// back to Gmail's own label color.
 private struct LabelColorPalette: View {
     @Environment(MailStore.self) var store
     let label: LabelRow
@@ -126,7 +123,7 @@ private struct LabelColorPalette: View {
                         onPick()
                     } label: {
                         Circle()
-                            .fill(Color.hexString(swatch.hex) ?? .gray)
+                            .fill(LabelRGB(hexString: swatch.hex).map(Color.init) ?? .gray)
                             .frame(width: 24, height: 24)
                             .overlay {
                                 if label.color?.caseInsensitiveCompare(swatch.hex) == .orderedSame {
@@ -145,7 +142,7 @@ private struct LabelColorPalette: View {
                 store.setLabelColor(label, hex: nil)
                 onPick()
             } label: {
-                Label("Default color", systemImage: "arrow.uturn.backward")
+                Label("Gmail color", systemImage: "arrow.uturn.backward")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)

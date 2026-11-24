@@ -1093,26 +1093,26 @@ struct ThreadDetailView: View {
                     .help("Attachments in this thread — click to Quick Look")
                 }
                 ForEach(categoryChipItems, id: \.id) { chip in
-                    HStack(spacing: 5) {
-                        if let tint = chip.tint {
-                            Circle().fill(tint).frame(width: 7, height: 7)
+                    if let colors = chip.colors {
+                        // User label: solid pill in its Gmail color, the
+                        // remove button in the pill's own text color.
+                        LabelPill(name: chip.name, colors: colors,
+                                  font: .system(size: 11.5 * fontScale, weight: .medium),
+                                  verticalPadding: 3) {
+                            removeChipButton(chip.id, name: chip.name)
                         }
-                        Text(chip.name)
-                            .font(.system(size: 11.5 * fontScale, weight: .medium))
-                        Button {
-                            store.toggleLabel(thread, labelId: chip.id)
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .bold))
-                                .pmHitTarget(extra: 8)
+                    } else {
+                        HStack(spacing: 5) {
+                            Text(chip.name)
+                                .font(.system(size: 11.5 * fontScale, weight: .medium))
+                            removeChipButton(chip.id, name: chip.name)
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(PressScaleButtonStyle()).foregroundStyle(.secondary)
-                        .help("Remove \(chip.name)")
+                        .foregroundStyle(Color.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.1),
+                                    in: RoundedRectangle(cornerRadius: 5))
                     }
-                    .foregroundStyle(chip.tint == nil ? Color.secondary : .primary)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background((chip.tint?.opacity(0.15) ?? Color.secondary.opacity(0.1)),
-                                in: RoundedRectangle(cornerRadius: 5))
                 }
                 Button {
                     store.openLabelPicker()
@@ -1129,11 +1129,23 @@ struct ThreadDetailView: View {
         }
     }
 
+    private func removeChipButton(_ labelId: String, name: String) -> some View {
+        Button {
+            store.toggleLabel(thread, labelId: labelId)
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .pmHitTarget(extra: 8)
+        }
+        .buttonStyle(PressScaleButtonStyle())
+        .help("Remove \(name)")
+    }
+
     /// Everything categorizing this thread: Gmail's own
     /// classification (Important, Updates, …) plus the user's labels, all
-    /// removable in place.
-    private var categoryChipItems: [(id: String, name: String, tint: Color?)] {
-        var items: [(id: String, name: String, tint: Color?)] = []
+    /// removable in place. User labels carry their display colors.
+    private var categoryChipItems: [(id: String, name: String, colors: LabelColors?)] {
+        var items: [(id: String, name: String, colors: LabelColors?)] = []
         for label in thread.labels {
             if label == "IMPORTANT" {
                 items.append((label, "Important", nil))
@@ -1143,7 +1155,7 @@ struct ThreadDetailView: View {
         }
         for labelId in userLabelIds {
             let name = store.labelName(labelId, account: thread.accountId) ?? labelId
-            items.append((labelId, name, store.labelTint(name, account: thread.accountId)))
+            items.append((labelId, name, store.labelColors(name, account: thread.accountId)))
         }
         return items
     }

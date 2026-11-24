@@ -100,7 +100,8 @@ enum DemoSeed {
                 for label in userLabels {
                     let row = LabelRow(id: "\(account):\(label.id)", accountId: account,
                                        gmailLabelId: label.id, name: label.name, type: "user",
-                                       color: label.color, sortOrder: label.order)
+                                       color: nil, sortOrder: label.order,
+                                       gmailBackgroundColor: label.color)
                     try row.insert(database)
                 }
 
