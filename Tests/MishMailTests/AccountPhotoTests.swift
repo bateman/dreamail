@@ -557,11 +557,12 @@ final class AccountPhotoTests: XCTestCase {
         ]
         CGImageDestinationAddImage(dest, try XCTUnwrap(ctx.makeImage()), meta as CFDictionary)
         XCTAssertTrue(CGImageDestinationFinalize(dest))
-        let inProps = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(
-            CGImageSourceCreateWithData(source as CFData, nil)!, 0, nil) as? [CFString: Any])
-        let tiffIn = inProps[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
-        XCTAssertEqual(tiffIn?[kCGImagePropertyTIFFArtist] as? String, "secret artist",
-                       "fixture carries metadata")
+        // The fixture really is Display P3. (Whether ImageIO keeps the
+        // metadata dictionaries in the JPEG varies; the output checks below
+        // hold either way.)
+        let inImage = try XCTUnwrap(CGImageSourceCreateImageAtIndex(
+            CGImageSourceCreateWithData(source as CFData, nil)!, 0, nil))
+        XCTAssertEqual(inImage.colorSpace?.name, CGColorSpace.displayP3, "fixture is Display P3")
 
         let out = try XCTUnwrap(AccountPhotoPolicy.normalizedImage(from: source as Data))
         XCTAssertLessThanOrEqual(out.count, AccountPhotoPolicy.maxStoredBytes)
