@@ -1727,6 +1727,10 @@ struct ComposeRequest: Identifiable {
         // window that put it in runDeferredStartupWork.
         loadBlocked()
         reloadThreads()
+        // Still-plaintext cache opened read-only: say why nothing syncs.
+        if !AppDatabase.shared.allowsWrites {
+            lastError = AppDatabase.encryptionPendingMessage
+        }
         startupTask = Task { await self.runDeferredStartupWork() }
         // The opt-in MCP server starts in runDeferredStartupWork, not here:
         // its Keychain token read and NWListener bind are main-thread work
@@ -2459,7 +2463,10 @@ struct ComposeRequest: Identifiable {
     /// One-time recompute of derived thread columns after the v2 migration.
     private func rebuildMetadataIfNeeded() {
         let key = "meta.rebuilt.v2"
-        guard !UserDefaults.standard.bool(forKey: key), !accounts.isEmpty else { return }
+        // Read-only plaintext cache (F-02): the rebuild would fail and the
+        // marker below would still skip it on every later launch.
+        guard !UserDefaults.standard.bool(forKey: key), !accounts.isEmpty,
+              AppDatabase.shared.allowsWrites else { return }
         Task {
             for account in accounts {
                 let engine = engines[account.id] ?? SyncEngine(accountId: account.id)
@@ -2987,7 +2994,9 @@ struct ComposeRequest: Identifiable {
     @discardableResult
     func pullServerSearchMatches(query: String, limit: Int = 50) async -> [String] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !isShuttingDown, !q.isEmpty, !demoMode else { return [] }
+        // Read-only plaintext cache (F-02): fetched matches could not be stored.
+        guard !isShuttingDown, !q.isEmpty, !demoMode,
+              AppDatabase.shared.allowsWrites else { return [] }
         let targets = activeAccountId.map { [$0] } ?? accounts.map(\.id)
         guard !targets.isEmpty else { return [] }
 

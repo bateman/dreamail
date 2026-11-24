@@ -638,6 +638,18 @@ final class AppDatabase: @unchecked Sendable {
     /// On-disk location, kept so the WAL sidecar can be sized without asking
     /// SQLite (see `checkpointIfNeeded`).
     private let path: String
+    /// False while a legacy plaintext cache waits for its one-time
+    /// encryption (another instance holds it, or the conversion was busy).
+    /// The pool is then read-only — SQLite refuses every write — so no new
+    /// mail is stored unencrypted. The next launch retries the conversion
+    /// and, once it succeeds, opens the encrypted file writable as usual.
+    let allowsWrites: Bool
+
+    /// Banner shown while `allowsWrites` is false. Sync is paused because
+    /// everything it fetched would be refused by the read-only cache.
+    static let encryptionPendingMessage =
+        "MishMail could not encrypt its mail cache yet, so mail is read-only and sync is paused. "
+        + "Quit any other copy of MishMail, then reopen MishMail to finish."
 
     /// Application Support directory that holds `mail.sqlite` (and discovery
     /// files such as `mcp.json`).
@@ -678,6 +690,10 @@ final class AppDatabase: @unchecked Sendable {
             allowConversion: !Self.anotherInstanceIsRunning())
         do {
             dbPool = try Self.openAndMigrate(path: path, key: key, scheme: scheme)
+            allowsWrites = scheme.allowsWrites
+            if !allowsWrites {
+                NSLog("MishMail: mail cache still plaintext; opened read-only, sync paused")
+            }
         } catch where !Self.isTransientOpenError(error) {
             // The cache can't be opened — wrong key (keychain item lost or
             // rotated, e.g. a backup restore) or a corrupt file. Everything in
@@ -690,6 +706,7 @@ final class AppDatabase: @unchecked Sendable {
             NSLog("MishMail: mail cache unreadable (%@); resetting", "\(error)")
             try Self.setAsideUnreadable(path: path)
             dbPool = try Self.openAndMigrate(path: path, key: key, scheme: .raw)
+            allowsWrites = true
         }
     }
 
@@ -765,11 +782,18 @@ final class AppDatabase: @unchecked Sendable {
     /// is 16× the default and keeps the worst case under 200 MB.
     static let pageCacheKiB = 32_768
 
+    /// Opens the pool the app runs on. For `.plaintext` (encryption deferred)
+    /// the pool is read-only and migrations are skipped: they would write,
+    /// and the unencrypted file must not change until it is encrypted.
+    /// Visible to the hostless tests, which open fixtures through it.
     static func openAndMigrate(
         path: String, key: String, scheme: KeyScheme
     ) throws -> DatabasePool {
         let keyString = scheme.keyString(for: key)
         var config = Configuration()
+        // Fail closed (F-02): enforced by SQLite on every connection, so no
+        // caller can write plaintext mail by forgetting to check a flag.
+        config.readonly = !scheme.allowsWrites
         config.prepareDatabase { db in
             if let keyString {
                 try db.usePassphrase(keyString)
@@ -793,7 +817,9 @@ final class AppDatabase: @unchecked Sendable {
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
         }
         let pool = try DatabasePool(path: path, configuration: config)
-        try migrator.migrate(pool)
+        if scheme.allowsWrites {
+            try migrator.migrate(pool)
+        }
         return pool
     }
 
@@ -829,7 +855,7 @@ final class AppDatabase: @unchecked Sendable {
     /// task once the app is up (`MailStore.runDeferredStartupWork`).
     func reclaimSpaceIfNeeded() {
         closeLock.lock()
-        let blocked = phase != .open
+        let blocked = phase != .open || !allowsWrites
         closeLock.unlock()
         guard !blocked else { return }
         do {
@@ -870,7 +896,7 @@ final class AppDatabase: @unchecked Sendable {
     /// it needs no timer of its own.
     func checkpointIfNeeded() {
         closeLock.lock()
-        let blocked = phase != .open
+        let blocked = phase != .open || !allowsWrites
         closeLock.unlock()
         guard !blocked else { return }
         guard walSizeBytes >= Self.checkpointThresholdBytes else { return }
@@ -917,6 +943,8 @@ final class AppDatabase: @unchecked Sendable {
         let current = phase
         closeLock.unlock()
         guard current != .closed, force || current == .open else { return }
+        // A read-only (still plaintext) cache has nothing to checkpoint.
+        guard allowsWrites else { return }
         do {
             try dbPool.writeWithoutTransaction { db in
                 // Order matters: `incremental_vacuum` is itself a write, so
@@ -999,7 +1027,12 @@ final class AppDatabase: @unchecked Sendable {
         case raw
         case passphrase
         /// Pre-encryption file whose conversion was deferred this launch.
+        /// Opened read-only (see `allowsWrites`), never written.
         case plaintext
+
+        /// Whether a pool opened with this scheme may write. Only encrypted
+        /// files are writable: new mail never lands in a plaintext file.
+        var allowsWrites: Bool { self != .plaintext }
 
         /// The string handed to `sqlite3_key` (via GRDB's `usePassphrase`),
         /// or nil for an unencrypted file.
@@ -1050,6 +1083,9 @@ final class AppDatabase: @unchecked Sendable {
     ///
     /// - Missing file: nothing to do; SQLite creates it raw-keyed on open.
     /// - Plaintext (pre-encryption builds): encrypted straight to raw key.
+    ///   If that is busy, or `allowConversion` is false, the file is left
+    ///   untouched and `.plaintext` comes back, which `openAndMigrate` opens
+    ///   read-only; the next launch retries.
     /// - Raw-keyed already: one probe, no KDF — the steady state.
     /// - Passphrase-keyed: converted once (see `convertPassphraseToRawKey`).
     ///   If that fails, or `allowConversion` is false (another instance holds

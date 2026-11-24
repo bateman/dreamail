@@ -153,6 +153,13 @@ final class DatabaseFailClosedTests: XCTestCase {
         try assertEncryptedAndIntact(expectedRows: 20)
     }
 
+    func testOnlyEncryptedSchemesAllowWrites() {
+        XCTAssertTrue(AppDatabase.KeyScheme.raw.allowsWrites)
+        XCTAssertTrue(AppDatabase.KeyScheme.passphrase.allowsWrites)
+        XCTAssertFalse(AppDatabase.KeyScheme.plaintext.allowsWrites)
+        XCTAssertNil(AppDatabase.KeyScheme.plaintext.keyString(for: key))
+    }
+
     /// Fail-closed must not touch encrypted files: both keyed schemes still
     /// open writable and migrated.
     func testEncryptedSchemesStayWritable() throws {

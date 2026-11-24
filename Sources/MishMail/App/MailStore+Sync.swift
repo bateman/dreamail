@@ -159,6 +159,12 @@ extension MailStore {
             return
         }
         guard !isShuttingDown else { return }
+        // Read-only plaintext cache (F-02): every fetched row would be
+        // refused, and offline queues could not record what they sent.
+        guard AppDatabase.shared.allowsWrites else {
+            if interactive { lastError = AppDatabase.encryptionPendingMessage }
+            return
+        }
         // Covers every exit below, including the no-accounts and early-out
         // paths — all of them count as "we just looked".
         defer { lastSyncAttemptedAt = Date() }
@@ -285,6 +291,7 @@ extension MailStore {
         // A follow-up sync (after a send or failed edit) must not restart a
         // pass for an account that is being removed.
         guard !isShuttingDown, isKnownAccount(accountId) else { return }
+        guard AppDatabase.shared.allowsWrites else { return }
         let engine = engines[accountId] ?? SyncEngine(accountId: accountId)
         engines[accountId] = engine
 

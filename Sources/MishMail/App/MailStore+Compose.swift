@@ -430,7 +430,10 @@ extension MailStore {
     /// Every attempt, including a retry after an ambiguous 5xx or timeout,
     /// first asks Gmail whether the stable Message-ID already arrived.
     func fireDueScheduledSends() async {
-        guard !demoMode, !isShuttingDown, !scheduledSendFlushInFlight else { return }
+        // Read-only plaintext cache (F-02): a sent row could not be removed,
+        // so the next tick would send the same message again.
+        guard !demoMode, !isShuttingDown, !scheduledSendFlushInFlight,
+              AppDatabase.shared.allowsWrites else { return }
         scheduledSendFlushInFlight = true
         defer { scheduledSendFlushInFlight = false }
         let due = scheduledSends.filter { $0.sendAt <= Date() }
@@ -957,7 +960,10 @@ extension MailStore {
     /// connectivity failure. One Drafts-mailbox sync afterwards so the
     /// uploaded rows appear where the user expects them.
     func flushLocalDrafts() async {
-        guard !demoMode, !isShuttingDown, !localDraftFlushInFlight else { return }
+        // Read-only plaintext cache (F-02): an uploaded draft could not
+        // leave the Outbox, so the next flush would upload it again.
+        guard !demoMode, !isShuttingDown, !localDraftFlushInFlight,
+              AppDatabase.shared.allowsWrites else { return }
         localDraftFlushInFlight = true
         defer { localDraftFlushInFlight = false }
         let rows = (try? await db.read {
