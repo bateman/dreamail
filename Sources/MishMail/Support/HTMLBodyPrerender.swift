@@ -50,12 +50,16 @@ enum HTMLBodyNeighborPrerender {
     ///
     /// Remote images are always blocked for neighbor pre-render (see
     /// `HTMLBodyPrerenderPolicy`) so focus-past-a-row never fires tracking
-    /// pixels for mail the user never opened.
+    /// pixels for mail the user never opened. `opensWithRemoteImages` (the
+    /// caller's image decision for that message) skips a neighbour whose
+    /// open would use the allowed variant: its blocked paint could never be
+    /// claimed.
     static func schedule(
         openedThreadId: String,
         displayOrder: [String],
         fontScale: Double,
-        loadPayload: @escaping (String) async -> ThreadDetailPayload
+        loadPayload: @escaping (String) async -> ThreadDetailPayload,
+        opensWithRemoteImages: @escaping @MainActor (String, Message) -> Bool
     ) {
         generation &+= 1
         let gen = generation
@@ -83,6 +87,9 @@ enum HTMLBodyNeighborPrerender {
                 guard gen == generation, !Task.isCancelled else { return }
                 guard let message = ForwardComposer.newestSentMessage(
                     in: payload.messages) else { continue }
+                guard HTMLBodyPrerenderSelection.paintsNeighbor(
+                    opensWithRemoteImages: opensWithRemoteImages(threadId, message))
+                else { continue }
                 // A body whose `cid:` images were already resolved opens
                 // with the inlined HTML (content id suffixed ":cid"), so
                 // paint that one or the open could never claim this view.

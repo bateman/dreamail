@@ -728,6 +728,10 @@ struct ContentView: View {
                             onReply: { msg in
                                 store.openCompose(.init(replyTo: msg))
                             })
+                            // Fresh view state per conversation, as in the
+                            // main detail path: a "load images for this
+                            // conversation" opt-in must never carry over.
+                            .id(thread.id)
                             .modifier(ThreadDetailToolbar(
                                 thread: thread,
                                 compactMode: false,
@@ -1756,7 +1760,9 @@ private extension ContentView {
     /// selection cancels in-flight work so only the latest id opens.
     private func scheduleDetailSelection(_ id: String) {
         detailSelectionTask?.cancel()
-        let settle = DetailOpenPolicy.settleNanoseconds(isKeyRepeat: browseKeyIsRepeat)
+        let settle = DetailOpenPolicy.settleNanoseconds(
+            isKeyRepeat: browseKeyIsRepeat,
+            keyRepeatInterval: NSEvent.keyRepeatInterval)
         // Consume the repeat flag: every browse keypress re-arms it before
         // moveSelection, but a mouse click or programmatic selection after a
         // held-key burst must not inherit the burst's settle delay.

@@ -98,9 +98,10 @@ final class RemoteImagePolicyTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        // Fresh install: don't pin .ask into defaults so a future default change applies.
+        // Fresh install: don't pin a policy into defaults so the default
+        // (now .always) keeps applying.
         RemoteImagePolicy.migrateIfNeeded(defaults)
         XCTAssertNil(defaults.object(forKey: RemoteImagePolicy.defaultsKey))
-        XCTAssertEqual(RemoteImagePolicy.stored(defaults), .ask)
+        XCTAssertEqual(RemoteImagePolicy.stored(defaults), .always)
     }
 }

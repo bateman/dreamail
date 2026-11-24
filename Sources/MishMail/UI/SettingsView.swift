@@ -1087,9 +1087,9 @@ struct AppearanceSettings: View {
     @AppStorage("priorityMaxCount") private var priorityMaxCount = 10
     @AppStorage(ThreadOpenStyle.storageKey) private var threadOpenStyleRaw =
         ThreadOpenStyle.defaultStyle.rawValue
-    /// Default `.ask` preserves privacy (no open-tracking until opt-in).
+    /// Unset follows `RemoteImagePolicy.defaultPolicy`.
     @AppStorage(RemoteImagePolicy.defaultsKey) private var remoteImagePolicyRaw =
-        RemoteImagePolicy.ask.rawValue
+        RemoteImagePolicy.defaultPolicy.rawValue
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
     /// Comma-separated raw values of compose footer / format buttons the user hid.
     @AppStorage(ComposeToolbarVisibility.storageKey) private var composeToolbarHidden = ""
@@ -1202,8 +1202,8 @@ struct AppearanceSettings: View {
                 } header: {
                     Text("Remote images")
                 } footer: {
-                    Text((RemoteImagePolicy(rawValue: remoteImagePolicyRaw) ?? .ask).footer
-                         + " Cleartext image URLs stay blocked either way.")
+                    Text(RemoteImagePolicy.from(raw: remoteImagePolicyRaw).footer
+                         + " " + RemoteImagePolicy.alwaysBlockedNote)
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
