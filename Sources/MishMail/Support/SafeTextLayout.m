@@ -16,3 +16,6 @@ BOOL MMEnsureTextLayout(NSLayoutManager *layoutManager,
         return NO;
     }
 }
+
+// TEMPORARY (reverted): proves the CI warning gate fails on an ObjC warning.
+#warning "deliberate warning: ObjC warning gate probe"
