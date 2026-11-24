@@ -1,9 +1,18 @@
 # Releasing MishMail
 
-MishMail ships as a signed `.app` published to **GitHub Releases**
-(`ronboger/mishmail`). Running copies check that repo about once a day and
-surface an **Update app** button (sidebar + Settings → Updates) when a newer
-version exists. Cutting a release = building Release, zipping the app, and
+MishMail ships as a signed `.app` published to **GitHub Releases**.
+
+> **This fork (`bateman/mishmail`) has no release channel.** The in-app
+> updater reads its channel from the `MISHMAIL_UPDATE_CHANNEL` build setting
+> (`OWNER/REPO`), which `Config/Signing.xcconfig` leaves empty, so tracked
+> builds never check for, download, or install updates. Publishing releases
+> for this fork first needs its own channel, publisher identity, and
+> anti-rollback policy (decision DEC-009); until then this document describes
+> the upstream process for reference.
+
+A build whose `Config/Local.xcconfig` sets `MISHMAIL_UPDATE_CHANNEL` checks
+that repo about once a day and surfaces an **Update app** button (sidebar +
+Settings → Updates) when a newer version exists. Cutting a release = building Release, zipping the app, and
 creating a GitHub release tagged `v<version>`.
 
 There are three "apps" the Makefile can produce — don't confuse them:
@@ -19,9 +28,11 @@ everyone." This doc is about `make release`.
 
 ## Prerequisites (one-time)
 
-- **`gh` CLI authenticated** with push access to `ronboger/mishmail`:
+- **`gh` CLI authenticated** with push access to the release repository
+  (upstream: `ronboger/mishmail`), the same `OWNER/REPO` the shipped build's
+  `MISHMAIL_UPDATE_CHANNEL` names:
   ```sh
-  gh auth status        # expect: Logged in to github.com as ronboger
+  gh auth status
   ```
 - **`xcodegen`** installed (`brew install xcodegen`) — the Makefile regenerates
   the project from `project.yml` on every build.

@@ -9,10 +9,34 @@ import CryptoKit
 /// builds, then hands the verified bundle to `UpdateInstaller`, which swaps it
 /// over the running app and restarts. Verification failures open the release
 /// page; install failures fall back to revealing the app in Finder.
+///
+/// Inert unless the build configured an `UpdateChannel`. Without one (the
+/// tracked default) nothing here touches the network, schedules a check,
+/// downloads, or installs: see `UpdateChannel` for why there is no default.
 @MainActor
 final class UpdateChecker: ObservableObject {
-    static let shared = UpdateChecker()
-    static let repo = "ronboger/mishmail"
+    static let shared = UpdateChecker(
+        channel: UpdateChannel.configured(in: Bundle.main.infoDictionary))
+
+    /// Releases source, or `nil` when updates are disabled for this build.
+    let channel: UpdateChannel?
+    var isEnabled: Bool { channel != nil }
+
+    /// Fetches the latest-release metadata. Injected so tests can prove that a
+    /// build without a channel never makes the request at all.
+    typealias Fetch = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+    private let fetch: Fetch
+
+    init(channel: UpdateChannel?,
+         fetch: @escaping Fetch = { try await URLSession.shared.data(for: $0) }) {
+        self.channel = channel
+        self.fetch = fetch
+    }
+
+    /// What Settings and an explicit check say when no channel is configured.
+    static let disabledStatus =
+        "Automatic updates are disabled in this build: no release channel is configured. "
+        + "Update by building from source."
 
     struct Release {
         let version: String       // tag with any leading "v" stripped
@@ -46,6 +70,8 @@ final class UpdateChecker: ObservableObject {
     var hasOpenDraft: (() -> Bool)?
 
     private var timer: Timer?
+    /// Whether the hourly timer is armed. Never true without a channel.
+    var isCheckingPeriodically: Bool { timer != nil }
     private static let lastCheckKey = "updates.lastCheckAt"
 
     /// Quiet checks: always once at launch, then hourly ticks that re-check
@@ -57,6 +83,12 @@ final class UpdateChecker: ObservableObject {
     /// is rare and one request is cheap, so it always looks; the hourly tick
     /// exists for the opposite case, a mail app left open for days.
     func startPeriodicChecks() {
+        // No channel, no schedule: not even the launch check.
+        guard isEnabled else {
+            timer?.invalidate()
+            timer = nil
+            return
+        }
         // Off the main actor: it is a temp-directory scan, and nothing waits
         // for it. An install that died before its own cleanup ran leaves tens
         // of MB behind, and without this the app has to update again to
@@ -88,6 +120,11 @@ final class UpdateChecker: ObservableObject {
     }
 
     func check(quietly: Bool = false) async {
+        guard let channel else {
+            available = nil
+            if !quietly { status = Self.disabledStatus }
+            return
+        }
         if checking {
             // A click during the background check should report its outcome.
             if !quietly { activity = .checking(quietly: false) }
@@ -100,10 +137,9 @@ final class UpdateChecker: ObservableObject {
             lastChecked = Date()
         }
         do {
-            var req = URLRequest(
-                url: URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest")!)
+            var req = URLRequest(url: channel.latestReleaseURL)
             req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await fetch(req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             guard code == 200 else {
                 if code == 404 {
@@ -183,17 +219,25 @@ final class UpdateChecker: ObservableObject {
     }
 
     func openUpdate() {
+        // A release can only get here through `check`, which already refuses
+        // without a channel; this is the backstop in front of the download
+        // and the in-place swap.
+        guard isEnabled else {
+            available = nil
+            status = Self.disabledStatus
+            return
+        }
         guard let available else { return }
         Task { await installOrOpenReleasePage(available) }
     }
 
     func openReleasePage() {
-        guard let available else { return }
+        guard isEnabled, let available else { return }
         NSWorkspace.shared.open(available.htmlURL)
     }
 
     private func installOrOpenReleasePage(_ release: Release) async {
-        guard activity == .idle else { return }
+        guard isEnabled, activity == .idle else { return }
         guard let assetURL = release.assetURL else {
             NSWorkspace.shared.open(release.htmlURL)
             return

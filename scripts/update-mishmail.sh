@@ -1,33 +1,88 @@
 #!/bin/bash
-# Install the latest MishMail release over an existing one, from the terminal.
+# Install a newer MishMail release over an existing one, from the terminal.
 #
-#   scripts/update-mishmail.sh                    # update /Applications/MishMail.app
-#   scripts/update-mishmail.sh ~/Apps/MishMail.app # or wherever it lives
+#   scripts/update-mishmail.sh --repo OWNER/REPO                  # /Applications/MishMail.app
+#   scripts/update-mishmail.sh --repo OWNER/REPO ~/Apps/MishMail.app
+#   scripts/update-mishmail.sh --repo OWNER/REPO --allow-downgrade  # recovery only
 #
-# From 0.4.1 on the app updates itself (Settings → Updates → Install and
-# Relaunch), so this exists for two cases:
+# There is no default release channel. This fork publishes no binaries, and
+# pointing an install at a repository you did not choose would let whoever
+# controls it replace your app, so the repository must always be named.
 #
-#   1. Crossing *to* 0.4.1. Older builds tag every download as quarantined,
-#      and Gatekeeper refuses to launch a quarantined build that isn't
-#      notarized — which these, signed with a free Personal Team, never are.
-#      Updating through the old in-app flow therefore ends at a Finder drag
-#      and a trip through System Settings → "Open Anyway".
-#   2. Recovery, if an in-place update ever fails and leaves you clicking
-#      "Update" against something that won't install.
+# Only a strictly newer version is installed. The same or an older release is
+# refused, because every old release stays public and correctly signed: a
+# stale or malicious "latest" would otherwise roll the install back to a
+# vulnerable build. --allow-downgrade lifts that one check, for recovering an
+# install that a broken update left unusable.
 #
 # The checks mirror the in-app updater: SHA-256 against the published
-# SHA256SUMS, a full code-signature check, and Team ID continuity with the app
-# being replaced — a stranger's Developer ID can't take over your install even
-# if the GitHub account is compromised.
-
-set -euo pipefail
-
-REPO="ronboger/mishmail"
-TARGET="${1:-/Applications/MishMail.app}"
+# SHA256SUMS, a full code-signature check, Team ID continuity and the same
+# bundle identifier as the app being replaced, and the release version against
+# the bundle's own — a stranger's Developer ID can't take over your install
+# even if the release repository is compromised.
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 
-[ -d "$TARGET" ] || die "no app at $TARGET (pass its path as the first argument)"
+usage() {
+  printf 'usage: %s --repo OWNER/REPO [--allow-downgrade] [/path/to/MishMail.app]\n' "$0" >&2
+}
+
+# OWNER/REPO in GitHub's own alphabet, nothing else: no URL, no extra path.
+valid_repo() {
+  [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$ ]] \
+    && [[ "${1#*/}" != "." && "${1#*/}" != ".." ]]
+}
+
+# Exit 0 when $1 is strictly newer than $2, comparing dotted numbers
+# (0.10.0 > 0.9.0; 0.7 == 0.7.0). Both must be digits and dots only: a
+# suffixed tag ("0.8.0-beta.1") or an unreadable installed version ("?") is
+# never "newer", so the caller refuses rather than guesses.
+version_is_newer() {
+  local candidate="$1" current="$2"
+  [[ "$candidate" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+  [[ "$current" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+  local -a a b
+  IFS=. read -r -a a <<<"$candidate"
+  IFS=. read -r -a b <<<"$current"
+  local n=$(( ${#a[@]} > ${#b[@]} ? ${#a[@]} : ${#b[@]} ))
+  local i x y
+  for (( i = 0; i < n; i++ )); do
+    # 10# forces base ten: a component like "08" is not octal.
+    x=$(( 10#${a[i]:-0} ))
+    y=$(( 10#${b[i]:-0} ))
+    (( x > y )) && return 0
+    (( x < y )) && return 1
+  done
+  return 1
+}
+
+main() {
+set -euo pipefail
+
+REPO=""
+ALLOW_DOWNGRADE=0
+TARGET=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)
+      [ $# -ge 2 ] || { usage; die "--repo needs OWNER/REPO"; }
+      REPO="$2"; shift 2 ;;
+    --repo=*) REPO="${1#--repo=}"; shift ;;
+    --allow-downgrade) ALLOW_DOWNGRADE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -*) usage; die "unknown option $1" ;;
+    *)
+      [ -z "$TARGET" ] || { usage; die "more than one app path given"; }
+      TARGET="$1"; shift ;;
+  esac
+done
+TARGET="${TARGET:-/Applications/MishMail.app}"
+
+# Before anything else, and above all before any network request.
+[ -n "$REPO" ] || { usage; die "no release repository given: pass --repo OWNER/REPO (there is no default channel)"; }
+valid_repo "$REPO" || die "--repo must be OWNER/REPO, got '$REPO'"
+
+[ -d "$TARGET" ] || die "no app at $TARGET (pass its path as the last argument)"
 
 # Team ID of the install we're replacing. Empty means ad-hoc: those builds
 # come from source, and `make install` is the way to update them.
@@ -65,11 +120,20 @@ version_of() {
 }
 VERSION="${TAG#v}"
 CURRENT="$(version_of "$TARGET" || echo '?')"
-if [ "$VERSION" = "$CURRENT" ]; then
-  printf 'Already on %s.\n' "$CURRENT"
-  exit 0
+# Decided on the tag first so nothing is downloaded for a release that would
+# be refused; re-checked below against the signed bundle's own version.
+if ! version_is_newer "$VERSION" "$CURRENT"; then
+  if [ "$ALLOW_DOWNGRADE" -eq 1 ]; then
+    printf 'warning: %s is not newer than the installed %s; continuing because of --allow-downgrade\n' \
+      "$VERSION" "$CURRENT" >&2
+  elif [ "$VERSION" = "$CURRENT" ]; then
+    printf 'Already on %s.\n' "$CURRENT"
+    exit 0
+  else
+    die "refusing to install $VERSION over $CURRENT: not a newer version (pass --allow-downgrade to recover an install)"
+  fi
 fi
-printf 'Updating MishMail %s → %s\n' "$CURRENT" "$VERSION"
+printf 'Updating MishMail %s → %s from %s\n' "$CURRENT" "$VERSION" "$REPO"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -102,6 +166,18 @@ NEW_VERSION="$(version_of "$NEW_APP")"
 # republished under a higher tag to roll the install backwards.
 [ "$NEW_VERSION" = "$VERSION" ] \
   || die "release $VERSION contains MishMail $NEW_VERSION"
+# The authenticated comparison: this version is sealed by the signature.
+if [ "$ALLOW_DOWNGRADE" -ne 1 ] && ! version_is_newer "$NEW_VERSION" "$CURRENT"; then
+  die "refusing to install $NEW_VERSION over $CURRENT: not a newer version"
+fi
+
+bundle_id_of() {
+  plutil -extract CFBundleIdentifier raw -o - "$1/Contents/Info.plist" 2>/dev/null
+}
+INSTALLED_ID="$(bundle_id_of "$TARGET" || true)"
+NEW_ID="$(bundle_id_of "$NEW_APP" || true)"
+[ -n "$INSTALLED_ID" ] && [ "$NEW_ID" = "$INSTALLED_ID" ] \
+  || die "bundle identifier mismatch (installed ${INSTALLED_ID:-unknown}, download ${NEW_ID:-unknown})"
 
 # Every item, not just the bundle root: ditto stamps the attribute onto
 # everything it extracts, and the embedded relauncher is an app bundle in its
@@ -128,3 +204,9 @@ fi
 
 printf 'Installed MishMail %s. Launching…\n' "$VERSION"
 open "$TARGET"
+}
+
+# Sourcing the file (the unit tests do) defines the helpers without running.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

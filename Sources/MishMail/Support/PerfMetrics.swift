@@ -8,11 +8,11 @@ import os
 ///
 /// ### Enable console logs
 /// - Env: `MISHMAIL_PERF=1` (e.g. `PERF=1 make run DEMO=0`)
-/// - Or: `defaults write dev.ronboger.MishMail.debug perf.metrics.enabled -bool YES`
+/// - Or: `defaults write io.github.bateman.MishMail.debug perf.metrics.enabled -bool YES`
 ///
 /// ### Instruments
 /// Profile the Debug app → Time Profiler or Points of Interest.
-/// Filter subsystem `dev.ronboger.MishMail.perf`.
+/// Filter subsystem `io.github.bateman.MishMail.perf`.
 ///
 /// ### What the events mean (decision map)
 /// | Event | If slow… |
@@ -33,7 +33,7 @@ import os
 /// | `sync.fetchAll` | Full backfill pass wall time |
 /// | `sync.blocklist` | applyBlocklist scan |
 enum PerfMetrics {
-    static let subsystem = "dev.ronboger.MishMail.perf"
+    static let subsystem = "io.github.bateman.MishMail.perf"
 
     private static let logger = Logger(subsystem: subsystem, category: "timing")
     private static let signposter = OSSignposter(

@@ -24,4 +24,12 @@
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = -
 
+// In-app update channel (GitHub OWNER/REPO), expanded into Info.plist as
+// MishMailUpdateChannel. Deliberately empty: with no channel the updater is
+// inert — no checks, no releases API request, no download, no in-place
+// install — so a local ad-hoc build is never replaced by someone else's
+// release. Set it in Local.xcconfig only for a channel you publish and sign
+// yourself, e.g.  MISHMAIL_UPDATE_CHANNEL = owner/repo
+MISHMAIL_UPDATE_CHANNEL =
+
 #include? "Local.xcconfig"

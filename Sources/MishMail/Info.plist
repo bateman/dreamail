@@ -29,5 +29,10 @@
 			</array>
 		</dict>
 	</array>
+	<!-- In-app update channel (OWNER/REPO). Empty unless the build sets
+	     MISHMAIL_UPDATE_CHANNEL (see Config/Signing.xcconfig); empty means the
+	     updater is disabled. -->
+	<key>MishMailUpdateChannel</key>
+	<string>$(MISHMAIL_UPDATE_CHANNEL)</string>
 </dict>
 </plist>

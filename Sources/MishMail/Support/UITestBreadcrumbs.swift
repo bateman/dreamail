@@ -10,7 +10,7 @@ import AppKit
 /// pasteboards cross that boundary. Inert outside `MISHMAIL_UI_TEST=1`.
 enum UITestBreadcrumbs {
     static let pasteboardName = NSPasteboard.Name(
-        "dev.ronboger.mishmail.uitest.breadcrumbs")
+        "io.github.bateman.mishmail.uitest.breadcrumbs")
 
     private static let enabled =
         ProcessInfo.processInfo.environment["MISHMAIL_UI_TEST"] == "1"

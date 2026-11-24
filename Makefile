@@ -3,7 +3,7 @@
 # Two apps come out of this project, and they are deliberately kept separate:
 #
 #   TESTING → `make run`      builds Debug and launches it. Shows up as
-#                             "MishMail Debug" (dev.ronboger.MishMail.debug)
+#                             "MishMail Debug" (io.github.bateman.MishMail.debug)
 #                             with its own isolated data — throwaway, can't touch
 #                             the real app. This is what you build to eyeball a change.
 #   REAL    → `make install`  builds Release and installs "MishMail" into
@@ -16,7 +16,8 @@
 #                  Locally it refuses unless UI_TEST_LOCAL=1.
 #   make build     just compile the test (Debug) app; don't launch it.
 #   make release   build Release, zip the app, publish a GitHub release
-#                  (the in-app update checker looks at these releases).
+#                  (only builds with MISHMAIL_UPDATE_CHANNEL set look at them;
+#                  the tracked configuration leaves it empty).
 #
 # All build output lands in ./build/dd.noindex (git-ignored). The `.noindex`
 # suffix is the one mechanism macOS reliably honors: Spotlight skips any path
@@ -199,7 +200,7 @@ ui-test: gen
 	-pkill -f "MishMail Debug" 2>/dev/null || true
 	# The throwaway Debug app persists window frames / prefs between runs;
 	# the smoke test asserts default-launch geometry, so start clean.
-	-defaults delete dev.ronboger.MishMail.debug 2>/dev/null || true
+	-defaults delete io.github.bateman.MishMail.debug 2>/dev/null || true
 	xcodebuild test -project $(PROJECT) -scheme MishMailUITests \
 		-destination '$(DESTINATION)' -derivedDataPath $(DD)
 
@@ -214,7 +215,7 @@ build: gen
 # real-account Debug app for testing sign-in/sync.
 DEMO ?= 1
 # Perf harness console logs: PERF=1 make run DEMO=0
-# (signposts always emit; Console.app subsystem dev.ronboger.MishMail.perf)
+# (signposts always emit; Console.app subsystem io.github.bateman.MishMail.perf)
 PERF ?= 0
 # Check signing before the build so a refusal doesn't cost a full compile.
 require-run-signing:
@@ -362,7 +363,7 @@ release: require-pushed test ui-test-ci
 		$(SHIP_DIR)/$(ZIP_NAME) \
 		$(SHIP_DIR)/SHA256SUMS \
 		--title "MishMail $(VERSION)" --generate-notes
-	@echo "Released v$(VERSION) with SHA256SUMS — running apps will offer the update within a day."
+	@echo "Released v$(VERSION) with SHA256SUMS — apps built with MISHMAIL_UPDATE_CHANNEL set to this repo will offer it within a day."
 
 # Reclaim all build output — the local ./build tree plus any stray per-project
 # DerivedData caches Xcode may have left in ~/Library.

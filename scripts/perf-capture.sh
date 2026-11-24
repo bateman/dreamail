@@ -9,8 +9,8 @@
 MINUTES="${1:-10}"
 
 log show --last "${MINUTES}m" --info \
-  --predicate 'subsystem == "dev.ronboger.MishMail.perf"' \
+  --predicate 'subsystem == "io.github.bateman.MishMail.perf"' \
   --style compact 2>/dev/null \
-  | sed 's/.*\[dev\.ronboger\.MishMail\.perf:timing\] //' \
+  | sed 's/.*\[io\.github\.bateman\.MishMail\.perf:timing\] //' \
   | grep -E '^(open\.|nav\.|action\.|selection\.|reload\.total|list\.group)' \
   || echo "no perf events found — was the app launched with PERF=1 ?"

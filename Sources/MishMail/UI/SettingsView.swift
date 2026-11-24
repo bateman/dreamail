@@ -233,8 +233,35 @@ struct UpdatesSettings: View {
     @ObservedObject private var updates = UpdateChecker.shared
 
     var body: some View {
+        if let channel = updates.channel {
+            enabledBody(channel)
+        } else {
+            disabledBody
+        }
+    }
+
+    /// No release channel configured (the tracked default): say so, and offer
+    /// nothing that would check, download, or install.
+    private var disabledBody: some View {
+        PaneScaffold(title: "Updates", subtitle: "Automatic updates are disabled") {
+            Form {
+                Section {
+                    LabeledContent("Current version", value: updates.currentVersion)
+                    Text(UpdateChecker.disabledStatus)
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("updatesDisabledNotice")
+                } footer: {
+                    Text("This build has no release channel, so MishMail never contacts a releases server and never replaces itself. A channel is set at build time with MISHMAIL_UPDATE_CHANNEL (owner/repo) in Config/Local.xcconfig.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+        }
+    }
+
+    private func enabledBody(_ channel: UpdateChannel) -> some View {
         PaneScaffold(title: "Updates",
-                     subtitle: "Releases are published on GitHub (\(UpdateChecker.repo))") {
+                     subtitle: "Releases are published on GitHub (\(channel.slug))") {
             Form {
                 Section {
                     LabeledContent("Current version", value: updates.currentVersion)
