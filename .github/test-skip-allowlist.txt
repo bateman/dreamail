@@ -1,0 +1,12 @@
+# Tests allowed to skip in CI (read by .github/scripts/check-test-skips.py).
+# One `Class.testMethod` per line, each with the reason its skip depends on
+# the runner rather than on the code. Every other skip fails the job: in
+# particular the signature, updater and relauncher tests that need the
+# built app must always run (the unit job builds the app first for them).
+
+# Both use publishedHeights(for:), which skips when an offscreen WKWebView
+# sends no height report within 1.5 s (HTMLBodyHeightLoopTests.swift:71).
+# That depends on the runner's WebKit timing: main's CI on 2026-11-23
+# skipped the second and ran the first.
+HTMLBodyHeightLoopTests.testViewportSizedMailSettlesInOneHeight
+HTMLBodyHeightLoopTests.testViewportLengthsArePinnedNotCollapsed
