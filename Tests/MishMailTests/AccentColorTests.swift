@@ -123,7 +123,8 @@ final class AccentColorTests: XCTestCase {
         let shown = AccentPalette.defaultAccent(.light)
         let echo = NSColor(srgbRed: shown.r, green: shown.g, blue: shown.b, alpha: 1)
         XCTAssertNil(PickedColor.pickedHex(echo, shown: shown.hexString))
-        XCTAssertNil(PickedColor.pickedHex(Color(shown), shown: shown.hexString))
+        XCTAssertNil(PickedColor.pickedHex(Color(.sRGB, red: shown.r, green: shown.g, blue: shown.b),
+                                           shown: shown.hexString))
         // A real pick is returned normalized.
         XCTAssertEqual(PickedColor.pickedHex(NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1),
                                              shown: shown.hexString), "#ff0000")
