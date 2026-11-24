@@ -83,6 +83,37 @@ final class AccountRemovalResidueTests: XCTestCase {
         }
     }
 
+    // MARK: - Cached remote images
+
+    func testRemovalDeletesOnlyThatAccountsCachedRemoteImages() throws {
+        let q = try makeDB()
+        try q.write { db in
+            for account in ["a@x.com", "b@x.com"] {
+                try self.insertAccount(db, account)
+                let id = "\(account):m1"
+                let url = "https://img.example.com/logo.png"
+                _ = try SyncEngine.upsertPending(db, items: [.init(
+                    message: Message(
+                        id: id, accountId: account, gmailId: "m1", threadId: "\(account):t1",
+                        fromHeader: "A <a@y.com>", toHeader: account, ccHeader: "",
+                        subject: "s", date: Date(), snippet: "", bodyText: "",
+                        bodyHTML: "<img src=\"\(url)\">",
+                        messageIdHeader: "", referencesHeader: "", labelIds: "INBOX",
+                        isUnread: false, hasAttachment: false),
+                    attachments: [])])
+                XCTAssertEqual(try RemoteImageCache.store(db, .init(
+                    messageId: id, accountId: account,
+                    images: [.init(urlKey: RemoteImageHTML.urlKey(url), mimeType: "image/png",
+                                   data: Data([0x89, 0x50]))]), now: Date()), 1)
+            }
+            try AccountLifecycle.purgeAccount(db, id: "a@x.com")
+        }
+        try q.read { db in
+            XCTAssertEqual(try String.fetchAll(db, sql: "SELECT accountId FROM remoteImage"),
+                           ["b@x.com"])
+        }
+    }
+
     // MARK: - Ask Mish chats
 
     func testRemovalDeletesOnlyChatsThatDrewOnTheAccount() throws {
