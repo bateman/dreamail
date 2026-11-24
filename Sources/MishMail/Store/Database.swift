@@ -693,10 +693,17 @@ final class AppDatabase: @unchecked Sendable {
                       allowConversion: !AppDatabase.anotherInstanceIsRunning())
     }
 
+    /// How long after a committed row deletion the log is scrubbed (see
+    /// `scheduleScrub`).
+    private let scrubDelay: TimeInterval
+    static let defaultScrubDelay: TimeInterval = 5
+
     /// Opens the cache at `path`. Visible to the hostless tests, which
     /// drive it with fixture files and keys instead of the Keychain.
-    init(path: String, key: String, allowConversion: Bool) throws {
+    init(path: String, key: String, allowConversion: Bool,
+         scrubDelay: TimeInterval = AppDatabase.defaultScrubDelay) throws {
         self.path = path
+        self.scrubDelay = scrubDelay
         // Runs on the main thread at launch (`AppDatabase.shared`), before
         // the pool opens and before migrations. Usually one cheap probe; the
         // one-time plaintext or passphrase→raw-key conversion copies the whole
@@ -816,11 +823,26 @@ final class AppDatabase: @unchecked Sendable {
     static func openAndMigrate(
         path: String, key: String, scheme: KeyScheme
     ) throws -> DatabasePool {
-        let keyString = scheme.keyString(for: key)
+        let config = connectionConfiguration(
+            keyString: scheme.keyString(for: key),
+            // Fail closed (F-02): enforced by SQLite on every connection, so
+            // no caller can write plaintext mail by forgetting to check a flag.
+            readonly: !scheme.allowsWrites)
+        let pool = try DatabasePool(path: path, configuration: config)
+        if scheme.allowsWrites {
+            try migrator.migrate(pool)
+        }
+        return pool
+    }
+
+    /// The configuration of every connection the app's pool opens, writer
+    /// and readers alike: `prepareDatabase` runs on each new connection, so
+    /// a per-connection setting made here cannot be forgotten on one.
+    /// Visible to the hostless tests, which open unkeyed files with exactly
+    /// this configuration to inspect what reaches the disk.
+    static func connectionConfiguration(keyString: String?, readonly: Bool) -> Configuration {
         var config = Configuration()
-        // Fail closed (F-02): enforced by SQLite on every connection, so no
-        // caller can write plaintext mail by forgetting to check a flag.
-        config.readonly = !scheme.allowsWrites
+        config.readonly = readonly
         config.prepareDatabase { db in
             if let keyString {
                 try db.usePassphrase(keyString)
@@ -843,11 +865,7 @@ final class AppDatabase: @unchecked Sendable {
             // those rows and the next pass re-fetches them from Gmail.
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
         }
-        let pool = try DatabasePool(path: path, configuration: config)
-        if scheme.allowsWrites {
-            try migrator.migrate(pool)
-        }
-        return pool
+        return config
     }
 
     // MARK: - WAL and file health
@@ -957,9 +975,14 @@ final class AppDatabase: @unchecked Sendable {
     /// `TRUNCATE` blocks until it can checkpoint everything, so this is only
     /// called when nothing else should be running: at idle and on the way out.
     ///
-    /// - Parameter force: Allow the final checkpoint during shutdown, after
-    ///   the tracked tasks finish and before the pool closes.
-    func checkpoint(force: Bool = false) {
+    /// - Parameters:
+    ///   - force: Allow the final checkpoint during shutdown, after the
+    ///     tracked tasks finish and before the pool closes.
+    ///   - reclaimAllFreePages: Free every page on the freelist instead of
+    ///     the usual bounded batch (account removal).
+    /// - Returns: True when the log was checkpointed in full and truncated.
+    @discardableResult
+    func checkpoint(force: Bool = false, reclaimAllFreePages: Bool = false) -> Bool {
         // Check-then-act deliberately releases closeLock before the write.
         // Holding closeLock across the write would deadlock against
         // interrupt(), which also acquires closeLock — a lock-holding
@@ -969,24 +992,47 @@ final class AppDatabase: @unchecked Sendable {
         closeLock.lock()
         let current = phase
         closeLock.unlock()
-        guard current != .closed, force || current == .open else { return }
+        guard current != .closed, force || current == .open else { return false }
         // A read-only (still plaintext) cache has nothing to checkpoint.
-        guard allowsWrites else { return }
+        guard allowsWrites else { return false }
         do {
-            try dbPool.writeWithoutTransaction { db in
-                // Order matters: `incremental_vacuum` is itself a write, so
-                // running it after the truncate would immediately re-grow the
-                // log we just emptied. Freeing first lets the checkpoint fold
-                // those pages in too, and the WAL ends at zero.
-                // Bounded per call so this never turns into a long stall.
-                try db.execute(sql: "PRAGMA incremental_vacuum(1000)")
-                try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+            return try dbPool.writeWithoutTransaction { db in
+                try Self.foldAndTruncateLog(
+                    db, freePageLimit: reclaimAllFreePages ? nil : Self.freePagesPerCheckpoint)
             }
         } catch {
             // A checkpoint that loses a race with a reader is normal and
             // harmless — the next idle pass gets it.
             NSLog("MishMail: wal checkpoint failed: %@", DiagnosticLog.describe(error))
+            return false
         }
+    }
+
+    /// Free pages released per routine checkpoint (4 MB at the default page
+    /// size), so an idle pass never turns into a long stall.
+    static let freePagesPerCheckpoint = 1000
+
+    /// The body of `checkpoint`, on a connection the caller already holds.
+    /// Visible to the hostless tests, which run it on unkeyed files.
+    ///
+    /// - Parameter freePageLimit: Pages to release from the freelist, or nil
+    ///   for all of them.
+    /// - Returns: True when every WAL frame reached the database file and the
+    ///   log was truncated to zero bytes. False when a reader still needed
+    ///   part of the log (SQLite reports that as a row, not an error).
+    static func foldAndTruncateLog(_ db: Database, freePageLimit: Int?) throws -> Bool {
+        // Order matters: `incremental_vacuum` is itself a write, so running
+        // it after the truncate would immediately re-grow the log we just
+        // emptied. Freeing first lets the checkpoint fold those pages in
+        // too, and the WAL ends at zero.
+        if let freePageLimit {
+            try db.execute(sql: "PRAGMA incremental_vacuum(\(freePageLimit))")
+        } else {
+            try db.execute(sql: "PRAGMA incremental_vacuum")
+        }
+        let result = try Row.fetchOne(db, sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        let busy: Int = result?[0] ?? 1
+        return busy == 0
     }
 
     /// Moves an unreadable database out of the way (kept as .unreadable for
