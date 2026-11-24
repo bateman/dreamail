@@ -169,19 +169,46 @@ final class SelectionAdvanceTests: XCTestCase {
     }
 
     func testSinglePressOpensWithNoSettle() {
-        // Live preview: a deliberate j/k or ↑/↓ opens immediately.
-        XCTAssertEqual(
-            DetailOpenPolicy.settleNanoseconds(isKeyRepeat: false), 0)
+        // Live preview: a deliberate j/k or ↑/↓ opens immediately, whatever
+        // the system repeat rate.
+        for interval in [0.0, 0.03, 0.083, 2.0] {
+            XCTAssertEqual(DetailOpenPolicy.settleNanoseconds(
+                isKeyRepeat: false, keyRepeatInterval: interval), 0)
+        }
         XCTAssertEqual(DetailOpenPolicy.singlePressSettleNanoseconds, 0)
     }
 
-    func testKeyRepeatSettleCoalescesHeldKeys() {
-        // System key-repeat is ~30–50 ms; settle must outlast a stretched
-        // main-thread gap so intermediate opens do not fire while holding ↓.
-        let settle = DetailOpenPolicy.settleNanoseconds(isKeyRepeat: true)
-        XCTAssertEqual(settle, DetailOpenPolicy.keyRepeatSettleNanoseconds)
-        XCTAssertGreaterThanOrEqual(settle, 30_000_000)
-        XCTAssertLessThanOrEqual(settle, 100_000_000)
+    func testKeyRepeatSettleOutlastsTheSystemRepeatInterval() {
+        // A held key opens only when it stops: the next repeat must always
+        // arrive (and cancel the pending open) before the settle expires,
+        // so rows merely passed over never load remote images.
+        for interval in [0.015, 0.03, 0.083, 0.25, 2.0] {
+            let settle = DetailOpenPolicy.settleNanoseconds(
+                isKeyRepeat: true, keyRepeatInterval: interval)
+            XCTAssertGreaterThan(settle, UInt64(interval * 1_000_000_000), "\(interval)")
+            XCTAssertGreaterThanOrEqual(settle, DetailOpenPolicy.keyRepeatSettleNanoseconds)
+        }
+        // Default macOS repeat (~83 ms) plus the margin.
+        XCTAssertEqual(
+            DetailOpenPolicy.settleNanoseconds(isKeyRepeat: true, keyRepeatInterval: 0.083),
+            83_000_000 + DetailOpenPolicy.keyRepeatMarginNanoseconds)
+        // Never below the old 50 ms floor.
+        XCTAssertEqual(
+            DetailOpenPolicy.settleNanoseconds(isKeyRepeat: true, keyRepeatInterval: 0),
+            DetailOpenPolicy.keyRepeatSettleNanoseconds)
+    }
+
+    func testKeyRepeatSettleIgnoresBogusIntervals() {
+        XCTAssertEqual(
+            DetailOpenPolicy.settleNanoseconds(isKeyRepeat: true, keyRepeatInterval: -1),
+            DetailOpenPolicy.keyRepeatSettleNanoseconds)
+        XCTAssertEqual(
+            DetailOpenPolicy.settleNanoseconds(isKeyRepeat: true, keyRepeatInterval: .nan),
+            DetailOpenPolicy.keyRepeatSettleNanoseconds)
+        // Capped: a huge preference cannot stall the pane for minutes.
+        XCTAssertEqual(
+            DetailOpenPolicy.settleNanoseconds(isKeyRepeat: true, keyRepeatInterval: 1e9),
+            10_000_000_000 + DetailOpenPolicy.keyRepeatMarginNanoseconds)
     }
 
     func testBrowseOpensWhenPaneIsVisibleAndAskMishIsClosed() {

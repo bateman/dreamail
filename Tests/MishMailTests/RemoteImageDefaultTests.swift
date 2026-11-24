@@ -50,9 +50,14 @@ final class RemoteImageDefaultTests: XCTestCase {
         XCTAssertEqual(RemoteImagePolicy.stored(defaults), .ask)
     }
 
-    func testUnknownRawValueFallsBackToDefault() {
+    func testUnknownStoredValueFailsClosedToAsk() {
         defaults.set("bogus", forKey: RemoteImagePolicy.defaultsKey)
-        XCTAssertEqual(RemoteImagePolicy.stored(defaults), RemoteImagePolicy.defaultPolicy)
+        XCTAssertEqual(RemoteImagePolicy.stored(defaults), .ask)
+        XCTAssertEqual(RemoteImagePolicy.from(raw: "bogus"), .ask)
+        XCTAssertEqual(RemoteImagePolicy.from(raw: ""), .ask)
+        XCTAssertEqual(RemoteImagePolicy.from(raw: "Always"), .ask, "case matters")
+        // Only a missing value follows the default.
+        XCTAssertEqual(RemoteImagePolicy.from(raw: nil), RemoteImagePolicy.defaultPolicy)
     }
 
     func testLegacyBoolMigrationKeepsItsMeaning() {
@@ -123,9 +128,57 @@ final class RemoteImageDefaultTests: XCTestCase {
             XCTAssertTrue(RemoteImagePolicy.allows(
                 policy: policy, senderEmail: "a@x.com", vipEmails: [],
                 messageOptIn: true, threadOptIn: false, inSpam: true), "\(policy)")
-            XCTAssertTrue(RemoteImagePolicy.allows(
+            // The conversation-wide opt-in leaves Spam messages blocked.
+            XCTAssertFalse(RemoteImagePolicy.allows(
                 policy: policy, senderEmail: "a@x.com", vipEmails: [],
                 messageOptIn: false, threadOptIn: true, inSpam: true), "\(policy)")
+        }
+    }
+
+    /// The card's whole decision, table-driven: policy × sender × VIP auth ×
+    /// message labels × thread Spam flag × per-message / per-thread opt-in.
+    func testCardDecisionTable() {
+        let vips: Set<String> = ["vip@x.com"]
+        struct Row {
+            let policy: RemoteImagePolicy
+            var from = "Someone <a@x.com>"
+            var labels = "INBOX"
+            var auth: Bool? = nil
+            var threadInSpam = false
+            var messageOptIn = false
+            var threadOptIn = false
+            let loads: Bool
+        }
+        let rows: [Row] = [
+            // Policy alone.
+            Row(policy: .always, loads: true),
+            Row(policy: .ask, loads: false),
+            Row(policy: .vip, loads: false),
+            Row(policy: .vip, from: "V <vip@x.com>", auth: true, loads: true),
+            Row(policy: .vip, from: "V <VIP@X.com>", auth: true, loads: true),
+            Row(policy: .vip, from: "V <vip@x.com>", auth: false, loads: false),
+            Row(policy: .vip, from: "V <vip@x.com>", auth: nil, loads: false),
+            // Spam from the message's labels, or from the thread flag that
+            // the optimistic "mark spam" writes before message labels sync.
+            Row(policy: .always, labels: "SPAM UNREAD", loads: false),
+            Row(policy: .always, threadInSpam: true, loads: false),
+            Row(policy: .vip, from: "V <vip@x.com>", labels: "SPAM", auth: true, loads: false),
+            Row(policy: .always, labels: "Label_SPAM", loads: true),
+            // Opt-ins.
+            Row(policy: .ask, messageOptIn: true, loads: true),
+            Row(policy: .ask, threadOptIn: true, loads: true),
+            Row(policy: .always, labels: "SPAM", messageOptIn: true, loads: true),
+            Row(policy: .always, threadInSpam: true, messageOptIn: true, loads: true),
+            // "This conversation" does not reach a Spam message.
+            Row(policy: .ask, labels: "SPAM", threadOptIn: true, loads: false),
+            Row(policy: .always, threadInSpam: true, threadOptIn: true, loads: false),
+        ]
+        for (i, row) in rows.enumerated() {
+            XCTAssertEqual(RemoteImagePolicy.autoLoads(
+                policy: row.policy, fromHeader: row.from, messageLabelIds: row.labels,
+                senderAuthenticated: row.auth, threadInSpam: row.threadInSpam,
+                vipEmails: vips, messageOptIn: row.messageOptIn,
+                threadOptIn: row.threadOptIn), row.loads, "row \(i)")
         }
     }
 
@@ -138,55 +191,54 @@ final class RemoteImageDefaultTests: XCTestCase {
             messageOptIn: false, threadOptIn: false, inSpam: true))
     }
 
-    /// The card passes the message's own Spam state into the decision.
-    func testMessageCardPassesSpamState() throws {
-        let text = try Self.repoFile("Sources/MishMail/UI/ThreadDetailView.swift")
-        XCTAssertTrue(text.contains("inSpam: RemoteImagePolicy.isSpam(labelIds: message.labelIds)"))
-    }
+    // MARK: - Pre-render
 
-    // MARK: - Pre-render and prefetch
-
-    func testPrerenderNeverAllowsRemoteImages() throws {
+    func testPrerenderNeverAllowsRemoteImages() {
         XCTAssertFalse(HTMLBodyPrerenderPolicy.allowRemoteImages)
-        // The pre-render (app-only file) keys and paints with the policy
-        // constant, never with the user's image policy.
-        let prerender = try Self.repoFile("Sources/MishMail/Support/HTMLBodyPrerender.swift")
-        XCTAssertTrue(prerender.contains(
-            "allowRemoteImages: HTMLBodyPrerenderPolicy.allowRemoteImages"))
-        XCTAssertFalse(prerender.contains("allowRemoteImages: true"))
-        XCTAssertFalse(prerender.contains("RemoteImagePolicy"))
     }
 
-    func testNeighborPrefetchDoesNotConsultImagePolicy() throws {
-        let store = try Self.repoFile("Sources/MishMail/App/MailStore.swift")
-        let start = try XCTUnwrap(store.range(of: "private func scheduleNeighborPrefetch("))
-        let body = String(store[start.lowerBound...].prefix(4000))
-        XCTAssertFalse(body.contains("RemoteImagePolicy"))
-        XCTAssertFalse(body.contains("allowRemoteImages: true"))
-    }
-
-    // MARK: - CSP pinned for both variants
-
-    func testCSPStringsAreUnchanged() {
-        XCTAssertEqual(
-            HTMLBodyCSP.metaTag(allowRemoteImages: false),
-            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
-            + "base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; "
-            + "img-src data: cid:; style-src 'unsafe-inline'\">")
-        XCTAssertEqual(
-            HTMLBodyCSP.metaTag(allowRemoteImages: true),
-            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
-            + "base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; "
-            + "img-src data: cid: https:; style-src 'unsafe-inline'\">")
+    /// A neighbour is painted only when its open would render the blocked
+    /// variant; otherwise the paint could never be claimed. Built from the
+    /// same decision as the card, with no opt-ins.
+    func testNeighborPrerenderSelection() {
+        let vips: Set<String> = ["vip@x.com"]
+        struct Row {
+            let policy: RemoteImagePolicy
+            var from = "a@x.com"
+            var labels = "INBOX"
+            var auth: Bool? = nil
+            var threadInSpam = false
+            let paints: Bool
+        }
+        let rows: [Row] = [
+            Row(policy: .always, paints: false),
+            Row(policy: .always, labels: "SPAM", paints: true),
+            Row(policy: .always, threadInSpam: true, paints: true),
+            Row(policy: .ask, paints: true),
+            Row(policy: .vip, from: "VIP <vip@x.com>", auth: true, paints: false),
+            Row(policy: .vip, from: "VIP <vip@x.com>", auth: nil, paints: true),
+            Row(policy: .vip, auth: true, paints: true),
+        ]
+        for (i, row) in rows.enumerated() {
+            let opens = RemoteImagePolicy.autoLoads(
+                policy: row.policy, fromHeader: row.from, messageLabelIds: row.labels,
+                senderAuthenticated: row.auth, threadInSpam: row.threadInSpam,
+                vipEmails: vips, messageOptIn: false, threadOptIn: false)
+            XCTAssertEqual(HTMLBodyPrerenderSelection.paintsNeighbor(
+                opensWithRemoteImages: opens), row.paints, "row \(i)")
+        }
     }
 
     // MARK: - Settings text
 
-    func testAlwaysFooterSaysSendersCanSeeOpens() {
+    func testAlwaysFooterStatesWhatTheSenderLearns() {
         let footer = RemoteImagePolicy.always.footer
         XCTAssertTrue(footer.contains("when you opened it"))
-        XCTAssertTrue(footer.contains("location"))
+        XCTAssertTrue(footer.contains("IP address"))
+        XCTAssertTrue(footer.contains("archive or delete"))
+        XCTAssertTrue(footer.contains("Ask each time"))
         XCTAssertTrue(RemoteImagePolicy.alwaysBlockedNote.contains("Spam"))
+        XCTAssertTrue(RemoteImagePolicy.alwaysBlockedNote.contains("not opened"))
     }
 
     // MARK: - Helpers
@@ -195,10 +247,6 @@ final class RemoteImageDefaultTests: XCTestCase {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-
-    static func repoFile(_ path: String) throws -> String {
-        try String(contentsOf: repoRoot.appendingPathComponent(path), encoding: .utf8)
-    }
 
     static func swiftFiles(under dir: URL) throws -> [URL] {
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(

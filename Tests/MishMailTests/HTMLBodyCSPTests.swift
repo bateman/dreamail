@@ -24,4 +24,19 @@ final class HTMLBodyCSPTests: XCTestCase {
         // Cleartext image loads stay banned even when remote images are on.
         XCTAssertFalse(allowed.contains(" http:"))
     }
+
+    /// Both variants pinned exactly: turning remote images on by default must
+    /// not change what either policy admits.
+    func testCSPStringsArePinned() {
+        XCTAssertEqual(
+            HTMLBodyCSP.metaTag(allowRemoteImages: false),
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+            + "base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; "
+            + "img-src data: cid:; style-src 'unsafe-inline'\">")
+        XCTAssertEqual(
+            HTMLBodyCSP.metaTag(allowRemoteImages: true),
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+            + "base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; "
+            + "img-src data: cid: https:; style-src 'unsafe-inline'\">")
+    }
 }

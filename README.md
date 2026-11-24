@@ -375,17 +375,22 @@ OAuth client and you want to keep the grant.
 - **Encrypted at rest** — the local mail cache is SQLCipher-encrypted with a
   256-bit key held only in the Keychain.
 - **HTML email is sandboxed** — rendered with JavaScript disabled, a strict CSP
-  (`default-src 'none'`, `base-uri 'none'`, no forms/frames/objects), remote
-  images over HTTPS only (no cleartext tracking pixels), an ephemeral web data
-  store, and a default-deny navigation policy so crafted mail can't redirect,
-  auto-submit forms, or reach the network. Links open in your default browser.
-- **Remote images** load by default when you open a message, so the sender's
-  servers can see when you opened it and your IP address. Settings →
-  Appearance → Load remote images can instead load them only for VIP senders
-  that pass Gmail's authentication checks, or ask each time (Load images per
-  message or per conversation). Whatever the setting, mail in Spam needs a
-  click, and conversations you have not opened (the neighbors MishMail
-  pre-renders for fast navigation) never load remote images.
+  (`default-src 'none'`, `base-uri 'none'`, no forms/frames/objects), an
+  ephemeral web data store, and a default-deny navigation policy, so crafted
+  mail cannot navigate the pane or submit forms. Its only network access is
+  fetching HTTPS images (never cleartext http), when remote images are allowed.
+  Links open in your default browser.
+- **Remote images load by default when a message is opened**: clicking it,
+  moving to it in the list while the reading pane is showing, or landing on it
+  after archive or delete. The sender's servers then learn when you opened it,
+  your IP address (approximate location and network), and details of the mail
+  client (macOS WebKit User-Agent, language). Exceptions under every setting:
+  mail in Spam needs its own click, and conversations you have not opened
+  (including the neighbors MishMail pre-renders for fast navigation) never load
+  remote images. To stop it, choose Settings → Appearance → Load remote images
+  → Ask each time (or VIP senders, which loads only for VIPs that pass Gmail's
+  authentication checks); Load images then works per message or per
+  conversation. Residual risks are listed in [SECURITY.md](SECURITY.md#remote-images).
 - **Attachments** written to disk are tagged with the quarantine attribute, so
   Gatekeeper's first-open checks still apply; opening app/script/installer-like
   filenames asks for confirmation first.

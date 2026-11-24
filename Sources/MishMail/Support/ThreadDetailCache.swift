@@ -80,7 +80,9 @@ private final class AllowedDocumentMemo: @unchecked Sendable {
 
 /// Pre-assembled HTML for (authored|full) × (blocked|allowed).
 ///
-/// Blocked CSP variants are built eagerly (Ask-policy default). Allowed
+/// Blocked CSP variants are built eagerly (Spam, Ask, non-VIP mail and
+/// neighbour pre-render use them; the default Always policy mostly does not
+/// — measured later, unchanged here). Allowed
 /// variants are assembled on first request and memoized, so the detail LRU
 /// does not retain four full copies of every body (~2 MB each) while a thread
 /// that does allow images still pays the assembly only once.
@@ -319,7 +321,9 @@ enum MessageHTMLPrepBuilder {
                                           htmlHead: String?,
                                           fontScale: Double) -> MessageHTMLDocuments {
         // Only blocked CSP variants are expanded eagerly. Allowed variants are
-        // produced on demand from the retained sources (common path is Ask).
+        // produced on demand from the retained sources. Under the default
+        // Always policy most opens want the allowed one; the blocked one
+        // still serves Spam, Ask, non-VIP mail and neighbour pre-render.
         let css = HTMLBodyDarkMode.injectedCSS(fontScale: fontScale)
         let cspBlocked = HTMLBodyCSP.metaTag(allowRemoteImages: false)
 

@@ -236,6 +236,13 @@ enum HTMLBodyPrerenderPolicy {
 
 /// Pure decision: which HTML fragment (if any) to pre-render for a neighbor.
 enum HTMLBodyPrerenderSelection {
+    /// Paint a neighbour only when its open renders the blocked variant
+    /// (`HTMLBodyPrerenderPolicy`): an open that loads remote images uses
+    /// another pool key, so the paint would be thrown away.
+    static func paintsNeighbor(opensWithRemoteImages: Bool) -> Bool {
+        HTMLBodyPrerenderPolicy.allowRemoteImages == opensWithRemoteImages
+    }
+
     struct Candidate: Equatable {
         let contentID: String
         let html: String

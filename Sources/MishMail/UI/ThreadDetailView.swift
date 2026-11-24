@@ -571,6 +571,7 @@ struct ThreadDetailView: View {
                         lastNonDraftId: lastNonDraftId)
                         ? paneViewportHeight : nil,
                     loadImagesForThread: $loadRemoteImagesForThread,
+                    threadInSpam: thread.inSpam,
                     onReply: { onReply(message) },
                     onBlockSender: { email in
                         blockTarget = BlockTarget(email: email, thread: nil)
@@ -1048,14 +1049,26 @@ struct ThreadDetailView: View {
             ? store.threads.map(\.id)
             : store.displayOrder
         let scale = fontScale
-        // Never load remote images for neighbor pre-render — focus-past is not
-        // an open, and VIP/always policy must not fire tracking pixels here.
+        // Pre-render paints the blocked variant only (no remote request for
+        // mail the user has not opened). A neighbour whose open would load
+        // images could never claim that view, so it is skipped rather than
+        // painted and thrown away. Same decision the card makes, minus the
+        // opt-ins (they reset per conversation).
+        let policy = RemoteImagePolicy.stored()
+        let vipEmails = store.vipEmails
         HTMLBodyNeighborPrerender.schedule(
             openedThreadId: thread.id,
             displayOrder: order,
             fontScale: scale,
             loadPayload: { [store] threadId in
                 await store.threadDetailPayload(threadId: threadId).payload
+            },
+            opensWithRemoteImages: { [store] threadId, message in
+                RemoteImagePolicy.autoLoads(
+                    message: message,
+                    threadInSpam: store.thread(withId: threadId)?.inSpam ?? false,
+                    policy: policy,
+                    vipEmails: vipEmails)
             })
     }
 
@@ -1604,6 +1617,9 @@ struct MessageCard: View {
     let fillsPaneHeight: CGFloat?
     /// Session-wide opt-in shared by every card in the open thread.
     @Binding var loadImagesForThread: Bool
+    /// The thread row's Spam flag: written optimistically when the user
+    /// marks spam, before this message's own labels catch up.
+    let threadInSpam: Bool
     let onReply: () -> Void
     /// Parent owns the confirmation dialog for sender blocking.
     let onBlockSender: (String) -> Void
@@ -1701,6 +1717,7 @@ struct MessageCard: View {
          isCollapsible: Bool = true,
          fillsPaneHeight: CGFloat? = nil,
          loadImagesForThread: Binding<Bool> = .constant(false),
+         threadInSpam: Bool = false,
          onReply: @escaping () -> Void,
          onBlockSender: @escaping (String) -> Void = { _ in },
          onNeedBody: @escaping () -> Void = {},
@@ -1718,6 +1735,7 @@ struct MessageCard: View {
         self.isCollapsible = isCollapsible
         self.fillsPaneHeight = fillsPaneHeight
         self._loadImagesForThread = loadImagesForThread
+        self.threadInSpam = threadInSpam
         self.onReply = onReply
         self.onBlockSender = onBlockSender
         self.onNeedBody = onNeedBody
@@ -1831,18 +1849,16 @@ struct MessageCard: View {
         RemoteImagePolicy.from(raw: remoteImagePolicyRaw)
     }
 
-    /// Policy + VIP list + per-message / per-thread opt-in. VIP auto-load is
-    /// gated on Gmail's auth verdict so a spoofed From: can't fire trackers;
-    /// mail in Spam never auto-loads.
+    /// The one pure decision (`RemoteImagePolicy.autoLoads`): policy, VIPs
+    /// and their auth verdict, Spam (message or thread), and the opt-ins.
     private var allowRemoteImages: Bool {
-        RemoteImagePolicy.allows(
+        RemoteImagePolicy.autoLoads(
+            message: message,
+            threadInSpam: threadInSpam,
             policy: remoteImagePolicy,
-            senderEmail: MessageParser.emailAddress(message.fromHeader),
             vipEmails: store.vipEmails,
             messageOptIn: loadRemoteImages,
-            threadOptIn: loadImagesForThread,
-            senderAuthenticated: message.senderAuth,
-            inSpam: RemoteImagePolicy.isSpam(labelIds: message.labelIds))
+            threadOptIn: loadImagesForThread)
     }
 
     var body: some View {
@@ -1900,7 +1916,7 @@ struct MessageCard: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .help("Remote images can track opens. Click for this message; menu for the whole conversation. The image policy is in Settings → Appearance; mail in Spam always needs a click.")
+                    .help("Remote images can track opens. Click for this message; menu for the whole conversation (Spam messages still need their own click). The image policy is in Settings → Appearance.")
                 }
                 if expanded {
                     Button {

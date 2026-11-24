@@ -3,7 +3,8 @@ import Foundation
 /// How remote images in HTML mail are allowed without a per-message click.
 ///
 /// Default is `.always` (`defaultPolicy`, the only place it is defined):
-/// HTTPS images load when the user opens a message. `.vip` is the middle
+/// HTTPS images load when the user opens a message. `autoLoads` is the one
+/// decision the message card and the neighbour pre-render both use. `.vip` is the middle
 /// ground — trusted senders get images automatically; everyone else needs
 /// Load images. `.ask` blocks every message until the user clicks.
 ///
@@ -22,11 +23,16 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
 
     /// The policy of an install that never chose one. Single definition:
     /// `stored`, `from(raw:)` and the `@AppStorage` fallbacks all read it.
+    /// (An `@AppStorage` fallback only applies while the key is absent, so
+    /// it agrees with `from(raw:)`.)
     static let defaultPolicy: RemoteImagePolicy = .always
 
-    /// Parses a stored raw value; an unknown value falls back to the default.
+    /// Parses a stored raw value. No value (never chose) follows the
+    /// default; a value that is present but unknown (a newer build's choice,
+    /// a corrupted plist) fails closed to `.ask`.
     static func from(raw: String?) -> RemoteImagePolicy {
-        raw.flatMap(RemoteImagePolicy.init(rawValue:)) ?? defaultPolicy
+        guard let raw else { return defaultPolicy }
+        return RemoteImagePolicy(rawValue: raw) ?? .ask
     }
 
     var title: String {
@@ -37,42 +43,93 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Policy-specific explanation. Settings appends the shared cleartext note.
+    /// Policy-specific explanation. Settings appends `alwaysBlockedNote`.
     var footer: String {
         switch self {
         case .ask:
-            return "No remote image loads until you click Load images on a message (or load all for the conversation). Senders can't see when you open their mail through images."
+            return "No remote image loads until you click Load images on a message, or load them for the whole conversation from its menu."
         case .vip:
             return "HTTPS images load automatically only from VIP senders that pass Gmail's authentication checks. Other messages need a click."
         case .always:
-            return "HTTPS images load when you open a message. The sender's servers can then see when you opened it and your IP address, which reveals your approximate location."
+            return "HTTPS images load when a message is opened: clicking it, moving to it in the list with the reading pane showing, or landing on it after archive or delete. The sender's servers then learn when you opened it, your IP address (approximate location and network), and details of your Mac's mail client (WebKit version, language). Choose Ask each time to stop this."
         }
     }
 
     /// Note shown under every policy: what stays blocked regardless.
     static let alwaysBlockedNote =
-        "Messages in Spam always need a click. Cleartext (http) image URLs stay blocked either way."
+        "Messages in Spam always need their own click, and conversations you have not opened never load remote images. Cleartext (http) image URLs stay blocked either way."
 
     /// Whether `labelIds` (space-separated Gmail label ids) put the message
     /// in Spam.
     static func isSpam(labelIds: String) -> Bool {
-        labelIds.split(whereSeparator: \.isWhitespace).contains { $0 == "SPAM" }
+        SyncEngine.labelIdsContain(labelIds, "SPAM")
+    }
+
+    /// The whole decision for one message card: may it fetch remote images
+    /// without a further click?
+    ///
+    /// Spam is the message's own `SPAM` label or the thread's `inSpam` flag.
+    /// The thread row is written optimistically when the user marks spam;
+    /// message rows keep their old labels until history sync, so the thread
+    /// flag closes that window.
+    static func autoLoads(
+        policy: RemoteImagePolicy,
+        fromHeader: String,
+        messageLabelIds: String,
+        senderAuthenticated: Bool?,
+        threadInSpam: Bool,
+        vipEmails: Set<String>,
+        messageOptIn: Bool,
+        threadOptIn: Bool
+    ) -> Bool {
+        allows(
+            policy: policy,
+            senderEmail: MessageParser.emailAddress(fromHeader),
+            vipEmails: vipEmails,
+            messageOptIn: messageOptIn,
+            threadOptIn: threadOptIn,
+            senderAuthenticated: senderAuthenticated,
+            inSpam: threadInSpam || isSpam(labelIds: messageLabelIds))
+    }
+
+    /// `autoLoads` for a stored message row.
+    static func autoLoads(
+        message: Message,
+        threadInSpam: Bool,
+        policy: RemoteImagePolicy,
+        vipEmails: Set<String>,
+        messageOptIn: Bool = false,
+        threadOptIn: Bool = false
+    ) -> Bool {
+        autoLoads(
+            policy: policy,
+            fromHeader: message.fromHeader,
+            messageLabelIds: message.labelIds,
+            senderAuthenticated: message.senderAuth,
+            threadInSpam: threadInSpam,
+            vipEmails: vipEmails,
+            messageOptIn: messageOptIn,
+            threadOptIn: threadOptIn)
     }
 
     /// Whether this message may fetch remote images without a further click.
     /// `messageOptIn` / `threadOptIn` are explicit UI loads for this session.
     ///
-    /// `inSpam` blocks auto-load under every policy (Gmail does the same):
-    /// spam is where tracking pixels and address-validation beacons live.
-    /// The explicit opt-ins still win, so Load images works there.
+    /// Order matters:
+    /// 1. The message's own Load images click always wins.
+    /// 2. `inSpam` blocks everything else under every policy (Gmail does the
+    ///    same): spam is where tracking pixels and address-validation beacons
+    ///    live. "Load images for this conversation" does not reach a Spam
+    ///    message; it needs its own click.
+    /// 3. The conversation-wide opt-in.
+    /// 4. The policy.
     ///
     /// `senderAuthenticated` is the verdict parsed from Gmail's own
     /// `Authentication-Results` header at ingest: the `From:` header itself
     /// is unauthenticated, so under `.vip` anything but an aligned DMARC pass
     /// blocks auto-load (a spoofed VIP address must not fire tracking pixels).
-    /// `nil` (rows synced before the verdict was stored — i.e. every existing
-    /// mailbox) also blocks: failing closed costs one explicit click per
-    /// message, and both per-message and per-thread opt-ins always win.
+    /// `nil` (rows synced before the verdict was stored) also blocks: failing
+    /// closed costs one explicit click per message.
     static func allows(
         policy: RemoteImagePolicy,
         senderEmail: String,
@@ -82,8 +139,9 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
         senderAuthenticated: Bool? = nil,
         inSpam: Bool = false
     ) -> Bool {
-        if messageOptIn || threadOptIn { return true }
+        if messageOptIn { return true }
         if inSpam { return false }
+        if threadOptIn { return true }
         switch policy {
         case .ask: return false
         case .always: return true
