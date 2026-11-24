@@ -6,6 +6,10 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Compact section breaks in the thread list.** Between "Last 7 days",
+  "Last 30 days", "Older" and the other sections there was an empty band about
+  two rows tall. The next header now follows the last row after a small gap,
+  scaled with the list's font size.
 - **Label colours you can read, as in Gmail.** Label pills are drawn in the
   label's Gmail colour as a solid fill, with Gmail's text colour when it is
   readable on it (4.5:1) and black or white otherwise. Very light labels get a
