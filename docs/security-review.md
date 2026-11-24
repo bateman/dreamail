@@ -57,6 +57,6 @@ The attachment cache path is predictable from Gmail/DB identifiers. If a file al
 - OAuth callback binds to `127.0.0.1`, uses high-entropy state/PKCE under normal RNG operation, validates state, limits request size, and times out.
 - OAuth refresh tokens, client secret, and database key are stored in a device-bound, non-synchronizing Keychain item.
 - The mail database is SQLCipher-encrypted with a random 256-bit Keychain-held key.
-- HTML email JavaScript is disabled; storage is ephemeral; CSP blocks scripts, forms, frames, objects, base URLs, and remote images by default; navigation is default-deny.
+- HTML email JavaScript is disabled; storage is ephemeral; CSP blocks scripts, forms, frames, objects, base URLs, and remote images by default; navigation is default-deny. *(Historical: since 2026-11 remote HTTPS images load by default when a message is opened; see the "Remote images" note in SECURITY.md.)*
 - Attachment names are reduced to basenames, risky executable extensions prompt the user, and downloaded files are normally quarantined.
 - Distribution updates require Team ID continuity, and Developer ID updates must be notarized.

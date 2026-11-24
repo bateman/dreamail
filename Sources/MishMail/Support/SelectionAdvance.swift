@@ -208,17 +208,29 @@ enum ThreadListNavigation {
 /// auto-advance), open immediately so the pane hands off to the neighbor in
 /// the same update instead of blanking and rebuilding after a settle.
 enum DetailOpenPolicy {
-    /// Held key-repeat quiet period before hydrating the reading pane.
-    /// Long enough that ~30–50 ms system key-repeat still coalesces to one
-    /// open; short enough that releasing still feels like live preview.
+    /// Minimum held key-repeat quiet period before hydrating the reading pane.
     static let keyRepeatSettleNanoseconds: UInt64 = 50_000_000  // 50 ms
+
+    /// Added to the system key-repeat interval so the next repeat always
+    /// lands (and cancels the pending open) before the settle expires.
+    static let keyRepeatMarginNanoseconds: UInt64 = 30_000_000  // 30 ms
 
     /// Deliberate single presses open with no artificial delay.
     static let singlePressSettleNanoseconds: UInt64 = 0
 
     /// Settle before `openDetail` for a keyboard browse step.
-    static func settleNanoseconds(isKeyRepeat: Bool) -> UInt64 {
-        isKeyRepeat ? keyRepeatSettleNanoseconds : singlePressSettleNanoseconds
+    ///
+    /// A held key opens a conversation only once the key stops: the settle
+    /// exceeds the system repeat interval (`NSEvent.keyRepeatInterval`), so
+    /// rows merely passed over never open and never fire remote image loads.
+    /// A single press stays immediate.
+    static func settleNanoseconds(isKeyRepeat: Bool,
+                                  keyRepeatInterval: TimeInterval) -> UInt64 {
+        guard isKeyRepeat else { return singlePressSettleNanoseconds }
+        let interval = keyRepeatInterval.isFinite
+            ? max(0, min(keyRepeatInterval, 10)) : 0
+        let repeatNanos = UInt64(interval * 1_000_000_000) + keyRepeatMarginNanoseconds
+        return max(keyRepeatSettleNanoseconds, repeatNanos)
     }
 
     static func opensImmediately(openedThreadId: String?,

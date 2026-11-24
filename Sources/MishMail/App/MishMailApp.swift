@@ -122,6 +122,13 @@ struct MishMailApp: App {
     @AppStorage("fontScale") private var fontScale = 1.0
     @AppStorage(AppTheme.storageKey) private var appThemeRaw = AppTheme.system.rawValue
 
+    init() {
+        // Before any window reads the policy: a legacy "don't load" choice
+        // must become an explicit `ask` before a card can fall back to the
+        // `.always` default.
+        RemoteImagePolicy.migrateIfNeeded()
+    }
+
     private var hasMessageSelection: Bool {
         store.selectedThread != nil || !store.checkedThreadIds.isEmpty
     }
@@ -145,7 +152,6 @@ struct MishMailApp: App {
                 .onAppear {
                     AppDelegate.store = store
                     AppTheme.apply(.from(raw: appThemeRaw))
-                    RemoteImagePolicy.migrateIfNeeded()
                     UpdateChecker.shared.prepareForQuit = { [weak store] in
                         await store?.prepareForTermination()
                     }

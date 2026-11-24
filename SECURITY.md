@@ -25,6 +25,39 @@ Especially interesting:
 - SQL injection or path traversal,
 - attachment handling.
 
+## Remote images
+
+Remote HTTPS images load by default when a message is opened (Settings →
+Appearance → Load remote images: Always; Ask each time and VIP senders are
+stricter). Mail in Spam and conversations that were not opened (including
+neighbour pre-render) never load them without a click. With images allowed,
+these risks remain:
+
+- **Open tracking.** The sender's servers learn when the message was opened,
+  the IP address (approximate location and network) and client details
+  (WebKit User-Agent, language). Moving to a message in the list with the
+  reading pane showing, and auto-advance after archive or delete, count as
+  opening it. Holding an arrow key opens only the row where the key stops.
+- **What loads.** Everything the CSP `img-src data: cid: https:` admits:
+  `<img>`, `srcset` and `<picture>` sources, CSS `url()` images (backgrounds,
+  list markers, borders), `<input type=image>`, `<video poster>`, and SVG
+  `<image>`. Nothing else (no scripts, fonts, frames, media, fetches).
+- **Fingerprinting without scripts.** Images chosen by CSS media queries,
+  `srcset` widths, `:hover` and animations can report window size, pixel
+  density, dark mode and some interaction back to the sender.
+- **Cookies** set by image responses stay in a non-persistent store and do
+  not cross messages or app runs.
+- **Private-network requests.** An image URL can point at an HTTPS host on
+  the local network; WebKit sends a blind GET (no response is readable by the
+  message, but the request itself happens).
+- **Decoding attacker-served images** happens without a click, so an image
+  decoder bug in macOS is reachable by opening the message.
+- **Spam is the only gate.** Gmail's phishing and suspicious-sender warnings
+  are not exposed by its API, so only the `SPAM` label (on the message, or on
+  the thread after you mark it) blocks loading. Trash follows the policy.
+- **Label lag.** Mail Gmail moves to Spam later loads under the policy until
+  the next sync brings the label.
+
 ## Design notes
 
 The threat model and mitigations are summarized in the
