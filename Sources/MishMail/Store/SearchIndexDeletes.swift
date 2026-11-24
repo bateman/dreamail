@@ -21,10 +21,13 @@ enum SearchIndexDeletes {
     static let bulkThreshold = 500
 
     /// Cost of deleting one message securely from the index, in units of the
-    /// cost of reindexing one remaining message during a rebuild. Measured in
-    /// CI on a 50,000-message raw-keyed file (`SecureDeleteCostTests`,
-    /// `MISHMAIL_BENCHMARK=1`).
-    static let rebuildCostRatio = 5
+    /// cost of reindexing one remaining message during a rebuild. Measured
+    /// in CI on a 50,000-message raw-keyed file (`SecureDeleteCostTests`):
+    /// 1.86 ms per deleted message against 0.0127 ms per remaining one, a
+    /// ratio of about 147. Rounded down, so the rebuild is chosen only when
+    /// it is clearly cheaper, and the writer is never held longer than the
+    /// per-row path would hold it.
+    static let rebuildCostRatio = 100
 
     /// Whether deleting `messages` of `total` message rows takes the bulk
     /// path: only when rebuilding what remains costs less than deleting the

@@ -10,7 +10,15 @@ import GRDB
 /// the log as `SECURE-DELETE-COST` lines. Nothing here asserts a time, so a
 /// slow runner cannot fail it; it asserts only that each run deleted what it
 /// should.
+///
+/// They take several seconds, so they run only on request:
+/// `TEST_RUNNER_MISHMAIL_BENCHMARK=1 make test` (xcodebuild hands variables
+/// prefixed `TEST_RUNNER_` to the tests). Otherwise each returns at once.
 final class SecureDeleteCostTests: XCTestCase {
+    private var benchmarking: Bool {
+        ProcessInfo.processInfo.environment["MISHMAIL_BENCHMARK"] == "1"
+    }
+
     private let key = String(repeating: "ef", count: 32)
     private let account = "bench@example.com"
     private let total = 3_000
@@ -123,6 +131,7 @@ final class SecureDeleteCostTests: XCTestCase {
     }
 
     func testCostOfOverwritingDeletedContent() throws {
+        guard benchmarking else { return }
         let template = dir.appendingPathComponent("template.sqlite").path
         try makeTemplate(at: template)
         let size = (try FileManager.default.attributesOfItem(atPath: template)[.size] as? NSNumber)?
@@ -163,6 +172,7 @@ final class SecureDeleteCostTests: XCTestCase {
     /// message securely from the index, and reindexing one remaining message
     /// in a rebuild. Their ratio is `SearchIndexDeletes.rebuildCostRatio`.
     func testBulkPathCostRatioAtMailboxScale() throws {
+        guard benchmarking else { return }
         let size = 50_000
         let deleted = 500
         let path = dir.appendingPathComponent("large.sqlite").path
