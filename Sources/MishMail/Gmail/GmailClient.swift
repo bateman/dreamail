@@ -42,8 +42,8 @@ struct GLabel: Decodable {
     let id: String
     let name: String
     let type: String?
-    /// Gmail's label color, when the user picked one in Gmail. Used to seed
-    /// the local label color on first sync.
+    /// Gmail's label color, when the user picked one in Gmail. Mirrored into
+    /// `LabelRow.gmailBackgroundColor` / `gmailTextColor` on every sync.
     let color: GColor?
 }
 

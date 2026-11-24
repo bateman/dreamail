@@ -29,22 +29,6 @@ extension Color {
     /// Sidebar background, a step warmer/lighter than the content.
     static let mailSidebar = Color(nsColor: NSColor.mailSidebar)
 
-    /// Opaque color from an sRGB hex value (same in light and dark).
-    static func hex(_ hex: UInt32) -> Color {
-        Color(.sRGB,
-              red: Double((hex >> 16) & 0xFF) / 255,
-              green: Double((hex >> 8) & 0xFF) / 255,
-              blue: Double(hex & 0xFF) / 255)
-    }
-
-    /// Color from a "#RRGGBB" (or "RRGGBB") string; nil when malformed.
-    static func hexString(_ string: String) -> Color? {
-        var hex = string.trimmingCharacters(in: .whitespaces)
-        if hex.hasPrefix("#") { hex.removeFirst() }
-        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
-        return .hex(value)
-    }
-
     /// The label color palette offered in the organizer (name, hex).
     /// Muted hues that read well as tinted pills in both themes.
     static let labelPalette: [(name: String, hex: String)] = [
