@@ -1785,6 +1785,7 @@ struct Sidebar: View {
     // Driven by `/` (Gmail-style) via store.searchFocusToken.
     @FocusState private var searchFocused: Bool
     @State private var viewToDelete: SavedView?
+    @FocusState private var sidebarListFocused: Bool
 
     private var confirmingViewDeleteShown: Binding<Bool> {
         Binding(
@@ -1882,6 +1883,7 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            .focused($sidebarListFocused)
             .environment(\.defaultMinListRowHeight, 30)
             .scrollContentBackground(.hidden)
 
@@ -1984,6 +1986,7 @@ struct Sidebar: View {
         .listItemTint(.monochrome)
         .badge((badge ?? 0) > 0 ? badge! : 0)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
+        .listRowBackground(AccentSelectionProbe(selected: selected, listFocused: sidebarListFocused))
         .simultaneousGesture(
             TapGesture().onEnded { store.goTo(view) },
             including: reselect ? .gesture : .subviews)

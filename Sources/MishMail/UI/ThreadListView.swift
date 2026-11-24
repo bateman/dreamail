@@ -519,11 +519,15 @@ private struct ThreadSelectionList<Content: View>: View {
         self.content = content()
     }
 
+    @FocusState private var listFocused: Bool
+
     var body: some View {
         List(selection: Binding(get: { listFocus.id }, set: onSelect)) {
             content
         }
         .listStyle(.plain)
+        .focused($listFocused)
+        .environment(\.probeListFocused, listFocused)
         // Section headers take their content's height, not the taller
         // system minimum.
         .environment(\.defaultMinListHeaderHeight, 1)
@@ -603,10 +607,12 @@ private struct ThreadListSections: View, Equatable {
                         // grey wash (adapts to dark mode); unread rows
                         // sit on the plain background and pop.
                         .listRowBackground(
-                            checked
-                                ? Color.mailAccent.opacity(0.10)
-                                : (thread.isUnread
-                                    ? Color.clear : Color.primary.opacity(0.05)))
+                            ProbeThreadRowBackground(
+                                focus: store.listFocus, threadId: thread.id,
+                                unselected: checked
+                                    ? Color.mailAccent.opacity(0.10)
+                                    : (thread.isUnread
+                                        ? Color.clear : Color.primary.opacity(0.05))))
                         .swipeActions(edge: .trailing) {
                             Button { store.archive(thread) } label: {
                                 Label("Archive", systemImage: "archivebox")
@@ -2083,5 +2089,16 @@ struct CategoriesPopover: View {
         .help(on
               ? "Stop \(filter.wrappedValue.exclude ? "excluding" : "requiring") \(name)"
               : "\(filter.wrappedValue.exclude ? "Exclude" : "Require") \(name)")
+    }
+}
+
+/// TEMPORARY probe (see AccentSelectionProbe).
+private struct ProbeThreadRowBackground: View {
+    @ObservedObject var focus: ListFocusState
+    let threadId: String
+    let unselected: Color
+
+    var body: some View {
+        AccentSelectionProbe(selected: focus.id == threadId, unselected: unselected)
     }
 }
