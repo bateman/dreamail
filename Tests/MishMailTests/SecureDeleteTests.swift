@@ -98,6 +98,38 @@ final class SecureDeleteTests: XCTestCase {
         }
     }
 
+    /// A message with one cached inline image (`InlineImageCache`).
+    private func insertInlineImage(_ db: Database, account: String, gmailId: String,
+                                   image: Data, daysAgo: Double = 1) throws {
+        try insertMessage(db, account: account, gmailId: gmailId,
+                          subject: "Image \(gmailId)", body: "image body", daysAgo: daysAgo)
+        let id = "\(account):\(gmailId)"
+        let html = "<p>Logo</p><img src=\"cid:logo\">"
+        try db.execute(sql: "UPDATE message_body SET bodyHTML = ? WHERE messageId = ?",
+                       arguments: [html, id])
+        let row = AttachmentRow(id: nil, messageId: id, gmailAttachmentId: "att-\(gmailId)",
+                                filename: "logo.png", mimeType: "image/png",
+                                size: image.count, contentId: "logo")
+        try row.insert(db)
+        let attachmentId = db.lastInsertedRowID
+        let stored = try InlineImageCache.store(db, .init(
+            messageId: id, accountId: account, bodyDigest: InlineImageCache.bodyDigest(html),
+            parts: [.init(attachmentId: attachmentId, contentId: "logo",
+                          mimeType: "image/png", data: image)]), now: Date())
+        XCTAssertTrue(stored)
+    }
+
+    /// Image bytes large enough to spill over several overflow pages, with
+    /// the marker on each of them.
+    private func imageBytes(_ marker: String) -> Data {
+        var data = Data()
+        for i in 0..<80 {
+            data.append(Data(marker.utf8))
+            data.append(Data(repeating: UInt8(i), count: 1_000))
+        }
+        return data
+    }
+
     private func foldAndTruncate(_ pool: DatabasePool, freePageLimit: Int) throws -> Bool {
         try pool.writeWithoutTransaction { db in
             try AppDatabase.foldAndTruncateLog(db, freePageLimit: freePageLimit)
@@ -127,6 +159,119 @@ final class SecureDeleteTests: XCTestCase {
         XCTAssertTrue(try onDisk("fillerbody 59"), "live mail stays")
         try pool.close()
         XCTAssertFalse(try onDisk(secret), "deleted body on disk after close")
+    }
+
+    // MARK: Cached inline images
+
+    /// A deleted message's cached inline images, a message whose content
+    /// changed, and an evicted message's images: zeroed in the file and gone
+    /// from the log, like the mail they belong to.
+    func testCachedInlineImagesLeaveNeitherTheFileNorTheLog() throws {
+        let pool = try openUnkeyedPool()
+        let deleted = marker("imgdeleted")
+        let revised = marker("imgrevised")
+        let evicted = marker("imgevicted")
+        let kept = marker("imgkept")
+        try pool.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertFiller(db, account: "me@example.com", range: 0..<30)
+            try insertInlineImage(db, account: "me@example.com", gmailId: "deleted",
+                                  image: imageBytes(deleted))
+            try insertInlineImage(db, account: "me@example.com", gmailId: "revised",
+                                  image: imageBytes(revised))
+            try insertInlineImage(db, account: "me@example.com", gmailId: "evicted",
+                                  image: imageBytes(evicted))
+            try insertInlineImage(db, account: "me@example.com", gmailId: "kept",
+                                  image: imageBytes(kept))
+            // "kept" was used last: it is the one eviction keeps.
+            try InlineImageCache.touch(db, messageIds: ["me@example.com:kept"],
+                                       now: Date().addingTimeInterval(2 * 86_400))
+            try insertFiller(db, account: "me@example.com", range: 30..<60)
+        }
+        for text in [deleted, revised, evicted, kept] {
+            XCTAssertTrue(try onDisk(text), "the scan must see \(text) while it is live")
+        }
+
+        try pool.write { db in
+            _ = try Message.deleteOne(db, key: "me@example.com:deleted")
+            // A full re-fetch: new body, new attachment rows.
+            var updated = try XCTUnwrap(try Message.fetchOne(db, key: "me@example.com:revised"))
+            updated.bodyText = "edited"
+            updated.bodyHTML = "<p>Edited</p><img src=\"cid:logo\">"
+            let replacement = AttachmentRow(
+                id: nil, messageId: updated.id, gmailAttachmentId: "att-new",
+                filename: "logo.png", mimeType: "image/png", size: 10, contentId: "logo")
+            _ = try SyncEngine.upsertPending(
+                db, items: [.init(message: updated, attachments: [replacement])])
+            let size = try Int.fetchOne(
+                db, sql: "SELECT byteCount FROM inlineImage WHERE messageId = ?",
+                arguments: ["me@example.com:kept"]) ?? 0
+            XCTAssertEqual(try InlineImageCache.evict(db, budget: size), ["me@example.com:evicted"])
+        }
+        XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: AppDatabase.freePagesPerCheckpoint))
+        XCTAssertEqual(walSize(), 0, "the log is truncated")
+        for text in [deleted, revised, evicted] {
+            XCTAssertFalse(try onDisk(text), "\(text) still on disk")
+        }
+        XCTAssertTrue(try onDisk(kept), "the image still cached stays")
+        try pool.close()
+        for text in [deleted, revised, evicted] {
+            XCTAssertFalse(try onDisk(text), "\(text) on disk after close")
+        }
+    }
+
+    /// The other ways a message's images go: a local prune, the deletion
+    /// of the last message of a thread, and the launch sweep of rows whose
+    /// attachment row is gone.
+    func testPrunedThreadDeletedAndOrphanedImagesLeaveNeitherTheFileNorTheLog() throws {
+        let pool = try openUnkeyedPool()
+        let pruned = marker("imgpruned")
+        let threadGone = marker("imgthread")
+        let orphan = marker("imgorphan")
+        let kept = marker("imgkept")
+        try pool.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertFiller(db, account: "me@example.com", range: 0..<30)
+            try insertInlineImage(db, account: "me@example.com", gmailId: "pruned",
+                                  image: imageBytes(pruned), daysAgo: 200)
+            try insertInlineImage(db, account: "me@example.com", gmailId: "thread",
+                                  image: imageBytes(threadGone))
+            try insertInlineImage(db, account: "me@example.com", gmailId: "orphan",
+                                  image: imageBytes(orphan))
+            try insertInlineImage(db, account: "me@example.com", gmailId: "kept",
+                                  image: imageBytes(kept))
+            try insertFiller(db, account: "me@example.com", range: 30..<60)
+        }
+        for text in [pruned, threadGone, orphan, kept] {
+            XCTAssertTrue(try onDisk(text), "the scan must see \(text) while it is live")
+        }
+
+        try pool.write { db in
+            try SyncEngine.pruneMessages(db, accountId: "me@example.com",
+                                         olderThan: Date().addingTimeInterval(-90 * 86_400))
+            XCTAssertEqual(try SyncEngine.deleteLocalMessage(
+                db, messageId: "me@example.com:thread", threadId: "me@example.com:t-thread",
+                accountId: "me@example.com"), .threadDeleted)
+        }
+        // A row left behind by a write with foreign keys off, then the sweep.
+        try pool.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA foreign_keys = OFF")
+            try db.execute(sql: "DELETE FROM attachment WHERE messageId = 'me@example.com:orphan'")
+            try db.execute(sql: "PRAGMA foreign_keys = ON")
+        }
+        try pool.write { db in
+            XCTAssertEqual(try Int.fetchOne(db, sql: """
+                SELECT count(*) FROM inlineImage WHERE messageId = 'me@example.com:orphan'
+                """), 1, "fixture: the orphaned row is still there")
+            try AccountLifecycle.purgeOrphanRows(db)
+        }
+        XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: AppDatabase.freePagesPerCheckpoint))
+        XCTAssertEqual(walSize(), 0, "the log is truncated")
+        for text in [pruned, threadGone, orphan] {
+            XCTAssertFalse(try onDisk(text), "\(text) still on disk")
+        }
+        XCTAssertTrue(try onDisk(kept), "the image still cached stays")
+        try pool.close()
     }
 
     // MARK: Full-text index
@@ -334,9 +479,15 @@ final class SecureDeleteTests: XCTestCase {
         let goneTerm = marker("qxjgone")
         let goneDraft = marker("gonedraft")
         let keptBody = marker("keptbody")
+        let goneImage = marker("goneimage")
+        let keptImage = marker("keptimage")
         try pool.write { db in
             try insertAccount(db, "gone@example.com")
             try insertAccount(db, "kept@example.com")
+            try insertInlineImage(db, account: "gone@example.com", gmailId: "img",
+                                  image: imageBytes(goneImage))
+            try insertInlineImage(db, account: "kept@example.com", gmailId: "img",
+                                  image: imageBytes(keptImage))
             // Interleaved, so the removed account's rows share pages with
             // rows that stay.
             for i in 0..<40 {
@@ -355,7 +506,7 @@ final class SecureDeleteTests: XCTestCase {
                 attachmentsJSON: Data("[]".utf8), createdAt: Date(), updatedAt: Date())
             try draft.insert(db)
         }
-        for text in [goneBody, String(goneTerm.dropFirst(3)), goneDraft, keptBody] {
+        for text in [goneBody, String(goneTerm.dropFirst(3)), goneDraft, keptBody, goneImage, keptImage] {
             XCTAssertTrue(try onDisk(text), "the scan must see \(text) while it is live")
         }
 
@@ -365,10 +516,11 @@ final class SecureDeleteTests: XCTestCase {
         // What account removal runs right after the purge.
         XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: AppDatabase.freePagesPerCheckpoint))
         XCTAssertEqual(walSize(), 0)
-        for text in [goneBody, String(goneTerm.dropFirst(3)), goneDraft] {
+        for text in [goneBody, String(goneTerm.dropFirst(3)), goneDraft, goneImage] {
             XCTAssertFalse(try onDisk(text), "removed account's \(text) still on disk")
         }
         XCTAssertTrue(try onDisk(keptBody), "the other account's mail stays")
+        XCTAssertTrue(try onDisk(keptImage), "and its cached images")
         try pool.close()
     }
 
@@ -399,6 +551,51 @@ final class SecureDeleteTests: XCTestCase {
         XCTAssertTrue(database.scrubIsPending, "the commit of a delete schedules it")
         database.runScheduledScrub()
         XCTAssertEqual(database.walSizeBytes, 0, "the delete must be folded out of the log")
+    }
+
+    /// An eviction through the app's writer (`InlineImageStore`) is a
+    /// committed delete like any other: it schedules the scrub, and the
+    /// scrub empties the log.
+    func testEvictionThroughTheStoreSchedulesTheScrub() async throws {
+        let database = try AppDatabase(path: path, key: key, allowConversion: true,
+                                       timing: .init(scrubDelay: 3_600))
+        defer { database.close() }
+        let oneImage = try seedTwoCachedImages(database)
+        XCTAssertFalse(database.scrubIsPending)
+
+        // Two days later "b" is shown again: "a" is the least recently used
+        // and goes, to fit a budget of one image.
+        let later = Date().addingTimeInterval(2 * 86_400)
+        let store = InlineImageStore(db: database.dbPool, budget: oneImage,
+                                     flushDelayNanoseconds: 1_000_000, now: { later })
+        await store.noteUsed(["me@example.com:b"])
+        await store.flush()
+        await store.shutDown()
+        XCTAssertEqual(try cachedImageMessages(database), ["me@example.com:b"])
+        XCTAssertTrue(database.scrubIsPending, "the eviction's commit schedules the scrub")
+        database.runScheduledScrub()
+        XCTAssertEqual(database.walSizeBytes, 0, "the evicted bytes are folded out of the log")
+    }
+
+    /// Synchronous on purpose (called from an async test). Returns one
+    /// image's size.
+    private func seedTwoCachedImages(_ database: AppDatabase) throws -> Int {
+        database.runScheduledScrub()
+        try database.dbPool.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertFiller(db, account: "me@example.com", range: 0..<20)
+            try insertInlineImage(db, account: "me@example.com", gmailId: "a",
+                                  image: imageBytes(marker("imga")))
+            try insertInlineImage(db, account: "me@example.com", gmailId: "b",
+                                  image: imageBytes(marker("imgb")))
+        }
+        return imageBytes(marker("imgx")).count
+    }
+
+    private func cachedImageMessages(_ database: AppDatabase) throws -> [String] {
+        try database.dbPool.read { db in
+            try String.fetchAll(db, sql: "SELECT messageId FROM inlineImage ORDER BY messageId")
+        }
     }
 
     /// The timer itself, end to end, with a short delay.

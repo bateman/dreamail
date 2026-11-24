@@ -1341,6 +1341,8 @@ actor SyncEngine {
             msg.bodyHTML = nil
             try writeMessageRow(db, msg, existing: existing)
             try MessageBody(messageId: msg.id, bodyText: bodyText, bodyHTML: bodyHTML).save(db)
+            // Cached inline images of the old content cascade with the
+            // attachment rows replaced here (`InlineImageCache`).
             try AttachmentRow.filter(Column("messageId") == item.message.id).deleteAll(db)
             for att in item.attachments {
                 try att.insert(db)

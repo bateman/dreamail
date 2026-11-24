@@ -2784,6 +2784,15 @@ final class AppDatabase: @unchecked Sendable {
                 t.column("lastAttemptFailed", .boolean).notNull().defaults(to: false)
             }
         }
+
+        // v54 (after v53, the account photo): the persistent inline-image
+        // cache. The bytes of each `cid:` image part a message's HTML shows,
+        // so a conversation opened before paints its images after a relaunch
+        // without a Gmail request. Cascades with its attachment row, message
+        // and account (`InlineImageCache`).
+        m.registerMigration("v54") { db in
+            try InlineImageCache.createTable(db)
+        }
         return m
     }
 }
