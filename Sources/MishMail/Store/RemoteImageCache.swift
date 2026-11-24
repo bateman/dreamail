@@ -109,6 +109,14 @@ enum RemoteImageCache {
         return out
     }
 
+    /// URL digests stored for one message: an index-only read (the primary
+    /// key), no image bytes.
+    static func storedKeys(_ db: Database, messageId: String, accountId: String) throws -> Set<String> {
+        Set(try String.fetchAll(db, sql: """
+            SELECT urlKey FROM remoteImage WHERE messageId = ? AND accountId = ?
+            """, arguments: [messageId, accountId]))
+    }
+
     static func totalBytes(_ db: Database) throws -> Int {
         try Int.fetchOne(db, sql: "SELECT COALESCE(SUM(byteCount), 0) FROM remoteImage") ?? 0
     }
@@ -306,6 +314,21 @@ actor RemoteImageStore {
         }) ?? [:]
         out.merge(stored) { queued, _ in queued }
         return out
+    }
+
+    /// URL digests this message has cached (queued or stored), without
+    /// reading any image. Empty on any error.
+    func storedKeys(messageId: String, accountId: String) async -> Set<String> {
+        guard !isClosed else { return [] }
+        var out: Set<String> = []
+        if let queued = pendingStores[messageId], queued.accountId == accountId {
+            out.formUnion(queued.images.map(\.urlKey))
+        }
+        let db = db
+        let stored = (try? await db.read { db in
+            try RemoteImageCache.storedKeys(db, messageId: messageId, accountId: accountId)
+        }) ?? []
+        return out.union(stored)
     }
 
     func remember(_ pending: RemoteImageCache.Pending) {

@@ -98,18 +98,45 @@ final class RemoteImageCacheTests: XCTestCase {
     }
 
     /// The pane's open through its real gate (`RemoteImageRendering.paneStep`
-    /// with the card's decision), then the background fetch it starts; the
-    /// result is the body the next open shows.
+    /// with the card's decision): the cache check before the body paints,
+    /// then, when the cache is incomplete, the background fetch. Returns the
+    /// body shown now (`.cache`) or kept for the next open (`.fetched`).
+    private enum Opened { case cache(RemoteInlinedBody), fetched(RemoteInlinedBody?), blocked }
+
+    private func openThroughPane(_ message: Message, store: RemoteImageStore?, server: Server,
+                                 allowed: Bool = true) async -> Opened {
+        let html = message.bodyHTML ?? ""
+        let count = RemoteImageHTML.candidates(in: html).count
+        let first = RemoteImageRendering.paneStep(
+            allowRemoteImages: allowed, remoteCandidateCount: count, cacheChecked: false,
+            cidResolveInFlight: false, cidInlined: false, remoteBody: nil)
+        guard case .checkCache(let baseIsCID) = first else { return .blocked }
+        if let body = await RemoteImageResolver.cachedBody(
+            messageId: message.id, accountId: message.accountId, baseHTML: html,
+            preInlineBytes: html.utf8.count, baseIsCIDInlined: baseIsCID, fontScale: 1.0,
+            store: store) {
+            XCTAssertEqual(RemoteImageRendering.paneStep(
+                allowRemoteImages: allowed, remoteCandidateCount: count, cacheChecked: true,
+                cidResolveInFlight: false, cidInlined: false, remoteBody: body), .markCachedUsed)
+            return .cache(body)
+        }
+        guard case .fetchForNextOpen(let base) = RemoteImageRendering.paneStep(
+            allowRemoteImages: allowed, remoteCandidateCount: count, cacheChecked: true,
+            cidResolveInFlight: false, cidInlined: false, remoteBody: nil) else { return .blocked }
+        return .fetched(await RemoteImageResolver.fetchForNextOpen(
+            messageId: message.id, accountId: message.accountId, baseHTML: html,
+            preInlineBytes: html.utf8.count, baseIsCIDInlined: base,
+            fontScale: 1.0, store: store, transport: server.transport))
+    }
+
+    /// The body an open produced (shown now or kept for the next open).
     private func open(_ message: Message, store: RemoteImageStore?, server: Server,
                       allowed: Bool = true) async -> RemoteInlinedBody? {
-        let html = message.bodyHTML ?? ""
-        guard case .fetchForNextOpen(let baseIsCID) = RemoteImageRendering.paneStep(
-            allowRemoteImages: allowed, cidResolveInFlight: false, cidInlined: false,
-            remoteBody: nil) else { return nil }
-        return await RemoteImageResolver.fetchForNextOpen(
-            messageId: message.id, accountId: message.accountId, baseHTML: html,
-            preInlineBytes: html.utf8.count, baseIsCIDInlined: baseIsCID,
-            fontScale: 1.0, store: store, transport: server.transport)
+        switch await openThroughPane(message, store: store, server: server, allowed: allowed) {
+        case .cache(let body): return body
+        case .fetched(let body): return body
+        case .blocked: return nil
+        }
     }
 
     private func rowCount(_ pool: DatabasePool, messageId: String? = nil) throws -> Int {
@@ -595,19 +622,86 @@ final class RemoteImageCacheTests: XCTestCase {
     func testPaneStepFollowsTheCardsDecision() {
         let local = RemoteInlinedBody(html: "x", prep: .empty, needsNetwork: false,
                                       inlinedCount: 1, baseIsCIDInlined: false)
-        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: false, cidResolveInFlight: false,
-                                                     cidInlined: false, remoteBody: local), .cancel,
-                       "blocked: nothing read, nothing fetched, any resolve cancelled")
-        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: true, cidResolveInFlight: true,
-                                                     cidInlined: false, remoteBody: nil), .waitForCID)
-        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: true, cidResolveInFlight: false,
-                                                     cidInlined: false, remoteBody: local), .markCachedUsed)
-        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: true, cidResolveInFlight: false,
-                                                     cidInlined: false, remoteBody: nil),
-                       .fetchForNextOpen(baseIsCIDInlined: false))
-        XCTAssertEqual(RemoteImageRendering.paneStep(allowRemoteImages: true, cidResolveInFlight: false,
-                                                     cidInlined: true, remoteBody: local),
+        func step(_ allowed: Bool = true, count: Int = 2, checked: Bool = false, cid: Bool = false,
+                  cidInFlight: Bool = false,
+                  body: RemoteInlinedBody? = nil) -> RemoteImageRendering.PaneStep {
+            RemoteImageRendering.paneStep(allowRemoteImages: allowed, remoteCandidateCount: count,
+                                          cacheChecked: checked, cidResolveInFlight: cidInFlight,
+                                          cidInlined: cid, remoteBody: body)
+        }
+        XCTAssertEqual(step(false, body: local), .cancel,
+                       "blocked: nothing read, nothing fetched, any fetch cancelled")
+        XCTAssertEqual(step(count: 0), .nothing)
+        XCTAssertEqual(step(), .checkCache(baseIsCIDInlined: false), "the cache before the body paints")
+        XCTAssertEqual(step(cidInFlight: true), .checkCache(baseIsCIDInlined: false),
+                       "the check never waits for a Gmail download")
+        XCTAssertEqual(step(checked: true, cidInFlight: true), .waitForCID)
+        XCTAssertEqual(step(body: local), .markCachedUsed)
+        XCTAssertEqual(step(checked: true), .fetchForNextOpen(baseIsCIDInlined: false))
+        XCTAssertEqual(step(checked: true, cid: true, body: local),
                        .fetchForNextOpen(baseIsCIDInlined: true), "a body built on another base is redone")
+        // The card meanwhile: nothing painted, or the other base's body.
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: nil,
+                                                   cidInlined: false, awaitingCacheCheck: true),
+                       .awaitingCacheCheck)
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: local,
+                                                   cidInlined: true, awaitingCacheCheck: true),
+                       .remote(local))
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: false, remoteBody: nil,
+                                                   cidInlined: false, awaitingCacheCheck: true),
+                       .base(allowRemoteImages: false), "a blocked card never waits")
+    }
+
+    /// After a relaunch, a conversation the prefetch never warmed is opened
+    /// directly: a complete cache is shown with no request.
+    func testDirectOpenAfterRelaunchWithACompleteCacheMakesNoRequest() async throws {
+        let pool = try openPool()
+        let message = try await pool.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "m1", body: self.html([self.a, self.b]))
+        }
+        let sender = server()
+        let first = RemoteImageStore(db: pool, flushDelayNanoseconds: 1_000_000)
+        let opened = await openThroughPane(message, store: first, server: sender)
+        guard case .fetched(let kept) = opened
+        else { return XCTFail("the first open shows images live and fetches for next time") }
+        XCTAssertNotNil(kept)
+        XCTAssertEqual(sender.requests.count, 2)
+        await first.flush()
+        await first.shutDown()
+        try close(pool)
+
+        let relaunched = try openPool()
+        let store = RemoteImageStore(db: relaunched)
+        // No repository, no warm: the pane's own check on a cold payload.
+        let direct = await openThroughPane(message, store: store, server: sender)
+        guard case .cache(let body) = direct else { return XCTFail("expected the cached body") }
+        XCTAssertEqual(sender.requests.count, 2, "zero requests on the direct open")
+        XCTAssertFalse(body.loadAllowsRemoteImages, "blocked CSP: nothing needs the network")
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: body,
+                                                   cidInlined: false), .remote(body))
+        await store.shutDown()
+        try close(relaunched)
+    }
+
+    func testAnIncompleteCacheIsDecidedOnKeysWithoutReadingImages() async throws {
+        let pool = try openPool()
+        let message = try await pool.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "m1", body: self.html([self.a, self.b]))
+        }
+        let store = RemoteImageStore(db: pool)
+        try await pool.write { db in
+            try RemoteImageCache.store(db, .init(messageId: message.id, accountId: self.me, images: [
+                .init(urlKey: RemoteImageHTML.urlKey(self.a), mimeType: "image/png", data: self.png(1)),
+            ]), now: Date())
+        }
+        let keys = await store.storedKeys(messageId: message.id, accountId: me)
+        XCTAssertEqual(keys, [RemoteImageHTML.urlKey(a)])
+        let body = await RemoteImageResolver.cachedBody(
+            messageId: message.id, accountId: me, baseHTML: message.bodyHTML!, preInlineBytes: 0,
+            baseIsCIDInlined: false, fontScale: 1, store: store)
+        XCTAssertNil(body)
+        await store.shutDown()
+        try close(pool)
     }
 
     func testAnURLInFlightIsNotFetchedTwice() async throws {

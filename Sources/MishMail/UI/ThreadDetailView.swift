@@ -128,6 +128,9 @@ struct ThreadDetailView: View {
     /// The running resolve per message, cancelled when its card leaves or
     /// its images stop being allowed, and on a thread change.
     @State private var remoteResolveTasks: [String: Task<Void, Never>] = [:]
+    /// "id|raw" / "id|cid": cache checks running / done for that base.
+    @State private var remoteCacheChecking: Set<String> = []
+    @State private var remoteCacheChecked: Set<String> = []
     /// Avoid re-fetching the same message for missing-attachment recovery every expand.
     @State private var attachmentRecoverAttempted: Set<String> = []
     /// Open message cards (live HTML body renderers). The reading pane keeps
@@ -369,6 +372,8 @@ struct ThreadDetailView: View {
                 remoteResolveWanted = []
                 for task in remoteResolveTasks.values { task.cancel() }
                 remoteResolveTasks = [:]
+                remoteCacheChecking = []
+                remoteCacheChecked = []
                 loadRemoteImagesForThread = false
                 // Keep the open set `init` seeded for this conversation; the
                 // payload re-seeds below. Clearing it here collapsed the card
@@ -613,6 +618,8 @@ struct ThreadDetailView: View {
                     cidInlinedHTML: cidInlinedHTMLById[message.id],
                     cidPrep: cidPrepByMessageId[message.id],
                     remoteBody: remoteBodyById[message.id],
+                    remoteCacheChecked: remoteCacheChecked.contains(
+                        message.id + (cidInlinedHTMLById[message.id] != nil ? "|cid" : "|raw")),
                     expandPolicy: messageExpandPolicy,
                     expandedMessageIds: $expandedMessageIds,
                     isCollapsible: MessageExpandPolicy.isCollapsible(
@@ -1043,18 +1050,28 @@ struct ThreadDetailView: View {
 
     /// The card's remote-image decision changed (or its base did), through
     /// the one gate (`RemoteImageRendering.paneStep`). While images are
-    /// allowed and the card shows them live (exactly as without the cache),
-    /// the app fetches the cacheable ones in the background for the next
-    /// open; nothing is swapped in now. A blocked card cancels and fetches
-    /// nothing, so the cache never overrides the decision.
+    /// allowed: first a cache check (keys only, then the bytes when complete)
+    /// before the body paints, so a fully cached message, prefetched or not,
+    /// opens with no request; otherwise the card shows the images live
+    /// (exactly as without the cache) and the app fetches the cacheable ones
+    /// in the background for the next open, never swapped in now. A blocked
+    /// card cancels and fetches nothing, so the cache never overrides the
+    /// decision.
     private func remoteImagesDecisionChanged(id: String, allowed: Bool) {
-        let cidHTML = cidInlinedHTMLById[id]
+        let cidInlined = cidInlinedHTMLById[id] != nil
+        let prep = cidInlined ? cidPrepByMessageId[id] : bodyPrepByMessageId[id]
         let step = RemoteImageRendering.paneStep(
-            allowRemoteImages: allowed, cidResolveInFlight: cidResolveInFlight.contains(id),
-            cidInlined: cidHTML != nil, remoteBody: remoteBodyById[id])
+            allowRemoteImages: allowed, remoteCandidateCount: prep?.remoteImageCount ?? 0,
+            cacheChecked: remoteCacheChecked.contains(id + (cidInlined ? "|cid" : "|raw")),
+            cidResolveInFlight: cidResolveInFlight.contains(id),
+            cidInlined: cidInlined, remoteBody: remoteBodyById[id])
         switch step {
         case .cancel:
             cancelRemoteResolve(id: id)
+        case .nothing:
+            break
+        case .checkCache(let baseIsCID):
+            startCacheCheck(id: id, baseIsCID: baseIsCID)
         case .waitForCID:
             remoteResolveWanted.insert(id)
         case .markCachedUsed:
@@ -1073,6 +1090,47 @@ struct ThreadDetailView: View {
         remoteResolveWanted.remove(id)
         remoteResolveTasks.removeValue(forKey: id)?.cancel()
         remoteResolveAttempted = remoteResolveAttempted.filter { !$0.hasPrefix(id + "|") }
+        remoteCacheChecking = remoteCacheChecking.filter { !$0.hasPrefix(id + "|") }
+        remoteCacheChecked = remoteCacheChecked.filter { !$0.hasPrefix(id + "|") }
+    }
+
+    /// The cache check of one open message, before its body paints: the
+    /// stored keys first (index only); when every cacheable image is there,
+    /// the body from the cache (no request). Then the next step: mark used,
+    /// or show live and fetch for the next open.
+    private func startCacheCheck(id: String, baseIsCID: Bool) {
+        let key = id + (baseIsCID ? "|cid" : "|raw")
+        guard !remoteCacheChecking.contains(key),
+              let msg = messages.first(where: { $0.id == id }),
+              let rawHTML = msg.bodyHTML, !rawHTML.isEmpty else { return }
+        remoteCacheChecking.insert(key)
+        let base = (baseIsCID ? cidInlinedHTMLById[id] : nil) ?? rawHTML
+        let prep = baseIsCID ? cidPrepByMessageId[id] : bodyPrepByMessageId[id]
+        let preInlineBytes = prep?.htmlBytes ?? rawHTML.utf8.count
+        let scale = fontScale
+        let revision = store.contentRevision(of: thread.id)
+        let threadId = thread.id
+        let imageStore = store.remoteImageStore
+        let accountId = msg.accountId
+        remoteResolveTasks[id]?.cancel()
+        remoteResolveTasks[id] = Task {
+            let body = await RemoteImageResolver.cachedBody(
+                messageId: id, accountId: accountId, baseHTML: base,
+                preInlineBytes: preInlineBytes, baseIsCIDInlined: baseIsCID,
+                fontScale: scale, store: imageStore)
+            await MainActor.run {
+                guard !Task.isCancelled, thread.id == threadId else { return }
+                remoteResolveTasks.removeValue(forKey: id)
+                remoteCacheChecking.remove(key)
+                remoteCacheChecked.insert(key)
+                if let body {
+                    remoteBodyById[id] = body
+                    store.rememberRemoteInline(body, messageId: id, threadId: threadId,
+                                               revision: revision)
+                }
+                remoteImagesDecisionChanged(id: id, allowed: true)
+            }
+        }
     }
 
     private func startRemoteResolve(id: String, baseIsCID: Bool) {
@@ -1757,6 +1815,10 @@ struct MessageCard: View {
     /// just fetched by the app). Used only while this card's own decision
     /// allows remote images (`RemoteImageRendering.choice`).
     let remoteBody: RemoteInlinedBody?
+    /// The parent checked the cache for this card's base. Until then a card
+    /// whose images are allowed and that has cacheable images does not
+    /// paint its body (a few milliseconds), so it never loads live first.
+    let remoteCacheChecked: Bool
     /// Single-active reading pane vs multi-open side-by-side compose.
     let expandPolicy: MessageExpandPolicy
     @Binding var expandedMessageIds: Set<String>
@@ -1871,6 +1933,7 @@ struct MessageCard: View {
          cidInlinedHTML: String? = nil,
          cidPrep: MessageHTMLPrep? = nil,
          remoteBody: RemoteInlinedBody? = nil,
+         remoteCacheChecked: Bool = true,
          expandPolicy: MessageExpandPolicy = .single,
          expandedMessageIds: Binding<Set<String>>,
          isCollapsible: Bool = true,
@@ -1891,6 +1954,7 @@ struct MessageCard: View {
         self.cidInlinedHTML = cidInlinedHTML
         self.cidPrep = cidPrep
         self.remoteBody = remoteBody
+        self.remoteCacheChecked = remoteCacheChecked
         self.expandPolicy = expandPolicy
         self._expandedMessageIds = expandedMessageIds
         self.isCollapsible = isCollapsible
@@ -2027,10 +2091,13 @@ struct MessageCard: View {
     /// (`RemoteImageRendering.choice`): the body from the cache only while
     /// images are allowed, else the body exactly as without the cache.
     private var remoteChoice: RemoteImageRendering.Choice {
-        RemoteImageRendering.choice(
+        let cidInlined = cidInlinedHTML.map { !$0.isEmpty } ?? false
+        let prep = cidInlined ? cidPrep : bodyPrep
+        return RemoteImageRendering.choice(
             allowRemoteImages: allowRemoteImages,
             remoteBody: remoteBody,
-            cidInlined: cidInlinedHTML.map { !$0.isEmpty } ?? false)
+            cidInlined: cidInlined,
+            awaitingCacheCheck: !remoteCacheChecked && (prep?.remoteImageCount ?? 0) > 0)
     }
 
     private var metrics: ThreadMessageRowMetrics {
@@ -2310,6 +2377,15 @@ struct MessageCard: View {
         } else if showPlainText, !message.bodyText.isEmpty {
             // Manual plain-text escape hatch (see header control).
             PlainTextBody(text: message.bodyText, fontScale: fontScale)
+        } else if case .awaitingCacheCheck = remoteChoice,
+                  !(cidInlinedHTML ?? message.bodyHTML ?? "").isEmpty {
+            // The pane is checking the cache (a few milliseconds): the body
+            // waits in its reserved space instead of loading live first.
+            Color.clear
+                .frame(maxWidth: .infinity, minHeight: fillsPaneHeight.map { max(0, $0 - bodyTopInCard) } ?? 0)
+                .task(id: "\(allowRemoteImages)|\(cidInlinedHTML != nil)") {
+                    onRemoteImagesDecision(allowRemoteImages)
+                }
         } else if let baseHTML = (cidInlinedHTML ?? message.bodyHTML), !baseHTML.isEmpty {
             // Remote images: a body with them inlined replaces the base
             // (with its own prep: head, sizes, documents) only while this
@@ -2323,6 +2399,7 @@ struct MessageCard: View {
                 switch choice {
                 case .base(let allow): return allow
                 case .remote(let body): return body.loadAllowsRemoteImages
+                case .awaitingCacheCheck: return false
                 }
             }()
             let html = remote?.html ?? baseHTML

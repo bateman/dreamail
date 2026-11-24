@@ -21,6 +21,10 @@ struct MessageHTMLPrep: Equatable, Sendable {
     var htmlHeadBytes: Int
     /// Assembled documents for the fontScale recorded on `documents`.
     var documents: MessageHTMLDocuments?
+    /// Remote image URLs the app could cache for this body
+    /// (`RemoteImageHTML.candidates`). Counted here, off the main actor, so
+    /// a card knows without scanning whether its open has a cache to check.
+    var remoteImageCount: Int = 0
 
     static let empty = MessageHTMLPrep(
         textHead: nil, htmlHead: nil, hasQuotedTrail: false,
@@ -227,7 +231,8 @@ enum MessageHTMLPrepBuilder {
             hasQuotedTrail: hasQuotedTrail,
             htmlBytes: fullHTMLBytes,
             htmlHeadBytes: htmlHeadBytes,
-            documents: documents)
+            documents: documents,
+            remoteImageCount: bodyHTML.map { RemoteImageHTML.candidates(in: $0).count } ?? 0)
     }
 
     /// Prep for a body whose `cid:` images were rewritten to `data:` URIs.
@@ -247,8 +252,11 @@ enum MessageHTMLPrepBuilder {
     /// Documents are assembled only for variants the card will auto-render
     /// (rendered bytes within budget); the explicit-approval path builds its
     /// document off-main in `HTMLBodyView` instead.
+    /// `countRemoteCandidates`: false for a body whose remote images were
+    /// already inlined (nothing reads the count; skips a whole-body scan).
     static func cidInlinedPrep(inlinedHTML: String, preInlineBytes: Int,
-                               fontScale: Double) -> MessageHTMLPrep {
+                               fontScale: Double,
+                               countRemoteCandidates: Bool = true) -> MessageHTMLPrep {
         guard !inlinedHTML.isEmpty else { return .empty }
         let fullBytes = inlinedHTML.utf8.count
         let budget = HTMLBodyRenderPolicy.maximumAutomaticBytes
@@ -296,7 +304,9 @@ enum MessageHTMLPrepBuilder {
             hasQuotedTrail: htmlHead != nil,
             htmlBytes: htmlBytes,
             htmlHeadBytes: htmlHeadBytes,
-            documents: documents)
+            documents: documents,
+            remoteImageCount: countRemoteCandidates
+                ? RemoteImageHTML.candidates(in: inlinedHTML).count : 0)
     }
 
     /// Rebuild only the assembled documents for a new font scale, keeping the

@@ -73,10 +73,20 @@ enum RemoteImageResolver {
 
     /// The body from the cache, with no network: nil unless it has a
     /// candidate, every eligible candidate is cached or was refused, and at
-    /// least one is cached.
+    /// least one is cached. Completeness is checked first on the keys alone
+    /// (an index-only read), so an incomplete cache reads no image bytes.
     static func cachedBody(messageId: String, accountId: String, baseHTML: String,
                            preInlineBytes: Int, baseIsCIDInlined: Bool, fontScale: Double,
                            store: RemoteImageStore?) async -> RemoteInlinedBody? {
+        guard let store else { return nil }
+        let urls = RemoteImageHTML.candidates(in: baseHTML)
+        guard !urls.isEmpty else { return nil }
+        let keys = urls.prefix(RemoteImageFetchPolicy.maxImagesPerMessage)
+            .map(RemoteImageHTML.urlKey)
+        let stored = await store.storedKeys(messageId: messageId, accountId: accountId)
+        let failed = await store.failedKeys(messageId: messageId, among: keys)
+        guard !stored.isEmpty, keys.allSatisfy({ stored.contains($0) || failed.contains($0) }),
+              !Task.isCancelled else { return nil }
         guard let found = await lookup(messageId: messageId, accountId: accountId,
                                        baseHTML: baseHTML, store: store),
               found.misses.isEmpty, !found.dataURLs.isEmpty,
@@ -164,7 +174,8 @@ enum RemoteImageResolver {
                       baseIsCIDInlined: Bool, fontScale: Double) -> RemoteInlinedBody {
         let rewritten = RemoteImageHTML.rewrite(baseHTML, dataURLs: dataURLs)
         let prep = MessageHTMLPrepBuilder.cidInlinedPrep(
-            inlinedHTML: rewritten.html, preInlineBytes: preInlineBytes, fontScale: fontScale)
+            inlinedHTML: rewritten.html, preInlineBytes: preInlineBytes, fontScale: fontScale,
+            countRemoteCandidates: false)
         return RemoteInlinedBody(
             html: rewritten.html, prep: prep,
             needsNetwork: rewritten.needsNetwork, inlinedCount: rewritten.rewrittenCount,
@@ -182,17 +193,28 @@ enum RemoteImageRendering {
         case base(allowRemoteImages: Bool)
         /// The body with every cacheable image from the cache.
         case remote(RemoteInlinedBody)
+        /// The cache check for this open is running (a few milliseconds):
+        /// the body is not painted yet, so it never loads live first and
+        /// then again from the cache.
+        case awaitingCacheCheck
     }
 
     /// The card's choice. `remoteBody` (complete, from the cache, present
     /// when the payload was warmed or a previous open filled it) is used
     /// only when remote images are allowed for this message and it was built
     /// on the same base.
+    /// `awaitingCacheCheck`: the pane has not yet checked the cache for
+    /// this base. While it checks, a body built on the other base (before a
+    /// `cid:` resolve landed) is kept on screen; otherwise nothing paints.
     static func choice(allowRemoteImages: Bool, remoteBody: RemoteInlinedBody?,
-                       cidInlined: Bool) -> Choice {
+                       cidInlined: Bool, awaitingCacheCheck: Bool = false) -> Choice {
         guard allowRemoteImages else { return .base(allowRemoteImages: false) }
         if let remoteBody, remoteBody.baseIsCIDInlined == cidInlined {
             return .remote(remoteBody)
+        }
+        if awaitingCacheCheck {
+            if let remoteBody { return .remote(remoteBody) }
+            return .awaitingCacheCheck
         }
         return .base(allowRemoteImages: true)
     }
@@ -208,6 +230,11 @@ enum RemoteImageRendering {
         case waitForCID
         /// The card shows the body from the cache: only mark it used.
         case markCachedUsed
+        /// Not checked yet for this base: read the cache (keys first) before
+        /// the body paints; a complete cache is shown with no request.
+        case checkCache(baseIsCIDInlined: Bool)
+        /// No remote image the app could cache: nothing to do.
+        case nothing
         /// The card shows images live; fetch the cacheable ones in the
         /// background for the next open, on this base.
         case fetchForNextOpen(baseIsCIDInlined: Bool)
@@ -215,11 +242,14 @@ enum RemoteImageRendering {
 
     /// The gate every pane fetch goes through: `allowRemoteImages` is the
     /// card's `RemoteImagePolicy.autoLoads` decision, opt-ins included.
-    static func paneStep(allowRemoteImages: Bool, cidResolveInFlight: Bool, cidInlined: Bool,
+    static func paneStep(allowRemoteImages: Bool, remoteCandidateCount: Int,
+                         cacheChecked: Bool, cidResolveInFlight: Bool, cidInlined: Bool,
                          remoteBody: RemoteInlinedBody?) -> PaneStep {
         guard allowRemoteImages else { return .cancel }
-        if cidResolveInFlight { return .waitForCID }
         if let body = remoteBody, body.baseIsCIDInlined == cidInlined { return .markCachedUsed }
+        guard remoteCandidateCount > 0 else { return .nothing }
+        if !cacheChecked { return .checkCache(baseIsCIDInlined: cidInlined) }
+        if cidResolveInFlight { return .waitForCID }
         return .fetchForNextOpen(baseIsCIDInlined: cidInlined)
     }
 
@@ -234,6 +264,8 @@ enum RemoteImageRendering {
             return allow ? nil : .base(allowRemoteImages: false)
         case .remote(let body):
             return body.loadAllowsRemoteImages ? nil : .remote(body)
+        case .awaitingCacheCheck:
+            return nil
         }
     }
 }
