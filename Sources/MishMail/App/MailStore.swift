@@ -323,7 +323,7 @@ final class MailStore {
     private(set) var demoMode = DemoSeed.isActive
     /// Label row ids whose Gmail color is being saved; the organizer
     /// disables the Gmail swatches for them meanwhile.
-    var gmailLabelColorSaving: Set<String> = []
+    private(set) var gmailLabelColorSaving: Set<String> = []
     /// Account ids whose saved sign-in Google has rejected (expired/revoked
     /// refresh token); the Accounts settings pane offers a "Reauthorize"
     /// button for these.
@@ -4022,11 +4022,13 @@ struct ComposeRequest: Identifiable {
         let client = client(for: label.accountId)
         let pool = db
         let id = label.id
+        let accountId = label.accountId
         gmailLabelColorSaving.insert(id)
         Task { @MainActor [weak self] in
             var failure: Error?
             do {
-                try await GmailLabelColorEdit.apply(color?.colors, labelRowId: id, db: pool) { labelId, color in
+                try await GmailLabelColorEdit.apply(color, labelRowId: id, db: pool,
+                                                    didStore: { self?.reloadAccounts() }) { labelId, color in
                     try await client.patchLabelColor(id: labelId, color: color)
                 }
             } catch {
@@ -4035,9 +4037,15 @@ struct ComposeRequest: Identifiable {
             guard let self else { return }
             self.gmailLabelColorSaving.remove(id)
             self.reloadAccounts()
-            if let failure { self.lastError = GmailLabelColorEdit.errorMessage(failure) }
+            switch GmailLabelColorEdit.outcome(failure, accountKnown: self.isKnownAccount(accountId)) {
+            case .saved, .silent:
+                break
+            case .reauthorize:
+                self.requireReauthorization(for: accountId, interactive: true)
+            case .banner(let message):
+                self.lastError = message
+            }
         }
-        reloadAccounts()
     }
 
     /// Persists a drag-reorder of the account switcher. The unified "all

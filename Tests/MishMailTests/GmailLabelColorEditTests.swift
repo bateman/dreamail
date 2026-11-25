@@ -117,7 +117,7 @@ final class GmailLabelColorEditTests: XCTestCase {
         let q = try makeDB(gmail: yellow)
         let pending = PendingLabelColorEdits()
         let calls = PatchRecorder()
-        try await GmailLabelColorEdit.apply(blue.colors, labelRowId: rowId, db: q, pending: pending) { id, color in
+        try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending) { id, color in
             calls.record(id, color)
             return self.answer(LabelColors(background: "#4A86E8", text: "#FFFFFF"))
         }
@@ -125,27 +125,31 @@ final class GmailLabelColorEditTests: XCTestCase {
         XCTAssertEqual(calls.calls.first?.1, blue)
         XCTAssertEqual(try gmailColors(q), blue.colors)
         XCTAssertNil(try row(q).color, "the Mac-only color is untouched")
-        XCTAssertFalse(pending.isInFlight(rowId))
     }
 
-    /// The new color is stored before Gmail answers.
-    func testUpdateIsOptimistic() async throws {
+    /// The new color is stored, and the app told to show it, before Gmail
+    /// is called.
+    func testUpdateIsShownBeforeGmailAnswers() async throws {
         let q = try makeDB(gmail: yellow)
         let id = rowId
-        try await GmailLabelColorEdit.apply(blue.colors, labelRowId: id, db: q,
-                                            pending: PendingLabelColorEdits()) { _, _ in
-            let during = try await q.read { db in try LabelRow.fetchOne(db, key: id) }
-            XCTAssertEqual(during?.gmailBackgroundColor, "#4a86e8")
-            XCTAssertEqual(during?.gmailTextColor, "#ffffff")
+        var shown: LabelRow?
+        var patchedAfterShown = false
+        try await GmailLabelColorEdit.apply(blue, labelRowId: id, db: q,
+                                            pending: PendingLabelColorEdits(),
+                                            didStore: { shown = try? await q.read { db in try LabelRow.fetchOne(db, key: id) } }) { _, _ in
+            patchedAfterShown = shown != nil
             return self.answer(self.blue.colors)
         }
+        XCTAssertEqual(shown?.gmailBackgroundColor, "#4a86e8")
+        XCTAssertEqual(shown?.gmailTextColor, "#ffffff")
+        XCTAssertTrue(patchedAfterShown)
     }
 
     func testFailedPatchRestoresThePreviousColor() async throws {
         let q = try makeDB(gmail: yellow)
         let pending = PendingLabelColorEdits()
         do {
-            try await GmailLabelColorEdit.apply(blue.colors, labelRowId: rowId, db: q, pending: pending) { _, _ in
+            try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending) { _, _ in
                 throw URLError(.notConnectedToInternet)
             }
             XCTFail("no error")
@@ -153,7 +157,6 @@ final class GmailLabelColorEditTests: XCTestCase {
             XCTAssertEqual((error as? URLError)?.code, .notConnectedToInternet)
         }
         XCTAssertEqual(try gmailColors(q), yellow)
-        XCTAssertFalse(pending.isInFlight(rowId))
         // Nothing held: the next sync's answer is stored as is.
         XCTAssertNil(pending.held(rowId, fetched: yellow, now: Date()))
     }
@@ -169,37 +172,30 @@ final class GmailLabelColorEditTests: XCTestCase {
             }
             XCTFail("no error")
         } catch {
-            XCTAssertTrue(GmailLabelColorEdit.errorMessage(error).contains("Reauthorize"))
+            XCTAssertEqual(GmailLabelColorEdit.outcome(error, accountKnown: true), .reauthorize)
         }
         XCTAssertEqual(try gmailColors(q), yellow)
-        // A 403 rate limit is not a scope problem.
-        let rate = GmailError.http(403, #"{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}"#)
-        XCTAssertFalse(GmailLabelColorEdit.errorMessage(rate).contains("Reauthorize"))
     }
 
-    func testOffPaletteColorIsRefusedBeforeTheCall() async throws {
-        let q = try makeDB(gmail: yellow)
-        let calls = PatchRecorder()
-        do {
-            try await GmailLabelColorEdit.apply(LabelColors(background: "#EB5757", text: "#000000"),
-                                                labelRowId: rowId, db: q,
-                                                pending: PendingLabelColorEdits()) { id, color in
-                calls.record(id, color)
-                return self.answer(nil)
-            }
-            XCTFail("no error")
-        } catch {
-            XCTAssertEqual(error as? GmailLabelColorEdit.Failure, .offPalette)
+    func testOutcomes() {
+        let rate = GmailError.http(403, #"{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}"#)
+        guard case .banner(let text) = GmailLabelColorEdit.outcome(rate, accountKnown: true) else {
+            return XCTFail("a 403 rate limit is not a scope problem")
         }
-        XCTAssertTrue(calls.calls.isEmpty)
-        XCTAssertEqual(try gmailColors(q), yellow)
+        XCTAssertFalse(text.isEmpty)
+        XCTAssertEqual(GmailLabelColorEdit.outcome(nil, accountKnown: true), .saved)
+        XCTAssertEqual(GmailLabelColorEdit.outcome(GmailLabelColorEdit.Failure.notApplied, accountKnown: true),
+                       .banner("Gmail didn't apply the color change."))
+        // An account removed meanwhile gets no banner and no reauth request.
+        XCTAssertEqual(GmailLabelColorEdit.outcome(GmailError.http(403, "{}"), accountKnown: false), .silent)
+        XCTAssertEqual(GmailLabelColorEdit.outcome(URLError(.timedOut), accountKnown: false), .silent)
     }
 
     func testSystemLabelIsRefusedBeforeTheCall() async throws {
         let q = try makeDB(type: "system", gmailId: "INBOX")
         let calls = PatchRecorder()
         do {
-            try await GmailLabelColorEdit.apply(blue.colors, labelRowId: "\(account):INBOX", db: q,
+            try await GmailLabelColorEdit.apply(blue, labelRowId: "\(account):INBOX", db: q,
                                                 pending: PendingLabelColorEdits()) { id, color in
                 calls.record(id, color)
                 return self.answer(self.blue.colors, id: "INBOX")
@@ -247,7 +243,7 @@ final class GmailLabelColorEditTests: XCTestCase {
     func testSecondEditWhileOneIsInFlightIsRefused() async throws {
         let q = try makeDB(gmail: yellow)
         let pending = PendingLabelColorEdits()
-        try await GmailLabelColorEdit.apply(blue.colors, labelRowId: rowId, db: q, pending: pending) { _, _ in
+        try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending) { _, _ in
             do {
                 try await GmailLabelColorEdit.apply(nil, labelRowId: self.rowId, db: q, pending: pending) { _, _ in
                     XCTFail("second call reached Gmail")
@@ -279,7 +275,7 @@ final class GmailLabelColorEditTests: XCTestCase {
         let q = try makeDB(gmail: yellow)
         let pending = PendingLabelColorEdits()
         let start = Date()
-        try await GmailLabelColorEdit.apply(blue.colors, labelRowId: rowId, db: q, pending: pending,
+        try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending,
                                             now: { start }) { _, _ in
             try self.sync(q, self.yellow, pending: pending, now: start)
             XCTAssertEqual(try self.gmailColors(q), self.blue.colors, "during the patch")
@@ -295,13 +291,13 @@ final class GmailLabelColorEditTests: XCTestCase {
         let q = try makeDB(gmail: yellow)
         let pending = PendingLabelColorEdits()
         let start = Date()
-        try await GmailLabelColorEdit.apply(blue.colors, labelRowId: rowId, db: q, pending: pending,
+        try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending,
                                             now: { start }) { _, _ in self.answer(self.blue.colors) }
         try sync(q, blue.colors, pending: pending, now: start.addingTimeInterval(1))
         try sync(q, yellow, pending: pending, now: start.addingTimeInterval(2))
         XCTAssertEqual(try gmailColors(q), yellow, "changed in Gmail after the edit was seen")
 
-        try await GmailLabelColorEdit.apply(blue.colors, labelRowId: rowId, db: q, pending: pending,
+        try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending,
                                             now: { start }) { _, _ in self.answer(self.blue.colors) }
         try sync(q, yellow, pending: pending,
                  now: start.addingTimeInterval(PendingLabelColorEdits.grace + 1))
@@ -317,6 +313,70 @@ final class GmailLabelColorEditTests: XCTestCase {
         XCTAssertEqual(pending.held("b@x.com:Label_1", fetched: yellow, now: Date()), blue.colors)
     }
 
+    /// Removing the account while its edit is in flight: the late answer
+    /// puts nothing back in memory.
+    func testRemovalDuringAnEditLeavesNothingHeld() async throws {
+        let q = try makeDB(gmail: yellow)
+        let pending = PendingLabelColorEdits()
+        try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending) { _, _ in
+            pending.forgetAccount(self.account)
+            return self.answer(self.blue.colors)
+        }
+        XCTAssertNil(pending.held(rowId, fetched: yellow, now: Date()))
+    }
+
+    /// A second edit that fails does not drop the hold of a first one
+    /// Gmail confirmed: a stale sync still cannot bring the old color back.
+    func testFailedSecondEditKeepsTheFirstHold() async throws {
+        let q = try makeDB(gmail: yellow)
+        let pending = PendingLabelColorEdits()
+        let start = Date()
+        try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending,
+                                            now: { start }) { _, _ in self.answer(self.blue.colors) }
+        do {
+            try await GmailLabelColorEdit.apply(nil, labelRowId: rowId, db: q, pending: pending) { _, _ in
+                throw URLError(.notConnectedToInternet)
+            }
+            XCTFail("no error")
+        } catch {}
+        XCTAssertEqual(try gmailColors(q), blue.colors, "restored to the confirmed color")
+        try sync(q, yellow, pending: pending, now: start.addingTimeInterval(5))
+        XCTAssertEqual(try gmailColors(q), blue.colors, "hold kept")
+    }
+
+    /// The restore after a failure only replaces the app's own write: a
+    /// sync that stored newer colors meanwhile wins.
+    func testRestoreDoesNotOverwriteNewerColors() async throws {
+        let q = try makeDB(gmail: yellow)
+        let id = rowId
+        do {
+            try await GmailLabelColorEdit.apply(blue, labelRowId: id, db: q,
+                                                pending: PendingLabelColorEdits()) { _, _ in
+                try await q.write { db in
+                    try db.execute(sql: "UPDATE label SET gmailBackgroundColor = '#16a766', gmailTextColor = '#ffffff' WHERE id = ?",
+                                   arguments: [id])
+                }
+                throw URLError(.timedOut)
+            }
+            XCTFail("no error")
+        } catch {}
+        XCTAssertEqual(try gmailColors(q), LabelColors(background: "#16a766", text: "#ffffff"))
+    }
+
+    /// labels.patch answers with the label resource; its color decodes.
+    func testPatchAnswerDecodes() throws {
+        let json = Data(#"{"id":"Label_1","name":"Work","type":"user","color":{"textColor":"#ffffff","backgroundColor":"#4a86e8"}}"#.utf8)
+        let label = try JSONDecoder().decode(GLabel.self, from: json)
+        XCTAssertEqual(GmailLabelColorEdit.colors(of: label), blue.colors)
+        let bare = try JSONDecoder().decode(GLabel.self, from: Data(#"{"id":"Label_1","name":"Work"}"#.utf8))
+        XCTAssertEqual(GmailLabelColorEdit.colors(of: bare), .none)
+    }
+
+    func testLabelIdIsOnePathSegment() {
+        XCTAssertEqual(GmailClient.pathSegment("Label_12"), "Label_12")
+        XCTAssertEqual(GmailClient.pathSegment("../filters?x=1#y"), "..%2Ffilters%3Fx=1%23y")
+    }
+
     // MARK: - Mac-only color precedence (DEC-023)
 
     /// A Mac-only color still wins after a Gmail edit and a sync, and is
@@ -328,7 +388,7 @@ final class GmailLabelColorEditTests: XCTestCase {
             try db.execute(sql: "UPDATE label SET color = '#EB5757' WHERE id = ?", arguments: [id])
         }
         let calls = PatchRecorder()
-        try await GmailLabelColorEdit.apply(blue.colors, labelRowId: rowId, db: q,
+        try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q,
                                             pending: PendingLabelColorEdits()) { id, color in
             calls.record(id, color)
             return self.answer(self.blue.colors)

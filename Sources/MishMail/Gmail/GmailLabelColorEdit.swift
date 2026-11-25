@@ -6,17 +6,25 @@ import GRDB
 /// color back. In memory only, keyed by label row id; an entry lives while
 /// its write is in flight and for `grace` after, and goes as soon as a sync
 /// sees Gmail agree. Nothing here outlives the app, and removing an account
-/// drops its entries (`forgetAccount`).
+/// drops its entries (`forgetAccount`) for good: an edit still in flight
+/// cannot put one back.
 final class PendingLabelColorEdits: @unchecked Sendable {
     static let shared = PendingLabelColorEdits()
 
     /// How long a confirmed color is held against older sync answers.
     static let grace: TimeInterval = 120
 
+    private struct Hold {
+        var colors: LabelColors
+        var expires: Date
+    }
+
     private struct Entry {
         var colors: LabelColors
         /// nil while the write is in flight.
         var expires: Date?
+        /// The confirmed hold this edit replaced, restored if it fails.
+        var prior: Hold?
     }
 
     private let lock = NSLock()
@@ -25,28 +33,39 @@ final class PendingLabelColorEdits: @unchecked Sendable {
     /// Starts an edit; false when one is already in flight for the label.
     func begin(_ id: String, colors: LabelColors) -> Bool {
         lock.withLock {
-            if let e = entries[id], e.expires == nil { return false }
-            entries[id] = Entry(colors: colors, expires: nil)
+            let current = entries[id]
+            if let current, current.expires == nil { return false }
+            let prior = current.flatMap { e in e.expires.map { Hold(colors: e.colors, expires: $0) } }
+            entries[id] = Entry(colors: colors, expires: nil, prior: prior)
             return true
         }
     }
 
-    /// The write landed: hold Gmail's answer for `grace`.
+    /// The write landed: hold Gmail's answer for `grace`. Only an edit
+    /// still in flight is confirmed, so nothing comes back after
+    /// `forgetAccount`.
     func confirm(_ id: String, colors: LabelColors, now: Date) {
-        lock.withLock { entries[id] = Entry(colors: colors, expires: now.addingTimeInterval(Self.grace)) }
+        lock.withLock {
+            guard let e = entries[id], e.expires == nil else { return }
+            entries[id] = Entry(colors: colors, expires: now.addingTimeInterval(Self.grace), prior: nil)
+        }
     }
 
+    /// The write failed: back to the hold it replaced, if any.
     func cancel(_ id: String) {
-        lock.withLock { _ = entries.removeValue(forKey: id) }
+        lock.withLock {
+            guard let e = entries[id], e.expires == nil else { return }
+            if let p = e.prior {
+                entries[id] = Entry(colors: p.colors, expires: p.expires, prior: nil)
+            } else {
+                entries.removeValue(forKey: id)
+            }
+        }
     }
 
     func forgetAccount(_ accountId: String) {
         let prefix = accountId + ":"
         lock.withLock { entries = entries.filter { !$0.key.hasPrefix(prefix) } }
-    }
-
-    func isInFlight(_ id: String) -> Bool {
-        lock.withLock { entries[id].map { $0.expires == nil } ?? false }
     }
 
     /// The Gmail colors a sync should store for a label: the held ones while
@@ -67,11 +86,11 @@ final class PendingLabelColorEdits: @unchecked Sendable {
 /// Changes a user label's color on Gmail (`labels.patch`): checks it
 /// first, shows it at once, then keeps Gmail's answer or puts the old
 /// color back if the call fails. The Mac-only color (`LabelRow.color`,
-/// DEC-023) is not touched and still wins on display.
+/// DEC-023) is not touched and still wins on display. A color outside
+/// Gmail's palette cannot be asked for: `GmailLabelColor` refuses it.
 enum GmailLabelColorEdit {
     enum Failure: LocalizedError, Equatable {
         case systemLabel
-        case offPalette
         case inFlight
         case unknownLabel
         /// Gmail answered but kept a different color.
@@ -80,7 +99,6 @@ enum GmailLabelColorEdit {
         var errorDescription: String? {
             switch self {
             case .systemLabel: return "System labels have no color in Gmail."
-            case .offPalette: return "Gmail only accepts colors from its own palette."
             case .inFlight: return "That label's color is still being saved to Gmail."
             case .unknownLabel: return "That label is no longer in Gmail."
             case .notApplied: return "Gmail didn't apply the color change."
@@ -88,14 +106,25 @@ enum GmailLabelColorEdit {
         }
     }
 
-    /// What the banner says when a change fails. A 403 that is not a rate
-    /// limit means Gmail refused the sign-in's access (scope or consent).
-    static func errorMessage(_ error: Error) -> String {
+    /// What the app does once an edit is over.
+    enum Outcome: Equatable {
+        case saved
+        /// Gmail refused the sign-in's access (403, not a rate limit):
+        /// flag the account for reauthorization.
+        case reauthorize
+        case banner(String)
+        /// The account was removed meanwhile: say nothing.
+        case silent
+    }
+
+    static func outcome(_ error: Error?, accountKnown: Bool) -> Outcome {
+        guard accountKnown else { return .silent }
+        guard let error else { return .saved }
         if case GmailError.http(403, let body) = error, !MessageFetchFailureKind.isRateLimitBody(body) {
-            return "Gmail refused the color change. Reauthorize the account in Settings → Accounts and try again."
+            return .reauthorize
         }
-        if let failure = error as? Failure { return failure.errorDescription ?? "" }
-        return "Couldn't change the label color on Gmail: \(error.localizedDescription)"
+        if let failure = error as? Failure { return .banner(failure.errorDescription ?? "") }
+        return .banner("Couldn't change the label color on Gmail: \(error.localizedDescription)")
     }
 
     typealias Patch = (_ gmailLabelId: String, _ color: GmailLabelColor?) async throws -> GLabel
@@ -107,51 +136,51 @@ enum GmailLabelColorEdit {
     }
 
     /// Sets (or, with nil, removes) the label's Gmail color. Throws
-    /// `Failure` before any call for a system label or a color outside
-    /// Gmail's palette; on a failed call the stored colors are restored and
-    /// the error rethrown.
-    static func apply(_ requested: LabelColors?,
+    /// `Failure` before any call for a system label or while another edit
+    /// of it is in flight. The new color is stored, then `didStore` runs
+    /// (the app shows it), then Gmail is called; on a failed call the
+    /// previous colors are restored and the error rethrown.
+    static func apply(_ target: GmailLabelColor?,
                       labelRowId id: String,
                       db: any DatabaseWriter,
                       pending: PendingLabelColorEdits = .shared,
                       now: () -> Date = { Date() },
+                      didStore: () async -> Void = {},
                       patch: Patch) async throws {
-        guard let row = try await db.read({ try LabelRow.fetchOne($0, key: id) }) else {
-            throw Failure.unknownLabel
-        }
-        guard row.type == "user" else { throw Failure.systemLabel }
-        let target: GmailLabelColor?
-        if let requested {
-            guard let color = GmailLabelColor(background: requested.background, text: requested.text) else {
-                throw Failure.offPalette
-            }
-            target = color
-        } else {
-            target = nil
-        }
         let wanted = target?.colors ?? .none
-        let before = LabelColors(background: row.gmailBackgroundColor, text: row.gmailTextColor)
-        guard pending.begin(id, colors: wanted) else { throw Failure.inFlight }
-
+        // Read, claim and write in one transaction, so `before` is what the
+        // optimistic write replaced and no sync lands in between.
+        let (gmailLabelId, before) = try await db.write { db -> (String, LabelColors) in
+            guard let row = try LabelRow.fetchOne(db, key: id) else { throw Failure.unknownLabel }
+            guard row.type == "user" else { throw Failure.systemLabel }
+            guard pending.begin(id, colors: wanted) else { throw Failure.inFlight }
+            try store(db, wanted, id: id)
+            return (row.gmailLabelId, LabelColors(background: row.gmailBackgroundColor,
+                                                  text: row.gmailTextColor))
+        }
+        await didStore()
         let answer: GLabel
         do {
-            try await store(wanted, id: id, db: db)
-            answer = try await patch(row.gmailLabelId, target)
+            answer = try await patch(gmailLabelId, target)
         } catch {
             pending.cancel(id)
-            try? await store(before, id: id, db: db)
+            // Only over our own write: a sync may have stored newer colors.
+            try? await db.write { db in
+                try db.execute(sql: """
+                    UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ?
+                    WHERE id = ? AND gmailBackgroundColor IS ? AND gmailTextColor IS ?
+                    """, arguments: [before.background, before.text, id, wanted.background, wanted.text])
+            }
             throw error
         }
         let confirmed = colors(of: answer)
-        try? await store(confirmed, id: id, db: db)
+        try? await db.write { db in try store(db, confirmed, id: id) }
         pending.confirm(id, colors: confirmed, now: now())
         if confirmed != wanted { throw Failure.notApplied }
     }
 
-    private static func store(_ colors: LabelColors, id: String, db: any DatabaseWriter) async throws {
-        try await db.write { db in
-            try db.execute(sql: "UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ? WHERE id = ?",
-                           arguments: [colors.background, colors.text, id])
-        }
+    private static func store(_ db: Database, _ colors: LabelColors, id: String) throws {
+        try db.execute(sql: "UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ? WHERE id = ?",
+                       arguments: [colors.background, colors.text, id])
     }
 }

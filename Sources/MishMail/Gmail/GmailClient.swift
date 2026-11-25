@@ -434,7 +434,13 @@ actor GmailClient {
     /// scope), or removes it with nil. Only `color` is sent; the answer is
     /// the label as Gmail now has it.
     func patchLabelColor(id: String, color: GmailLabelColor?) async throws -> GLabel {
-        try await request("PATCH", "/labels/\(id)", jsonBody: Self.labelColorPatchBody(color))
+        try await request("PATCH", "/labels/\(Self.pathSegment(id))", jsonBody: Self.labelColorPatchBody(color))
+    }
+
+    /// A label id as one path segment: `/`, `?`, `#` and the like are
+    /// percent-encoded, so an id can't reach another endpoint.
+    nonisolated static func pathSegment(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? ""
     }
 
     /// The `labels.patch` body: both colors, or `"color": null` to remove
@@ -469,7 +475,7 @@ actor GmailClient {
 
     /// Authoritative per-label unread counts, straight from Gmail.
     func labelInfo(_ id: String) async throws -> GLabelDetail {
-        try await request("GET", "/labels/\(id)")
+        try await request("GET", "/labels/\(Self.pathSegment(id))")
     }
 
     /// The account's display name from the Google profile.
