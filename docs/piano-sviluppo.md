@@ -192,7 +192,7 @@ Seguiti annotati:
 | Cache persistente e cifrata delle immagini incorporate (migrazione v54) | #39 |
 | Immagini remote caricate per impostazione predefinita all'apertura; Spam sempre bloccato; nessun caricamento anticipato | #40 |
 | Anello dell'account a spessore doppio (3 pt). Modifica semplice: sessione Sonnet, nessuna review, unita a CI verde (DEC-036) | #41 |
-| Cache cifrata delle immagini remote, solo dove sono già permesse (migrazione v55) | #42, in lavorazione |
+| Cache cifrata delle immagini remote, solo dove sono già permesse (migrazione v55). Prima apertura come prima, con salvataggio in secondo piano (DEC-043) | #42 |
 | Colore d'accento configurabile in Settings → Appearance | #43 |
 | Badge delle non lette sull'icona nel Dock: aggiornamento immediato dopo le azioni locali, ridisegno al ritorno nell'app, riga "Shown by macOS" nelle impostazioni | #45 |
 
@@ -206,6 +206,7 @@ Esiti da ricordare:
 - PR #39: immagini solo dentro il database cifrato, mai in file; 200 MiB in tutto, 3 MiB per messaggio, esce prima ciò che è usato meno di recente; cancellazione a cascata con allegato, messaggio e account. Nessun confronto di latenza in CI: da giudicare sul Mac.
 - PR #40: un'installazione che non aveva mai scelto segue il nuovo predefinito; una scelta salvata resta; un valore sconosciuto vale "Ask". Con un tasto freccia tenuto premuto si apre solo la conversazione su cui ci si ferma. Nessun avviso nell'app per chi non aveva mai scelto: lo dice solo il changelog. `SECURITY.md` ha una nuova nota "Remote images".
 
+- PR #42: alla prima apertura le immagini sono chieste due volte al mittente (dal visualizzatore e dall'app, che non può leggere i byte scaricati dal visualizzatore). Un messaggio si riapre dalla cache solo quando tutte le sue immagini sono "sistemate": salvate, oppure rifiutate e ricordate come tali (pixel, SVG, troppo grandi, oltre il tetto). Gli errori di rete non vengono ricordati e si ritentano. La review sul percorso nuovo ha trovato un difetto serio (immagini incorporate mai mostrate a freddo con cache completa) corretto prima dell'unione.
 - PR #43: Settings → Appearance → "Accent color" (selettore di sistema, colori rapidi, "Default" = aspetto di prima). Il testo sopra l'accento diventa bianco o nero; l'accento usato come testo o icona viene corretto in luminosità quanto basta; i pulsanti di sistema usano una variante scurita. L'evidenziazione della riga selezionata nel colore scelto vale solo su macOS 26 e successivi: su macOS 14 e 15 resta quella di sistema. Restano al sistema la selezione del testo, i controlli nativi e gli avvisi. Ha toccato 45 file dell'interfaccia.
 - PR #45: il badge esisteva già e usava il supporto di sistema (`dockTile.badgeLabel`); il proprietario ha segnalato che sul suo Mac non compare affatto. Nel codice non è stata trovata una causa certa: la PR toglie i casi in cui un disegno perso non veniva ritentato e mostra nelle impostazioni lo stato riferito da macOS. La causa sul Mac del proprietario resta da accertare. Le skill `ponytail-review` e `security-audit` non erano disponibili nella sessione dell'orchestratore: le due review sono state fatte a mano da agenti.
 
@@ -286,6 +287,10 @@ Aggiornato il 25 novembre 2026.
 
 - ☐ **C-37** VoiceOver: menu degli account, righe dei messaggi, anello dell'account.
 - ☐ **C-38** macOS 14 e 15: intestazioni di sezione, icone, selezione con accento personalizzato (lì resta quella di sistema).
+
+### Aggiunti dalle PR unite dopo il 25 novembre 2026
+
+- ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme.
 
 ## Ondata 3 — parità Gmail
 
@@ -390,7 +395,7 @@ Aggiornato il 25 novembre 2026.
 | — | `perf/persistent-image-cache` | #39 | Unito |
 | — | `ux/remote-images-default-on` | #40 | Unito |
 | — | `ux/account-ring-thicker` | #41 | Unito, modifica semplice senza review |
-| — | `perf/remote-image-cache` | #42 | In lavorazione |
+| — | `perf/remote-image-cache` | #42 | Unito |
 | — | `ux/custom-accent-color` | #43 | Unito |
 | — | `docs/ux-round-4` | #44 | Documentazione del quarto giro |
 | — | `feature/unread-dock-badge` | #45 | Unito |
