@@ -56,7 +56,7 @@ final class AccountRailUITests: XCTestCase {
         // midline is half the rail's width from the window's left edge.
         let railWidth = (settings.frame.midX - window.frame.minX) * 2
         XCTAssertEqual(railWidth, 64, accuracy: 2, "the rail below the band is 64 pt wide")
-        XCTAssertGreaterThanOrEqual(element(app, "accountRail.all").frame.minY, band.frame.maxY,
+        XCTAssertGreaterThanOrEqual(element(app, "accountRail.account.you@example.com").frame.minY, band.frame.maxY,
                                     "avatars start below the band")
 
         // Sidebar shown: the band runs over the sidebar's top, and the
