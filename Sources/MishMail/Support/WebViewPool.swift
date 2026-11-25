@@ -88,6 +88,12 @@ enum HTMLWebViewPool {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true)
         config.userContentController.addUserScript(domReady)
+        // Records image load/error events and CSP-refused image loads.
+        let imageEvents = WKUserScript(
+            source: HTMLBodyLayout.imageEventsJS,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true)
+        config.userContentController.addUserScript(imageEvents)
         return config
     }
 

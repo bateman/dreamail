@@ -57,7 +57,7 @@ enum RemoteImagePolicy: String, CaseIterable, Identifiable {
 
     /// Note shown under every policy: what stays blocked regardless.
     static let alwaysBlockedNote =
-        "Messages in Spam always need their own click, and conversations you have not opened never load remote images. Cleartext (http) image URLs stay blocked either way."
+        "Messages in Spam always need their own click, and conversations you have not opened never load remote images. Images with a cleartext (http) address are never fetched over http: they load over https, as in Gmail, or not at all."
 
     /// Whether `labelIds` (space-separated Gmail label ids) put the message
     /// in Spam.
