@@ -38,4 +38,14 @@ enum RemoteThreadSend {
         if ThreadEditRetryPolicy.shouldRequeue(error) { return .queue }
         return .revert
     }
+
+    /// The banner for an edit Gmail refused. Mute gets its own words: the
+    /// `MUTED` label is not documented in the Gmail API, so a refusal of it
+    /// is expected on some accounts and must not read like a sync fault.
+    static func refusalMessage(for change: RemoteThreadChange, error: Error) -> String {
+        if change.addLabels.contains(ConversationAction.mutedLabel) {
+            return "Gmail did not accept muting this conversation, so it is back where it was. Mute it on gmail.com instead."
+        }
+        return error.localizedDescription
+    }
 }

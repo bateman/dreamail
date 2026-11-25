@@ -208,8 +208,9 @@ struct MishMailApp: App {
                     .disabled(!hasMessageSelection)
                 Button("Label…") { store.perform(.label) }
                     .disabled(!hasSingleThreadSelection)
+                // Same targets as `v`: the checked rows, else the focused one.
                 Button("Move to…") { store.perform(.moveTo) }
-                    .disabled(!hasSingleThreadSelection)
+                    .disabled(!hasMessageSelection)
                 Button("Mute/Unmute") { store.perform(.mute) }
                     .disabled(!hasMessageSelection)
                 Button("Mark as Important") { store.perform(.markImportant) }

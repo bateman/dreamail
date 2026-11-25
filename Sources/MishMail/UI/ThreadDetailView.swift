@@ -892,9 +892,9 @@ struct ThreadDetailView: View {
         withAnimation(.easeOut(duration: 0.12)) {
             expandedMessageIds = after.expanded
         }
-        for id in after.expanded.subtracting(before.expanded) {
-            loadBodyIfNeeded(id: id)
-        }
+        // In thread order, so the bounded fetch starts at the top.
+        let opened = after.expanded.subtracting(before.expanded)
+        loadBodiesBounded(ids.filter { opened.contains($0) })
         if let scrollTo {
             applyScrollAnchor(scrollTo, proxy: proxy)
         }
@@ -920,26 +920,53 @@ struct ThreadDetailView: View {
 
     /// Hydrate one message's body into `messages` when the user expands it.
     private func loadBodyIfNeeded(id: String) {
-        guard let idx = messages.firstIndex(where: { $0.id == id }) else { return }
+        guard claimBodyLoad(id: id) else { return }
+        Task { await fetchBody(id: id) }
+    }
+
+    /// Gmail `;` opens every card at once: fetch the missing bodies a few at
+    /// a time rather than one request per message in a burst.
+    static let expandAllBodyFetchLimit = 2
+
+    private func loadBodiesBounded(_ ids: [String]) {
+        let pending = ids.filter { claimBodyLoad(id: $0) }
+        guard !pending.isEmpty else { return }
+        // `expandAllBodyFetchLimit` serial walks, each over every n-th id.
+        let lanes = min(Self.expandAllBodyFetchLimit, pending.count)
+        for lane in 0..<lanes {
+            let mine = stride(from: lane, to: pending.count, by: lanes).map { pending[$0] }
+            Task {
+                for id in mine { await fetchBody(id: id) }
+            }
+        }
+    }
+
+    /// True when `id` still needs its body fetched (and marks it attempted).
+    /// A body already present only gets the CID and attachment recovery.
+    private func claimBodyLoad(id: String) -> Bool {
+        guard let idx = messages.firstIndex(where: { $0.id == id }) else { return false }
         guard Self.needsBodyLoad(messages[idx]) else {
             // Body already present (newest message, cache hit) — still try CID
             // and missing-attachment recovery.
             recoverAttachmentsIfNeeded(id: id)
             resolveCIDImagesIfNeeded(id: id)
-            return
+            return false
         }
-        guard !bodyLoadAttempted.contains(id) else { return }
+        guard !bodyLoadAttempted.contains(id) else { return false }
         bodyLoadAttempted.insert(id)
-        Task {
-            guard let loaded = await store.messageBodyForReadingPane(id: id),
-                  splitMode || store.openedThreadId == thread.id,
-                  let currentIdx = messages.firstIndex(where: { $0.id == id })
-            else { return }
-            messages[currentIdx] = loaded.message
-            bodyPrepByMessageId[id] = loaded.prep
-            recoverAttachmentsIfNeeded(id: id)
-            resolveCIDImagesIfNeeded(id: id)
-        }
+        return true
+    }
+
+    @MainActor
+    private func fetchBody(id: String) async {
+        guard let loaded = await store.messageBodyForReadingPane(id: id),
+              splitMode || store.openedThreadId == thread.id,
+              let currentIdx = messages.firstIndex(where: { $0.id == id })
+        else { return }
+        messages[currentIdx] = loaded.message
+        bodyPrepByMessageId[id] = loaded.prep
+        recoverAttachmentsIfNeeded(id: id)
+        resolveCIDImagesIfNeeded(id: id)
     }
 
     /// Full re-fetch when this card has no attachment chips but Gmail may still

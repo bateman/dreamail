@@ -34,6 +34,16 @@ enum ShortcutCommand: String, CaseIterable, Codable {
     case expandAll, collapseAll
 }
 
+extension ShortcutCommand {
+    /// Toggles and pickers: a held key runs them once, not on every repeat.
+    var ignoresAutoRepeat: Bool {
+        switch self {
+        case .mute, .moveTo, .markImportant, .markNotImportant: return true
+        default: return false
+        }
+    }
+}
+
 struct ShortcutSpec: Identifiable {
     let command: ShortcutCommand
     let title: String

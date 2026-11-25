@@ -1346,7 +1346,7 @@ private extension ContentView {
                     // the field wins focus, Return would otherwise be eaten
                     // by the default branch below (it's a control character,
                     // so it neither deletes nor appends).
-                    if let thread = store.selectedThread {
+                    if let thread = store.labelPickerThread {
                         let labels = store.labelPickerLabels(for: thread)
                         let createName = store.labelPickerCreateName(for: thread)
                         let rowCount = labels.count + (createName != nil ? 1 : 0)
@@ -1359,7 +1359,7 @@ private extension ContentView {
                     }
                     return nil
                 case 49 where picker.navigated:  // space after arrows: toggle
-                    if let thread = store.selectedThread {
+                    if let thread = store.labelPickerThread {
                         let labels = store.labelPickerLabels(for: thread)
                         let createName = store.labelPickerCreateName(for: thread)
                         let rowCount = labels.count + (createName != nil ? 1 : 0)
@@ -1620,6 +1620,13 @@ private extension ContentView {
             // j/k (and other rebindable browse keys) also auto-repeat; pass
             // through so held navigation coalesces like ↑/↓.
             browseKeyIsRepeat = event.isARepeat
+            // A held `m` or `v` must not toggle mute back and forth or reopen
+            // the picker on every repeat.
+            if event.isARepeat, !store.hasPendingShortcutPrefix,
+               let command = store.keyBindings.command(for: chars),
+               command.ignoresAutoRepeat {
+                return nil
+            }
             if store.handleKey(chars) { return nil }
             // Unhandled printable keys must not fall through: SwiftUI List
             // type-selects to the first row starting with that letter, which

@@ -319,6 +319,194 @@ final class ConversationActionsTests: XCTestCase {
         let folded = ConversationAction.mute.remote.merged(with: ConversationAction.unmute.remote)
         XCTAssertEqual(folded, .modify(add: [], remove: ["INBOX"]))
     }
+
+    // MARK: - Round 1 review
+
+    private let other = "ann@y.com"
+
+    private func insertOtherAccountThread(_ q: DatabaseQueue, _ id: String, labels: String) throws {
+        try q.write { db in
+            try Account(id: self.other, displayName: "A", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
+            try Message(id: "\(self.other):m-\(id)", accountId: self.other, gmailId: "m-\(id)",
+                        threadId: "\(self.other):\(id)", fromHeader: "a@b.com",
+                        toHeader: self.other, ccHeader: "", bccHeader: "",
+                        subject: "Hi", date: Date(), snippet: "", bodyText: "",
+                        bodyHTML: nil, messageIdHeader: "", referencesHeader: "",
+                        labelIds: labels, isUnread: false, hasAttachment: false).insert(db)
+            try SyncEngine.deriveThreads(db, for: ["\(self.other):\(id)"], accountId: self.other)
+        }
+    }
+
+    /// R5: the store's glue as a plan. A bulk move over two accounts moves
+    /// only the picker account's rows, reports the others, and its undo
+    /// gives every moved row back exactly; the other account is untouched.
+    func testBulkMoveAcrossTwoAccountsThenUndo() throws {
+        let q = try makeDB([("a1", ["INBOX UNREAD"]), ("a2", ["INBOX"])])
+        try insertOtherAccountThread(q, "b1", labels: "INBOX")
+        let a1 = try thread(q, "a1"), a2 = try thread(q, "a2")
+        let b1 = try XCTUnwrap(try q.read { try MailThread.fetchOne($0, key: "\(self.other):b1") })
+        let plan = ConversationActionRun(.moveTo(labelId: "Label_7"),
+                                         targets: [a1, b1, a2], account: account)
+        XCTAssertEqual(plan.targets.map(\.gmailThreadId), ["a1", "a2"])
+        XCTAssertEqual(plan.skipped.map(\.gmailThreadId), ["b1"])
+        let badgeBefore = try badge(q)
+        try q.write { db in
+            for (o, a) in zip(plan.targets, plan.acted) {
+                try OptimisticThreadWrite.updateChangedColumns(db, from: o, to: a)
+            }
+        }
+        XCTAssertFalse(try thread(q, "a1").inInbox)
+        XCTAssertFalse(try thread(q, "a2").inInbox)
+        XCTAssertEqual(try badge(q), badgeBefore - 1, "a1 was the unread one")
+        // The undo the toast runs.
+        try q.write { db in
+            for group in plan.undoGroups {
+                for t in group.threads {
+                    var restored = t
+                    restored.applyLabelMutation(add: Set(group.change.addLabels),
+                                                remove: Set(group.change.removeLabels))
+                    try OptimisticThreadWrite.updateChangedColumns(db, from: t, to: restored)
+                }
+            }
+        }
+        for o in [a1, a2] {
+            let row = try thread(q, o.gmailThreadId)
+            XCTAssertTrue(row.inInbox, o.gmailThreadId)
+            XCTAssertEqual(row.userLabelIds, [], o.gmailThreadId)
+        }
+        XCTAssertEqual(try badge(q), badgeBefore)
+        let untouched = try XCTUnwrap(try q.read { try MailThread.fetchOne($0, key: "\(self.other):b1") })
+        XCTAssertEqual(untouched, b1)
+    }
+
+    func testAPlanWithEveryTargetInAnotherAccountMovesNothing() throws {
+        let q = try makeDB([])
+        try insertOtherAccountThread(q, "b1", labels: "INBOX")
+        let b1 = try XCTUnwrap(try q.read { try MailThread.fetchOne($0, key: "\(self.other):b1") })
+        let plan = ConversationActionRun(.moveTo(labelId: "Label_7"), targets: [b1], account: account)
+        XCTAssertTrue(plan.targets.isEmpty)
+        XCTAssertEqual(plan.skipped.count, 1, "the store shows the notice from this")
+    }
+
+    /// R2: from a label view the move also leaves that label, from Trash it
+    /// leaves the trash; the undo puts both back.
+    func testMoveFromALabelViewLeavesThatLabelAndUndoRestoresIt() throws {
+        let q = try makeDB([("t1", ["INBOX Label_3"])])
+        let original = try thread(q)
+        let action = ConversationAction.moveTo(
+            labelId: "Label_7",
+            alsoRemove: MoveSource.alsoRemove(labelViewId: "Label_3", inTrashView: false))
+        XCTAssertEqual(action.remote, .modify(add: ["Label_7"], remove: ["INBOX", "Label_3"]))
+        var moved = original
+        action.apply(&moved)
+        XCTAssertEqual(moved.userLabelIds, ["Label_7"])
+        try write(q, from: original, to: moved)
+        XCTAssertEqual(action.undoRemote(original: original),
+                       .modify(add: ["INBOX", "Label_3"], remove: ["Label_7"]))
+        var restored = moved
+        action.restore(original: original, &restored)
+        try write(q, from: moved, to: restored)
+        let row = try thread(q)
+        XCTAssertTrue(row.inInbox)
+        XCTAssertEqual(row.userLabelIds, ["Label_3"])
+    }
+
+    func testMoveFromTrashLeavesTheTrash() throws {
+        let q = try makeDB([("t1", ["TRASH"])])
+        let original = try thread(q)
+        let action = ConversationAction.moveTo(
+            labelId: "Label_7", alsoRemove: MoveSource.alsoRemove(labelViewId: nil, inTrashView: true))
+        XCTAssertEqual(action.remote, .modify(add: ["Label_7"], remove: ["INBOX", "TRASH"]))
+        var moved = original
+        action.apply(&moved)
+        XCTAssertFalse(moved.inTrash)
+        var restored = moved
+        action.restore(original: original, &restored)
+        XCTAssertTrue(restored.inTrash, "undo puts it back in the trash")
+        XCTAssertFalse(restored.inInbox, "and not in the inbox, where it never was")
+    }
+
+    func testMoveSources() {
+        XCTAssertEqual(MoveSource.alsoRemove(labelViewId: nil, inTrashView: false), [])
+        XCTAssertEqual(MoveSource.alsoRemove(labelViewId: "Label_3", inTrashView: false), ["Label_3"])
+        XCTAssertEqual(MoveSource.alsoRemove(labelViewId: nil, inTrashView: true), ["TRASH"])
+        // Moving a label view's conversation to that same label only archives.
+        XCTAssertEqual(ConversationAction.moveTo(labelId: "Label_3", alsoRemove: ["Label_3"]).remote,
+                       .modify(add: ["Label_3"], remove: ["INBOX"]))
+    }
+
+    /// R1: a refused mute says so in its own words, reverts, and a queued
+    /// one is dropped (not kept for another replay).
+    func testRefusedMuteHasItsOwnMessageAndIsNotRetried() {
+        let refusal = GmailError.http(400, "Invalid label: MUTED")
+        let message = RemoteThreadSend.refusalMessage(for: ConversationAction.mute.remote, error: refusal)
+        XCTAssertTrue(message.contains("did not accept muting"), message)
+        XCTAssertEqual(RemoteThreadSend.refusalMessage(for: ConversationAction.markImportant.remote,
+                                                       error: refusal),
+                       refusal.localizedDescription)
+        XCTAssertEqual(RemoteThreadSend.disposition(for: refusal), .revert)
+        guard case .dropRow(let revert, _) = ThreadOpReplay.replayDisposition(
+            error: refusal, accountIsKnown: true, createdAt: Date()) else {
+            return XCTFail("a refused queued mute must be dropped, not kept for the next replay")
+        }
+        XCTAssertTrue(revert)
+    }
+
+    /// R4: `-` under Priority "starred + important" drops an important-only
+    /// row out of the section, so the focus must move first.
+    func testNotImportantLeavesThePrioritySection() throws {
+        let q = try makeDB([("t1", ["INBOX IMPORTANT"]), ("t2", ["INBOX STARRED IMPORTANT"])])
+        let t1 = try thread(q, "t1"), t2 = try thread(q, "t2")
+        let leaving = PrioritySectionAdvance.idsLeavingSection(
+            targets: [t1, t2], sectionIds: [t1.id, t2.id], mode: .starredImportant,
+            vipThreadIds: [], vipAlwaysPins: true,
+            simulate: { $0.applyLabelMutation(remove: [ConversationAction.importantLabel]) })
+        XCTAssertEqual(leaving, [t1.id], "the starred one stays")
+        // Unstar, the default, is unchanged.
+        XCTAssertEqual(PrioritySectionAdvance.idsLeavingSection(
+            targets: [t2], sectionIds: [t2.id], mode: .starred,
+            vipThreadIds: [], vipAlwaysPins: true), [t2.id])
+    }
+
+    // MARK: - Move picker (S1, S2)
+
+    /// S1: the toolbar's conversation wins over the checked rows; the key
+    /// acts on the checked rows, else the focused one.
+    func testMovePickerTargets() {
+        XCTAssertEqual(MovePickerRules.targetIds(toolbarThread: "open", checkedInOrder: ["a", "b"],
+                                                 focused: "f"), ["open"])
+        XCTAssertEqual(MovePickerRules.targetIds(toolbarThread: nil, checkedInOrder: ["a", "b"],
+                                                 focused: "f"), ["a", "b"])
+        XCTAssertEqual(MovePickerRules.targetIds(toolbarThread: nil, checkedInOrder: [],
+                                                 focused: "f"), ["f"])
+        XCTAssertEqual(MovePickerRules.targetIds(toolbarThread: nil, checkedInOrder: [],
+                                                 focused: nil), [])
+    }
+
+    /// S2: a label created from the picker moves only while that picker
+    /// session is still open in move mode.
+    func testCreatedLabelMovesOnlyIntoTheSamePickerSession() {
+        let s = UUID()
+        XCTAssertTrue(MovePickerRules.appliesCreatedLabel(pickerOpen: true, moveMode: true,
+                                                          currentSession: s, requestSession: s))
+        XCTAssertFalse(MovePickerRules.appliesCreatedLabel(pickerOpen: false, moveMode: true,
+                                                           currentSession: s, requestSession: s))
+        XCTAssertFalse(MovePickerRules.appliesCreatedLabel(pickerOpen: true, moveMode: false,
+                                                           currentSession: s, requestSession: s))
+        XCTAssertFalse(MovePickerRules.appliesCreatedLabel(pickerOpen: true, moveMode: true,
+                                                           currentSession: UUID(), requestSession: s))
+    }
+
+    /// I2: toggles and pickers ignore key auto-repeat; navigation keeps it.
+    func testHeldTogglesDoNotRepeat() {
+        for c in [ShortcutCommand.mute, .moveTo, .markImportant, .markNotImportant] {
+            XCTAssertTrue(c.ignoresAutoRepeat, "\(c)")
+        }
+        for c in [ShortcutCommand.next, .prev, .nextMessage, .previousMessage] {
+            XCTAssertFalse(c.ignoresAutoRepeat, "\(c)")
+        }
+    }
 }
 
 /// Records the thread edits that would reach Gmail.

@@ -35,7 +35,7 @@ struct LabelPicker: View {
                 .ignoresSafeArea()
                 .onTapGesture { store.mailboxOverlay = nil }
 
-            if let thread = store.selectedThread {
+            if let thread = store.labelPickerThread {
                 let labels = store.labelPickerLabels(for: thread)
                 // The "Create …" row sits after the matches and is reachable
                 // with the same up/down highlight.
@@ -43,7 +43,7 @@ struct LabelPicker: View {
                 let rowCount = labels.count + (createName != nil ? 1 : 0)
                 let highlighted = min(picker.highlight, max(rowCount - 1, 0))
                 VStack(spacing: 0) {
-                    TextField(picker.mode == .move ? "Move to…" : "Label as…", text: $picker.query)
+                    TextField(placeholder, text: $picker.query)
                         .textFieldStyle(.plain)
                         .font(.system(size: 15))
                         .padding(12)
@@ -168,6 +168,13 @@ struct LabelPicker: View {
                 }
             }
         }
+    }
+
+    /// "Move 5 conversations to…" when the move covers several.
+    private var placeholder: String {
+        guard picker.mode == .move else { return "Label as…" }
+        let n = picker.moveTargetIds.count
+        return n > 1 ? "Move \(n) conversations to…" : "Move to…"
     }
 
     /// Scroll the list so the highlighted row (label or Create) is visible.

@@ -280,7 +280,7 @@ struct ThreadDetailToolbar: ViewModifier {
                               ? "Mark as not important (\(store.keyBindings.displayKey(for: .markNotImportant)))"
                               : "Mark as important (\(store.keyBindings.displayKey(for: .markImportant)))")
                         Button {
-                            store.openMovePicker()
+                            store.openMovePicker(thread: thread)
                         } label: {
                             Label("Move to…", systemImage: "folder")
                         }

@@ -107,7 +107,7 @@ extension MailStore {
                 // of the next sync instead of reverting the thread.
                 await queueThreadChange(change, accountId: accountId, gmailThreadId: gmailThreadId)
             case .revert:
-                lastError = error.localizedDescription
+                lastError = RemoteThreadSend.refusalMessage(for: change, error: error)
                 await rederiveThreadFromMessages(
                     accountId: accountId, gmailThreadId: gmailThreadId)
                 await sync(accountId: accountId)
@@ -216,7 +216,9 @@ extension MailStore {
                 case .dropRow(let revert, let report):
                     // Gone or rejected: the next sync shows Gmail's truth.
                     if report {
-                        lastError = "Couldn't sync an offline change: \(error.localizedDescription)"
+                        lastError = change.addLabels.contains(ConversationAction.mutedLabel)
+                            ? RemoteThreadSend.refusalMessage(for: change, error: error)
+                            : "Couldn't sync an offline change: \(error.localizedDescription)"
                     }
                     shouldDelete = true
                     shouldRederive = revert
@@ -571,7 +573,10 @@ extension MailStore {
     /// into date groups, jump selection to the next Priority neighbor
     /// (down, then up). When the section empties, destinations are nil —
     /// deliberately do nothing; selection stays on the still-listed row.
-    private func advanceForPriorityUnstar(_ targets: [MailThread]) {
+    /// `simulate`: the edit that may drop the rows out of the section (unstar
+    /// by default; `-` passes the IMPORTANT removal).
+    func advanceForPriorityUnstar(_ targets: [MailThread],
+                                  simulate: ((inout MailThread) -> Void)? = nil) {
         guard selectedView == .inbox, !prioritySectionIds.isEmpty else { return }
         let modeRaw = UserDefaults.standard.string(forKey: "priorityMode")
         let mode = PrioritySplit.Mode(rawValue: modeRaw ?? "") ?? .starred
@@ -599,7 +604,8 @@ extension MailStore {
             mode: mode,
             vipThreadIds: vipThreadIds,
             vipAlwaysPins: vipAlwaysPins,
-            newerThan: newerThan)
+            newerThan: newerThan,
+            simulate: simulate)
         guard !leaving.isEmpty else { return }
 
         let destinations = PrioritySectionAdvance.destinations(

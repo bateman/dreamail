@@ -25,6 +25,13 @@ final class LabelPickerState: ObservableObject {
     /// `l` toggles labels; `v` (Gmail's Move to) adds one and leaves the inbox.
     enum Mode { case label, move }
     @Published var mode = Mode.label
+    /// Move mode: the conversations the move applies to, fixed when the
+    /// picker opens (the toolbar's own conversation, or the key's targets),
+    /// so a selection change while it is open cannot redirect the move.
+    var moveTargetIds: [String] = []
+    /// Changes on every open, so a label created for one picker session
+    /// cannot be applied by a later one.
+    var session = UUID()
 }
 
 /// List-row focus (highlight), split out of MailStore so holding ↓ / j only
@@ -423,11 +430,13 @@ final class MailStore {
     /// Open the label picker with fresh state — every entry point (shortcut,
     /// command palette, toolbar/"Add category") must go through here so a
     /// stale query/highlight from the last use never leaks in.
-    func openLabelPicker(mode: LabelPickerState.Mode = .label) {
+    func openLabelPicker(mode: LabelPickerState.Mode = .label, moveTargetIds: [String] = []) {
         labelPicker.query = ""
         labelPicker.highlight = 0
         labelPicker.navigated = false
         labelPicker.mode = mode
+        labelPicker.moveTargetIds = mode == .move ? moveTargetIds : []
+        labelPicker.session = UUID()
         mailboxOverlay = .labels
     }
     var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
@@ -3955,6 +3964,11 @@ struct ComposeRequest: Identifiable {
         }
         let accountId = thread.accountId
         let client = client(for: accountId)
+        // Move mode acts on the picker's targets as they were when the label
+        // was asked for, and only while that same picker is still open.
+        let mode = labelPicker.mode
+        let session = labelPicker.session
+        let moveIds = labelPicker.moveTargetIds
         Task {
             do {
                 let l = try await client.createLabel(name: name)
@@ -3972,9 +3986,15 @@ struct ComposeRequest: Identifiable {
                         .firstIndex(where: { $0.gmailLabelId == l.id }) {
                         self.labelPicker.highlight = idx
                     }
-                    switch self.labelPicker.mode {
+                    switch mode {
                     case .label: self.toggleLabel(thread, labelId: l.id)
-                    case .move: self.moveTargets(toLabel: l.id, accountId: accountId)
+                    case .move:
+                        guard MovePickerRules.appliesCreatedLabel(
+                            pickerOpen: self.showLabelPicker,
+                            moveMode: self.labelPicker.mode == .move,
+                            currentSession: self.labelPicker.session,
+                            requestSession: session) else { return }
+                        self.moveThreads(ids: moveIds, toLabel: l.id, accountId: accountId)
                     }
                 }
             } catch {
