@@ -18,3 +18,18 @@ to the orchestrator, and messages between sessions.
 
 The owner writes in Italian: answer the owner in Italian. Code, commits, PR
 texts and repository documents follow the language already used in each file.
+
+## Process: review tiers
+
+The orchestrator picks one tier per task, from the owner's request. When in
+doubt between two tiers, it uses the stricter one and says which it chose.
+
+| Tier | When | Model | Reviews | CI and merge |
+|---|---|---|---|---|
+| Simple | A trivial change: one property, a colour, a size, a label. | Sonnet | None. | Merged straight into `main`, without waiting for CI. |
+| Low risk | Not complex and with a low security risk (no auth, network, storage, deletion, logging, CI or dependency changes). | Sonnet | `ponytail-review` in `full` mode only; no security audit. | Regular pull request, merged on green CI. |
+| Standard | Everything else. | Opus, medium effort | `ponytail-review` in `full` mode and the security audit, in parallel. | Regular pull request, merged on green CI. |
+
+- `ponytail-review` runs in `full` mode, no longer `ultra`.
+- A Simple change is still checked after the merge: the full CI run on `main`
+  must be green, and a red run is fixed at once.
