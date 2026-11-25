@@ -172,12 +172,13 @@ targets:
           - MCPServer.swift
       - path: Sources/MishMail/Support
         excludes:
-          # MailStore / SwiftUI-environment / WebKit pool — app target only.
+          # MailStore / SwiftUI-environment — app target only. The WebKit
+          # pool and HTMLBodyView are compiled here so tests drive the real
+          # body coordinator.
           - AskMishController.swift
           - GmailFilterDisplay.swift
           - HTMLBodyPrerender.swift
           - QuickLookController.swift
-          - WebViewPool.swift
           - Styles.swift
           - UITestBreadcrumbs.swift
     dependencies:

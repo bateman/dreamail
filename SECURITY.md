@@ -44,7 +44,10 @@ the background and keeps it in the encrypted database with the message (see
 "What deleting means"). On that first open the sender therefore sees two
 requests per image: one from WebKit, one from the app's client, which is
 distinguishable from WebKit (WebKit downloads in its own process and the
-app cannot read those bytes). What later opens do depends on whether every
+app cannot read those bytes). The app's requests start only once WebKit's
+load of the message has ended, or 5 seconds after its text is ready if it
+has not (an image that never completes cannot keep the rest of the message
+uncached), and never for a message that is closed before then. What later opens do depends on whether every
 cacheable image of the message is settled, that is stored, or refused and
 remembered as refused:
 
@@ -139,6 +142,20 @@ A 2026-07 source review (findings SEC-001–003, all fixed) lives in
 [docs/security-review.md](docs/security-review.md); a second pass later that
 month (SEC-004–007, all fixed) lives in
 [docs/security-review-2026-07-29.md](docs/security-review-2026-07-29.md).
+
+## Notification content
+
+A delivered notification lives in Notification Center, outside the encrypted
+cache, and macOS may show it on the lock screen. By default it names no
+sender, subject or snippet ("New mail", "Follow-up reminder", a count).
+"Show sender and subject in notifications" is set for each account
+(Settings → Accounts) and is off for a new account. The choice is read from
+the database when a notification is posted, for the account of the mail it
+is about; a notification that covers several accounts shows details only if
+all of them allow it. The snippet is never shown. Turning the setting off
+also removes that account's notifications still in Notification Center;
+removing the account removes them too. Notification identifiers carry only
+salted hashes of the account and thread, whatever the setting.
 
 ## Google Calendar (off in this build)
 

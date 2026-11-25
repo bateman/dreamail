@@ -6,6 +6,21 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Fixed: messages with slow or missing remote images.** A message whose
+  remote images are slow or gone now opens at its full height at once, instead
+  of a clipped box for up to 30 seconds. Images still loading are no longer
+  shown as failed, and MishMail's own copy of the images for later opens is
+  fetched only after the message view has finished loading.
+- **Notification details per account.** "Show sender and subject in
+  notifications" is now chosen for each account in Settings → Accounts.
+  Existing accounts keep your current choice; new accounts start off. Switching
+  it off withdraws that account's notifications from Notification Center. Gmail
+  filters show one account at a time, and the Settings sidebar separates
+  per-account settings from app settings.
+- **Darker date headers in the thread list.** "Today", "Yesterday", "Last 7
+  days" and the other section headers use the primary text colour.
+- **`make run` starts with the real account.** The fictional demo inbox now
+  needs `make run DEMO=1` or `make demo`.
 - **Row actions on hover, star on the left.** With the pointer on a
   conversation, archive, trash, mark as unread or read and snooze appear at the
   right end of the row, in this order, as in Gmail. The star now sits to the

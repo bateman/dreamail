@@ -494,9 +494,10 @@ extension MailStore {
                     try await deliver(p)
                     _ = try? await db.write { db in try ScheduledSend.deleteOne(db, key: rowId) }
                     holds[rowId] = nil
+                    let detailAccounts = await notificationDetailAccounts()
                     Notifier.notify(NotificationContent.scheduledSent(
                         accountId: s.accountId, rowId: rowId, subject: s.subject,
-                        showDetails: NotificationContent.showsDetails()))
+                        showDetails: detailAccounts.contains(s.accountId)))
                     continue
                 } catch {
                     failure = error
@@ -619,8 +620,9 @@ extension MailStore {
     /// 1. Untouched forward quote → original HTML under user text
     /// 2. Untouched reply quote → Gmail-style gmail_quote + original HTML
     /// 3. Unedited draft body → preserved draft HTML
-    /// 4. Markdown body → rendered HTML (bold, headers, math, lists, …)
-    /// 5. Otherwise → ComposeLinks linkification (markdown links + bare URLs)
+    /// 4. Signature, no quote → authored text + `gmail_signature` block
+    /// 5. Markdown body → rendered HTML (bold, headers, math, lists, …)
+    /// 6. Otherwise → ComposeLinks linkification (markdown links + bare URLs)
     ///
     /// Forward single vs Forward-all is resolved by
     /// `ForwardComposer.matchHTMLUpgrade` (all-package first — see that
@@ -644,6 +646,11 @@ extension MailStore {
         }
         if let draft, let html = draft.bodyHTML, !html.isEmpty, body == draft.bodyText {
             return html
+        }
+        // A signature with no quote after it (new mail, or a quote the user
+        // removed): authored text plus Gmail's signature block.
+        if ComposeSignature.split(body) != nil, ComposeQuote.quoteStart(in: body) == nil {
+            return ComposeQuote.authoredHeadHTML(body)
         }
         // Markdown-authored body. Reply quotes that failed the upgrade above
         // still match `^>\s` here — best-effort, not Gmail-shaped.

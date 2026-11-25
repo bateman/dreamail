@@ -9,7 +9,7 @@ struct SettingsView: View {
     @Environment(MailStore.self) var store
 
     enum Pane: String, Identifiable {
-        case accounts, googleAPI, filters, snippets, general, appearance, shortcuts, ai, updates
+        case accounts, googleAPI, filters, snippets, signatures, general, appearance, shortcuts, ai, updates
 
         var id: String { rawValue }
 
@@ -19,6 +19,7 @@ struct SettingsView: View {
             case .googleAPI: return "Google API"
             case .filters: return "Gmail filters"
             case .snippets: return "Snippets"
+            case .signatures: return "Signatures"
             case .general: return "General"
             case .appearance: return "Appearance"
             case .shortcuts: return "Keyboard shortcuts"
@@ -33,6 +34,7 @@ struct SettingsView: View {
             case .googleAPI: return "key"
             case .filters: return "line.3.horizontal.decrease"
             case .snippets: return "curlybraces"
+            case .signatures: return "signature"
             case .general: return "gearshape"
             case .appearance: return "textformat.size"
             case .shortcuts: return "keyboard"
@@ -49,13 +51,16 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             List(selection: $pane) {
-                Section("Account") {
+                // What is set for each account apart, then what applies to
+                // the whole app.
+                Section("Per account") {
                     row(.accounts)
-                    row(.googleAPI)
                     row(.filters)
-                    row(.snippets)
+                    row(.signatures)
                 }
                 Section("App") {
+                    row(.googleAPI)
+                    row(.snippets)
                     row(.general)
                     row(.appearance)
                     row(.shortcuts)
@@ -107,6 +112,7 @@ struct SettingsView: View {
         case .googleAPI: GoogleAPISettings()
         case .filters: GmailFiltersSettings()
         case .snippets: SnippetsSettings()
+        case .signatures: SignatureSettings()
         case .general: GeneralSettings()
         case .appearance: AppearanceSettings()
         case .shortcuts: ShortcutsSettings(bindings: store.keyBindings)
@@ -349,6 +355,7 @@ struct UpdatesSettings: View {
 struct AccountsSettings: View {
     @Environment(MailStore.self) var store
     @State private var accountToRemove: Account?
+    @AppStorage("settingsPane") private var pane: SettingsView.Pane = .accounts
 
     private var confirmingAccountRemoval: Binding<Bool> {
         Binding(
@@ -408,9 +415,22 @@ struct AccountsSettings: View {
                             }
                         }
                         SyncWindowPicker(accountId: account.id)
+                        notificationToggle(account)
+                        LabeledContent("Gmail filters") {
+                            Button("Show Filters…") {
+                                store.settingsFiltersAccount = account.id
+                                pane = .filters
+                            }
+                            .accessibilityIdentifier("settings.account.filters.\(account.id)")
+                            .accessibilityLabel("Show Gmail filters of \(account.id)")
+                        }
+                        ShowSignaturesButton(accountId: account.id)
                         if store.calendarUIEnabled {
                             CalendarAccountSettings(accountId: account.id)
                         }
+                    } footer: {
+                        Text("Settings in this box apply to \(account.id) only.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Section {
@@ -443,6 +463,19 @@ struct AccountsSettings: View {
             }
         }
     }
+
+    /// Off by default (generic notifications); each account has its own.
+    private func notificationToggle(_ account: Account) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Show sender and subject in notifications", isOn: Binding(
+                get: { account.notificationDetails },
+                set: { store.setNotificationDetails(account.id, $0) }))
+                .accessibilityIdentifier("settings.account.notificationDetails.\(account.id)")
+                .accessibilityLabel("Show sender and subject in notifications for \(account.id)")
+            Text("Off: notifications about this account only say “New mail”, so none of its mail details are kept in Notification Center. Turning it off also removes this account's notifications already there.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
 }
 
 // MARK: - Gmail filters (plain-language sentences; editor in GmailFilterEditorSheet)
@@ -453,13 +486,21 @@ struct GmailFiltersSettings: View {
     @State private var deleting: GmailFilterEditTarget?
     @State private var deleteError: String?
 
+    /// Filters are per account: the pane shows one account's at a time
+    /// (`FiltersPaneAccount`).
+    private var shownAccount: String? {
+        FiltersPaneAccount.shown(chosen: store.settingsFiltersAccount,
+                                 active: store.activeAccountId,
+                                 accounts: store.accounts.map(\.id))
+    }
+
     private var anyLoading: Bool {
-        store.accounts.contains { store.filtersLoading.contains($0.id) }
+        shownAccount.map { store.filtersLoading.contains($0) } ?? false
     }
 
     var body: some View {
         PaneScaffold(title: "Gmail filters",
-                     subtitle: "Gmail applies these filters to all incoming mail. Changes here are saved to Gmail.") {
+                     subtitle: "Each account has its own filters. Gmail applies them to the account's incoming mail; changes here are saved to Gmail.") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if store.accounts.isEmpty {
@@ -467,21 +508,26 @@ struct GmailFiltersSettings: View {
                             .foregroundStyle(.secondary)
                             .padding(20)
                     }
-                    ForEach(store.accounts) { account in
-                        if store.accounts.count > 1 {
-                            Text(account.id)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 16).padding(.bottom, 4)
+                    if store.accounts.count > 1, let shown = shownAccount {
+                        Picker("Account", selection: Binding(
+                            get: { shown },
+                            set: { store.settingsFiltersAccount = $0 })) {
+                            ForEach(store.accounts) { account in
+                                Text(account.id).tag(account.id)
+                            }
                         }
-                        accountSection(account.id)
+                        .fixedSize()
+                        .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 4)
+                        .accessibilityIdentifier("settings.filters.account")
+                    }
+                    if let accountId = shownAccount {
+                        accountSection(accountId)
                         Button("New filter…") {
                             deleteError = nil
-                            editing = GmailFilterEditTarget(accountId: account.id, original: nil)
+                            editing = GmailFilterEditTarget(accountId: accountId, original: nil)
                         }
                         .font(.system(size: 12))
-                        .disabled(store.demoMode || store.filtersByAccount[account.id] == nil)
+                        .disabled(store.demoMode || store.filtersByAccount[accountId] == nil)
                         .padding(.horizontal, 20).padding(.vertical, 8)
                         .accessibilityIdentifier("newGmailFilter")
                     }
@@ -494,10 +540,9 @@ struct GmailFiltersSettings: View {
                         if anyLoading { ProgressView().controlSize(.small) }
                         Spacer()
                         Button("Edit filters in Gmail…") {
-                            // Prefer the first account's authuser so multi-
-                            // account users land on a real mailbox; Gmail's
+                            // The shown account's authuser: Gmail's
                             // #settings/filters is per signed-in session.
-                            let email = store.accounts.first?.id ?? ""
+                            let email = shownAccount ?? ""
                             if let url = GmailWebLinks.filtersSettingsURL(accountEmail: email) {
                                 NSWorkspace.shared.open(url)
                             }
@@ -511,7 +556,7 @@ struct GmailFiltersSettings: View {
                 }
             }
         }
-        .task { await load() }
+        .task(id: shownAccount) { await load() }
         .sheet(item: $editing) { target in
             GmailFilterEditorSheet(target: target)
         }
@@ -593,15 +638,10 @@ struct GmailFiltersSettings: View {
     private func load() async {
         deleteError = nil
         // Shared cache with the per-message matching-filters disclosure.
-        // Force refresh when opening Settings so edits made in Gmail show up.
-        await withTaskGroup(of: Void.self) { group in
-            for account in store.accounts {
-                let id = account.id
-                group.addTask { @MainActor in
-                    await store.ensureFiltersLoaded(for: id, force: true)
-                }
-            }
-        }
+        // Force refresh when opening the pane or choosing another account,
+        // so edits made in Gmail show up.
+        guard let id = shownAccount else { return }
+        await store.ensureFiltersLoaded(for: id, force: true)
     }
 }
 
@@ -1056,7 +1096,6 @@ struct GeneralSettings: View {
     @State private var isDefaultMailApp = false
     @State private var settingDefaultMail = false
     @State private var defaultMailError: String?
-    @AppStorage(NotificationContent.showDetailsKey) private var notificationDetails = false
 
     /// Debug builds use a separate bundle id + sandbox; claiming mailto: only
     /// affects this build (not the installed Release app in /Applications).
@@ -1125,12 +1164,10 @@ struct GeneralSettings: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
-                    Toggle("Show sender and subject in notifications", isOn: $notificationDetails)
+                    Text("Whether notifications show sender and subject is set for each account, in Accounts.")
+                        .foregroundStyle(.secondary)
                 } header: {
                     Text("Notifications")
-                } footer: {
-                    Text("Off: notifications only say “New mail”, so no mail details are kept in Notification Center.")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)

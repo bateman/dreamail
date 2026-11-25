@@ -9,6 +9,7 @@ enum ComposeToolbarItem: String, CaseIterable, Identifiable, Codable {
     // Left tools
     case attach
     case link
+    case signature
     case snippets
     case ai
     // Format strip (no second link — dedicated link button owns ⌘K)
@@ -27,6 +28,7 @@ enum ComposeToolbarItem: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .attach: return "Attach"
         case .link: return "Link"
+        case .signature: return "Signature"
         case .snippets: return "Snippets"
         case .ai: return "AI draft"
         case .bold: return "Bold"
@@ -45,6 +47,7 @@ enum ComposeToolbarItem: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .attach: return "Attach files"
         case .link: return "Insert link (⌘K)"
+        case .signature: return "Insert signature"
         case .snippets: return "Insert a saved snippet (⌘/)"
         case .ai: return "Write with AI — give instructions and review a draft"
         case .bold: return "Bold (⌘B)"
@@ -62,6 +65,7 @@ enum ComposeToolbarItem: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .attach: return "paperclip"
         case .link: return "link"
+        case .signature: return "signature"
         case .snippets: return "text.badge.plus"
         case .ai: return "sparkles"
         case .bold: return "bold"
@@ -78,7 +82,7 @@ enum ComposeToolbarItem: String, CaseIterable, Identifiable, Codable {
     /// Left cluster before the format strip.
     var isLeftTool: Bool {
         switch self {
-        case .attach, .link, .snippets, .ai: return true
+        case .attach, .link, .signature, .snippets, .ai: return true
         default: return false
         }
     }
@@ -88,7 +92,7 @@ enum ComposeToolbarItem: String, CaseIterable, Identifiable, Codable {
 
     /// Stable Settings / toolbar order.
     static let displayOrder: [ComposeToolbarItem] = [
-        .attach, .link, .snippets, .ai,
+        .attach, .link, .signature, .snippets, .ai,
         .bold, .italic, .strikethrough, .code,
         .heading, .quote, .bullet, .math,
     ]
