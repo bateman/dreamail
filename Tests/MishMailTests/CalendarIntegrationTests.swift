@@ -340,6 +340,20 @@ final class CalendarIntegrationTests: XCTestCase {
                        "no events read for the window")
     }
 
+    func testACalendarReadOnlyInPartIsIncomplete() async throws {
+        let h = try harness()
+        try connect(h)
+        h.net.respond = { request, _ in
+            if Fixture.isLookup(request) { return (200, Fixture.empty, [:]) }
+            return (200, #"{"items":[],"nextPageToken":"more"}"#, [:])
+        }
+        let findings = try XCTUnwrap(
+            (await h.integration.check(facts(), messageId: "m1", accountId: account)).findings)
+        XCTAssertEqual(findings.availability?.isIncomplete, true)
+        XCTAssertEqual(h.net.requests.filter { !Fixture.isLookup($0) }.count,
+                       CalendarClient.availabilityMaxPages)
+    }
+
     func testARefusedGrantAsksToReconnect() async throws {
         let h = try harness()
         try connect(h)
