@@ -44,8 +44,8 @@ final class SignatureMenuUITests: XCTestCase {
     /// Opens the menu once the Gmail signature has arrived (the launch
     /// refresh runs in the background).
     private func openMenu(_ app: XCUIApplication) {
-        let button = app.descendants(matching: .any)
-            .matching(identifier: "compose.signature").firstMatch
+        let button = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == 'compose.signature' OR label == 'Insert signature'")).firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: 5))
         let deadline = Date().addingTimeInterval(15)
         repeat {
@@ -82,8 +82,9 @@ final class SignatureMenuUITests: XCTestCase {
             $0.contains("Alex Rivera") && !$0.contains(self.shortText)
         }, "choosing another signature replaces the first")
         // Its Gmail look is shown as sent, under the editor's text form.
-        let preview = app.descendants(matching: .any)
-            .matching(identifier: "compose.signaturePreview").firstMatch
+        let preview = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == 'compose.signaturePreview' OR label == 'Hide signature as sent'"))
+            .firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5),
                       "a Gmail signature carried unchanged shows how it is sent")
 

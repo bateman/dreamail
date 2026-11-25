@@ -685,6 +685,9 @@ struct ComposeView: View {
         }
         .padding(isMinimized ? EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 8)
                              : EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18))
+        // A container element: without it the identifier below would also
+        // replace those of the SwiftUI controls inside (compose.signature).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(isSplit ? "composeSplit"
                                  : isInline ? "composeInline" : "composeCard")
         .confirmationDialog(
