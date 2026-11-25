@@ -428,10 +428,13 @@ struct ShowSignaturesButton: View {
     @AppStorage(SignatureSettings.accountKey) private var signaturesAccount = ""
 
     var body: some View {
-        Button("Show Signatures…") {
-            signaturesAccount = accountId
-            pane = .signatures
+        LabeledContent("Signatures") {
+            Button("Show Signatures…") {
+                signaturesAccount = accountId
+                pane = .signatures
+            }
+            .accessibilityIdentifier("settings.account.signatures.\(accountId)")
+            .accessibilityLabel("Show signatures of \(accountId)")
         }
-        .accessibilityIdentifier("settings.account.showSignatures")
     }
 }

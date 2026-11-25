@@ -65,6 +65,8 @@ final class MailStore {
     /// (see `lastSyncByAccount`) — never write these values back to the
     /// database; re-fetch inside the write transaction instead.
     var accounts: [Account] = [] { didSet { rebuildOwnDisplayNames() } }
+    /// Orders account reloads, so an older snapshot never replaces a newer one.
+    @ObservationIgnored var accountReloads = LatestOnly()
     /// Each account's own Google profile photo, decoded from the database
     /// (`loadAccountPhotos`). Missing: the initial disc is drawn.
     var accountPhotos: [String: NSImage] = [:]
@@ -853,6 +855,10 @@ final class MailStore {
     /// Accounts currently mid-fetch — UI can show a spinner. Backed by a
     /// refcount so overlapping force+lazy loads don't drop the spinner early.
     private(set) var filtersLoading: Set<String> = []
+    /// The account Settings ▸ Gmail filters shows. In memory only, so a
+    /// removed account's address is not left behind; an id that is no
+    /// longer an account falls back to the first one.
+    var settingsFiltersAccount: String?
     private var filterLoadRefCounts: [String: Int] = [:]
     /// In-flight filter fetches; concurrent callers await the same task.
     /// Token lets a finishing load clear its slot without clobbering a newer one.
@@ -1181,6 +1187,23 @@ final class MailStore {
             try AccountLabelColor.set(db, accountId: id, hex: hex)
         }
         reloadAccounts()
+    }
+
+    /// Whether notifications about this account's mail show sender and
+    /// subject (`NotificationContent`). Local only; goes with the account.
+    func setNotificationDetails(_ id: String, _ on: Bool) {
+        try? db.write { db in
+            try NotificationContent.setDetails(db, accountId: id, on: on) {
+                Notifier.removeNotifications(forAccount: $0)
+            }
+        }
+        reloadAccounts()
+    }
+
+    /// `NotificationContent.detailAccounts`, read now, off main.
+    func notificationDetailAccounts() async -> Set<String> {
+        let pool = db
+        return (try? await pool.read { NotificationContent.detailAccounts($0) }) ?? []
     }
 
     /// Name recipients see on outgoing mail ("Ron Boger <ron@…>").
@@ -2628,15 +2651,19 @@ struct ComposeRequest: Identifiable {
     /// line) and the one-off user mutations (rename, add, remove) where a
     /// deferred publish would show a stale name for a frame.
     func reloadAccounts() {
+        _ = accountReloads.begin()
         let snapshot = (try? db.read { try Self.fetchAccounts($0) }) ?? .empty
         applyAccounts(snapshot)
     }
 
     /// Off-main reload for the post-sync tail, which runs once a minute
-    /// whether or not anything changed.
+    /// whether or not anything changed. A reload started after this one
+    /// (a setting just changed) wins: this older snapshot is dropped.
     func reloadAccountsOffMain() async {
+        let ticket = accountReloads.begin()
         let pool = db
         let snapshot = (try? await pool.read { try Self.fetchAccounts($0) }) ?? .empty
+        guard accountReloads.isCurrent(ticket) else { return }
         applyAccounts(snapshot)
     }
 

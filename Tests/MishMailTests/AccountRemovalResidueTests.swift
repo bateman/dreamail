@@ -426,19 +426,21 @@ final class AccountRemovalResidueTests: XCTestCase {
         let b = NotificationContent.MailItem(accountId: "b@x.com", threadId: "b@x.com:t3",
                                              sender: "S", subject: "Sub")
         var ids: [String] = []
+        let everyAccount: Set<String> = ["a@x.com", "a@x.com.au", "b@x.com"]
         for details in [false, true] {
-            ids += NotificationContent.newMail([a], showDetails: details).map(\.id)
-            ids += NotificationContent.newMail([longer], showDetails: details).map(\.id)
-            ids += NotificationContent.newMail([b], showDetails: details).map(\.id)
-            ids += NotificationContent.reminders([a], showDetails: details).map(\.id)
-            ids += NotificationContent.reminders([b, longer], showDetails: details).map(\.id)
+            let shown = details ? everyAccount : []
+            ids += NotificationContent.newMail([a], detailAccounts: shown).map(\.id)
+            ids += NotificationContent.newMail([longer], detailAccounts: shown).map(\.id)
+            ids += NotificationContent.newMail([b], detailAccounts: shown).map(\.id)
+            ids += NotificationContent.reminders([a], detailAccounts: shown).map(\.id)
+            ids += NotificationContent.reminders([b, longer], detailAccounts: shown).map(\.id)
             ids.append(NotificationContent.scheduledSent(
                 accountId: "a@x.com", rowId: 7, subject: "s", showDetails: details).id)
             ids.append(NotificationContent.scheduledSent(
                 accountId: "b@x.com", rowId: 8, subject: "s", showDetails: details).id)
         }
         let mixedBatch = NotificationContent.newMail(
-            [a, b, longer, b], showDetails: false).map(\.id)
+            [a, b, longer, b], detailAccounts: []).map(\.id)
         XCTAssertEqual(mixedBatch.count, 1)
 
         let removed = (ids + mixedBatch).filter {

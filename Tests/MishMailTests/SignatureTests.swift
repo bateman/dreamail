@@ -507,3 +507,32 @@ final class SignatureTests: XCTestCase {
         XCTAssertEqual(result.droppedLinks, 1)
     }
 }
+
+/// v63 (this branch) registers before v64 (per-account notification
+/// details, merged first). A database that already ran v64 from `main` must
+/// still get v63.
+final class SignatureMigrationOrderTests: XCTestCase {
+    func testV63RunsOnADatabaseThatAlreadyHasV64() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        // Make it the database of a build without v63: v64 applied, v63 not.
+        try q.write { db in
+            try db.drop(table: "signatureDefault")
+            try db.drop(table: "signature")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'v63'")
+        }
+        try q.read { db in
+            let applied = try AppDatabase.migrator.appliedIdentifiers(db)
+            XCTAssertTrue(applied.contains("v64"))
+            XCTAssertFalse(applied.contains("v63"))
+            XCTAssertFalse(try db.tableExists("signature"))
+        }
+        try AppDatabase.migrator.migrate(q)
+        try q.read { db in
+            XCTAssertTrue(try AppDatabase.migrator.appliedIdentifiers(db).contains("v63"))
+            XCTAssertTrue(try db.tableExists("signature"))
+            XCTAssertTrue(try db.tableExists("signatureDefault"))
+            XCTAssertTrue(try AppDatabase.migrator.hasCompletedMigrations(db))
+        }
+    }
+}
