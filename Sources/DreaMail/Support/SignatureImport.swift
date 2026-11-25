@@ -24,9 +24,9 @@ enum SignatureImport {
         var tooLarge = false
     }
 
-    /// Gmail caps a signature at 10,000 characters; markup on top of that
-    /// stays well under this. Larger input is refused before any pass.
-    static let maxInputLength = 50_000
+    /// Gmail's own limit for a signature, 10,000 characters: larger input
+    /// is refused before any pass.
+    static let maxInputLength = 10_000
 
     static func markdown(fromGmailHTML html: String) -> Result {
         guard html.utf16.count <= maxInputLength else {
@@ -35,17 +35,9 @@ enum SignatureImport {
         var s = html.replacingOccurrences(of: "\r\n", with: "\n")
         // Gmail stores line breaks as tags; source newlines are layout.
         s = s.replacingOccurrences(of: "\n", with: " ")
-        s = s.replacingOccurrences(of: "<!--[\\s\\S]*?-->", with: "",
-                                   options: .regularExpression)
-        // Elements dropped whole, content included.
-        for tag in ["script", "style", "head", "title", "noscript", "template", "form",
-                    "textarea", "select", "button", "object", "iframe", "svg", "math"] {
-            s = s.replacingOccurrences(
-                of: "<\(tag)\\b[^>]*>[\\s\\S]*?</\(tag)\\s*>", with: " ",
-                options: [.regularExpression, .caseInsensitive])
-        }
-        s = s.replacingOccurrences(of: #"<(link|meta|input)\b[^>]*>"#, with: "",
-                                   options: [.regularExpression, .caseInsensitive])
+        // Comments, declarations, scripts, styles, forms and unknown tags go
+        // in one linear pass (`SignatureHTML.prepare`).
+        s = SignatureHTML.prepare(s)?.html ?? ""
         let images = count(#"<img\b"#, in: s)
         s = s.replacingOccurrences(of: #"<img\b[^>]*>"#, with: "",
                                    options: [.regularExpression, .caseInsensitive])
@@ -113,6 +105,8 @@ enum SignatureImport {
     /// "label (url)" in plain text, so the mismatch shows. Text and URL
     /// have `&` re-escaped: the final pass decodes entities once.
     private static func replaceLinks(_ s: String) -> (text: String, dropped: Int) {
+        // No closing tag: nothing to match, and no scan from every opener.
+        guard s.range(of: "</a", options: .caseInsensitive) != nil else { return (s, 0) }
         let pattern = #"<a\b([^>]*)>([\s\S]*?)</a\s*>"#
         guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
             return (s, 0)
@@ -206,6 +200,9 @@ enum SignatureImport {
     /// `<b> text </b>` → ` **text** `: markers hug the text, as Markdown
     /// needs, and a run with no text loses its tags only.
     private static func wrap(_ s: String, tags: String, marker: String) -> String {
+        guard tags.split(separator: "|").contains(where: {
+            s.range(of: "</\($0)", options: .caseInsensitive) != nil
+        }) else { return s }
         let pattern = "<(\(tags))\\b[^>]*>([\\s\\S]*?)</\\1\\s*>"
         guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
             return s

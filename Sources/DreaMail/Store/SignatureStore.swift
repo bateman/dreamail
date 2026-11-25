@@ -303,21 +303,21 @@ enum SignatureStore {
     struct GmailOutcome: Equatable {
         var added = 0
         var updated = 0
-        var removed = 0
     }
 
     /// Applies what Gmail returned for every send-as address of the account
     /// (`gmail`: lowercased address → its signature; an address without one
     /// is left out). The rules:
     /// - New on Gmail (or changed there while no copy is here): a copy is
-    ///   added, named after the address. An existing signature with the same
-    ///   text (a #61 manual import) becomes the copy instead. The first time
-    ///   an address's signature is seen, it becomes that address's default
-    ///   for new messages and for replies, unless the address has a default.
+    ///   added, named after the address. Only the first time an address's
+    ///   signature is seen, an existing signature with the same text (a #61
+    ///   manual import) becomes the copy instead, and the copy becomes the
+    ///   address's default for new messages unless it has one. Gmail's API
+    ///   gives the new-mail signature only: the reply default is left alone.
     /// - Changed on Gmail: the copy follows, unless it was edited here; then
     ///   Settings shows that Gmail's differs.
-    /// - Gone from Gmail: an unedited copy no default uses is deleted; any
-    ///   other stays, shown as no longer on Gmail.
+    /// - Gone from Gmail: nothing is deleted; the copy stays, shown as no
+    ///   longer on Gmail.
     /// - A copy deleted here is not added again until Gmail's text changes.
     /// - An unusable signature (too large, no text) changes nothing.
     @discardableResult
@@ -344,7 +344,8 @@ enum SignatureStore {
                     try rows[i].update(db)
                 }
             } else if prev?.body != body || prev?.html != html {
-                if let i = rows.firstIndex(where: { $0.gmailAddress == nil && $0.body == body }) {
+                if prev == nil,
+                   let i = rows.firstIndex(where: { $0.gmailAddress == nil && $0.body == body }) {
                     rows[i].gmailAddress = email
                     rows[i].html = html
                     try rows[i].update(db)
@@ -357,13 +358,12 @@ enum SignatureStore {
                     rows.append(row)
                     outcome.added += 1
                     let hasDefault = try SignatureDefaultRecord
-                        .filter(Column("accountId") == accountId && Column("sendAsEmail") == email)
+                        .filter(Column("accountId") == accountId && Column("sendAsEmail") == email
+                                && Column("use") == SignatureUse.newMessage.rawValue)
                         .fetchCount(db) > 0
                     if prev == nil, !hasDefault, let id = row.id {
-                        for use in SignatureUse.allCases {
-                            try setDefault(db, accountId: accountId, email: email, use: use,
-                                           choice: .signature(id))
-                        }
+                        try setDefault(db, accountId: accountId, email: email, use: .newMessage,
+                                       choice: .signature(id))
                     }
                 }
             }
@@ -377,15 +377,6 @@ enum SignatureStore {
         }) == nil {
             try SignatureGmailRecord.deleteOne(
                 db, key: ["accountId": accountId, "sendAsEmail": prev.sendAsEmail])
-            for row in rows where row.gmailAddress == prev.sendAsEmail && !row.editedHere {
-                guard let id = row.id else { continue }
-                let used = try SignatureDefaultRecord
-                    .filter(Column("signatureId") == id).fetchCount(db) > 0
-                if !used {
-                    try delete(db, id: id)
-                    outcome.removed += 1
-                }
-            }
         }
         return outcome
     }

@@ -228,7 +228,7 @@ struct SignatureSettings: View {
     /// What a recipient sees: Gmail's look for an unchanged copy, else the
     /// text as compose renders it.
     static func previewHTML(_ signature: SignatureRecord) -> String {
-        if let html = signature.html, let rich = SignatureHTML.sanitize(html) {
+        if let html = signature.html, let rich = SignatureHTML.cachedSanitize(html) {
             return ComposeSignature.htmlBlock(innerHTML: rich.html)
         }
         return ComposeQuote.authoredHeadHTML("-- \n" + signature.body)

@@ -32,7 +32,7 @@ struct SignaturePreview: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
-        let view = WKWebView(frame: .zero, configuration: config)
+        let view = PreviewWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
         view.setValue(false, forKey: "drawsBackground")
         view.setAccessibilityElement(false)
@@ -86,5 +86,13 @@ struct SignaturePreviewBox: View {
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.separator))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Preview as sent")
+    }
+}
+
+/// No context menu: "Open Link" or "Download Linked File" would reach past
+/// the preview's no-navigation rule.
+private final class PreviewWebView: WKWebView {
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        menu.removeAllItems()
     }
 }

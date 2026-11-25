@@ -43,7 +43,7 @@ final class SignatureSyncTests: XCTestCase {
 
     // MARK: - Rules
 
-    func testNewGmailSignatureIsAddedNamedAfterTheAddressAndBecomesTheDefault() throws {
+    func testNewGmailSignatureIsAddedNamedAfterTheAddressAndBecomesTheNewMessageDefault() throws {
         let q = try makeDB()
         let outcome = try apply(q, [a: .text("Ann\n**Uni**")])
         XCTAssertEqual(outcome.added, 1)
@@ -54,7 +54,8 @@ final class SignatureSyncTests: XCTestCase {
         XCTAssertEqual(s.gmailAddress, a)
         XCTAssertEqual(b.gmailState(of: s), .synced)
         XCTAssertEqual(b.defaultSignature(use: .newMessage, accountId: a, email: a)?.id, s.id)
-        XCTAssertEqual(b.defaultSignature(use: .reply, accountId: a, email: a)?.id, s.id)
+        // Gmail's API gives the new-mail signature only: replies stay as they are.
+        XCTAssertNil(b.defaultSignature(use: .reply, accountId: a, email: a))
         // The same answer again changes nothing.
         XCTAssertEqual(try apply(q, [a: .text("Ann\n**Uni**")]), .init())
         XCTAssertEqual(try book(q).signatures(for: a).count, 1)
@@ -121,30 +122,44 @@ final class SignatureSyncTests: XCTestCase {
         XCTAssertEqual(s.body, "Gmail v2")
     }
 
-    func testDeletedOnGmailAnUnusedCopyGoesADefaultStaysMarked() throws {
+    func testDeletedOnGmailNothingIsDeletedTheCopiesAreMarked() throws {
         let q = try makeDB()
         try apply(q, [a: .text("Primary"), alias: .text("Alias")])
         let b0 = try book(q)
         let aliasId = try XCTUnwrap(b0.signatures(for: a).first { $0.gmailAddress == alias }?.id)
+        let primaryId = try XCTUnwrap(b0.signatures(for: a).first { $0.gmailAddress == a }?.id)
         // The alias copy is used by no default.
         try q.write { db in
             try SignatureStore.setDefault(db, accountId: self.a, email: self.alias,
                                           use: .newMessage, choice: .followPrimary)
-            try SignatureStore.setDefault(db, accountId: self.a, email: self.alias,
-                                          use: .reply, choice: .followPrimary)
         }
-        let outcome = try apply(q, [:])
-        XCTAssertEqual(outcome.removed, 1)
+        XCTAssertEqual(try apply(q, [:]), .init())
         let b = try book(q)
-        XCTAssertNil(b.signature(id: aliasId))
-        let primary = try XCTUnwrap(b.signatures(for: a).first)
-        XCTAssertEqual(b.gmailState(of: primary), .gone)
-        XCTAssertEqual(b.defaultSignature(use: .newMessage, accountId: a, email: a)?.id, primary.id)
+        for id in [aliasId, primaryId] {
+            let kept = try XCTUnwrap(b.signature(id: id), "a signature is never deleted by a refresh")
+            XCTAssertEqual(b.gmailState(of: kept), .gone)
+        }
+        XCTAssertEqual(b.defaultSignature(use: .newMessage, accountId: a, email: a)?.id, primaryId)
         // Back on Gmail: the kept copy follows it again.
         try apply(q, [a: .text("Primary 2")])
-        let back = try XCTUnwrap(try book(q).signature(id: primary.id))
+        let back = try XCTUnwrap(try book(q).signature(id: primaryId))
         XCTAssertEqual(back.body, "Primary 2")
         XCTAssertEqual(try book(q).gmailState(of: back), .synced)
+    }
+
+    func testAUserReplyDefaultIsNeverChanged() throws {
+        let q = try makeDB()
+        let mine = try q.write { db in
+            try SignatureStore.insert(db, accountId: self.a, name: "Mine", body: "Mine")
+        }
+        try q.write { db in
+            try SignatureStore.setDefault(db, accountId: self.a, email: self.a, use: .reply,
+                                          choice: .signature(mine.id!))
+        }
+        try apply(q, [a: .text("Gmail")])
+        let b = try book(q)
+        XCTAssertEqual(b.defaultSignature(use: .reply, accountId: a, email: a)?.id, mine.id)
+        XCTAssertEqual(b.defaultSignature(use: .newMessage, accountId: a, email: a)?.name, a)
     }
 
     func testAnEditedCopyStaysWhenDeletedOnGmail() throws {
@@ -184,6 +199,25 @@ final class SignatureSyncTests: XCTestCase {
         let s = try XCTUnwrap(try book(q).signatures(for: a).first)
         XCTAssertEqual(try book(q).signatures(for: a).count, 1)
         XCTAssertEqual(s.gmailAddress, a)
+    }
+
+    func testALocalSignatureIsAdoptedOnlyAtTheFirstImport() throws {
+        let q = try makeDB()
+        try apply(q, [a: .text("Gmail v1")])
+        let copy = try XCTUnwrap(try book(q).signatures(for: a).first)
+        try q.write { try SignatureStore.delete($0, id: copy.id!) }
+        // Made here later, with the text Gmail will have next.
+        let local = try q.write { db in
+            try SignatureStore.insert(db, accountId: self.a, name: "Local", body: "Gmail v2")
+        }
+        XCTAssertEqual(try apply(q, [a: .text("Gmail v2")]).added, 1)
+        let b = try book(q)
+        let kept = try XCTUnwrap(b.signature(id: local.id))
+        XCTAssertNil(kept.gmailAddress, "a local signature is not taken over after the first import")
+        XCTAssertEqual(kept.name, "Local")
+        // A later change on Gmail does not touch it.
+        try apply(q, [a: .text("Gmail v3")])
+        XCTAssertEqual(try book(q).signature(id: local.id)?.body, "Gmail v2")
     }
 
     func testAnUnusableSignatureChangesNothing() throws {
@@ -235,7 +269,7 @@ final class SignatureSyncTests: XCTestCase {
     func testRefreshIsThrottledToOncePerIntervalUnlessForced() {
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)
         XCTAssertTrue(SignatureSyncPolicy.isDue(nil, force: false, now: t0))
-        let done = SignatureSyncState(status: .done, lastAttempt: t0, lastSuccess: t0)
+        let done = SignatureSyncState(status: .done, lastAttempt: t0)
         XCTAssertFalse(SignatureSyncPolicy.isDue(done, force: false, now: t0.addingTimeInterval(60)))
         XCTAssertTrue(SignatureSyncPolicy.isDue(done, force: true, now: t0.addingTimeInterval(60)))
         XCTAssertTrue(SignatureSyncPolicy.isDue(

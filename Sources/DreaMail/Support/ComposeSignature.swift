@@ -119,10 +119,13 @@ enum ComposeSignature {
                                   signatures: [SignatureRecord]) -> String {
         guard let parts = split(head),
               let match = richSignature(in: head, signatures: signatures),
-              let rich = match.html.flatMap({ SignatureHTML.sanitize($0) }) else { return html }
+              let rich = match.html.flatMap({ SignatureHTML.cachedSanitize($0) }) else { return html }
         let text = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
         let plain = ComposeQuote.signatureBlockHTML(text)
-        guard let range = html.range(of: plain, options: .backwards) else { return html }
+        // Only in the authored head, which every builder writes first: a
+        // quoted message may carry the same block (one DreaMail sent).
+        let quote = html.range(of: "<div class=\"gmail_quote\"")?.lowerBound ?? html.endIndex
+        guard let range = html.range(of: plain, range: html.startIndex..<quote) else { return html }
         return html.replacingCharacters(in: range, with: htmlBlock(innerHTML: rich.html))
     }
 
@@ -335,20 +338,11 @@ struct ComposeSignatureState: Equatable {
 /// by name. The check mark follows the body (`ComposeSignatureState.selection`):
 /// none on a signature the user typed or edited.
 enum ComposeSignatureMenu {
-    enum Row: Equatable, Identifiable {
+    enum Row: Equatable {
         case manage
         case divider
         case none(checked: Bool)
         case signature(id: Int64, name: String, checked: Bool)
-
-        var id: String {
-            switch self {
-            case .manage: return "manage"
-            case .divider: return "divider"
-            case .none: return "none"
-            case .signature(let id, _, _): return "signature.\(id)"
-            }
-        }
     }
 
     static func rows(signatures: [SignatureRecord],

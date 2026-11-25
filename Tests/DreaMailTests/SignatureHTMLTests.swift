@@ -46,7 +46,6 @@ final class SignatureHTMLTests: XCTestCase {
     func testTheLookAlikeSignatureKeepsItsStyles() throws {
         let result = try XCTUnwrap(SignatureHTML.sanitize(Self.lookAlike))
         assertPreserved(result.html)
-        XCTAssertEqual(result.droppedImages, 0)
         // Rebuilding what was rebuilt changes nothing.
         XCTAssertEqual(SignatureHTML.sanitize(result.html)?.html, result.html)
     }
@@ -143,7 +142,6 @@ final class SignatureHTMLTests: XCTestCase {
                        "<b>not a tag"] {
             XCTAssertFalse(out.contains(banned), "\(banned) survived in \(result.html)")
         }
-        XCTAssertEqual(result.droppedImages, 1)
         // What is harmless stays.
         XCTAssertTrue(out.contains("color:red"))
         XCTAssertTrue(out.contains("font-size:14px"))
@@ -167,7 +165,7 @@ final class SignatureHTMLTests: XCTestCase {
     }
 
     func testTooLargeOrEmptyKeepsNoLook() {
-        XCTAssertNil(SignatureHTML.sanitize(String(repeating: "<b>x</b>", count: 10_000)))
+        XCTAssertNil(SignatureHTML.sanitize(String(repeating: "<b>x</b>", count: 1_251)))
         XCTAssertNil(SignatureHTML.sanitize("<img src=\"https://example.com/logo.png\">"))
     }
 

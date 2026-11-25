@@ -13,10 +13,8 @@ struct SignatureSyncState: Equatable, Sendable {
     }
 
     var status: Status
-    /// When the last refresh started (the throttle) and when one last
-    /// succeeded.
+    /// When the last refresh started (the throttle).
     var lastAttempt: Date
-    var lastSuccess: Date?
     /// Addresses whose Gmail signature could not be kept, with the reason.
     var unusable: [String: String] = [:]
 }

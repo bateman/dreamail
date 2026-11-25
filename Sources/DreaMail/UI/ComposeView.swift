@@ -2079,7 +2079,7 @@ struct ComposeView: View {
     @ViewBuilder
     private var signatureAsSentPreview: some View {
         if let rich = ComposeSignature.richSignature(in: signatureHead, signatures: senderSignatures),
-           let html = rich.html.flatMap({ SignatureHTML.sanitize($0) })?.html {
+           let html = rich.html.flatMap({ SignatureHTML.cachedSanitize($0) })?.html {
             VStack(alignment: .leading, spacing: 4) {
                 Button {
                     signaturePreviewExpanded.toggle()

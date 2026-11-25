@@ -90,11 +90,15 @@ extension MailStore {
         } else {
             rows = try await client(for: accountId).listSendAs().map { ($0.sendAsEmail, $0.signature) }
         }
-        var out: [String: GmailSignature] = [:]
-        for (email, html) in rows {
-            if let signature = GmailSignature.from(html: html) { out[email.lowercased()] = signature }
-        }
-        return out
+        // Untrusted HTML is parsed off the main actor: a hostile signature
+        // can slow a refresh, never the app.
+        return await Task.detached(priority: .utility) {
+            var out: [String: GmailSignature] = [:]
+            for (email, html) in rows {
+                if let signature = GmailSignature.from(html: html) { out[email.lowercased()] = signature }
+            }
+            return out
+        }.value
     }
 
     /// Throttled refresh (Settings shown, compose opened).
@@ -113,7 +117,7 @@ extension MailStore {
         else { return }
         let previous = signatureSync[accountId]
         signatureSync[accountId] = SignatureSyncState(
-            status: .refreshing, lastAttempt: Date(), lastSuccess: previous?.lastSuccess,
+            status: .refreshing, lastAttempt: Date(),
             unusable: previous?.unusable ?? [:])
         let result: Result<[String: GmailSignature], Error>
         do {
@@ -135,7 +139,6 @@ extension MailStore {
                     try SignatureStore.applyGmail(db, accountId: accountId, gmail: gmail)
                 }
                 state.status = .done
-                state.lastSuccess = Date()
                 state.unusable = gmail.compactMapValues { (signature: GmailSignature) -> String? in
                     if case .unusable(let reason) = signature { return reason }
                     return nil
