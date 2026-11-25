@@ -4220,18 +4220,24 @@ struct ComposeRequest: Identifiable {
                     self.labelsByAccount[accountId]?.first { $0.id == id }?.name
                 }
                 let reason = result.mixedCauses ? "Some labels could not be updated." : message
-                let retryable = result.retryable
                 self.labelMenu.failure = LabelEditFailure(
                     title: "Some labels kept their old color",
                     message: "\(reason)\n\n" + LabelEditFailure.list(names),
-                    retry: retryable.isEmpty ? nil : { [weak self] in
-                        guard let self else { return }
-                        let again = retryable.filter { !self.gmailLabelColorSaving.contains($0) }
-                        guard !again.isEmpty else { return }
-                        self.setGmailLabelColor(rowIds: again, clearing: clearing, accountId: accountId,
-                                                to: color)
-                    })
+                    retry: self.colorRetry(result.retryable, clearing: clearing,
+                                           accountId: accountId, to: color))
             }
+        }
+    }
+
+    /// Retry for the labels a retry can fix; nil when there are none.
+    private func colorRetry(_ ids: [String], clearing: Set<String>, accountId: String,
+                            to color: GmailLabelColor?) -> (@MainActor () -> Void)? {
+        guard !ids.isEmpty else { return nil }
+        return { [weak self] in
+            guard let self else { return }
+            let again = ids.filter { !self.gmailLabelColorSaving.contains($0) }
+            guard !again.isEmpty else { return }
+            self.setGmailLabelColor(rowIds: again, clearing: clearing, accountId: accountId, to: color)
         }
     }
 
