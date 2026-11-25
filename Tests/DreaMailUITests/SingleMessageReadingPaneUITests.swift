@@ -36,6 +36,10 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
     }
 
     private func stepSingleMessageConversationOpensFullyExpanded(_ app: XCUIApplication) {
+        // The narrow default window shows t3 in place of the list (compact
+        // layout): its back button brings the list back.
+        let back = app.buttons.matching(identifier: "compactBackButton").firstMatch
+        if back.exists { back.click() }
         // Demo t1 is a single message from Dana (plain text, several lines).
         let demoThread = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch

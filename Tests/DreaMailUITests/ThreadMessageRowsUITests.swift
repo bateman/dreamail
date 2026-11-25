@@ -100,12 +100,21 @@ final class ThreadMessageRowsUITests: XCTestCase {
 
     /// Opens another conversation, then t2 again with its default rows.
     private func reopenConversation(_ app: XCUIApplication) {
+        showList(app)
         let other = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
         XCTAssertTrue(other.waitForExistence(timeout: 10))
         other.click()
         _ = settled("messageRowFrame", in: app) { $0.count != 4 }
+        showList(app)
         openConversation(app)
+    }
+
+    /// In the narrow default window the conversation replaces the list
+    /// (compact layout); its back button brings the list back.
+    private func showList(_ app: XCUIApplication) {
+        let back = app.buttons.matching(identifier: "compactBackButton").firstMatch
+        if back.exists { back.click() }
     }
 
     /// Opening the conversation scrolls its newest message to the top of

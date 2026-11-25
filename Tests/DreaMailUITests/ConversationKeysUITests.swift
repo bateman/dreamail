@@ -70,11 +70,13 @@ final class ConversationKeysUITests: XCTestCase {
     /// comes back with its default rows.
     private func openConversation(_ app: XCUIApplication) {
         if !rows(app).isEmpty {
+            showList(app)
             let other = app.descendants(matching: .any)
                 .matching(identifier: "threadRow.you@example.com:t1").firstMatch
             XCTAssertTrue(other.waitForExistence(timeout: 10))
             other.click()
             wait("t1 replaces t2 in the pane") { rows(app).count != 4 }
+            showList(app)
         }
         let row = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t2").firstMatch
@@ -82,6 +84,13 @@ final class ConversationKeysUITests: XCTestCase {
         row.click()
         wait("four rows, newest open") { rows(app).count == 4 && collapsedCount(app) == 3 }
         XCTAssertEqual(openIndex(app), 3)
+    }
+
+    /// In the narrow default window the conversation replaces the list
+    /// (compact layout); its back button brings the list back.
+    private func showList(_ app: XCUIApplication) {
+        let back = app.buttons.matching(identifier: "compactBackButton").firstMatch
+        if back.exists { back.click() }
     }
 
     private func stepPreviousAndNextMessageMoveTheOpenMessage(_ app: XCUIApplication) {
