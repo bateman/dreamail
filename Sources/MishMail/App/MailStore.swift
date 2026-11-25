@@ -1629,6 +1629,8 @@ struct ComposeRequest: Identifiable {
     }
 
     let db = AppDatabase.shared.dbPool
+    /// OpenPGP (step 4B): inert unless the build turns it on.
+    let openPGP = PGPCenter(database: AppDatabase.shared.dbPool)
     let threadDetailRepository = ThreadDetailRepository(
         db: AppDatabase.shared.dbPool,
         inlineImages: InlineImageStore(db: AppDatabase.shared.dbPool),

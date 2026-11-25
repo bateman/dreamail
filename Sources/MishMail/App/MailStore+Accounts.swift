@@ -92,6 +92,8 @@ extension MailStore {
         accounts.removeAll { $0.id == id }
         forgetAccountPhoto(id)
         forgetSignatureSettingsAccount(id)
+        // OpenPGP passphrase and results of the account leave memory.
+        openPGP.forget(accountId: id)
         // DEC-019: the account's Gmail filters leave memory with it.
         filterCache.forget(account: id)
         // Same for the Google Calendar integration's memory of it (again
@@ -207,6 +209,8 @@ extension MailStore {
             }) else { return }
             for id in result.removals.stale { AccountLifecycle.clearRemovalPending(id) }
             for id in result.removals.finish { await Self.removeOutsideDatabase(accountId: id) }
+            // OpenPGP secret keys whose row is gone (a delete cut short).
+            await PGPCenter.sweepSecretKeys(database: pool)
             let (live, cached) = (result.live, result.cached)
             _ = await Task.detached(priority: .utility) {
                 AttachmentCache.removeOrphans(liveAccounts: live)
@@ -242,6 +246,9 @@ extension MailStore {
     private static func removeOutsideDatabase(accountId id: String) async {
         Keychain.delete("refreshToken.\(id)")
         Keychain.delete(CalendarAuthorization.keychainKey(accountId: id))
+        // DEC-019: its OpenPGP secret keys (the certificates went with the
+        // database purge).
+        PGPCenter.removeSecretKeys(accountId: id)
         AccountLifecycle.clearAccountDefaults(accountId: id)
         Notifier.removeNotifications(forAccount: id)
         _ = await Task.detached(priority: .utility) {

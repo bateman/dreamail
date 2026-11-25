@@ -1955,6 +1955,9 @@ struct MessageCard: View {
     private let hasQuotedTrail: Bool
     /// Pre-assembled WebKit documents (nil when scale mismatched or absent).
     private let htmlDocuments: MessageHTMLDocuments?
+    /// May carry OpenPGP (`PGPDisplay.isCandidate`); always false with the
+    /// build switch off.
+    private let pgpCandidate: Bool
 
     /// Fallback NSCache for cards opened without a repository prep (e.g. rare
     /// main-thread-only paths). Primary path is `bodyPrep` from the actor.
@@ -2034,6 +2037,8 @@ struct MessageCard: View {
         self.onBodySettled = onBodySettled
         self.onUnsubscribe = onUnsubscribe
         self.onNeedUnsubscribeHeaders = onNeedUnsubscribeHeaders
+        self.pgpCandidate = PGPDisplay.isCandidate(bodyText: message.bodyText, attachments: attachments,
+                                                   enabled: PGPFeatures.isEnabled)
         let hasBody = !ThreadDetailView.needsBodyLoad(message)
         // CID-inlined HTML already embeds image bytes; prefer its prep over
         // the repository prep (which still has unresolved `cid:`). The parent
@@ -2144,7 +2149,10 @@ struct MessageCard: View {
     /// The one pure decision (`RemoteImagePolicy.autoLoads`): policy, VIPs
     /// and their auth verdict, Spam (message or thread), and the opt-ins.
     private var allowRemoteImages: Bool {
-        RemoteImagePolicy.autoLoads(
+        // OpenPGP: blocked until the message is checked, and for anything
+        // encrypted (EFAIL), whatever the policy or an opt-in says.
+        if store.openPGP.blocksRemoteContent(message, candidate: pgpCandidate) { return false }
+        return RemoteImagePolicy.autoLoads(
             message: message,
             threadInSpam: threadInSpam,
             policy: remoteImagePolicy,
@@ -2306,14 +2314,42 @@ struct MessageCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if let reading = pgpReading {
+                PGPIndicatorButton(reading: reading, onDecryptPart: { checkPGP(decryptPart: true) })
+            }
             headerActions
+        }
+    }
+
+    /// The engine's verdict on this message, once checked (`PGPCenter`).
+    private var pgpReading: PGPCenter.Reading? {
+        pgpCandidate ? store.openPGP.readings[message.id] : nil
+    }
+
+    /// What replaces the body, if anything: decrypted or signed text, or a
+    /// notice (never armor shown as the message).
+    private var pgpBody: PGPBodyDisplay? {
+        guard let body = pgpReading?.body, body != .original else { return nil }
+        return body
+    }
+
+    private func checkPGP(decryptPart: Bool = false) {
+        guard pgpCandidate else { return }
+        let client = store.client(for: message.accountId)
+        let center = store.openPGP
+        let message = message
+        let attachments = attachments
+        Task {
+            await center.check(message, attachments: attachments,
+                               fetchRaw: { try await client.getRawMessage(id: $0) },
+                               decryptPart: decryptPart)
         }
     }
 
     @ViewBuilder
     private var headerActions: some View {
         HStack(spacing: 10) {
-            if message.bodyHTML != nil, !message.bodyText.isEmpty {
+            if message.bodyHTML != nil, !message.bodyText.isEmpty, pgpBody == nil {
                 Button {
                     showPlainText.toggle()
                 } label: {
@@ -2327,7 +2363,8 @@ struct MessageCard: View {
                       ? "Render the HTML body again"
                       : "Show the multipart plain-text alternative (no remote images; useful when HTML is unreadable)")
             }
-            if message.bodyHTML != nil, !allowRemoteImages, !showPlainText {
+            if message.bodyHTML != nil, !allowRemoteImages, !showPlainText, pgpBody == nil,
+               !store.openPGP.blocksRemoteContent(message, candidate: pgpCandidate) {
                 // Click loads this message; chevron / long-press offers the thread.
                 Menu {
                     Button("This conversation") { loadImagesForThread = true }
@@ -2394,6 +2431,11 @@ struct MessageCard: View {
                 }
                 .padding(.horizontal, metrics.bodyInset)
                 .padding(.bottom, metrics.verticalPadding)
+                // OpenPGP: checked once when opened, and again after the
+                // keys or the passphrase change (the reading is dropped).
+                .task(id: "\(message.id)|\(pgpReading == nil)") {
+                    if pgpReading == nil { checkPGP() }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2439,7 +2481,9 @@ struct MessageCard: View {
         // When we only have a plain-text head (no structured HTML quote),
         // show that head while collapsed — even if bodyHTML exists —
         // so nested `>` history doesn't stay visible by default.
-        if hasQuotedTrail, let head = textHead, !showQuoted {
+        if let pgpBody {
+            PGPBodyReplacement(display: pgpBody, accountId: message.accountId, fontScale: fontScale)
+        } else if hasQuotedTrail, let head = textHead, !showQuoted {
             PlainTextBody(text: head, fontScale: fontScale)
         } else if showPlainText, !message.bodyText.isEmpty {
             // Manual plain-text escape hatch (see header control).
@@ -2591,7 +2635,10 @@ struct MessageCard: View {
             // is full body (no trail, or showQuoted).
             PlainTextBody(text: message.bodyText, fontScale: fontScale)
         }
-        if hasQuotedTrail {
+        if let part = pgpReading?.separatePart {
+            PGPEncryptedPartView(text: part, fontScale: fontScale)
+        }
+        if hasQuotedTrail, pgpBody == nil {
             // Same pill as the compose card: the trail is one click
             // away, and one more click tucks it back.
             Button {

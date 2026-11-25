@@ -8,15 +8,13 @@ import Foundation
 /// empty, and only an untracked `Config/Local.xcconfig` (or the `xcodebuild`
 /// command line) can set it to `YES`. It is not a preference.
 ///
-/// In this step nothing in the app reads it: the code under `PGP/` is the
-/// structure-only groundwork (MIME recognition, signed-bytes extraction, the
-/// engine protocol and the display rules), with no crypto library, no user
-/// interface and no network request. The entry points that read a message
+/// With it off nothing of OpenPGP runs: `PGPCenter` (the app's only way in)
+/// returns from every entry point first, the message view never looks for
+/// OpenPGP, and Settings has no OpenPGP pane. The library is linked either
+/// way and never called. The entry points that read a message
 /// (`PGPInspection`, `PGPStructure.findings`) take the state as a parameter,
-/// so the tests exercise both, and with it off return before parsing or
-/// calling an engine. The pure helpers under them (`RawMIME`, the display
-/// rules) take no switch; a test keeps every `PGP/` type unused outside
-/// `PGP/` until the step that wires it in.
+/// so the tests exercise both. A test keeps the files outside `PGP/` that
+/// reach into it to a fixed, gated list.
 enum PGPFeatures {
     /// Info.plist key the build setting expands into.
     static let infoKey = "MishMailPGP"

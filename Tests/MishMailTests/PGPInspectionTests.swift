@@ -213,24 +213,40 @@ final class PGPInspectionTests: XCTestCase {
         }
     }
 
-    /// Nothing outside `PGP/` uses this code yet: with the switch in either
-    /// state the app behaves as before. Any identifier with the `PGP`,
-    /// `OpenPGP` or `RPGP` prefix, or one of the MIME types defined in
-    /// `PGP/`, counts. The step that wires it in changes this on purpose.
-    func testNoAppCodeOutsidePGPUsesIt() throws {
+    /// Outside `PGP/`, OpenPGP code is reached from these files only. Any
+    /// identifier with the `PGP`, `OpenPGP` or `RPGP` prefix, or one of the
+    /// MIME types defined in `PGP/`, counts. The schema (v62) and the
+    /// account purge touch a table that stays empty with the switch off;
+    /// every other entry point is `PGPCenter`, whose methods return first
+    /// with the switch off (`PGPCenterTests`), or checks `PGPFeatures`
+    /// itself. A new file that reaches into `PGP/` must be added here, and
+    /// gated, on purpose.
+    func testAppCodeReachesItOnlyThroughTheSwitch() throws {
         let pattern = try NSRegularExpression(
             pattern: #"\b(?:PGP[A-Z]\w*|OpenPGP\w*|RPGP\w*|RawMIME\w*|MIMEContentType|MIMEOutline)\b"#)
         let sources = ForkIdentityTests.repoRoot.appendingPathComponent("Sources")
         let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
-        var users: [String] = []
+        var users: [String: String] = [:]
         for case let url as URL in files where url.pathExtension == "swift"
             && !url.path.contains("/Sources/MishMail/PGP/") {
             let text = try String(contentsOf: url, encoding: .utf8)
-            let range = NSRange(text.startIndex..., in: text)
-            users += pattern.matches(in: text, range: range).compactMap { Range($0.range, in: text) }
-                .map { "\(url.lastPathComponent): \(text[$0])" }
+            if pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil {
+                users[url.lastPathComponent] = text
+            }
         }
-        XCTAssertEqual(users, [])
+        XCTAssertEqual(Set(users.keys), [
+            "Database.swift", "AccountLifecycle.swift", "GmailClient.swift",
+            "MailStore.swift", "MailStore+Accounts.swift",
+            "ThreadDetailView.swift", "SettingsView.swift",
+            "PGPMessageViews.swift", "PGPKeySettings.swift",
+        ])
+        // Gated where they start: the message card's candidate check and the
+        // Settings pane read the switch; the views draw only what
+        // `PGPCenter` produced.
+        XCTAssertTrue(users["ThreadDetailView.swift"]?.contains("enabled: PGPFeatures.isEnabled") ?? false)
+        XCTAssertEqual(users["SettingsView.swift"]?.components(separatedBy: "PGPFeatures.isEnabled").count, 3)
+        XCTAssertTrue(users["MailStore.swift"]?.contains("PGPCenter(database: AppDatabase.shared.dbPool)") ?? false,
+                      "the app's center takes the build's switch")
     }
 
     /// The corpus and the sources carry no private-key block.

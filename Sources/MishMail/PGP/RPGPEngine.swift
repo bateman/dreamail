@@ -13,28 +13,36 @@ import MishMailRPGP
 /// only when the `MishMailRPGP` module is linked into the build.
 ///
 /// The library is stateless. Keys live in `PGPKeyStore` (secret keys in the
-/// Keychain, certificates in the encrypted database, in the step that
-/// stores them) and are read on every call; nothing is cached here.
+/// Keychain, certificates in the encrypted database) and are read on every
+/// call; nothing is cached here.
 ///
-/// For the wiring step: the C calls are synchronous and can take a while;
-/// run them off the cooperative thread pool (a dedicated queue) and check
-/// for cancellation around them. Swift `Data` copies of the passphrase,
-/// secret keys and plaintext cannot be wiped reliably; the library zeroes
-/// its own buffers, the Swift side can only keep copies short-lived.
+/// The C calls are synchronous and can take a while: they run on a queue of
+/// their own, never on the cooperative pool, with a cancellation check on
+/// each side. Swift `Data` copies of the passphrase, secret keys and
+/// plaintext cannot be wiped reliably; the library zeroes its own buffers,
+/// the Swift side only keeps copies short-lived.
 struct RPGPEngine: OpenPGPEngine {
+    /// The library's own input limit (`MAX_INPUT` in dreamail-openpgp):
+    /// larger input is refused here, before it is copied across.
+    static let maxInputBytes = 48 * 1024 * 1024
+
     let bindings: any RPGPBindings
     let store: any PGPKeyStore
     var now: @Sendable () -> Date = { Date() }
 
     func verifyDetached(signedData: Data, signature: Data) async throws -> [PGPSignatureResult] {
+        try Self.checkSize(signedData, signature)
         let certs = try await store.certificates()
-        let reply = bindings.verifyDetached(signedData, signature, certs, unixNow)
+        let now = unixNow
+        let reply = try await call { $0.verifyDetached(signedData, signature, certs, now) }
         return try RPGPReply.decode(reply.json).signatures()
     }
 
     func verifyCleartext(_ message: Data) async throws -> PGPCleartextResult {
+        try Self.checkSize(message)
         let certs = try await store.certificates()
-        let reply = bindings.verifyCleartext(message, certs, unixNow)
+        let now = unixNow
+        let reply = try await call { $0.verifyCleartext(message, certs, now) }
         let decoded = try RPGPReply.decode(reply.json)
         return PGPCleartextResult(signedText: reply.data, signatures: try decoded.signatures())
     }
@@ -43,36 +51,50 @@ struct RPGPEngine: OpenPGPEngine {
     /// integrity check was verified; anything else is discarded and reported
     /// as `.notIntegrityProtected`.
     func decrypt(_ message: Data) async throws -> PGPDecryptionResult {
+        try Self.checkSize(message)
         let secrets = try await store.secretKeys()
         guard !secrets.isEmpty else { throw PGPEngineError.noSecretKey }
         let certs = try await store.certificates()
         let passphrase = try await store.passphrase()
-        let reply = bindings.decrypt(message, secrets, passphrase, certs, unixNow)
+        let now = unixNow
+        let reply = try await call { $0.decrypt(message, secrets, passphrase, certs, now) }
         let decoded = try RPGPReply.decode(reply.json)
         guard decoded.integrityProtected == true else { throw PGPEngineError.notIntegrityProtected }
         return PGPDecryptionResult(plaintext: reply.data, signatures: try decoded.signatures())
     }
 
     /// Stores the certificates the library re-serialized after checking
-    /// them, never `data` itself.
+    /// them, never `data` itself: one armored block per key, in the order of
+    /// the keys the library lists.
     func importKeys(_ data: Data) async throws -> [PGPKeySummary] {
-        let reply = bindings.importPublic(data, unixNow)
+        try Self.checkSize(data)
+        let now = unixNow
+        let reply = try await call { $0.importPublic(data, now) }
         let keys = try RPGPReply.decode(reply.json).keys ?? []
-        guard !keys.isEmpty, !reply.data.isEmpty else { throw PGPEngineError.malformed }
-        try await store.addCertificates(reply.data)
+        let blocks = try Self.pair(keys, PGPArmorBlocks.split(reply.data))
+        try await store.addCertificates(blocks)
         return keys
     }
 
     /// A separate, explicit action: valid secret keys, re-serialized, into
-    /// the secret store; their public halves into the certificates.
+    /// the secret store; their public halves into the certificates (first,
+    /// so a key's secret half is never stored without its certificate).
     func importSecretKeys(_ data: Data) async throws -> [PGPKeySummary] {
-        let secret = bindings.importSecret(data, unixNow)
+        try Self.checkSize(data)
+        let now = unixNow
+        let secret = try await call { $0.importSecret(data, now) }
         let keys = try RPGPReply.decode(secret.json).keys ?? []
-        guard !keys.isEmpty, !secret.data.isEmpty else { throw PGPEngineError.noSecretKey }
-        let publicHalves = bindings.importPublic(secret.data, unixNow)
-        _ = try RPGPReply.decode(publicHalves.json)
-        try await store.addSecretKeys(secret.data)
-        try await store.addCertificates(publicHalves.data)
+        guard !keys.isEmpty else { throw PGPEngineError.noSecretKey }
+        let secretBlocks = try Self.pair(keys, PGPArmorBlocks.split(secret.data))
+        let secretData = secret.data
+        let publicHalves = try await call { $0.importPublic(secretData, now) }
+        let publicKeys = try RPGPReply.decode(publicHalves.json).keys ?? []
+        let publicBlocks = try Self.pair(publicKeys, PGPArmorBlocks.split(publicHalves.data))
+        guard Set(publicBlocks.map(\.key)).isSuperset(of: secretBlocks.map(\.key)) else {
+            throw PGPEngineError.malformed
+        }
+        try await store.addCertificates(publicBlocks)
+        try await store.addSecretKeys(secretBlocks)
         return keys
     }
 
@@ -82,8 +104,10 @@ struct RPGPEngine: OpenPGPEngine {
         var merged: [PGPKeySummary] = []
         let secretKeys = try await store.secretKeys()
         let certificates = try await store.certificates()
+        let now = unixNow
         for (blob, secret) in [(secretKeys, true), (certificates, false)] where !blob.isEmpty {
-            let listed = try RPGPReply.decode(bindings.inspectKeys(blob, unixNow).json).keys ?? []
+            let reply = try await call { $0.inspectKeys(blob, now) }
+            let listed = try RPGPReply.decode(reply.json).keys ?? []
             for key in listed where !merged.contains(where: { $0.key == key.key }) {
                 merged.append(secret && !key.hasSecretKey ? key.withSecret : key)
             }
@@ -96,12 +120,81 @@ struct RPGPEngine: OpenPGPEngine {
     }
 
     private var unixNow: Int64 { Int64(now().timeIntervalSince1970) }
+
+    private static func checkSize(_ inputs: Data...) throws {
+        if inputs.contains(where: { $0.count > maxInputBytes }) { throw PGPEngineError.tooLarge }
+    }
+
+    /// The library writes one armored block per listed key, in order. Any
+    /// other count means the answer cannot be trusted to say which block is
+    /// which key: nothing is stored.
+    private static func pair(_ keys: [PGPKeySummary], _ blocks: [Data]) throws -> [PGPArmoredKey] {
+        guard !keys.isEmpty, keys.count == blocks.count else { throw PGPEngineError.malformed }
+        return zip(keys, blocks).map { PGPArmoredKey(key: $0.key, armored: $1) }
+    }
+
+    /// The library's calls run here: synchronous and possibly slow, so off
+    /// the cooperative pool.
+    private static let queue = DispatchQueue(label: "io.github.bateman.MishMail.rpgp",
+                                             qos: .userInitiated, attributes: .concurrent)
+
+    private func call(_ body: @escaping @Sendable (any RPGPBindings) -> RPGPRawReply)
+        async throws -> RPGPRawReply {
+        try Task.checkCancellation()
+        let bindings = self.bindings
+        let reply = await withCheckedContinuation { continuation in
+            Self.queue.async { continuation.resume(returning: body(bindings)) }
+        }
+        try Task.checkCancellation()
+        return reply
+    }
 }
 
 private extension PGPKeySummary {
     var withSecret: PGPKeySummary {
         PGPKeySummary(key: key, userIDs: userIDs, hasSecretKey: true, created: created,
                       expires: expires, validity: validity)
+    }
+}
+
+/// The engine of this build: rPGP when the library is linked, otherwise
+/// one that refuses every call.
+enum PGPEngines {
+    static func engine(store: any PGPKeyStore) -> any OpenPGPEngine {
+        #if canImport(MishMailRPGP)
+        RPGPEngine(bindings: LinkedRPGPBindings(), store: store)
+        #else
+        UnavailableOpenPGPEngine()
+        #endif
+    }
+}
+
+/// One key as the library re-serialized it: a single armored block.
+struct PGPArmoredKey: Sendable, Equatable {
+    let key: PGPKeyReference
+    let armored: Data
+}
+
+/// Splits concatenated armored blocks (the library's own output) at their
+/// framing lines. Framing only: nothing inside a block is read.
+enum PGPArmorBlocks {
+    static func split(_ data: Data) -> [Data] {
+        var blocks: [Data] = []
+        var current: [UInt8]?
+        for line in data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false) {
+            let text = String(decoding: line, as: UTF8.self)
+                .trimmingCharacters(in: CharacterSet(charactersIn: " \t\r"))
+            if text.hasPrefix("-----BEGIN PGP ") { current = [] }
+            if current != nil {
+                current?.append(contentsOf: text.utf8)
+                current?.append(UInt8(ascii: "\n"))
+            }
+            if text.hasPrefix("-----END PGP "), let block = current {
+                blocks.append(Data(block))
+                current = nil
+            }
+        }
+        return blocks
     }
 }
 
@@ -115,8 +208,11 @@ protocol PGPKeyStore: Sendable {
     func secretKeys() async throws -> Data
     /// The passphrase for the secret keys; empty when they have none.
     func passphrase() async throws -> Data
-    func addCertificates(_ armored: Data) async throws
-    func addSecretKeys(_ armored: Data) async throws
+    /// Adds or replaces certificates, one per key.
+    func addCertificates(_ keys: [PGPArmoredKey]) async throws
+    /// Adds or replaces secret keys, one per key; each key's certificate is
+    /// already stored.
+    func addSecretKeys(_ keys: [PGPArmoredKey]) async throws
     /// Removes a key, public and secret parts.
     func remove(_ key: PGPKeyReference) async throws
 }
@@ -219,6 +315,8 @@ struct RPGPReply: Decodable, Equatable {
             case "not_integrity_protected": throw PGPEngineError.notIntegrityProtected
             case "too_large": throw PGPEngineError.tooLarge
             case "unsupported": throw PGPEngineError.unsupported
+            // "malformed", "internal" (a caught panic, a refused clock) and
+            // anything unknown: nothing the library said can be used.
             default: throw PGPEngineError.malformed
             }
         }

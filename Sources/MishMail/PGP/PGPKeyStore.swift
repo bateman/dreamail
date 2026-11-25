@@ -1,0 +1,286 @@
+import Foundation
+import GRDB
+import Security
+
+/// One OpenPGP key of an account (v62). The certificate is public and lives
+/// in the encrypted database; a secret half, when there is one, lives in the
+/// Keychain only (`PGPSecretKeyStorage`) and this row carries just the flag.
+/// Cascades with the account (DEC-019).
+struct PGPKeyRecord: Codable, Hashable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "pgpKey"
+    var accountId: String
+    /// Uppercase hex, no spaces (`PGPKeyReference`).
+    var fingerprint: String
+    /// The certificate as the library re-serialized it (one armored block).
+    var certificate: Data
+    /// A secret half is stored in the Keychain. Never the key itself.
+    var hasSecretKey: Bool
+    var addedAt: Date
+}
+
+enum PGPKeyTable {
+    static func createTable(_ db: Database) throws {
+        try db.create(table: PGPKeyRecord.databaseTableName) { t in
+            t.column("accountId", .text).notNull()
+                .references("account", onDelete: .cascade)
+            t.column("fingerprint", .text).notNull()
+            t.column("certificate", .blob).notNull()
+            t.column("hasSecretKey", .boolean).notNull().defaults(to: false)
+            t.column("addedAt", .datetime).notNull()
+            t.primaryKey(["accountId", "fingerprint"])
+        }
+    }
+
+    static func rows(_ db: Database, accountId: String) throws -> [PGPKeyRecord] {
+        try PGPKeyRecord.filter(Column("accountId") == accountId)
+            .order(Column("fingerprint")).fetchAll(db)
+    }
+
+    /// Also cascades with the account row; deleted by name so a removal does
+    /// not depend on the foreign key alone.
+    static func forget(_ db: Database, accountId: String) throws {
+        _ = try PGPKeyRecord.filter(Column("accountId") == accountId).deleteAll(db)
+    }
+
+    static func purgeOrphans(_ db: Database) throws {
+        try db.execute(sql: """
+            DELETE FROM \(PGPKeyRecord.databaseTableName)
+            WHERE accountId NOT IN (SELECT id FROM account)
+            """)
+    }
+
+    /// Every (account, key) whose secret half the database says is stored.
+    static func secretKeyOwners(_ db: Database) throws -> Set<PGPSecretKeyOwner> {
+        let rows = try PGPKeyRecord.filter(Column("hasSecretKey") == true).fetchAll(db)
+        return Set(rows.map {
+            PGPSecretKeyOwner(accountId: $0.accountId, key: PGPKeyReference(fingerprint: $0.fingerprint))
+        })
+    }
+}
+
+struct PGPSecretKeyOwner: Hashable, Sendable {
+    let accountId: String
+    let key: PGPKeyReference
+}
+
+/// Where secret keys are kept: the Keychain in the app, memory in tests.
+protocol PGPSecretKeyStorage: Sendable {
+    /// Nil when there is none; throws when the store cannot be read (a
+    /// locked Keychain), so a caller never mistakes that for "no key".
+    func secretKey(of owner: PGPSecretKeyOwner) throws -> Data?
+    func setSecretKey(_ armored: Data, of owner: PGPSecretKeyOwner) throws
+    /// Succeeds when the key is gone, also when there was none.
+    func deleteSecretKey(of owner: PGPSecretKeyOwner) throws
+    /// Every stored owner, for the sweep of keys whose row is gone.
+    func owners() throws -> [PGPSecretKeyOwner]
+}
+
+extension PGPSecretKeyStorage {
+    func deleteAll(accountId: String) throws {
+        for owner in try owners() where owner.accountId == accountId {
+            try deleteSecretKey(of: owner)
+        }
+    }
+
+    /// Deletes every secret key the database does not list (a removed
+    /// account or key whose Keychain delete failed, or was cut short).
+    func deleteAll(except keep: Set<PGPSecretKeyOwner>) throws {
+        for owner in try owners() where !keep.contains(owner) {
+            try deleteSecretKey(of: owner)
+        }
+    }
+}
+
+/// Secret keys in the login Keychain: this device only, never synced, one
+/// item per account and key, under a service of their own so they can be
+/// listed and removed without touching the app's other secrets.
+struct KeychainPGPSecretKeys: PGPSecretKeyStorage {
+    private static let service =
+        (Bundle.main.bundleIdentifier ?? "io.github.bateman.MishMail") + ".openpgp"
+    private static let prefix = "secretKey:"
+
+    /// `secretKey:<FINGERPRINT>:<account>`: the fingerprint is hex, so the
+    /// first colon after it ends it, whatever the account id holds.
+    static func itemName(_ owner: PGPSecretKeyOwner) -> String {
+        "\(prefix)\(owner.key.fingerprint):\(owner.accountId)"
+    }
+
+    static func owner(fromItemName name: String) -> PGPSecretKeyOwner? {
+        guard name.hasPrefix(prefix) else { return nil }
+        let rest = name.dropFirst(prefix.count)
+        guard let colon = rest.firstIndex(of: ":") else { return nil }
+        let fingerprint = String(rest[..<colon])
+        let account = String(rest[rest.index(after: colon)...])
+        guard !fingerprint.isEmpty, !account.isEmpty,
+              fingerprint.allSatisfy(\.isHexDigit) else { return nil }
+        return PGPSecretKeyOwner(accountId: account, key: PGPKeyReference(fingerprint: fingerprint))
+    }
+
+    private func query(_ owner: PGPSecretKeyOwner) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: Self.service,
+         kSecAttrAccount as String: Self.itemName(owner)]
+    }
+
+    func secretKey(of owner: PGPSecretKeyOwner) throws -> Data? {
+        var q = query(owner)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        let status = SecItemCopyMatching(q as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw KeychainError.status(status == errSecSuccess ? errSecDecode : status)
+        }
+        return data
+    }
+
+    func setSecretKey(_ armored: Data, of owner: PGPSecretKeyOwner) throws {
+        let q = query(owner)
+        let status = SecItemUpdate(q as CFDictionary, [kSecValueData as String: armored] as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = q
+            add[kSecValueData as String] = armored
+            add[kSecAttrSynchronizable as String] = false
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            add[kSecAttrLabel as String] = "MishMail OpenPGP secret key"
+            let added = SecItemAdd(add as CFDictionary, nil)
+            guard added == errSecSuccess else { throw KeychainError.status(added) }
+        } else if status != errSecSuccess {
+            throw KeychainError.status(status)
+        }
+    }
+
+    func deleteSecretKey(of owner: PGPSecretKeyOwner) throws {
+        let status = SecItemDelete(query(owner) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainError.status(status)
+        }
+    }
+
+    func owners() throws -> [PGPSecretKeyOwner] {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                kSecAttrService as String: Self.service,
+                                kSecReturnAttributes as String: true,
+                                kSecMatchLimit as String: kSecMatchLimitAll]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(q as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess else { throw KeychainError.status(status) }
+        let items = result as? [[String: Any]] ?? []
+        return items.compactMap { ($0[kSecAttrAccount as String] as? String).flatMap(Self.owner) }
+    }
+}
+
+/// Passphrases the user typed to unlock a secret key, per account, held in
+/// memory only: never written to disk, the database, the Keychain or a log.
+/// They go when MishMail quits, when the account goes, or when one of its
+/// keys is deleted.
+final class PGPPassphrases: @unchecked Sendable {
+    private let lock = NSLock()
+    private var byAccount: [String: Data] = [:]
+
+    func passphrase(accountId: String) -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        return byAccount[accountId]
+    }
+
+    func set(_ passphrase: Data, accountId: String) {
+        lock.lock(); defer { lock.unlock() }
+        byAccount[accountId] = passphrase
+    }
+
+    func forget(accountId: String) {
+        lock.lock(); defer { lock.unlock() }
+        byAccount[accountId] = nil
+    }
+}
+
+/// `PGPKeyStore` of one account: certificates from the encrypted database,
+/// secret keys from `secrets`, the passphrase from memory.
+struct DatabasePGPKeyStore: PGPKeyStore {
+    let accountId: String
+    let database: any DatabaseWriter
+    let secrets: any PGPSecretKeyStorage
+    let passphrases: PGPPassphrases
+
+    private func owner(_ key: PGPKeyReference) -> PGPSecretKeyOwner {
+        PGPSecretKeyOwner(accountId: accountId, key: key)
+    }
+
+    func certificates() async throws -> Data {
+        let account = accountId
+        let rows = try await database.read { try PGPKeyTable.rows($0, accountId: account) }
+        return rows.reduce(into: Data()) { $0.append($1.certificate) }
+    }
+
+    /// The secret keys the database lists, read from the Keychain. A row
+    /// whose Keychain item is missing is skipped (the key cannot decrypt);
+    /// an unreadable Keychain fails the call.
+    func secretKeys() async throws -> Data {
+        let account = accountId
+        let rows = try await database.read { try PGPKeyTable.rows($0, accountId: account) }
+        var out = Data()
+        for row in rows where row.hasSecretKey {
+            if let key = try secrets.secretKey(of: owner(PGPKeyReference(fingerprint: row.fingerprint))) {
+                out.append(key)
+            }
+        }
+        return out
+    }
+
+    func passphrase() async throws -> Data {
+        passphrases.passphrase(accountId: accountId) ?? Data()
+    }
+
+    /// Adds or replaces each certificate; a stored secret half stays.
+    func addCertificates(_ keys: [PGPArmoredKey]) async throws {
+        let account = accountId
+        try await database.write { db in
+            for key in keys {
+                try db.execute(sql: """
+                    INSERT INTO pgpKey (accountId, fingerprint, certificate, hasSecretKey, addedAt)
+                    VALUES (?, ?, ?, 0, ?)
+                    ON CONFLICT(accountId, fingerprint) DO UPDATE SET certificate = excluded.certificate
+                    """, arguments: [account, key.key.fingerprint, key.armored, Date()])
+            }
+        }
+    }
+
+    /// The Keychain first, then the flag: a flag never names a key that was
+    /// not stored. The certificate row must exist (`RPGPEngine` adds it
+    /// first).
+    func addSecretKeys(_ keys: [PGPArmoredKey]) async throws {
+        for key in keys {
+            try secrets.setSecretKey(key.armored, of: owner(key.key))
+        }
+        let account = accountId
+        let missing = try await database.write { db -> Bool in
+            var missing = false
+            for key in keys {
+                try db.execute(sql: """
+                    UPDATE pgpKey SET hasSecretKey = 1 WHERE accountId = ? AND fingerprint = ?
+                    """, arguments: [account, key.key.fingerprint])
+                if db.changesCount == 0 { missing = true }
+            }
+            return missing
+        }
+        if missing {
+            for key in keys { try? secrets.deleteSecretKey(of: owner(key.key)) }
+            throw PGPEngineError.malformed
+        }
+    }
+
+    /// DEC-019: the secret half (Keychain) first, then the row. A Keychain
+    /// that refuses the delete fails the call with the key still listed, so
+    /// the user can try again; nothing is left that the list does not show.
+    func remove(_ key: PGPKeyReference) async throws {
+        try secrets.deleteSecretKey(of: owner(key))
+        let account = accountId
+        try await database.write { db in
+            _ = try PGPKeyRecord.filter(Column("accountId") == account
+                                            && Column("fingerprint") == key.fingerprint).deleteAll(db)
+        }
+        passphrases.forget(accountId: accountId)
+    }
+}

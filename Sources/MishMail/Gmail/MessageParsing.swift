@@ -297,7 +297,7 @@ enum MessageParser {
     /// is authoritative for legacy mail. Order: a 7-bit stateful label
     /// (ISO-2022-JP, UTF-7), then UTF-8, then any other declared charset,
     /// then Windows-1252 / ISO-8859-1 for malformed headers.
-    private static func decodeText(_ data: Data, contentType: String?) -> String? {
+    static func decodeText(_ data: Data, contentType: String?) -> String? {
         let charset = contentType.flatMap(declaredCharset)?.lowercased()
         let declared: String.Encoding? = charset.flatMap { name in
             ["utf-8", "utf8", "us-ascii", "ascii"].contains(name)

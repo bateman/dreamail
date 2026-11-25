@@ -9,7 +9,7 @@ struct SettingsView: View {
     @Environment(MailStore.self) var store
 
     enum Pane: String, Identifiable {
-        case accounts, googleAPI, filters, snippets, signatures, general, appearance, shortcuts, ai, updates
+        case accounts, googleAPI, filters, snippets, signatures, openPGP, general, appearance, shortcuts, ai, updates
 
         var id: String { rawValue }
 
@@ -20,6 +20,7 @@ struct SettingsView: View {
             case .filters: return "Gmail filters"
             case .snippets: return "Snippets"
             case .signatures: return "Signatures"
+            case .openPGP: return "OpenPGP keys"
             case .general: return "General"
             case .appearance: return "Appearance"
             case .shortcuts: return "Keyboard shortcuts"
@@ -35,6 +36,7 @@ struct SettingsView: View {
             case .filters: return "line.3.horizontal.decrease"
             case .snippets: return "curlybraces"
             case .signatures: return "signature"
+            case .openPGP: return "key.horizontal"
             case .general: return "gearshape"
             case .appearance: return "textformat.size"
             case .shortcuts: return "keyboard"
@@ -57,6 +59,10 @@ struct SettingsView: View {
                     row(.accounts)
                     row(.filters)
                     row(.signatures)
+                    // OpenPGP (step 4B): only in a build that turns it on.
+                    if PGPFeatures.isEnabled {
+                        row(.openPGP)
+                    }
                 }
                 Section("App") {
                     row(.googleAPI)
@@ -113,6 +119,9 @@ struct SettingsView: View {
         case .filters: GmailFiltersSettings()
         case .snippets: SnippetsSettings()
         case .signatures: SignatureSettings()
+        case .openPGP:
+            // A pane remembered from a build with OpenPGP shows Accounts.
+            if PGPFeatures.isEnabled { PGPKeySettings() } else { AccountsSettings() }
         case .general: GeneralSettings()
         case .appearance: AppearanceSettings()
         case .shortcuts: ShortcutsSettings(bindings: store.keyBindings)

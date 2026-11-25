@@ -36,13 +36,18 @@ struct PGPMessageSecurity: Sendable, Equatable {
     /// For a `multipart/signed`: the canonical bytes of the signed part, the
     /// only content that may be shown as signed. Nil otherwise.
     let signedContent: Data?
+    /// For a cleartext-signed text part: the text as the engine read it,
+    /// dash-escaping undone, the only text that may be shown as signed. Nil
+    /// otherwise.
+    let signedText: Data?
 
     init(encryption: Encryption, signature: Signature, fromHeader: String,
-         signedContent: Data? = nil) {
+         signedContent: Data? = nil, signedText: Data? = nil) {
         self.encryption = encryption
         self.signature = signature
         self.fromHeader = fromHeader
         self.signedContent = signedContent
+        self.signedText = signedText
     }
 }
 
