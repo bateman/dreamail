@@ -90,6 +90,8 @@ extension MailboxView {
         case .social: return "bubble.left"
         case .starred: return "star"
         case .snoozed: return "clock"
+        case .important: return "flag"
+        case .spam: return "exclamationmark.octagon"
         case .reminders: return "bell"
         case .drafts: return "doc.text"
         case .scheduled: return "calendar.badge.clock"
@@ -113,6 +115,8 @@ extension MailboxView {
         case .social: return "bubble.left.fill"
         case .starred: return "star.fill"
         case .snoozed: return "clock.fill"
+        case .important: return "flag.fill"
+        case .spam: return "exclamationmark.octagon.fill"
         case .reminders: return "bell.fill"
         case .drafts: return "doc.text.fill"
         // No filled variant of the badged calendar: keep the outline.

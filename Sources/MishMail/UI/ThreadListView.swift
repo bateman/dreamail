@@ -124,6 +124,12 @@ struct ThreadListView: View {
         switch store.selectedView {
         case .trash:
             return ("Trash is empty", "trash", "Deleted conversations will appear here.")
+        case .spam:
+            return ("Hooray, no spam here!", "exclamationmark.octagon",
+                    "Conversations marked as spam will appear here.")
+        case .important:
+            return ("No important conversations", "flag",
+                    "Conversations Gmail marks as important will appear here.")
         case .sent:
             return ("No sent conversations", "paperplane", "Messages you send will appear here.")
         case .drafts:
@@ -1354,7 +1360,8 @@ struct FilterBar: View {
         case .sent: source = .sent
         case .label(let account, let labelId, let name):
             source = .label(account: account, labelId: labelId, name: name)
-        case .snoozed, .labels, .reminders, .drafts, .scheduled, .outbox, .trash, .saved:
+        case .snoozed, .important, .spam, .labels, .reminders, .drafts, .scheduled, .outbox,
+             .trash, .saved:
             source = .unsupported
         }
         return SavedViewBase.fields(

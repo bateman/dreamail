@@ -75,8 +75,52 @@ enum SidebarCounts {
         if thread.inDrafts && !thread.inTrash {
             result.insert("drafts")
         }
+        // Same predicates as `fetchLabelUnread` and the Spam count.
+        if thread.isUnread && thread.inSpam {
+            result.insert("spam")
+        }
+        if thread.isUnread && !thread.inTrash && !thread.inSpam {
+            for labelId in thread.userLabelIds {
+                result.insert(labelKey(accountId: thread.accountId, labelId: labelId))
+            }
+        }
         return result
     }
+
+    /// The `counts` key of one user label's unread count:
+    /// `label:<account>:<labelId>`, i.e. `label:` + `LabelRow.id`.
+    static func labelKey(accountId: String, labelId: String) -> String {
+        "label:\(accountId):\(labelId)"
+    }
+
+    /// Unread conversations per user label, Gmail-style: unread, not in
+    /// trash or spam. One grouped query for every label (never one per
+    /// label): it walks the `thread_unread_live` partial index (v65) and
+    /// looks each thread up in `thread_label` by its primary key. Keyed by
+    /// `labelKey`; a label with no unread mail is absent.
+    static func fetchLabelUnread(db: Database, account: String?) throws -> [String: Int] {
+        let scope = account == nil ? "" : "thread.accountId = ? AND "
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT thread.accountId AS accountId, thread_label.labelId AS labelId,
+                   COUNT(*) AS n
+            FROM thread JOIN thread_label ON thread_label.threadId = thread.id
+            WHERE \(scope)(\(labelUnreadSQL))
+            GROUP BY thread.accountId, thread_label.labelId
+            """, arguments: StatementArguments(account.map { [$0] } ?? []))
+        var out: [String: Int] = [:]
+        for row in rows {
+            let accountId: String = row["accountId"]
+            let labelId: String = row["labelId"]
+            let n: Int = row["n"]
+            out[labelKey(accountId: accountId, labelId: labelId)] = n
+        }
+        return out
+    }
+
+    /// Matches the `thread_unread_live` partial index exactly, so SQLite
+    /// can use it.
+    static let labelUnreadSQL =
+        "thread.isUnread = 1 AND thread.inTrash = 0 AND thread.inSpam = 0"
 
     /// Whether a non-promo/non-social thread is excluded from the primary
     /// badge by the inbox category hide set.
@@ -150,6 +194,11 @@ enum SidebarCounts {
         let drafts = try count(db, account: activeAccount, where: """
             inDrafts = 1 AND inTrash = 0
             """)
+        // Unread spam, the number Gmail shows on its Spam row
+        // (`thread_unread_spam`, v65).
+        let spam = try count(db, account: activeAccount, where: """
+            isUnread = 1 AND inSpam = 1
+            """)
 
         // Dock badge uses the same primary-inbox predicate as `inbox`, but
         // may scope to a different account. Reuse when scopes match.
@@ -162,7 +211,7 @@ enum SidebarCounts {
                               arguments: [now])
         }
 
-        return ([
+        var counts = [
             "inbox": inbox,
             "promotions": promotions,
             "social": social,
@@ -170,7 +219,11 @@ enum SidebarCounts {
             "starred": starred,
             "snoozed": snoozed,
             "drafts": drafts,
-        ], badge)
+            "spam": spam,
+        ]
+        // The sidebar's label tree reads these by `labelKey`.
+        counts.merge(try fetchLabelUnread(db: db, account: activeAccount)) { $1 }
+        return (counts, badge)
     }
 
     /// The primary-inbox unread predicate behind the inbox count, the Dock

@@ -175,6 +175,9 @@ struct CommandPalette: View {
         case .starred: return .starred
         case .snoozed: return .snoozed
         case .reminders: return .reminders
+        case .important: return .important
+        case .spam: return .spam
+        case .labels: return .labels
         case .drafts: return .drafts
         case .sent: return .sent
         case .allMail: return .allMail
