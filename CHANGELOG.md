@@ -34,6 +34,15 @@ minor versions may still change behavior.
   v0.2.0, which only renames it (`DreaMailRPGP`); its behaviour is that of
   v0.1.1.
 
+- **More newsletter images load.** With remote images allowed, images
+  addressed with `http://` or `//host/…` are now requested over https, as
+  Gmail does. An image that still fails shows its alternative text in small
+  type, when it has one, instead of leaving an empty space.
+
+- **Fixed: a closed "Categories" kept showing the open category.** Closing
+  "Categories" (or a parent label) now hides everything under it, as in
+  Gmail; "Less" still keeps the open view visible.
+
 - **OpenPGP (off by default).** Signature check and decryption of PGP/MIME
   and cleartext-signed mail, with an indicator in the message header, and
   Settings → OpenPGP keys, behind the `DREAMAIL_PGP` build switch (empty by

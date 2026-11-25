@@ -4,15 +4,20 @@ import AppKit
 extension AccountRailPalette {
     static let background = Color(nsColor: .adaptive(light: backgroundLight, dark: backgroundDark))
     static let glyph = Color(nsColor: .adaptive(light: glyphLight, dark: glyphDark))
+    static let idleRing = Color(nsColor: .adaptive(light: idleRingLight, dark: idleRingDark))
 }
 
 /// The always-visible strip left of the sidebar: one avatar per account
 /// (ring, unread badge), "All accounts" first when there are several, a "+"
 /// to add an account, and at the bottom the Settings button.
 struct AccountRail: View {
-    /// Avatar 40 pt + 12 pt padding on each side.
     static let avatarSize: CGFloat = 40
-    static let width: CGFloat = 64
+    static let width = AccountRailMetrics.width
+    static let showAddAccountKey = AccountRailMetrics.showAddAccountKey
+    static let showAddAccountDefault = AccountRailMetrics.showAddAccountDefault
+
+    @AppStorage(AccountRail.showAddAccountKey) private var showAddAccount =
+        AccountRail.showAddAccountDefault
 
     @Environment(MailStore.self) var store
     private var bound: Bindable<MailStore> { Bindable(store) }
@@ -34,7 +39,7 @@ struct AccountRail: View {
                             .onDrop(of: [.text], delegate: AccountDropDelegate(
                                 target: account, draggingId: $draggingAccountId, store: store))
                     }
-                    addButton
+                    if showAddAccount { addButton }
                 }
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
@@ -75,6 +80,12 @@ struct AccountRail: View {
                     }
                 }
                 .opacity(selected ? 1 : 0.6)
+                // After the dimming, so the ring keeps its full contrast.
+                .overlay {
+                    if !selected {
+                        Circle().strokeBorder(AccountRailPalette.idleRing, lineWidth: 1)
+                    }
+                }
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

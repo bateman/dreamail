@@ -168,11 +168,20 @@ final class AccentColorUITests: XCTestCase {
         about.click()
         let panel = app.dialogs.firstMatch
         XCTAssertTrue(panel.waitForExistence(timeout: 5), "the About panel should open")
-        for (name, strip) in [("sidebar", sidebarStrip()), ("thread", selected())] {
+        // The inactive check only needs the row's background, so the thread
+        // strip is cut short of the panel (the wider account rail moves the
+        // list towards the centred panel).
+        let threadClear: () -> CGRect = {
+            let strip = selected()
+            let room = panel.frame.minX - strip.minX - 4
+            guard room < strip.width else { return strip }
+            return CGRect(x: strip.minX, y: strip.minY, width: max(8, room), height: strip.height)
+        }
+        for (name, strip) in [("sidebar", sidebarStrip()), ("thread", threadClear())] {
             XCTAssertFalse(panel.frame.intersects(strip),
                            "About panel \(panel.frame) covers the \(name) strip \(strip)")
         }
-        try assertRow(selected, in: main, is: .grey, "thread list, inactive window")
+        try assertRow(threadClear, in: main, is: .grey, "thread list, inactive window")
         try assertRow(sidebarStrip, in: main, is: .grey, "sidebar, inactive window")
     }
 
