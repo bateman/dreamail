@@ -295,6 +295,15 @@ actor RemoteImageStore {
     private let flushDelayNanoseconds: UInt64
     private let now: @Sendable () -> Date
     private var pendingStores: [String: RemoteImageCache.Pending] = [:]
+    /// The batch being written: still answered by the reads until its
+    /// transactions commit, so an image is never fetched again in between.
+    private var writingStores: [String: RemoteImageCache.Pending] = [:]
+
+    /// Queued or being written, for one message of one account.
+    private func unwritten(_ messageId: String, _ accountId: String) -> [RemoteImageCache.Pending] {
+        [pendingStores[messageId], writingStores[messageId]].compactMap { $0 }
+            .filter { $0.accountId == accountId }
+    }
     private var pendingTouches: Set<String> = []
     private var timerTask: Task<Void, Never>?
     private var writeTask: Task<Void, Never>?
@@ -321,8 +330,8 @@ actor RemoteImageStore {
                       urlKeys: [String]) async -> [String: RemoteImageCache.Image] {
         guard !urlKeys.isEmpty, !isClosed else { return [:] }
         var out: [String: RemoteImageCache.Image] = [:]
-        if let queued = pendingStores[messageId], queued.accountId == accountId {
-            let wanted = Set(urlKeys)
+        let wanted = Set(urlKeys)
+        for queued in unwritten(messageId, accountId) {
             for image in queued.images where wanted.contains(image.urlKey) {
                 out[image.urlKey] = image
             }
@@ -343,7 +352,7 @@ actor RemoteImageStore {
     func storedKeys(messageId: String, accountId: String) async -> Set<String> {
         guard !isClosed else { return [] }
         var out: Set<String> = []
-        if let queued = pendingStores[messageId], queued.accountId == accountId {
+        for queued in unwritten(messageId, accountId) {
             out.formUnion(queued.images.map(\.urlKey))
             out.formUnion(queued.refused)
         }
@@ -356,7 +365,7 @@ actor RemoteImageStore {
 
     /// Refused URL digests of one message (queued or stored).
     func refusedKeys(messageId: String, accountId: String) async -> Set<String> {
-        var out = Set(pendingStores[messageId].map { $0.accountId == accountId ? $0.refused : [] } ?? [])
+        var out = Set(unwritten(messageId, accountId).flatMap(\.refused))
         let db = db
         out.formUnion((try? await db.read { db in
             try RemoteImageCache.refusedKeys(db, messageId: messageId, accountId: accountId)
@@ -408,6 +417,7 @@ actor RemoteImageStore {
             await running.value
             if writeTask == running { writeTask = nil }
         }
+        writingStores = [:]
         guard !isClosed else { return }
         _ = try? await db.write { db in try RemoteImageCache.removeAll(db) }
     }
@@ -431,6 +441,7 @@ actor RemoteImageStore {
             await running.value
             if writeTask == running { writeTask = nil }
         }
+        writingStores = [:]
     }
 
     var queuedMessageCount: Int { pendingStores.count }
@@ -465,6 +476,7 @@ actor RemoteImageStore {
         guard !isClosed, !pendingStores.isEmpty || !pendingTouches.isEmpty else { return }
         let stores = pendingStores.values.sorted { $0.messageId < $1.messageId }
         let touches = pendingTouches.subtracting(pendingStores.keys).sorted()
+        writingStores = pendingStores
         pendingStores = [:]
         pendingTouches = []
         let stamp = now()
@@ -501,6 +513,7 @@ actor RemoteImageStore {
         writeTask = task
         await task.value
         if writeTask == task { writeTask = nil }
+        writingStores = [:]
         if !pendingStores.isEmpty || !pendingTouches.isEmpty { scheduleFlush() }
     }
 }
