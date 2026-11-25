@@ -6,6 +6,9 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **The window reopens as you left it.** At launch the main window comes back
+  with the size and position it had when it was closed.
+
 - **Account rail.** An always-visible strip left of the sidebar shows one
   avatar per account with its unread count, "All accounts" when there are
   several, "+" to add an account, and Settings at the bottom. It replaces the

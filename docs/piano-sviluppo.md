@@ -304,6 +304,7 @@ Aggiornato il 25 novembre 2026.
 - ☐ **C-50** Firme per account (PR #61): MishMail → Settings (⌘,) → Signatures. Creare due firme, impostare la predefinita per i nuovi messaggi e per le risposte di ogni indirizzo; "Import from Gmail" porta le firme di Gmail (una firma con tabella resta leggibile, le immagini sono tolte e la cosa è detta). In composizione: la firma predefinita compare da sola; cambiando From la firma cambia; il menu "Insert signature / No signature / Manage signatures" la sostituisce o la toglie; un P.S. scritto sotto la firma non viene cancellato; ⌘Z annulla il cambio.
 - ☐ **C-51** Immagini fallite nascoste (PR #67): aprire la ricevuta SumUp: al posto del "?" blu non compare nulla. Da guardare: un'immagine fallita con testo alternativo e dimensioni fisse potrebbe mostrare ancora il "?" (non verificato).
 - ☐ **C-52** Barra degli account (PR #62): striscia sempre visibile a sinistra della barra laterale. Un avatar per account con il suo numero di non letti; clic cambia account; "All accounts" in cima con più account; "+" aggiunge un account; ingranaggio in basso apre Settings. ⌘1…⌘9 come prima; trascinare un avatar riordina gli account; colori in modalità chiara e scura; gli avvisi in basso (annulla) non coprono l'ingranaggio; con un solo account l'avatar appare selezionato.
+- ☐ **C-53** Dimensione della finestra all'avvio (PR #65): ridimensionare e spostare la finestra principale, uscire con ⌘Q, riaprire: la finestra torna con la stessa dimensione e posizione. La prima volta dopo l'aggiornamento parte con la dimensione predefinita (il nome di salvataggio è cambiato). Provare anche con `make run` dopo una ricompilazione.
 
 ## Ondata 3 — parità Gmail
 
@@ -434,7 +435,7 @@ Aggiornato il 25 novembre 2026.
 | — | `feature/account-signatures` | #61 | Unito |
 | — | `ux/account-rail` | #62 | Unito (livello basso rischio) |
 | — | `ux/gmail-style-sidebar` | #63 | In lavorazione |
-| — | `ux/restore-window-size` | #65 | In lavorazione (livello basso rischio) |
+| — | `ux/restore-window-size` | #65 | Unito (livello basso rischio) |
 | — | `perf/remote-image-cache-regression` | #67 | Unito (livello basso rischio) |
 | — | `feature/openpgp-library-wiring` | #68 | In lavorazione (libreria v0.1.0, commit `adad8a1`) |
 | — | `docs/study-google-chat`, `docs/study-google-calendar`, `docs/study-rebranding-dreamail` | #69, #70, #71 | Uniti (studi in `docs/studi/`; domande aperte per il proprietario in fondo a ciascuno) |
