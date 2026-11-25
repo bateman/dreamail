@@ -794,39 +794,27 @@ final class ComposeBodyTextView: ComposeCaretSettlingTextView {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let cmd = flags.contains(.command)
-        let shift = flags.contains(.shift)
-        let opt = flags.contains(.option)
-        // Only plain ⌘ / ⌘⇧ / ⌘⌥ — leave control chords alone.
-        guard cmd, !flags.contains(.control) else {
-            return super.performKeyEquivalent(with: event)
+        // ⌘K is owned by ComposeView's link sheet (local key monitor) — not
+        // in the table, or the sheet never opens.
+        guard let format = ComposeFormatKeys.format(
+            keyCode: event.keyCode,
+            characters: event.charactersIgnoringModifiers ?? "",
+            command: flags.contains(.command), shift: flags.contains(.shift),
+            option: flags.contains(.option), control: flags.contains(.control))
+        else { return super.performKeyEquivalent(with: event) }
+        switch format {
+        case .bold: onFormat?(.bold)
+        case .italic: onFormat?(.italic)
+        case .strikethrough: onFormat?(.strikethrough)
+        case .code: onFormat?(.code)
+        case .math: onFormat?(.math)
+        case .heading1: onFormat?(.heading1)
+        case .heading2: onFormat?(.heading2)
+        case .heading3: onFormat?(.heading3)
+        case .bullet: onFormat?(.bullet)
+        case .quote: onFormat?(.quote)
         }
-        // Symbol keys: `charactersIgnoringModifiers` still reflects Shift, so
-        // ⌘⇧8 arrives as "*" and ⌘⇧. as ">". Match keyCodes (ANSI layout).
-        // kVK_ANSI_8 = 28, kVK_ANSI_Period = 47, kVK_ANSI_9 = 25 (⌘⇧9 is
-        // Gmail's quote key; ⌘⇧. stays as MishMail's).
-        if shift, !opt {
-            switch event.keyCode {
-            case 28: onFormat?(.bullet); return true
-            case 47, 25: onFormat?(.quote); return true
-            default: break
-            }
-        }
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        switch (key, shift, opt) {
-        case ("b", false, false): onFormat?(.bold); return true
-        case ("i", false, false): onFormat?(.italic); return true
-        case ("x", true, false):  onFormat?(.strikethrough); return true
-        case ("e", false, false): onFormat?(.code); return true
-        case ("m", true, false):  onFormat?(.math); return true
-        // ⌘K is owned by ComposeView's link sheet (local key monitor) — don't
-        // also inject raw `[text](url)` here or the sheet never opens.
-        case ("1", false, true):  onFormat?(.heading1); return true
-        case ("2", false, true):  onFormat?(.heading2); return true
-        case ("3", false, true):  onFormat?(.heading3); return true
-        default:
-            return super.performKeyEquivalent(with: event)
-        }
+        return true
     }
 }
 

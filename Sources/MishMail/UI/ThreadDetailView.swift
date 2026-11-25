@@ -134,6 +134,10 @@ struct ThreadDetailView: View {
     /// this to one id (`MessageExpandPolicy.single`); side-by-side compose
     /// opens every sent card so the draft can reference the full thread.
     @State private var expandedMessageIds: Set<String> = []
+    /// Gmail `;` pressed: every card open until `:` (or another conversation).
+    @State private var expandAllActive = false
+    /// The message Gmail's `n` / `p` last moved to.
+    @State private var messageCursorId: String?
     /// Visible height of the conversation's scroll view. The open card
     /// reserves it for a body that has not measured itself yet, so the pane
     /// never opens as a short box (see `MessageBodyHeight`).
@@ -442,6 +446,12 @@ struct ThreadDetailView: View {
             // navigating away — but only when it was *this* thread: a sync
             // touching other conversations must not disturb what we're reading.
             // Scroll anchor and summary stay put.
+            // Gmail `n` / `p` / `;` / `:` (routed by ContentView only while
+            // this conversation is on screen).
+            .onChange(of: store.conversationKeyRequest) { _, request in
+                guard let request, request.threadId == thread.id else { return }
+                runConversationKey(request.action, proxy: proxy)
+            }
             .onChange(of: store.threadContentToken) {
                 let revision = store.contentRevision(of: thread.id)
                 guard revision != seenContentRevision else { return }
@@ -862,9 +872,32 @@ struct ThreadDetailView: View {
             composingDraftIds: store.composingDraftMessageIds)
     }
 
-    /// Side-by-side opens every sent card; the reading pane stays single-active.
+    /// Side-by-side opens every sent card; the reading pane stays
+    /// single-active unless Gmail's `;` opened every message.
     private var messageExpandPolicy: MessageExpandPolicy {
-        splitMode ? .multiple : .single
+        splitMode || expandAllActive ? .multiple : .single
+    }
+
+    private func runConversationKey(_ action: MessageNavigation.Action, proxy: ScrollViewProxy) {
+        let ids = messageRoles.nonDraftIds
+        let before = MessageNavigation.State(
+            expanded: expandedMessageIds, cursor: messageCursorId,
+            expandAll: expandAllActive || splitMode)
+        let (after, scrollTo) = MessageNavigation.apply(
+            action, to: before, ids: ids, policy: messageExpandPolicy)
+        messageCursorId = after.cursor
+        // Side-by-side always keeps every card open; `:` there closes them
+        // but the policy stays multiple.
+        expandAllActive = after.expandAll && !splitMode
+        withAnimation(.easeOut(duration: 0.12)) {
+            expandedMessageIds = after.expanded
+        }
+        // In thread order, so the bounded fetch starts at the top.
+        let opened = after.expanded.subtracting(before.expanded)
+        loadBodiesBounded(ids.filter { opened.contains($0) })
+        if let scrollTo {
+            applyScrollAnchor(scrollTo, proxy: proxy)
+        }
     }
 
     /// Seed open cards for the active policy and hydrate each body.
@@ -887,26 +920,53 @@ struct ThreadDetailView: View {
 
     /// Hydrate one message's body into `messages` when the user expands it.
     private func loadBodyIfNeeded(id: String) {
-        guard let idx = messages.firstIndex(where: { $0.id == id }) else { return }
+        guard claimBodyLoad(id: id) else { return }
+        Task { await fetchBody(id: id) }
+    }
+
+    /// Gmail `;` opens every card at once: fetch the missing bodies a few at
+    /// a time rather than one request per message in a burst.
+    static let expandAllBodyFetchLimit = 2
+
+    private func loadBodiesBounded(_ ids: [String]) {
+        let pending = ids.filter { claimBodyLoad(id: $0) }
+        guard !pending.isEmpty else { return }
+        // `expandAllBodyFetchLimit` serial walks, each over every n-th id.
+        let lanes = min(Self.expandAllBodyFetchLimit, pending.count)
+        for lane in 0..<lanes {
+            let mine = stride(from: lane, to: pending.count, by: lanes).map { pending[$0] }
+            Task {
+                for id in mine { await fetchBody(id: id) }
+            }
+        }
+    }
+
+    /// True when `id` still needs its body fetched (and marks it attempted).
+    /// A body already present only gets the CID and attachment recovery.
+    private func claimBodyLoad(id: String) -> Bool {
+        guard let idx = messages.firstIndex(where: { $0.id == id }) else { return false }
         guard Self.needsBodyLoad(messages[idx]) else {
             // Body already present (newest message, cache hit) — still try CID
             // and missing-attachment recovery.
             recoverAttachmentsIfNeeded(id: id)
             resolveCIDImagesIfNeeded(id: id)
-            return
+            return false
         }
-        guard !bodyLoadAttempted.contains(id) else { return }
+        guard !bodyLoadAttempted.contains(id) else { return false }
         bodyLoadAttempted.insert(id)
-        Task {
-            guard let loaded = await store.messageBodyForReadingPane(id: id),
-                  splitMode || store.openedThreadId == thread.id,
-                  let currentIdx = messages.firstIndex(where: { $0.id == id })
-            else { return }
-            messages[currentIdx] = loaded.message
-            bodyPrepByMessageId[id] = loaded.prep
-            recoverAttachmentsIfNeeded(id: id)
-            resolveCIDImagesIfNeeded(id: id)
-        }
+        return true
+    }
+
+    @MainActor
+    private func fetchBody(id: String) async {
+        guard let loaded = await store.messageBodyForReadingPane(id: id),
+              splitMode || store.openedThreadId == thread.id,
+              let currentIdx = messages.firstIndex(where: { $0.id == id })
+        else { return }
+        messages[currentIdx] = loaded.message
+        bodyPrepByMessageId[id] = loaded.prep
+        recoverAttachmentsIfNeeded(id: id)
+        resolveCIDImagesIfNeeded(id: id)
     }
 
     /// Full re-fetch when this card has no attachment chips but Gmail may still

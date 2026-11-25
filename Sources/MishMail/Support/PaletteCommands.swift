@@ -31,6 +31,8 @@ enum PaletteCommands {
     struct ThreadState: Equatable {
         var isStarred = false
         var isUnread = false
+        var isMuted = false
+        var isImportant = false
     }
 
     struct SavedViewRef: Equatable {
@@ -157,6 +159,27 @@ enum PaletteCommands {
         list.append(Entry(id: "act.label",
                           title: bulk ? "Label \(noun)…" : "Label Conversation…",
                           icon: "tag", shortcut: .label, action: .perform(.label)))
+        // Same rules as the store (`ConversationAction.muteToggle`): unmute
+        // only when every target is muted.
+        let unmuting = bulk
+            ? !ctx.checked.isEmpty && ctx.checked.allSatisfy(\.isMuted)
+            : (ctx.focused?.isMuted ?? false)
+        list += [
+            Entry(id: "act.move", title: bulk ? "Move \(noun) To…" : "Move Conversation To…",
+                  icon: "folder", shortcut: .moveTo, action: .perform(.moveTo)),
+            Entry(id: "act.mute",
+                  title: bulk ? "\(unmuting ? "Unmute" : "Mute") \(noun)"
+                              : (unmuting ? "Unmute Conversation" : "Mute Conversation"),
+                  icon: unmuting ? "bell" : "bell.slash",
+                  shortcut: .mute, action: .perform(.mute)),
+            Entry(id: "act.important",
+                  title: bulk ? "Mark \(noun) as Important" : "Mark as Important",
+                  icon: "flag", shortcut: .markImportant, action: .perform(.markImportant)),
+            Entry(id: "act.notImportant",
+                  title: bulk ? "Mark \(noun) as Not Important" : "Mark as Not Important",
+                  icon: "flag.slash", shortcut: .markNotImportant,
+                  action: .perform(.markNotImportant)),
+        ]
         if ctx.focused != nil {
             list.append(Entry(id: "act.copyLink", title: "Copy Gmail Link to Conversation",
                               icon: "link", action: .copyLink))

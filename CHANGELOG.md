@@ -6,6 +6,13 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **More Gmail shortcuts.** Mute (`m`), mark as important or not important (`+`
+  or `=`, `-`) and move to (`v`, which also leaves the current label or Trash),
+  each with undo, also in the Message menu, the command palette and the
+  conversation's More menu. Inside a conversation: next and previous message
+  (`n`, `p`) and expand or collapse all (`;`, `:`). The `?` help lists the
+  compose formatting keys. Mute relies on a Gmail label the API may refuse; if
+  it does, the conversation comes back with a message.
 - **Label colors on Gmail.** In the label organizer you can change a label's
   color on Gmail (from Gmail's own palette, so the web and the phone show it
   too) or remove it, separately from the Mac-only color, which still wins on
