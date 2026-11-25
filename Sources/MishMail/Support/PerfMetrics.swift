@@ -28,7 +28,8 @@ import os
 /// | `selection.focus` | List focus publication by click/browse/auto-advance |
 /// | `action.advance` | Destructive action through synchronous neighbor handoff |
 /// | `open.ready` | Opened thread through useful payload (cache hit/miss) |
-/// | `open.html` | HTML document assembly/load through stable WebView height |
+/// | `open.html` | HTML document assembly/load through stable WebView height (`measure=` what installed the measure, `firstHeightMs=` time to the first height) |
+/// | `open.remoteCheck` | Remote-image cache check before a body's first paint (`complete=`, `late=`: past the deadline) |
 /// | `sync.flush` | Chunked write transaction |
 /// | `sync.fetchAll` | Full backfill pass wall time |
 /// | `sync.blocklist` | applyBlocklist scan |
@@ -83,6 +84,9 @@ enum PerfMetrics {
         case navFocus = "nav.focus"
         /// Reading-pane open after keyboard settle.
         case navDetailOpen = "nav.detailOpen"
+        /// Reading-pane remote-image cache check before a body's first
+        /// paint (bounded by `RemoteImagePaneState.checkDeadline`).
+        case openRemoteCheck = "open.remoteCheck"
     }
 
     /// One finished sample (ring buffer for dump / tests).
@@ -191,6 +195,7 @@ enum PerfMetrics {
         case .openReady: return signposter.beginInterval("open.ready")
         case .navFocus: return signposter.beginInterval("nav.focus")
         case .navDetailOpen: return signposter.beginInterval("nav.detailOpen")
+        case .openRemoteCheck: return signposter.beginInterval("open.remoteCheck")
         }
     }
 
@@ -218,6 +223,7 @@ enum PerfMetrics {
         case .openReady: signposter.endInterval("open.ready", state)
         case .navFocus: signposter.endInterval("nav.focus", state)
         case .navDetailOpen: signposter.endInterval("nav.detailOpen", state)
+        case .openRemoteCheck: signposter.endInterval("open.remoteCheck", state)
         }
     }
 

@@ -262,10 +262,11 @@ enum RemoteImageRendering {
 /// and the `cid:`-inlined base, so its verdict holds for both), which only
 /// the first paint waits for, and at most `checkDeadline`; then either the
 /// body from the cache, or the live body plus one background fetch for the
-/// next open. The fetch starts only from a mounted body (`bodyMounted`), so
-/// an oversized body behind its approval placeholder, a collapsed card or a
-/// closed pane never fetches; a decision that turns false cancels
-/// everything for the message.
+/// next open. The fetch starts only from a mounted body whose own web-view
+/// load has ended (`bodyMounted`), so it never competes with the web view's
+/// requests to the same hosts, and an oversized body behind its approval
+/// placeholder, a collapsed card or a closed pane never fetches; a decision
+/// that turns false cancels everything for the message.
 struct RemoteImagePaneState: Equatable {
     /// How long the first paint may wait for the cache check before it
     /// paints as without the cache.
@@ -308,7 +309,8 @@ struct RemoteImagePaneState: Equatable {
     }
 
     /// The next step for a card. `bodyMounted`: the HTML body view (not the
-    /// waiting placeholder) is on screen.
+    /// waiting placeholder) is on screen and its document's load has ended
+    /// (`HTMLBodyView.onLoadFinished`).
     mutating func step(id: String, allowRemoteImages: Bool, bodyMounted: Bool,
                        candidateCount: Int, cidResolveInFlight: Bool, cidInlined: Bool,
                        remoteBody: RemoteInlinedBody?) -> Step {

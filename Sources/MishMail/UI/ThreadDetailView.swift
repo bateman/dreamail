@@ -1108,8 +1108,9 @@ struct ThreadDetailView: View {
     /// While images are allowed: one cache check before the first paint
     /// (bounded), so a fully cached message, prefetched or not, opens with
     /// no request; otherwise the live body, exactly as without the cache,
-    /// and one background fetch for the next open, started only from the
-    /// mounted body. A blocked card cancels and fetches nothing.
+    /// and one background fetch for the next open, started only once the
+    /// mounted body's own web-view load has ended (never alongside it). A
+    /// blocked card cancels and fetches nothing.
     private func remoteImagesDecisionChanged(id: String, allowed: Bool, bodyMounted: Bool) {
         let cidInlined = cidInlinedHTMLById[id] != nil
         let prep = cidInlined ? cidPrepByMessageId[id] : bodyPrepByMessageId[id]
@@ -1162,6 +1163,7 @@ struct ThreadDetailView: View {
         let threadId = thread.id
         let imageStore = store.remoteImageStore
         remoteResolveTasks[id]?.cancel()
+        let checkInterval = isCheck ? PerfMetrics.begin(.openRemoteCheck) : nil
         if isCheck {
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(RemoteImagePaneState.checkDeadline * 1e9))
@@ -1177,9 +1179,13 @@ struct ThreadDetailView: View {
                 preInlineBytes: work.preInlineBytes, baseIsCIDInlined: baseIsCID,
                 fontScale: scale, store: imageStore)
             await MainActor.run {
-                guard !Task.isCancelled, thread.id == threadId else { return }
+                guard !Task.isCancelled, thread.id == threadId else {
+                    checkInterval?.end(extraMeta: "cancelled")
+                    return
+                }
                 remoteResolveTasks.removeValue(forKey: id)
                 let showNow = isCheck ? remotePane.checkFinished(id, complete: body != nil) : true
+                checkInterval?.end(extraMeta: "complete=\(body != nil ? 1 : 0) late=\(showNow ? 0 : 1)")
                 guard let body else { return }
                 if showNow { remoteBodyById[id] = body }
                 // Past the deadline: kept for the next open only.
@@ -1906,6 +1912,10 @@ struct MessageCard: View {
     /// Set by the first height report. Only a body's first load reserves the
     /// pane; a later reload (quote toggle) starts from its cached height.
     @State private var htmlBodyEverMeasured = false
+    /// Content id of the body document whose web-view load has ended
+    /// (`HTMLBodyView.onLoadFinished`): the background image fetch for the
+    /// next open starts only then, never alongside the web view's own loads.
+    @State private var loadFinishedContentID: String?
     /// Offset of the body from the card's top (header and banners), so the
     /// reservation makes the card, not just its body, end at the pane bottom.
     @State private var bodyTopInCard: CGFloat = 0
@@ -2535,7 +2545,10 @@ struct MessageCard: View {
                             measuredHTMLHeight = $0
                             htmlBodyEverMeasured = true
                         }),
-                    onSettled: onBodySettled)
+                    onSettled: onBodySettled,
+                    onLoadFinished: { finished in
+                        if loadFinishedContentID != finished { loadFinishedContentID = finished }
+                    })
                     // The web view keeps its own frame (measuring is
                     // unchanged); only its container reserves space.
                     .frame(height: bodyHeight)
@@ -2551,9 +2564,12 @@ struct MessageCard: View {
                     // The card's decision (policy, click, conversation
                     // opt-in, Spam): the parent resolves only while it
                     // allows, and stops when it no longer does or the body
-                    // leaves.
-                    .task(id: "\(allowRemoteImages)|\(cidInlinedHTML != nil)") {
-                        onRemoteImagesDecision(allowRemoteImages, true)
+                    // leaves. "Mounted" for the fetch means this document's
+                    // own load ended: the app's requests to the image hosts
+                    // never compete with the web view's.
+                    .task(id: "\(allowRemoteImages)|\(cidInlinedHTML != nil)|\(loadFinishedContentID == bodyContentID)") {
+                        onRemoteImagesDecision(allowRemoteImages,
+                                               loadFinishedContentID == bodyContentID)
                     }
                     .onDisappear { onRemoteImagesDecision(false, true) }
             }
@@ -3282,6 +3298,11 @@ struct HTMLBodyView: NSViewRepresentable {
     /// Fired once the first stable height for the current document is known
     /// (ResizeObserver settle). Used to arm neighbor pre-renders.
     var onSettled: (() -> Void)? = nil
+    /// Fired with the content id once the web view's own load of that
+    /// document ended (window load or failure; a claimed pre-render already
+    /// has). The card starts the background image fetch only then, so the
+    /// app's requests never compete with the web view's.
+    var onLoadFinished: ((String) -> Void)? = nil
 
     /// Cross-fade when swapping painted WebViews. Project style: fade only,
     /// never a slide; keep well under 100ms.
@@ -3293,6 +3314,7 @@ struct HTMLBodyView: NSViewRepresentable {
         context.coordinator.container = container
         context.coordinator.contentID = contentID
         context.coordinator.onSettled = onSettled
+        context.coordinator.onLoadFinished = onLoadFinished
 
         let heightBinding = _height
         context.coordinator.setHeight = { heightBinding.wrappedValue = $0 }
@@ -3327,6 +3349,7 @@ struct HTMLBodyView: NSViewRepresentable {
                 prerenderHit: true)
             context.coordinator.acceptsHeightReports = true
             context.coordinator.installLayoutAndMeasure(ready)
+            context.coordinator.notifyLoadFinished()
         } else {
             let webView = HTMLWebViewPool.dequeue()
             context.coordinator.attach(
@@ -3348,6 +3371,7 @@ struct HTMLBodyView: NSViewRepresentable {
         context.coordinator.container = container
         context.coordinator.contentID = contentID
         context.coordinator.onSettled = onSettled
+        context.coordinator.onLoadFinished = onLoadFinished
         // Refresh the binding callback even when the document identity did not
         // change. Capture the Binding only — capturing `self` retains `html`.
         let heightBinding = _height
@@ -3407,6 +3431,7 @@ struct HTMLBodyView: NSViewRepresentable {
         var loadedKey: HTMLBodyLoadKey?
         var setHeight: ((CGFloat) -> Void)?
         var onSettled: (() -> Void)?
+        var onLoadFinished: ((String) -> Void)?
         var contentID: String = ""
         weak var container: NSView?
         private(set) var current: PassthroughWebView?
@@ -3422,6 +3447,13 @@ struct HTMLBodyView: NSViewRepresentable {
         private var navigationGate = HTMLNavigationIdentityGate()
         private var pendingReveal = false
         private var settledNotified = false
+        /// Measure before window load (`HTMLDOMReadyGate`).
+        private var domReadyGate = HTMLDOMReadyGate()
+        /// `open.html` timing (no mail data): what installed the measure
+        /// that produced the first height, and when.
+        private var renderStart: CFAbsoluteTime = 0
+        private var firstHeightMs: Int?
+        private var measuredBy = "load"
         /// Bumped on every swap/dismantle so an in-flight fade completion
         /// from a superseded swap cannot recycle views or promote `current`.
         private var swapGeneration = 0
@@ -3504,6 +3536,7 @@ struct HTMLBodyView: NSViewRepresentable {
                 acceptsHeightReports = true
                 installLayoutAndMeasure(next)
                 revealIncoming(animated: true)
+                notifyLoadFinished()
             } else {
                 loadDocument(
                     html: html, preassembled: preassembled,
@@ -3520,6 +3553,10 @@ struct HTMLBodyView: NSViewRepresentable {
             heightStability.reset()
             heightUpdateCount = 0
             settledNotified = false
+            domReadyGate.reset()
+            renderStart = CFAbsoluteTimeGetCurrent()
+            firstHeightMs = nil
+            measuredBy = prerenderHit ? "prerender" : "load"
             renderInterval = PerfMetrics.begin(
                 .openHTML,
                 meta: "bytes=\(byteCount) variant=\(variant) prerender=\(prerenderHit ? 1 : 0)")
@@ -3640,6 +3677,7 @@ struct HTMLBodyView: NSViewRepresentable {
         }
 
         private func startNavigation(_ webView: WKWebView, document: String) {
+            domReadyGate.reset()
             let navigation = webView.loadHTMLString(document, baseURL: nil)
             navigationGate.didStart(navigation)
         }
@@ -3655,6 +3693,8 @@ struct HTMLBodyView: NSViewRepresentable {
             onSettled = nil
             acceptsHeightReports = false
             navigationGate.reset()
+            domReadyGate.reset()
+            onLoadFinished = nil
             finishRender(reason: "detached")
             heightStability.reset()
             pendingReveal = false
@@ -3677,8 +3717,44 @@ struct HTMLBodyView: NSViewRepresentable {
             else { return }
             // Primary contrast pass runs as WKUserScript at document-end
             // (WebViewPool) for every navigation, including recycled views.
+            // Re-run when DOM ready already installed it (safe to re-run).
+            domReadyGate.didFinishLoad()
             acceptsHeightReports = true
             installLayoutAndMeasure(webView)
+            notifyLoadFinished()
+        }
+
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            guard navigationGate.accepts(navigation) else { return }
+            guard webView === incoming || (incoming == nil && webView === current)
+            else { return }
+            domReadyGate.didCommit()
+        }
+
+        /// The document is parsed (`HTMLBodyLayout.domReadyJS`): measure
+        /// after a short grace unless window load comes first, so a slow
+        /// image host never holds the body at its placeholder height.
+        private func domReady(in webView: WKWebView) {
+            guard webView === incoming || (incoming == nil && webView === current),
+                  let generation = domReadyGate.domReady() else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + HTMLBodyLayout.domReadyGrace) {
+                [weak self, weak webView] in
+                guard let self, let webView,
+                      webView === self.incoming
+                        || (self.incoming == nil && webView === self.current),
+                      self.domReadyGate.graceEnded(generation: generation) else { return }
+                self.measuredBy = "domReady"
+                self.acceptsHeightReports = true
+                self.installLayoutAndMeasure(webView)
+            }
+        }
+
+        /// The active document's own load ended (or a painted pre-render
+        /// was claimed). Async: may run inside a SwiftUI update.
+        func notifyLoadFinished() {
+            let callback = onLoadFinished
+            let id = contentID
+            DispatchQueue.main.async { callback?(id) }
         }
 
         func installLayoutAndMeasure(_ webView: WKWebView) {
@@ -3703,6 +3779,9 @@ struct HTMLBodyView: NSViewRepresentable {
             let observation = heightStability.observe(height)
             if observation.shouldPublish {
                 heightUpdateCount += 1
+                if firstHeightMs == nil {
+                    firstHeightMs = Int((CFAbsoluteTimeGetCurrent() - renderStart) * 1000)
+                }
                 let published = observation.height
                 let measuredView = webView ?? incoming ?? current
                 let measuredWidth = measuredView?.frame.width ?? 0
@@ -3777,7 +3856,8 @@ struct HTMLBodyView: NSViewRepresentable {
             renderTimeout = nil
             guard let interval = renderInterval else { return }
             renderInterval = nil
-            interval.end(extraMeta: "heightUpdates=\(heightUpdateCount) \(reason)")
+            interval.end(extraMeta: "heightUpdates=\(heightUpdateCount) \(reason)"
+                         + " measure=\(measuredBy) firstHeightMs=\(firstHeightMs ?? -1)")
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!,
@@ -3792,6 +3872,7 @@ struct HTMLBodyView: NSViewRepresentable {
                 pendingReveal = false
             }
             finishRender(reason: "navigationError")
+            notifyLoadFinished()
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
@@ -3805,12 +3886,17 @@ struct HTMLBodyView: NSViewRepresentable {
                 pendingReveal = false
             }
             finishRender(reason: "provisionalError")
+            notifyLoadFinished()
         }
 
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
             guard message.name == HTMLBodyLayout.heightHandlerName else { return }
             let webView = message.webView
+            if HTMLBodyLayout.isDOMReadyMessage(message.body) {
+                if let webView { domReady(in: webView) }
+                return
+            }
             applyMeasuredHeight(message.body, from: webView)
         }
 

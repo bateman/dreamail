@@ -359,6 +359,51 @@ struct HTMLNavigationIdentityGate {
 /// Suppresses no-op WebView height publications and declares an initial render
 /// stable after the same size has been observed repeatedly. ResizeObserver can
 /// remain installed for real later changes (for example, an image load).
+/// When the body's layout + measure script may run before window load.
+///
+/// Window load (`didFinish`) waits for every remote image, so a slow or dead
+/// image host used to hold the body at its placeholder height (clipped,
+/// scrolling inside) for the network timeout. The document-end signal
+/// (`HTMLBodyLayout.domReadyJS`) arms a short grace instead: the measure runs
+/// at window load when that comes first, else when the grace ends. Only for
+/// the document whose own navigation committed, once per document.
+struct HTMLDOMReadyGate: Equatable {
+    private(set) var generation = 0
+    private var committed = false
+    private var installed = false
+    private var armed = false
+
+    /// A new navigation (or none): forget the previous document.
+    mutating func reset() {
+        generation &+= 1
+        committed = false
+        installed = false
+        armed = false
+    }
+
+    /// The accepted navigation committed: its own DOM is the one in the view.
+    mutating func didCommit() { committed = true }
+
+    /// The DOM-ready signal arrived. Returns the generation to start the
+    /// grace for, or nil (not this document's, measured, or already armed).
+    mutating func domReady() -> Int? {
+        guard committed, !installed, !armed else { return nil }
+        armed = true
+        return generation
+    }
+
+    /// The grace ended: whether to install the measure now.
+    mutating func graceEnded(generation g: Int) -> Bool {
+        guard g == generation, !installed else { return false }
+        installed = true
+        return true
+    }
+
+    /// Window load installed the measure (as before): the grace has nothing
+    /// left to do.
+    mutating func didFinishLoad() { installed = true }
+}
+
 struct HTMLHeightStability {
     struct Observation: Equatable {
         let shouldPublish: Bool

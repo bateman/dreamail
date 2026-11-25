@@ -51,6 +51,31 @@ enum HTMLBodyLayout {
     /// `WKScriptMessageHandler` name for continuous height reports.
     static let heightHandlerName = "mmHeight"
 
+    /// Posted on `heightHandlerName` by `domReadyJS` once the document is
+    /// parsed (DOMContentLoaded), before its images have loaded.
+    static let domReadyMessage = "mm-dom-ready"
+
+    /// App-injected user script at document end: tells the host the DOM is
+    /// ready, so the height measure need not wait for window load (which
+    /// waits for every remote image: a slow or dead image host held the body
+    /// at its placeholder height for the network timeout). A view without
+    /// the handler (pre-render, free slot) ignores it.
+    static let domReadyJS = """
+    (function(){
+      try { window.webkit.messageHandlers.\(heightHandlerName).postMessage('\(domReadyMessage)'); } catch (e) {}
+    })();
+    """
+
+    /// How long after DOM ready the measure still waits for window load. A
+    /// page whose images all arrive in this time measures and reveals as
+    /// before (images in); a slower one is measured now and grows as its
+    /// images arrive (`installLayoutAndMeasureJS` handles pending images).
+    static let domReadyGrace: TimeInterval = 0.25
+
+    static func isDOMReadyMessage(_ body: Any) -> Bool {
+        (body as? String) == domReadyMessage
+    }
+
     /// Max preserved width (px) for blocked-image layout boxes.
     static let maxPreservedWidth = 1200
     /// Max preserved height (px) for blocked-image layout boxes.
