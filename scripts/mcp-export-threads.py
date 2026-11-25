@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export MishMail threads to JSONL for offline/remote summarization.
+"""Export DreaMail threads to JSONL for offline/remote summarization.
 
 Pairs with mcp-import-summaries.py. Use when the summarizer can't reach the
 MCP server directly — e.g. a Codex Cloud worker or any sandboxed runner that

@@ -137,7 +137,7 @@ jobs:
       # Build first: the unit suite has tests that inspect the built Debug
       # app (signature, zip round trip, embedded relauncher, ad-hoc trust).
       # With no app on disk they skip, so the old order never ran them.
-      # WARNINGS_AS_ERRORS=1: a Swift or C/ObjC warning in MishMail's own
+      # WARNINGS_AS_ERRORS=1: a Swift or C/ObjC warning in DreaMail's own
       # targets fails the build (project.yml). Swift packages are exempt.
       # The cache is saved from builds with the same setting.
       - name: Build app

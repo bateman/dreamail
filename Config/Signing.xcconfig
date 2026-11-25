@@ -1,4 +1,4 @@
-// Signing configuration for MishMail.
+// Signing configuration for DreaMail.
 //
 // The tracked default is ad-hoc "Sign to Run Locally": it builds and runs on
 // any Mac with no Apple Developer account (so `make build`, CI, and strangers
@@ -15,7 +15,7 @@
 // No paid Apple Developer membership is required for that personal-use setup.
 // Paid membership is required for Developer ID / notarized shipping builds.
 // `make install` and `make release` switch the app to the distribution
-// entitlements themselves (MISHMAIL_APP_ENTITLEMENTS; library validation stays
+// entitlements themselves (DREAMAIL_APP_ENTITLEMENTS; library validation stays
 // ON — the embedded GRDB framework is re-signed with your team). Do not set
 // CODE_SIGN_ENTITLEMENTS here: project.yml overrides it per target.
 //
@@ -25,31 +25,31 @@ CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = -
 
 // In-app update channel (GitHub OWNER/REPO), expanded into Info.plist as
-// MishMailUpdateChannel. Deliberately empty: with no channel the updater is
+// DreaMailUpdateChannel. Deliberately empty: with no channel the updater is
 // inert — no checks, no releases API request, no download, no in-place
 // install — so a local ad-hoc build is never replaced by someone else's
 // release. Set it in Local.xcconfig only for a channel you publish and sign
-// yourself, e.g.  MISHMAIL_UPDATE_CHANNEL = owner/repo
-MISHMAIL_UPDATE_CHANNEL =
+// yourself, e.g.  DREAMAIL_UPDATE_CHANNEL = owner/repo
+DREAMAIL_UPDATE_CHANNEL =
 
 // AI features and the local MCP server, expanded into Info.plist as
-// MishMailAIFeatures. Deliberately empty: with it off no AI surface is shown,
+// DreaMailAIFeatures. Deliberately empty: with it off no AI surface is shown,
 // no model provider, custom endpoint or Ollama daemon is contacted, no stored
 // provider credential is read, and the MCP server never starts (whatever the
 // stored `mcp.enabled` preference says). Set it in Local.xcconfig to build
-// the AI features in:  MISHMAIL_AI_FEATURES = YES
-MISHMAIL_AI_FEATURES =
+// the AI features in:  DREAMAIL_AI_FEATURES = YES
+DREAMAIL_AI_FEATURES =
 
 // Google Calendar integration (step 4A, in design), expanded into Info.plist
-// as MishMailCalendar. Deliberately empty: with it off nothing is shown, no
+// as DreaMailCalendar. Deliberately empty: with it off nothing is shown, no
 // Calendar scope is requested and no request reaches the Calendar API. Set it
-// in Local.xcconfig to build it in:  MISHMAIL_CALENDAR = YES
-MISHMAIL_CALENDAR =
+// in Local.xcconfig to build it in:  DREAMAIL_CALENDAR = YES
+DREAMAIL_CALENDAR =
 
-// OpenPGP support, expanded into Info.plist as MishMailPGP. Deliberately
+// OpenPGP support, expanded into Info.plist as DreaMailPGP. Deliberately
 // empty: with it off no OpenPGP surface is shown and no message is inspected
 // for OpenPGP structure. Set it in Local.xcconfig to build it in (signature
-// check, decryption and Settings → OpenPGP keys):  MISHMAIL_PGP = YES
-MISHMAIL_PGP =
+// check, decryption and Settings → OpenPGP keys):  DREAMAIL_PGP = YES
+DREAMAIL_PGP =
 
 #include? "Local.xcconfig"
