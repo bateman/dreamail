@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.16
+Versione: 0.17
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -62,6 +62,9 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-048 | **Calendar: permesso ampio** | A Google si chiede `calendar.events`: lettura e scrittura sugli eventi di tutti i calendari, condivisi inclusi, così i conflitti mostrano anche i titoli dei calendari condivisi. Scartata l'alternativa stretta (solo eventi propri più libero/occupato). |
 | DEC-049 | **Risposta agli inviti: sempre calendario più e-mail** | Con Calendar collegato la risposta va sul calendario (senza notifiche di Google) e sempre anche per e-mail all'organizzatore. Sostituisce la regola "solo calendario per gli organizzatori Google": i segnali per riconoscerli sono scritti dal mittente e un invito falsificato sarebbe risultato accettato senza avvisare l'organizzatore. Decisione dell'orchestratore dopo le review della PR #55, comunicata al proprietario, ribaltabile dopo la prova con account reali. |
 | DEC-050 | **Libreria OpenPGP in un repository separato** | La libreria rPGP compilata sta nel repository `bateman/dreamail-openpgp`, creato dal proprietario; MishMail la fissa per versione e checksum come già fa con GRDB. Scartata la compilazione in CI da `Vendor/`, che avrebbe richiesto di modificare il controllo `check-package-pins`. La verifica delle alternative richiesta da DEC-047 è fatta: nessuna soluzione Swift o Objective-C pronta è adeguata (tabella con le fonti nella PR #56). |
+| DEC-051 | **OpenPGP: chiavi Ed448/X448 rifiutate** | Chiavi, firme e messaggi Ed448/X448 risultano "non supportati": la dipendenza che li implementa (`cx448`) si dichiara non verificata e non pubblica un testo di licenza, e non si può togliere dalla compilazione di rPGP 0.21.1. Rifiutati anche MD5, RIPEMD-160 e SHA-1 nelle firme dei messaggi. Due avvisi sui tempi di calcolo (RUSTSEC-2023-0071 su `rsa`, RUSTSEC-2026-0387 su `crypto-bigint`) sono accettati come limiti noti, senza correzione disponibile per rPGP 0.21.1. Decisione dell'orchestratore, comunicata al proprietario, ribaltabile. |
+| DEC-052 | **Risposta agli inviti: prima l'e-mail, poi il calendario** | Con Calendar collegato l'e-mail di risposta parte per prima; il calendario viene scritto solo dopo, e un suo errore produce solo un avviso. Precisa DEC-049. |
+| DEC-053 | **Badge dei non letti sulla foto profilo** | Ogni foto profilo nel selettore degli account mostra i non letti del suo account, nell'angolo in alto a destra, anche sopra l'anello colorato; stesso criterio del badge del Dock; tetto "99+"; nessun badge sulla voce "tutti gli account". |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -457,6 +460,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-25 | **0.14** | Aggiunta DEC-047: libreria OpenPGP rPGP (Rust), previa verifica che non esista una soluzione già pronta. |
 | 2026-11-25 | **0.15** | Aggiunte DEC-048 (Calendar: permesso ampio) e DEC-049 (risposta agli inviti sempre su calendario e per e-mail). |
 | 2026-11-25 | **0.16** | Aggiunta DEC-050: libreria OpenPGP in un repository separato. |
+| 2026-11-25 | **0.17** | Aggiunte DEC-051 (Ed448/X448 e algoritmi deboli rifiutati, avvisi accettati), DEC-052 (e-mail prima del calendario), DEC-053 (badge dei non letti sulla foto profilo). |
 
 ---
 

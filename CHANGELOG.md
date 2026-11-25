@@ -6,6 +6,22 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Snooze aligned with Gmail.** Conversations snoozed in Gmail on the web or
+  the phone now appear under Snoozed (Gmail still wakes them). Removing an
+  account first deletes its data, then puts its MishMail snoozes back in the
+  Gmail Inbox within ten seconds; what could not go back is reported. A
+  conversation moved back to the Inbox elsewhere reappears at once; a snoozed
+  conversation that is trashed or marked spam no longer comes back.
+- **Google Calendar groundwork (off).** Behind the `MISHMAIL_CALENDAR` build
+  switch (empty by default): a separate consent, availability next to an
+  invitation, the answer also written on the calendar (the e-mail reply is
+  always sent), add to calendar. Only the Calendar grant and the chosen
+  calendars are stored, encrypted and deleted with the account. Nothing changes
+  in the app.
+- **OpenPGP engine (off, not linked).** The Swift side of the rPGP-based engine
+  from the separate `dreamail-openpgp` repository (verification, decryption,
+  key import), tested against the library's contract; not part of the app build
+  yet.
 - **OpenPGP groundwork (off).** Recognition of OpenPGP/MIME and inline
   messages, exact signed-byte extraction, and the security and rendering rules,
   behind the `MISHMAIL_PGP` build switch (empty by default). No library, no
