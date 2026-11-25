@@ -210,11 +210,12 @@ extension MailStore {
     private static var residueSwept = false
 
     /// Everything of a purged account outside the database (F-04): the
-    /// sign-in, its preferences, notifications and attachment copies. Then
-    /// the removal is no longer pending. A copy a failed delete leaves goes
+    /// sign-ins (Gmail and Calendar), its preferences, notifications and
+    /// attachment copies. Then the removal is no longer pending. A copy a failed delete leaves goes
     /// at the next launch (`sweepRemovedAccountResidueOnce`).
     private static func removeOutsideDatabase(accountId id: String) async {
         Keychain.delete("refreshToken.\(id)")
+        Keychain.delete(CalendarAuthorization.keychainKey(accountId: id))
         AccountLifecycle.clearAccountDefaults(accountId: id)
         Notifier.removeNotifications(forAccount: id)
         _ = await Task.detached(priority: .utility) {

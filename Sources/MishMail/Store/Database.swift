@@ -2810,6 +2810,14 @@ final class AppDatabase: @unchecked Sendable {
         m.registerMigration("v59") { db in
             try CalendarRSVPStore.createTable(db)
         }
+
+        // v61 (Google Calendar, step 4A; v56–v58 and v60 belong to other
+        // open branches and register before it): the Calendar grant and the
+        // chosen calendars, cascading from the account (`CalendarStore`). Written only by the Calendar integration, which
+        // is off unless the build turns it on (`CalendarFeatures`).
+        m.registerMigration("v61") { db in
+            try CalendarStore.createTables(db)
+        }
         return m
     }
 }
