@@ -2793,6 +2793,14 @@ final class AppDatabase: @unchecked Sendable {
         m.registerMigration("v54") { db in
             try InlineImageCache.createTable(db)
         }
+
+        // v59 (v55–v58 are taken by work in parallel): the answers sent to
+        // calendar invites, moved out of UserDefaults into the encrypted
+        // database. Cascades with the message and the account
+        // (`CalendarRSVPStore`).
+        m.registerMigration("v59") { db in
+            try CalendarRSVPStore.createTable(db)
+        }
         return m
     }
 }

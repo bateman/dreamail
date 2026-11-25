@@ -88,6 +88,12 @@ struct CalendarInviteCard: View {
                         .font(PMFont.secondary(fontScale))
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
+                    if let repeats = invite.repeatDescription {
+                        Label(repeats, systemImage: "repeat")
+                            .font(PMFont.caption(fontScale))
+                            .foregroundStyle(.secondary)
+                            .labelStyle(.titleAndIcon)
+                    }
                     if !invite.location.isEmpty {
                         Label(invite.location, systemImage: "mappin.and.ellipse")
                             .font(PMFont.caption(fontScale))
@@ -96,9 +102,11 @@ struct CalendarInviteCard: View {
                             .textSelection(.enabled)
                     }
                     if !invite.organizerEmail.isEmpty {
+                        let email = CalendarInvite.displaySafe(
+                            invite.organizerEmail, limit: 254)
                         let who = invite.organizerName.isEmpty
-                            ? invite.organizerEmail
-                            : "\(invite.organizerName) <\(invite.organizerEmail)>"
+                            ? email
+                            : "\(invite.organizerName) <\(email)>"
                         Text("Organizer · \(who)")
                             .font(PMFont.caption(fontScale))
                             .foregroundStyle(.secondary)
@@ -118,12 +126,13 @@ struct CalendarInviteCard: View {
                 }
             } else if invite.isActionable {
                 rsvpRow(for: invite)
+                replyRecipientNote(invite)
             } else {
                 // PUBLISH / REPLY / unknown METHOD: show the event but don't
                 // offer Accept (would email an untrusted ORGANIZER). Still
                 // let the user open the .ics in Calendar.app.
                 HStack(spacing: 8) {
-                    statusPill(methodLabel(invite.method), color: .secondary)
+                    statusPill(statusLabel(invite), color: .secondary)
                     Spacer(minLength: 0)
                     fileActions
                 }
@@ -167,6 +176,30 @@ struct CalendarInviteCard: View {
                 statusPill(local.subjectPrefix, color: tint(for: local))
             }
             fileActions
+        }
+    }
+
+    /// Where Accept / Decline / Maybe sends the reply: the ICS's ORGANIZER,
+    /// which its author chose. Always shown; flagged when it is not the
+    /// address the message came from (a forged invite would otherwise make
+    /// the user answer a third party unseen).
+    @ViewBuilder
+    private func replyRecipientNote(_ invite: CalendarInvite) -> some View {
+        let sender = MessageParser.emailAddress(message.fromHeader)
+        if invite.organizerIsSender(senderEmail: sender) {
+            Text("Your reply goes to \(invite.organizerEmail)")
+                .font(PMFont.caption(fontScale))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        } else {
+            Label("Your reply goes to \(invite.organizerEmail), not to the sender \(CalendarInvite.displaySafe(sender, limit: 254))",
+                  systemImage: "exclamationmark.triangle")
+                .font(PMFont.caption(fontScale))
+                .foregroundStyle(.orange)
+                .labelStyle(.titleAndIcon)
+                .textSelection(.enabled)
         }
     }
 
@@ -274,6 +307,24 @@ struct CalendarInviteCard: View {
         }
     }
 
+    /// Pill for an invite without buttons.
+    private func statusLabel(_ invite: CalendarInvite) -> String {
+        if invite.method == .request, !invite.hasValidOrganizer {
+            return "Can't reply: no valid organizer"
+        }
+        if invite.method == .reply, let who = invite.replyAttendeeEmail {
+            let name = CalendarInvite.displaySafe(who, limit: 254)
+            switch invite.replyPartstat {
+            case "ACCEPTED": return "\(name) accepted"
+            case "DECLINED": return "\(name) declined"
+            case "TENTATIVE": return "\(name) replied maybe"
+            case "DELEGATED": return "\(name) delegated"
+            default: break
+            }
+        }
+        return methodLabel(invite.method)
+    }
+
     private func methodLabel(_ method: CalendarInvite.Method) -> String {
         switch method {
         case .publish: return "Published event"
@@ -282,6 +333,7 @@ struct CalendarInviteCard: View {
         case .counter: return "Counter proposal"
         case .refresh: return "Refresh request"
         case .add: return "Added event"
+        case .declineCounter: return "Counter proposal declined"
         case .unknown: return "Calendar event"
         case .request: return "Invitation"
         }
@@ -306,14 +358,8 @@ struct CalendarInviteCard: View {
                 return
             }
             load = .loaded(parsed)
-            var map: [String: CalendarInvite.RSVP] = [:]
-            for inv in parsed {
-                if let stored = CalendarInvite.storedRSVP(
-                    accountId: message.accountId, uid: inv.uid,
-                    recurrenceIdLine: inv.recurrenceIdLine) {
-                    map[rsvpKey(inv)] = stored
-                }
-            }
+            let map = await store.storedRSVPs(for: parsed, accountId: message.accountId)
+            guard !Task.isCancelled else { return }
             localRSVPByKey = map
         } catch {
             guard !Task.isCancelled else { return }
@@ -327,9 +373,8 @@ struct CalendarInviteCard: View {
         defer { sending = nil }
         await store.rsvpToInvite(invite, status: status, message: message)
         // Re-read stored state — only updates on success.
-        if let stored = CalendarInvite.storedRSVP(
-            accountId: message.accountId, uid: invite.uid,
-            recurrenceIdLine: invite.recurrenceIdLine) {
+        if let stored = await store.storedRSVPs(
+            for: [invite], accountId: message.accountId)[key] {
             withAnimation(PMMotion.feedback) { localRSVPByKey[key] = stored }
         }
     }

@@ -1935,6 +1935,8 @@ struct ComposeRequest: Identifiable {
         // Purge a pre-redaction log and age out old lines even when no
         // error is logged this session.
         DiagnosticLog.maintainAtLaunch()
+        // Earlier builds kept invite answers in plain-text UserDefaults.
+        CalendarRSVPStore.purgeLegacyDefaults()
         reloadScheduledSends()
         reloadLocalDrafts()
         await reloadPendingThreadOpCount()
@@ -4361,6 +4363,12 @@ struct ComposeRequest: Identifiable {
             showNotice("RSVP is disabled in the demo inbox")
             return
         }
+        // The card offers the buttons only then; checked again here because
+        // the To below comes from the untrusted ICS.
+        guard invite.isActionable else {
+            lastError = "This invite can't be answered: it has no valid organizer."
+            return
+        }
         // Prefer a send-as address listed as ATTENDEE on the invite (the
         // address the organizer's calendar already knows), then fall back to
         // a To/Cc match, then the mailbox primary.
@@ -4368,10 +4376,6 @@ struct ComposeRequest: Identifiable {
         let fromEmail = identity.email
         let displayName = identity.displayName
         let organizer = invite.organizerEmail
-        guard !organizer.isEmpty else {
-            lastError = "This invite has no organizer to reply to."
-            return
-        }
         let attachment = invite.replyAttachment(
             status: status, attendeeEmail: fromEmail, attendeeName: displayName)
         let subject = invite.replySubject(status: status)
@@ -4389,13 +4393,37 @@ struct ComposeRequest: Identifiable {
                 replyTo: message,
                 attachments: [attachment]
             )
-            CalendarInvite.storeRSVP(
-                status, accountId: message.accountId, uid: invite.uid,
-                recurrenceIdLine: invite.recurrenceIdLine)
+            // The reply went out; failing to remember it only leaves the
+            // buttons unselected.
+            let accountId = message.accountId, messageId = message.id
+            _ = try? await db.write { db in
+                try CalendarRSVPStore.record(
+                    db, status: status, invite: invite,
+                    accountId: accountId, messageId: messageId)
+            }
             showNotice("\(status.subjectPrefix) — reply sent to \(organizer)")
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    /// The answers already sent for `invites` (see `CalendarRSVPStore.current`),
+    /// by `CalendarInvite.rsvpDefaultsKey`.
+    func storedRSVPs(for invites: [CalendarInvite],
+                     accountId: String) async -> [String: CalendarInvite.RSVP] {
+        let found = try? await db.read { db in
+            var map: [String: CalendarInvite.RSVP] = [:]
+            for invite in invites {
+                if let status = try CalendarRSVPStore.current(
+                    db, invite: invite, accountId: accountId) {
+                    map[CalendarInvite.rsvpDefaultsKey(
+                        accountId: accountId, uid: invite.uid,
+                        recurrenceIdLine: invite.recurrenceIdLine)] = status
+                }
+            }
+            return map
+        }
+        return found ?? [:]
     }
 
     /// Identity used on the RSVP. Order:
