@@ -1889,7 +1889,7 @@ struct Sidebar: View {
                     }
                     if disclosure.moreOpen {
                         moreItems
-                    } else if isBehindMore(store.selectedView) {
+                    } else if isShownBehindClosedMore(store.selectedView) {
                         // Closed "More": the open view stays visible.
                         sidebarItem(store.selectedView, badge: moreBadge(store.selectedView))
                     }
@@ -2032,9 +2032,9 @@ struct Sidebar: View {
         (store.unreadCounts["reminders"] ?? 0) > 0
     }
 
-    /// Whether `view` lives under the "More" row and is not hidden by a closed
-    /// "Categories" (only those stay visible while "More" is closed).
-    private func isBehindMore(_ view: MailboxView) -> Bool {
+    /// Whether `view` is listed flat while "More" is closed: it lives under
+    /// "More" and no closed "Categories" hides it.
+    private func isShownBehindClosedMore(_ view: MailboxView) -> Bool {
         switch view {
         case .scheduled, .spam: return true
         // A closed "Categories" hides its children, the open one included.

@@ -17,6 +17,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
                                 // Start from Gmail's defaults: "More" closed,
                                 // every parent label closed.
                                 "-sidebar.more.expanded", "NO",
+                                "-sidebar.categories.expanded", "NO",
                                 "-sidebar.labels.expanded.\(account)", "()"]
         app.terminate()
         app.launch()
@@ -103,7 +104,8 @@ final class SidebarLabelTreeUITests: XCTestCase {
         XCTAssertTrue(triangle.waitForExistence(timeout: 5),
                       "Categories has a disclosure triangle\n\(app.debugDescription)")
         let promotions = element("sidebar.promotions", in: app)
-        if !promotions.exists { triangle.click() }
+        XCTAssertFalse(promotions.exists, "Categories starts closed")
+        triangle.click()
         XCTAssertTrue(promotions.waitForExistence(timeout: 5), "open Categories lists Promotions")
         promotions.click()
         triangle.click()
@@ -111,8 +113,10 @@ final class SidebarLabelTreeUITests: XCTestCase {
                       "a closed Categories hides the open category too")
         XCTAssertFalse(element("sidebar.social", in: app).exists)
         // Closing "More" must not bring it back.
+        let spam = element("sidebar.spam", in: app)
         more.click()
-        XCTAssertTrue(waitForAbsence(promotions))
+        XCTAssertTrue(waitForAbsence(spam), "More is closed")
+        XCTAssertFalse(promotions.exists)
         more.click()
         XCTAssertTrue(categories.waitForExistence(timeout: 5))
         triangle.click()
