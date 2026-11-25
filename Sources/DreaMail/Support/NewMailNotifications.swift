@@ -33,6 +33,34 @@ struct NewMailNotifications {
     /// comes first) has been adopted.
     private(set) var isSeeded = false
     private var knownInbound: [String: Date] = [:]
+    /// Per account: mail that arrived before this is backlog (a first sync
+    /// downloading what was there before the account was added).
+    private var backlogBefore: [String: Date] = [:]
+
+    /// A first sync of `accountId` starts (or a wider "Keep mail from"
+    /// downloads older mail): threads it brings in whose newest
+    /// inbound message is older than `date` are recorded without notifying.
+    /// The earliest date is kept, so a resumed first sync still notifies
+    /// for mail that arrived after the first attempt began.
+    mutating func quietBacklog(accountId: String, before date: Date) {
+        backlogBefore[accountId] = min(backlogBefore[accountId] ?? date, date)
+    }
+
+    func hasBacklog(accountId: String) -> Bool {
+        backlogBefore[accountId] != nil
+    }
+
+    /// The backlog is downloaded (or the account removed, DEC-019): later
+    /// first-seen threads notify as before, e.g. a snoozed thread waking.
+    mutating func forgetBacklog(accountId: String) {
+        backlogBefore[accountId] = nil
+    }
+
+    /// The account part of a thread id (`accountId:gmailThreadId`).
+    static func accountId(ofThread id: String) -> String {
+        guard let colon = id.range(of: ":", options: .backwards) else { return id }
+        return String(id[..<colon.lowerBound])
+    }
 
     /// Primary-tab unread only, awake. `unreadInboxCandidates` applies the
     /// same filter in SQL to keep the read narrow; this is the rule of record.
@@ -51,7 +79,8 @@ struct NewMailNotifications {
 
     /// Ids to notify for, in `current` order, and records them as known.
     ///
-    /// Silent when: this is the first pass (it becomes the baseline), demo
+    /// Silent when: this is the first pass (it becomes the baseline), the
+    /// thread is first seen and its mail is backlog (`quietBacklog`), demo
     /// mode, the thread has no inbound message (own sent mail), the inbound
     /// date did not advance, or a blocked sender wrote in the thread. Silent
     /// passes still record what they saw, so unblocking a sender or leaving
@@ -66,7 +95,12 @@ struct NewMailNotifications {
         for c in current where Self.isEligible(c, now: now) {
             guard let inbound = c.lastInboundDate else { continue }
             if let known = knownInbound[c.id], inbound <= known { continue }
+            let unseen = knownInbound[c.id] == nil
             knownInbound[c.id] = inbound
+            if unseen, !backlogBefore.isEmpty,
+               let cutoff = backlogBefore[Self.accountId(ofThread: c.id)], inbound < cutoff {
+                continue
+            }
             if demoMode || Self.hasBlockedSender(c, isBlocked: isBlocked) { continue }
             ids.append(c.id)
         }

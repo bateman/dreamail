@@ -423,6 +423,7 @@ struct AccountsSettings: View {
                                 Button("Remove Account", role: .destructive) {
                                     accountToRemove = account
                                 }
+                                .disabled(store.connectingAccount)
                             }
                         }
                         SyncWindowPicker(accountId: account.id)
@@ -445,11 +446,22 @@ struct AccountsSettings: View {
                     }
                 }
                 Section {
-                    Button(store.connectingAccount ? "Connecting…" : store.demoMode ? "Connect Google and exit demo…"
-                                          : "Add Google Account…") {
-                        store.addAccount()
+                    if store.connectingAccount {
+                        // The browser sign-in can wait up to five minutes;
+                        // Cancel gives up without storing anything.
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Connecting…").foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Cancel") { store.cancelAccountSignIn() }
+                                .accessibilityIdentifier("settings.accounts.cancelConnecting")
+                        }
+                    } else {
+                        Button(store.demoMode ? "Connect Google and exit demo…"
+                                              : "Add Google Account…") {
+                            store.addAccount()
+                        }
                     }
-                    .disabled(store.connectingAccount)
                 } footer: {
                     Text(store.demoMode
                          ? "After Google sign-in succeeds, DreaMail removes the fictional inbox and starts syncing your account."

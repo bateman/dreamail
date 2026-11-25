@@ -60,6 +60,14 @@ actor SyncEngine {
     /// describe *removals*, so the whole cache is suspect.
     private var contentFullyRebuilt = false
 
+    /// The running pass's mark in `LocalThreadEdits`: edits made after it
+    /// are applied when a backfill re-derives their threads.
+    private var passEditMark: UInt64?
+
+    /// The running pass's batch callback: thread keys whose rows a backfill
+    /// page just committed, so the list can show them before the pass ends.
+    private var onBatch: (@Sendable (Set<String>) -> Void)?
+
     /// What changed since the last drain. Clears the accumulator. Callers use
     /// this directly to collect partial work after `syncNow` throws.
     func drainContentChange() -> ThreadContentChange {
@@ -77,12 +85,31 @@ actor SyncEngine {
     /// A call made while a pass is running waits for the next pass (shared by
     /// every caller that arrives meanwhile) instead of joining the running
     /// one, whose result may predate the caller's change.
-    func syncNow(progress: (@Sendable (String) -> Void)? = nil) async throws
+    ///
+    /// `batch` receives, during the pass, the thread keys each backfill page
+    /// committed (messages and thread rows both written). It does not drain
+    /// the change this returns, which still names every thread of the pass.
+    func syncNow(progress: (@Sendable (String) -> Void)? = nil,
+                 batch: (@Sendable (Set<String>) -> Void)? = nil) async throws
         -> ThreadContentChange {
         try await passes.run { [weak self] in
             guard let self else { return .none }
-            return try await self.performSyncNow(progress: progress)
+            return try await self.runPass(progress: progress, batch: batch)
         }
+    }
+
+    private func runPass(progress: (@Sendable (String) -> Void)?,
+                         batch: (@Sendable (Set<String>) -> Void)?) async throws
+        -> ThreadContentChange {
+        let mark = LocalThreadEdits.shared.beginPass()
+        passEditMark = mark
+        onBatch = batch
+        defer {
+            passEditMark = nil
+            onBatch = nil
+            LocalThreadEdits.shared.endPass(mark)
+        }
+        return try await performSyncNow(progress: progress)
     }
 
     /// Cancels the running pass and any queued follow-up, and returns once
@@ -113,6 +140,9 @@ actor SyncEngine {
                     forKey: WindowBackfill.listedKey(accountId: accountId))
                 UserDefaults.standard.set(false, forKey: "backfill.starred.\(accountId)")
             }
+            // No first sync runs while nothing is kept: a later window
+            // starts a fresh one.
+            UserDefaults.standard.removeObject(forKey: Self.firstSyncHistoryKey(accountId: accountId))
             try await db.write { [accountId] db in
                 try db.execute(
                     sql: "UPDATE account SET historyId = NULL, lastSyncAt = ? WHERE id = ?",
@@ -138,6 +168,8 @@ actor SyncEngine {
             windowListedThisPass = true
             let latest = try await fullBackfill(progress: progress)
             try await commitHistoryId(latest)
+            UserDefaults.standard.removeObject(
+                forKey: Self.firstSyncHistoryKey(accountId: accountId))
         }
 
         // When the configured window changed: backfill anything newly inside
@@ -155,10 +187,10 @@ actor SyncEngine {
            WindowBackfill.needsListing(
                storedWindow: UserDefaults.standard.integer(forKey: windowKey),
                listedWindow: listedWindow, days: syncWindowDays) {
+            // fetchAll derives each page's threads as it commits them.
             let batch = try await fetchAll(
                 query: windowQuery, limit: windowLimit, countsCachedIds: false,
                 progress: progress)
-            try await deriveThreads(for: batch.touchedKeys)
             if windowChanged && syncWindowDays != 0 {
                 progress?("Removing local mail outside the window…")
                 try await pruneLocalMail(keepingDays: syncWindowDays)
@@ -168,8 +200,7 @@ actor SyncEngine {
         }
         let starKey = "backfill.starred.\(accountId)"
         if !UserDefaults.standard.bool(forKey: starKey) {
-            let batch = try await fetchAll(query: "is:starred", limit: 3000, progress: progress)
-            try await deriveThreads(for: batch.touchedKeys)
+            try await fetchAll(query: "is:starred", limit: 3000, progress: progress)
             UserDefaults.standard.set(true, forKey: starKey)
         }
 
@@ -344,12 +375,55 @@ actor SyncEngine {
     private func fullBackfill(reconcileCached: Bool = false,
                               progress: (@Sendable (String) -> Void)?) async throws -> String {
         // Read before listing: history from this id onward replays anything
-        // that changes while the backfill runs.
-        let profile = try await client.profile()
+        // that changes while the backfill runs. A first sync keeps the id of
+        // its first attempt until it completes: a run cut short (quit,
+        // offline, quota) resumes without re-reading stored messages. The
+        // resumed attempt first replays history from the kept id onto what
+        // is stored (edits made meanwhile, here or on another device), so a
+        // later page cannot re-derive a thread from labels that are out of
+        // date; then it keeps the id the replay reached.
+        let startKey = Self.firstSyncHistoryKey(accountId: accountId)
+        var startHistory: String
+        switch Self.backfillStart(
+            kept: UserDefaults.standard.string(forKey: startKey), reconcile: reconcileCached) {
+        case .fresh:
+            startHistory = try await client.profile().historyId
+            if !reconcileCached { UserDefaults.standard.set(startHistory, forKey: startKey) }
+        case .replay(let kept):
+            startHistory = kept
+            do {
+                // Slices advance the kept id, never `account.historyId`:
+                // that one marks the first sync complete.
+                startHistory = try await incrementalSync(since: kept, progress: progress) {
+                    UserDefaults.standard.set($0, forKey: startKey)
+                }
+                UserDefaults.standard.set(startHistory, forKey: startKey)
+            } catch GmailError.historyExpired {
+                // As before: the expired id is committed at the end and the
+                // next pass takes the reconcile path.
+            }
+        }
+        var inboxFetched = 0
+        if !reconcileCached {
+            // First sync, or one an earlier run cut short. A run stopped
+            // between a write and its page's derive left messages without a
+            // thread row; the listing below skips them as cached, so nothing
+            // else would ever derive them.
+            try await deriveThreadsMissingRows()
+            // The Inbox first, newest first and with a small first page, so
+            // the list has conversations to show within seconds. The window
+            // listing below skips what this stored.
+            inboxFetched = try await fetchAll(
+                query: Self.inboxFirstQuery(windowQuery: windowQuery),
+                limit: Self.inboxFirstLimit, firstPageSize: Self.firstPageSize,
+                progress: progress).downloadedGmailIds.count
+        }
+        // Gmail lists newest first, and each page is derived and surfaced as
+        // soon as it is stored (`fetchAll`).
         let batch = try await fetchAll(
             query: windowQuery, limit: windowLimit, countsCachedIds: false,
-            collectListedIds: reconcileCached, progress: progress)
-        try await deriveThreads(for: batch.touchedKeys)
+            collectListedIds: reconcileCached, firstPageSize: Self.firstPageSize,
+            progressBase: inboxFetched, progress: progress)
         UserDefaults.standard.set(syncWindowDays, forKey: "backfill.window.\(accountId)")
         recordWindowListing(complete: batch.listingComplete, progress: progress)
         if reconcileCached {
@@ -366,11 +440,68 @@ actor SyncEngine {
             // expired and every pass would restart the full reconcile and
             // lose its work — an infinite loop. Stale labels on a few cached
             // rows (until they next change) are the lesser evil.
-            try await commitHistoryId(profile.historyId)
+            try await commitHistoryId(startHistory)
             await refreshCachedLabels(
                 plan, skipping: batch.downloadedGmailIds, progress: progress)
         }
-        return profile.historyId
+        return startHistory
+    }
+
+    enum BackfillStart: Equatable {
+        /// Read the current history id from the profile.
+        case fresh
+        /// A first sync cut short: replay history from the kept id first.
+        case replay(String)
+    }
+
+    /// How a full backfill starts. The history-expired reconcile always
+    /// starts fresh; a first sync resumes from its kept id. Pure — tested.
+    static func backfillStart(kept: String?, reconcile: Bool) -> BackfillStart {
+        guard !reconcile, let kept, !kept.isEmpty else { return .fresh }
+        return .replay(kept)
+    }
+
+    /// UserDefaults key of the history id a first sync started from, kept
+    /// until the pass that completes it commits that id.
+    static func firstSyncHistoryKey(accountId: String) -> String {
+        "backfill.startHistory.\(accountId)"
+    }
+
+    /// First `messages.list` page of a backfill listing: small, so the
+    /// first conversations appear after a few seconds, not after a whole
+    /// 500-message page.
+    static let firstPageSize = 50
+
+    /// Most messages the Inbox-first listing of a first sync downloads
+    /// before the whole window is listed.
+    static let inboxFirstLimit = 1_000
+
+    /// The Inbox inside the sync window ("Everything": the whole Inbox).
+    static func inboxFirstQuery(windowQuery: String?) -> String {
+        ["in:inbox", windowQuery].compactMap { $0 }.joined(separator: " ")
+    }
+
+    /// The page size a listing asks for: the cap's, or less on the first
+    /// page when `firstPageSize` is set. At least 1.
+    static func listPageSize(cap: Int, firstPageSize: Int?) -> Int {
+        max(1, min(cap, firstPageSize ?? cap))
+    }
+
+    /// Thread keys of this account's messages that have no thread row.
+    static func threadKeysMissingRow(_ db: Database, accountId: String) throws -> Set<String> {
+        Set(try String.fetchAll(db, sql: """
+            SELECT DISTINCT threadId FROM message
+            WHERE accountId = ? AND threadId NOT IN (SELECT id FROM thread WHERE accountId = ?)
+            """, arguments: [accountId, accountId]))
+    }
+
+    private func deriveThreadsMissingRows() async throws {
+        let keys = try await db.read { [accountId] db in
+            try Self.threadKeysMissingRow(db, accountId: accountId)
+        }
+        guard !keys.isEmpty else { return }
+        try await deriveThreads(for: keys)
+        onBatch?(keys)
     }
 
     /// Cached rows the history-expired reconcile must re-read by id.
@@ -728,7 +859,6 @@ actor SyncEngine {
     func searchServer(query: String, limit: Int = 50) async throws
         -> ServerSearchResult {
         let batch = try await fetchAll(query: query, limit: limit, progress: nil)
-        try await deriveThreads(for: batch.touchedKeys)
         return ServerSearchResult(
             change: drainContentChange(),
             threadIds: batch.matchedThreadIds)
@@ -761,9 +891,19 @@ actor SyncEngine {
     /// continues where an earlier capped call stopped (window backfill).
     /// `collectListedIds`: keep every listed id for the reconcile. Off by
     /// default so an ordinary pass does not hold a whole window of ids.
+    /// `firstPageSize`: a smaller first `messages.list` page, so the first
+    /// conversations are stored (and shown) before a whole 500-message page
+    /// is downloaded.
+    ///
+    /// Each write chunk commits its messages and re-derives their threads in
+    /// one transaction, and each page is reported to the pass's batch
+    /// callback before the next page is listed: a first sync shows mail as
+    /// it lands, and a run cut short leaves no message with a missing or
+    /// stale thread row.
     @discardableResult
     private func fetchAll(query: String?, limit: Int, countsCachedIds: Bool = true,
-                          collectListedIds: Bool = false,
+                          collectListedIds: Bool = false, firstPageSize: Int? = nil,
+                          progressBase: Int = 0,
                           progress: (@Sendable (String) -> Void)?) async throws -> FetchAllBatch {
         try await PerfMetrics.measureAsync(.syncFetchAll, meta: "limit=\(limit)") {
             var cap = WindowBackfill.ListingCap(limit: limit, countsCachedIds: countsCachedIds)
@@ -778,11 +918,16 @@ actor SyncEngine {
             var matchedGmailThreadIds: [String] = []
             var seenGmailThreads = Set<String>()
             var downloadedGmailIds = Set<String>()
+            var pageKeys = Set<String>()
+            var isFirstPage = true
             repeat {
                 // Larger pages mean fewer list calls; capped at what is left
                 // of `limit` so a page never lists (and so downloads) past it.
+                let pageSize = Self.listPageSize(
+                    cap: cap.pageSize, firstPageSize: isFirstPage ? firstPageSize : nil)
+                isFirstPage = false
                 let page = try await client.listMessages(
-                    query: query, pageToken: pageToken, maxResults: cap.pageSize)
+                    query: query, pageToken: pageToken, maxResults: pageSize)
                 let refs = page.messages ?? []
                 let listedIds = refs.map(\.id)
                 if collectListedIds { listedGmailIds.formUnion(listedIds) }
@@ -813,15 +958,23 @@ actor SyncEngine {
                         downloadedGmailIds.insert(msg.id)
                         writeBuffer.append(PendingUpsert(message: message, attachments: attachments))
                         if writeBuffer.count >= Self.writeChunkSize {
-                            try await flushUpserts(&writeBuffer, into: &touchedKeys)
+                            try await flushUpserts(
+                                &writeBuffer, into: &pageKeys, derivingThreads: true)
                         }
                     }
                 }
+                // The page's last messages. Each chunk derived its threads in
+                // its own transaction; the list hears once per page.
+                try await flushUpserts(&writeBuffer, into: &pageKeys, derivingThreads: true)
+                if !pageKeys.isEmpty {
+                    touchedKeys.formUnion(pageKeys)
+                    onBatch?(pageKeys)
+                    pageKeys.removeAll(keepingCapacity: true)
+                }
                 fetched += report.messages.count
                 retryExhausted += report.retryExhaustedIds.count
-                // "Fetched" not "Downloaded": up to writeChunkSize-1 may still be
-                // buffered uncommitted; a failed final flush rolls those back.
-                if fetched > 0 { progress?("Fetched \(fetched) messages…") }
+                // Every message of the page is committed and derived by now.
+                if fetched > 0 { progress?("Fetched \(progressBase + fetched) messages…") }
                 if report.hasRetryExhausted {
                     // A rate-limited batch reports the remaining ids instead
                     // of fanning them out as singles. Do not list later pages:
@@ -832,12 +985,9 @@ actor SyncEngine {
                     reachedLastPage = page.nextPageToken == nil
                 }
             } while pageToken != nil && !cap.reached
-            try await flushUpserts(&writeBuffer, into: &touchedKeys)
             if retryExhausted > 0 {
-                // Settle the threads of what landed before throwing: the next
-                // pass skips these now-cached ids, so nothing else would
-                // derive their thread rows.
-                try await deriveThreads(for: touchedKeys)
+                // What landed is already derived chunk by chunk; the next
+                // pass retries the rest.
                 throw GmailError.partialFetch(failedCount: retryExhausted)
             }
             let localThreadIds = Self.localThreadIds(
@@ -1017,7 +1167,12 @@ actor SyncEngine {
     /// fits well inside Gmail's per-second budget even at 5 units a message.
     static let historySliceMessages = 100
 
-    private func incrementalSync(since historyId: String, progress: (@Sendable (String) -> Void)?) async throws -> String {
+    /// `commitSlice` records the id reached after each slice but the last;
+    /// by default `account.historyId`.
+    private func incrementalSync(
+        since historyId: String, progress: (@Sendable (String) -> Void)?,
+        commitSlice: ((String) async throws -> Void)? = nil
+    ) async throws -> String {
         var pageToken: String?
         var latest = historyId
         var items: [GHistoryList.Item] = []
@@ -1051,7 +1206,11 @@ actor SyncEngine {
                 throw GmailError.partialFetch(failedCount: failed)
             }
             if n + 1 < slices.count {
-                try await commitHistoryId(slice.lastRecordId)
+                if let commitSlice {
+                    try await commitSlice(slice.lastRecordId)
+                } else {
+                    try await commitHistoryId(slice.lastRecordId)
+                }
             }
         }
         return latest
@@ -1236,7 +1395,7 @@ actor SyncEngine {
             // so the next sync re-reads the same history range.
             try await flushUpserts(&writeBuffer, into: &touchedKeys)
             if !touchedKeys.isEmpty {
-                try await deriveThreads(for: touchedKeys)
+                try await deriveThreads(for: touchedKeys, applyingLocalEdits: false)
                 progress?("Updated \(fullFetch.count + labelOnlyCount) messages")
             }
             if !deleted.isEmpty {
@@ -1247,8 +1406,10 @@ actor SyncEngine {
         try await flushUpserts(&writeBuffer, into: &touchedKeys)
 
         // Recompute thread rows for anything affected, exactly once each.
+        // History is Gmail's own record, newer than any backfill download:
+        // no local edit is laid over it.
         if !touchedKeys.isEmpty {
-            try await deriveThreads(for: touchedKeys)
+            try await deriveThreads(for: touchedKeys, applyingLocalEdits: false)
             progress?("Updated \(fullFetch.count + labelOnlyCount) messages")
         }
         // A thread can lose all its messages (e.g. every message deleted);
@@ -1268,6 +1429,37 @@ actor SyncEngine {
         for r in remove where !r.isEmpty { labels.remove(r) }
         for a in add where !a.isEmpty { labels.insert(a) }
         return labels.sorted().joined(separator: " ")
+    }
+
+    /// A message as Gmail holds it once `change` lands: a thread edit
+    /// applies to every message of the thread. Trash mirrors the local
+    /// trash (`ThreadUndo.apply`). Pure — unit-tested.
+    static func applyingLocalEdit(_ change: RemoteThreadChange, to message: Message) -> Message {
+        let (add, remove): ([String], [String]) = {
+            switch change {
+            case .modify(let add, let remove): return (add, remove)
+            case .trash: return (["TRASH"], ["INBOX"])
+            }
+        }()
+        var edited = message
+        edited.labelIds = applyLabelDelta(labelIds: message.labelIds, add: add, remove: remove)
+        if add.contains("UNREAD") || remove.contains("UNREAD") {
+            edited.isUnread = labelIdsContain(edited.labelIds, "UNREAD")
+        }
+        return edited
+    }
+
+    /// `edits` in order, each to the messages that existed when it was
+    /// made (dated at or before it): a message that arrived later is new
+    /// mail, untouched by an earlier archive or mark-read. Pure — unit-tested.
+    static func applyingLocalEdits(_ edits: [LocalThreadEdits.Edit],
+                                   to messages: [Message]) -> [Message] {
+        // shortcut: Gmail's internalDate against this Mac's clock, no margin.
+        // A skewed clock can misplace a message received within seconds of
+        // the edit; a margin would hide real replies arriving just after it.
+        edits.reduce(messages) { current, edit in
+            current.map { $0.date <= edit.at ? applyingLocalEdit(edit.change, to: $0) : $0 }
+        }
     }
 
     // MARK: - Bounded concurrency
@@ -1397,6 +1589,20 @@ actor SyncEngine {
         return keys
     }
 
+    /// `upsertPending`, then the touched threads re-derived, in the caller's
+    /// one transaction: a stored message never waits for its thread row.
+    /// `localEdits` names, for the touched keys, the edits to lay over them
+    /// (`LocalThreadEdits`). Pure over a `Database` — unit-tested.
+    @discardableResult
+    static func upsertDerivingThreads(
+        _ db: Database, items: [PendingUpsert], accountId: String,
+        localEdits: (Set<String>) -> [String: [LocalThreadEdits.Edit]] = { _ in [:] }
+    ) throws -> Set<String> {
+        let keys = try upsertPending(db, items: items)
+        try deriveThreads(db, for: keys, accountId: accountId, localEdits: localEdits(keys))
+        return keys
+    }
+
     /// Insert, or update only the columns that changed.
     ///
     /// A full-row `save` names every column in its UPDATE, so the v40 FTS
@@ -1416,15 +1622,29 @@ actor SyncEngine {
 
     /// Commits `items` in one write transaction and unions thread keys into
     /// `touchedKeys`, then clears the buffer.
+    ///
+    /// `derivingThreads`: also re-derive the touched threads in the same
+    /// transaction (backfill). A pass stopped anywhere then never leaves a
+    /// stored message whose thread row is missing or out of date — the next
+    /// listing skips stored ids, so nothing else would fix it.
     private func flushUpserts(_ items: inout [PendingUpsert],
-                              into touchedKeys: inout Set<String>) async throws {
+                              into touchedKeys: inout Set<String>,
+                              derivingThreads: Bool = false) async throws {
         guard !items.isEmpty else { return }
         let batch = items  // copy: escaping write closure cannot capture inout
+        let mark = derivingThreads ? passEditMark : nil
         let keys = try await PerfMetrics.measureAsync(.syncFlush, meta: "n=\(batch.count)") {
-            try await db.write { db in
-                try Self.upsertPending(db, items: batch)
+            try await db.write { [accountId] db in
+                guard derivingThreads else { return try Self.upsertPending(db, items: batch) }
+                return try Self.upsertDerivingThreads(db, items: batch, accountId: accountId) {
+                    keys in mark.map {
+                        LocalThreadEdits.shared.changes(since: $0, threadIds: keys)
+                    } ?? [:]
+                }
             }
         }
+        // Derived here: recorded like `deriveThreads(for:)` records.
+        if derivingThreads { touchedThreadIds.formUnion(keys) }
         touchedKeys.formUnion(keys)
         items.removeAll(keepingCapacity: true)
     }
@@ -1447,12 +1667,24 @@ actor SyncEngine {
     /// chunks leaves the same "messages written, thread not yet derived"
     /// state a crash between flush and derive always could. historyId is
     /// committed only after this returns, as before.
-    private func deriveThreads(for keys: Set<String>) async throws {
+    ///
+    /// `applyingLocalEdits`: lay the user's edits made since this pass began
+    /// over the downloaded messages (`LocalThreadEdits`), so a backfill page
+    /// cannot undo an archive, star or read made while the pass runs.
+    private func deriveThreads(for keys: Set<String>,
+                               applyingLocalEdits: Bool = true) async throws {
         guard !keys.isEmpty else { return }
+        let mark = applyingLocalEdits ? passEditMark : nil
         for chunk in Self.deriveChunks(keys) {
             let chunkKeys = Set(chunk)
             try await db.write { [accountId] db in
-                try Self.deriveThreads(db, for: chunkKeys, accountId: accountId)
+                // Read inside the write: an edit recorded up to here is
+                // either applied now or already in the thread row.
+                let edits = mark.map {
+                    LocalThreadEdits.shared.changes(since: $0, threadIds: chunkKeys)
+                } ?? [:]
+                try Self.deriveThreads(db, for: chunkKeys, accountId: accountId,
+                                       localEdits: edits)
             }
             // Single choke point for message-row writes: everything that
             // rewrites messages re-derives their threads here, so recording
@@ -1476,6 +1708,7 @@ actor SyncEngine {
     }
 
     static func deriveThreads(_ db: Database, for keys: Set<String>, accountId: String,
+                             localEdits: [String: [LocalThreadEdits.Edit]] = [:],
                              derivationCount: (() -> Void)? = nil) throws {
         for chunk in deriveChunks(keys) {
             // Snapshot metadata on the caller's connection/transaction. Fetching
@@ -1489,10 +1722,15 @@ actor SyncEngine {
 
             for threadKey in chunk {
                 let gmailThreadId = String(threadKey.split(separator: ":").last ?? "")
-                let messages = try Message
+                var messages = try Message
                     .filter(Column("threadId") == threadKey)
                     .order(Column("date").desc)
                     .fetchAll(db)
+                if let threadEdits = localEdits[threadKey] {
+                    // In memory only: message rows keep Gmail's last known
+                    // labels, the source a refused edit reverts from.
+                    messages = applyingLocalEdits(threadEdits, to: messages)
+                }
                 let existing = existingById[threadKey]
                 derivationCount?()
                 guard let thread = deriveThread(

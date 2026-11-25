@@ -25,51 +25,108 @@ extension MailStore {
         accountSignInTask = Task {
             defer { accountSignInTask = nil }
             do {
-                let (refresh, access) = try await OAuthService().signIn(loginHint: hint)
-                var req = URLRequest(url: URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!)
-                req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
-                let (data, _) = try await GoogleHTTP.session.data(for: req)
-                let profile = try GoogleUserInfo.decode(data)
-                guard let email = profile.email else { throw URLError(.badServerResponse) }
-                let info = (email: email, name: profile.name, picture: profile.picture)
-
-                try Task.checkCancellation()
-                // A successful connection replaces the fictional mailbox.
-                // Exit only after OAuth succeeds, so cancelling sign-in leaves
-                // the user's demo session intact.
-                guard !demoMode || exitDemoMode() else { return }
-
-                try Keychain.set(refresh, forKey: "refreshToken.\(info.email)")
-                // The shared client may hold an access token from the old
-                // sign-in (other scopes, or a different grant).
-                await GmailClient.shared(accountEmail: info.email).forgetAccessToken()
-                try await db.write { db in
-                    let existing = try Account.fetchOne(db, key: info.email)
-                    let account = AccountLifecycle.accountAfterSignIn(
-                        email: info.email, name: info.name, existing: existing)
-                    if existing != nil {
-                        try account.update(db)
-                    } else {
-                        try account.insert(db)
-                    }
-                }
+                let pool = db
+                guard let info = try await AccountSignIn.connect(
+                    authorize: { try await OAuthService().signIn(loginHint: hint) },
+                    profile: { access in
+                        var req = URLRequest(url: URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!)
+                        req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
+                        let (data, _) = try await GoogleHTTP.session.data(for: req)
+                        let profile = try GoogleUserInfo.decode(data)
+                        guard let email = profile.email else { throw URLError(.badServerResponse) }
+                        return AccountSignIn.Profile(
+                            email: email, name: profile.name, picture: profile.picture)
+                    },
+                    store: { @MainActor [weak self] refresh, info in
+                        guard let self else { return false }
+                        // A successful connection replaces the fictional
+                        // mailbox. Exit only after OAuth succeeds, so
+                        // cancelling sign-in leaves the demo session intact.
+                        // An account whose removal has not finished must not
+                        // come back with a fresh token.
+                        guard !AccountLifecycle.pendingRemovals().contains(info.email) else {
+                            throw AccountSignIn.Failure.removalPending
+                        }
+                        guard !self.demoMode || self.exitDemoMode() else { return false }
+                        // Read before the token is stored: on a failed write,
+                        // a new account's token goes again; a reauthorized
+                        // account keeps its row and the new token, and stays
+                        // flagged for reauthorization until a sync succeeds.
+                        let isNew = try await pool.read { db in
+                            try Account.fetchOne(db, key: info.email) == nil
+                        }
+                        try Keychain.set(refresh, forKey: "refreshToken.\(info.email)")
+                        // The shared client may hold an access token from the
+                        // old sign-in (other scopes, or a different grant).
+                        await GmailClient.shared(accountEmail: info.email).forgetAccessToken()
+                        do {
+                            try await pool.write { db in
+                                let existing = try Account.fetchOne(db, key: info.email)
+                                let account = AccountLifecycle.accountAfterSignIn(
+                                    email: info.email, name: info.name, existing: existing)
+                                if existing != nil {
+                                    try account.update(db)
+                                } else {
+                                    try account.insert(db)
+                                }
+                            }
+                        } catch {
+                            if isNew { Keychain.delete("refreshToken.\(info.email)") }
+                            throw error
+                        }
+                        return true
+                    }) else { return }
                 accountsNeedingReauth.remove(info.email)
                 reloadAccounts()
                 // Sign-in already returned the photo URL; fetch it in the
                 // background, never holding up the first sync.
                 let picture = info.picture
                 refreshAccountPhoto(accountId: info.email, force: true) { picture }
-                await refreshSendIdentities(accountId: info.email)
-                await refreshGmailSignatures(accountId: info.email, force: true)
-                // Own addresses are filtered at rank time. The new primary is
-                // already in `ownEmailAddresses` before send-as returns, so
-                // setSendIdentities sees no change and would not re-rank.
-                rerankContacts()
-                await sync(accountId: info.email)
+                // The account is stored: "Connecting…" ends here (the
+                // `defer` above), and the first sync runs as background work.
+                startFirstSync(accountId: info.email)
             } catch {
                 if !Task.isCancelled { lastError = error.localizedDescription }
             }
         }
+    }
+
+    /// Gives up a sign-in still waiting for the browser or the profile.
+    /// Nothing is stored: the loopback listener closes and the token, if
+    /// any arrived, is dropped. Once the account is being stored, it
+    /// finishes (see `AccountSignIn`).
+    func cancelAccountSignIn() {
+        accountSignInTask?.cancel()
+    }
+
+    /// The new account's send-as identities and first sync, tracked per
+    /// account so quit and account removal cancel and await it like the
+    /// other syncs. Mail appears in the list page by page as it is stored.
+    private func startFirstSync(accountId: String) {
+        guard !isShuttingDown else { return }
+        let previous = firstSyncTasks[accountId]?.task
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            // A reauthorization of an account whose first sync still runs:
+            // let that one end, then pass again (the engine coalesces).
+            await previous?.value
+            guard let self else { return }
+            defer {
+                if self.firstSyncTasks[accountId]?.id == id {
+                    self.firstSyncTasks[accountId] = nil
+                }
+            }
+            guard !Task.isCancelled, !self.isShuttingDown else { return }
+            await self.refreshSendIdentities(accountId: accountId)
+            await self.refreshGmailSignatures(accountId: accountId, force: true)
+            // Own addresses are filtered at rank time. The new primary is
+            // already in `ownEmailAddresses` before send-as returns, so
+            // setSendIdentities sees no change and would not re-rank.
+            self.rerankContacts()
+            guard !Task.isCancelled else { return }
+            await self.sync(accountId: accountId)
+        }
+        firstSyncTasks[accountId] = FirstSyncHandle(id: id, task: task)
     }
 
     func removeAccount(_ id: String) {
@@ -80,17 +137,36 @@ extension MailStore {
         // Read-only cache (F-02): refuse before anything changes, so the
         // removal cannot fail halfway on a cache that refuses every write.
         guard cacheAcceptsWrites() else { return }
+        // A sign-in still running could store this account again after the
+        // purge (a reauthorization of it): finish or cancel it first.
+        guard !connectingAccount else {
+            lastError = AccountLifecycle.removalWhileConnectingMessage
+            return
+        }
+        // Marked now, not after the sync is cancelled: a sign-in of this
+        // address in that window must already see the removal (it refuses
+        // a pending one). Idempotent; a failed purge clears it again.
+        AccountLifecycle.markRemovalPending(id)
         let pool = db
         // Stop the account's sync first: a pass still running would write
         // rows for an account that is being deleted. Drop the account from
         // `accounts` now so late sync errors, reauth requests and attachment
         // downloads for it are ignored (see `isKnownAccount`).
         let engine = engines[id]
+        // The first sync of an account added moments ago: cancelled now,
+        // awaited below with the engine's pass.
+        let firstSync = firstSyncTasks.removeValue(forKey: id)?.task
+        firstSync?.cancel()
         // Taken now: the snooze release runs after the purge, with the
         // sign-in still in the Keychain until `removeOutsideDatabase`.
         let gmail = client(for: id)
         let reachable = !isOffline
         accounts.removeAll { $0.id == id }
+        // DEC-019: its edits recorded for a running backfill leave memory
+        // (after the account left `accounts`: no new edit is recorded for
+        // it; again after the purge, below), and its backlog date.
+        LocalThreadEdits.shared.forget(accountId: id)
+        newMailNotifications.forgetBacklog(accountId: id)
         forgetAccountPhoto(id)
         forgetSignatureSettingsAccount(id)
         signatureSync[id] = nil
@@ -105,6 +181,7 @@ extension MailStore {
         PendingLabelColorEdits.shared.forgetAccount(id)
         Task { @MainActor [weak self] in
             await engine?.cancelSync()
+            await firstSync?.value
             // The database purge comes first because it is the step that can
             // fail. On failure nothing irreversible has happened yet: the
             // sign-in, notifications and attachment copies are still there,
@@ -141,6 +218,7 @@ extension MailStore {
             // a check that reloaded them between the first forget and the
             // purge leaves nothing behind.
             self?.forgetCalendar(accountId: id)
+            LocalThreadEdits.shared.forget(accountId: id)
             // The purge zeroed the account's rows in their pages
             // (secure_delete); fold those pages out of the WAL and truncate it
             // now rather than in a few seconds. A reader holding the log makes

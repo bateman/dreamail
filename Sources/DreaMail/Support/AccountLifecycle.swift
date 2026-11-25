@@ -254,6 +254,10 @@ enum AccountLifecycle {
     static let removalFailedMessage =
         "The account couldn't be removed. Nothing was deleted; try again."
 
+    /// A sign-in is running (it may be a reauthorization of this account).
+    static let removalWhileConnectingMessage =
+        "Finish or cancel connecting the Google account first, then remove the account."
+
     /// Rows of the tables without a foreign key whose account no longer
     /// exists: a write that landed after its account's purge (an open
     /// composer's autosave, an in-flight edit or triage result), or a purge
@@ -306,6 +310,7 @@ enum AccountLifecycle {
                     "backfill.starred.\(accountId)",
                     SyncEngine.attachmentRepairDefaultsKey(accountId: accountId),
                     WindowBackfill.listedKey(accountId: accountId),
+                    SyncEngine.firstSyncHistoryKey(accountId: accountId),
                     "syncWindowDays.\(accountId)"]
         // Which of its labels are open in the sidebar (label ids only).
         keys += SidebarDisclosure.keys(accountId: accountId)
