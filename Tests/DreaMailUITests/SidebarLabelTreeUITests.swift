@@ -17,6 +17,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
                                 // Start from Gmail's defaults: "More" closed,
                                 // every parent label closed.
                                 "-sidebar.more.expanded", "NO",
+                                "-sidebar.categories.expanded", "NO",
                                 "-sidebar.labels.expanded.\(account)", "()"]
         app.terminate()
         app.launch()
@@ -89,5 +90,37 @@ final class SidebarLabelTreeUITests: XCTestCase {
         XCTAssertTrue(child.waitForExistence(timeout: 5), "opening the parent shows AWS")
         triangle.click()
         XCTAssertTrue(waitForAbsence(child), "closing it hides AWS again")
+    }
+
+    func testClosedCategoriesHidesTheOpenCategory() {
+        let app = launch()
+        let more = element("sidebar.more", in: app)
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        more.click()
+        let categories = element("sidebar.categories", in: app)
+        XCTAssertTrue(categories.waitForExistence(timeout: 5))
+        let row = app.outlineRows.containing(.any, identifier: categories.identifier).firstMatch
+        let triangle = row.disclosureTriangles.firstMatch
+        XCTAssertTrue(triangle.waitForExistence(timeout: 5),
+                      "Categories has a disclosure triangle\n\(app.debugDescription)")
+        let promotions = element("sidebar.promotions", in: app)
+        XCTAssertFalse(promotions.exists, "Categories starts closed")
+        triangle.click()
+        XCTAssertTrue(promotions.waitForExistence(timeout: 5), "open Categories lists Promotions")
+        promotions.click()
+        triangle.click()
+        XCTAssertTrue(waitForAbsence(promotions),
+                      "a closed Categories hides the open category too")
+        XCTAssertFalse(element("sidebar.social", in: app).exists)
+        // Closing "More" must not bring it back.
+        let spam = element("sidebar.spam", in: app)
+        more.click()
+        XCTAssertTrue(waitForAbsence(spam), "More is closed")
+        XCTAssertFalse(promotions.exists)
+        more.click()
+        XCTAssertTrue(categories.waitForExistence(timeout: 5))
+        triangle.click()
+        XCTAssertTrue(promotions.waitForExistence(timeout: 5),
+                      "reopening Categories shows Promotions again")
     }
 }

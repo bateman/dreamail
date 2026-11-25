@@ -1889,7 +1889,7 @@ struct Sidebar: View {
                     }
                     if disclosure.moreOpen {
                         moreItems
-                    } else if isBehindMore(store.selectedView) {
+                    } else if isShownBehindClosedMore(store.selectedView) {
                         // Closed "More": the open view stays visible.
                         sidebarItem(store.selectedView, badge: moreBadge(store.selectedView))
                     }
@@ -2020,11 +2020,6 @@ struct Sidebar: View {
             }
             .accessibilityIdentifier("sidebar.categories")
         }
-        // Closed "Categories": the open category stays visible.
-        if !disclosure.categoriesOpen,
-           store.selectedView == .promotions || store.selectedView == .social {
-            sidebarItem(store.selectedView, badge: moreBadge(store.selectedView))
-        }
     }
 
     /// Drafts kept locally while offline; gone once uploaded.
@@ -2037,10 +2032,13 @@ struct Sidebar: View {
         (store.unreadCounts["reminders"] ?? 0) > 0
     }
 
-    /// Whether `view` only appears inside the "More" row right now.
-    private func isBehindMore(_ view: MailboxView) -> Bool {
+    /// Whether `view` is listed flat while "More" is closed: it lives under
+    /// "More" and no closed "Categories" hides it.
+    private func isShownBehindClosedMore(_ view: MailboxView) -> Bool {
         switch view {
-        case .scheduled, .spam, .promotions, .social: return true
+        case .scheduled, .spam: return true
+        // A closed "Categories" hides its children, the open one included.
+        case .promotions, .social: return disclosure.categoriesOpen
         case .reminders: return !hasReminders
         default: return false
         }
