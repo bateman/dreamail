@@ -181,10 +181,9 @@ final class CalendarIntegration {
         await tokens.invalidate()
         // The calendar list names the primary calendar; without it (scope
         // unticked, offline) "primary" stands for it.
-        var calendars: [GCalendarListEntry] = []
-        if grant.canListCalendars {
-            calendars = (try? await client(accountId, grant).calendars()) ?? []
-        }
+        let calendars: [GCalendarListEntry] = grant.canListCalendars
+            ? ((try? await client(accountId, grant).calendars()) ?? [])
+            : []
         let scopes = grant.scopes.sorted().joined(separator: " ")
         try await deps.database().write { db in
             try CalendarStore.saveGrant(db, accountId: accountId, scopes: scopes, at: Date(),
