@@ -467,9 +467,12 @@ actor GmailClient {
     }
 
     /// Creates a filter. Same scope as `listFilters`. A filter that forwards
-    /// also needs gmail.settings.sharing, which MishMail does not request:
-    /// the editor never sends one (`GmailFilterDraft`).
+    /// also needs gmail.settings.sharing, which MishMail does not request,
+    /// so one is refused here before anything is sent.
     func createFilter(_ body: GFilter.Body) async throws -> GFilter {
+        guard body.action.forward == nil else {
+            throw GmailFilterError.forwardingNotSupported
+        }
         let data = try JSONEncoder().encode(body)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw GmailError.http(400, "")

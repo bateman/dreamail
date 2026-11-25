@@ -849,8 +849,7 @@ final class MailStore {
     /// fetch so Settings still gets a refresh.
     func ensureFiltersLoaded(for accountId: String, force: Bool = false) async {
         guard !demoMode else {
-            filterCache.filters[accountId] = []
-            filterCache.loadErrors[accountId] = nil
+            filterCache.setDemo(account: accountId)
             return
         }
         if !force, filtersByAccount[accountId] != nil { return }
@@ -899,23 +898,22 @@ final class MailStore {
     }
 
     private func fetchFilters(accountId: String) async {
-        let previous = filtersByAccount[accountId]
         let client = client(for: accountId)
+        // An edit that lands while this read is in flight wins over it.
+        let revision = filterCache.revision(accountId)
         do {
             let filters = try await client.listFilters()
             // The account may have been removed while the list was in flight.
             guard isKnownAccount(accountId) else { return }
-            filterCache.filters[accountId] = filters
-            filterCache.loadErrors[accountId] = nil
+            filterCache.loaded(filters, account: accountId, revision: revision)
         } catch {
             guard isKnownAccount(accountId) else { return }
             let failure = GmailFilterError(error)
-            filterCache.loadErrors[accountId] = failure == .missingScope
+            // Any previous good list stays; a never-loaded slot stays empty
+            // so Settings shows the error.
+            filterCache.loadFailed(failure == .missingScope
                 ? "MishMail doesn't have permission to read this account's filters yet. Sign in to it again with Add Google Account… (Accounts pane) to grant it; the account and its mail stay as they are."
-                : failure.localizedDescription
-            // Keep any previous good cache; only leave the slot empty when we
-            // never had one (so UI can show the error).
-            if previous == nil { filterCache.filters[accountId] = nil }
+                : failure.localizedDescription, account: accountId)
         }
     }
 

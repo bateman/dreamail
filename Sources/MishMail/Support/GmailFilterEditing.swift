@@ -18,6 +18,8 @@ indirect enum GmailFilterError: LocalizedError, Equatable {
     /// 400: Gmail refused the criteria or actions. Carries Gmail's message.
     case invalid(String)
     case other(String)
+    /// Forwarding needs gmail.settings.sharing, which MishMail does not ask for.
+    case forwardingNotSupported
     /// An edit created the new filter but could not delete the original:
     /// both are now on the server.
     case oldFilterKept(created: GFilter, cause: GmailFilterError)
@@ -45,6 +47,18 @@ indirect enum GmailFilterError: LocalizedError, Equatable {
         }
     }
 
+    /// The request may have reached Gmail and been applied: a transport
+    /// failure (timeout, lost connection) or a 5xx. The cache cannot know,
+    /// so the caller re-reads the list.
+    static func outcomeUnknown(_ error: Error) -> Bool {
+        if case GmailFilterError.oldFilterKept = error { return true }
+        if error is GmailFilterError || error is CancellationError { return false }
+        guard case GmailError.http(let code, _) = error else {
+            return !(error is GmailError)
+        }
+        return code >= 500 || code == 0
+    }
+
     var errorDescription: String? {
         switch self {
         case .missingScope:
@@ -57,6 +71,8 @@ indirect enum GmailFilterError: LocalizedError, Equatable {
                 : "Gmail didn't accept this filter: \(message)"
         case .other(let message):
             return message
+        case .forwardingNotSupported:
+            return "Filters that forward mail can only be created or edited in Gmail."
         case .oldFilterKept(_, let cause):
             return "The edited filter was saved, but the original couldn't be removed (\(cause.errorDescription ?? "unknown error")). Both are in place now: delete the old one."
         }
@@ -79,44 +95,84 @@ indirect enum GmailFilterError: LocalizedError, Equatable {
 /// in Settings. In memory only.
 struct GmailFilterCache: Equatable {
     /// Nil entry: not loaded yet. Empty: loaded, the account has none.
-    var filters: [String: [GFilter]] = [:]
+    private(set) var filters: [String: [GFilter]] = [:]
     var loadErrors: [String: String] = [:]
+    /// Bumped by every edit, so a list read that started before an edit
+    /// cannot overwrite the edit's result when it lands after it.
+    private(set) var revisions: [String: Int] = [:]
 
-    mutating func inserted(_ filter: GFilter, account: String) {
-        var list = filters[account] ?? []
-        list.removeAll { $0.id == filter.id }
-        list.append(filter)
+    /// A change Gmail confirmed.
+    enum Edit: Equatable {
+        case created(GFilter)
+        case replaced(oldId: String, with: GFilter)
+        case deleted(id: String)
+    }
+
+    func revision(_ account: String) -> Int { revisions[account] ?? 0 }
+
+    /// A list read from Gmail. Dropped when an edit landed since `revision`.
+    mutating func loaded(_ list: [GFilter], account: String, revision: Int) {
+        guard self.revision(account) == revision else { return }
         filters[account] = list
+        loadErrors[account] = nil
     }
 
-    mutating func removed(id: String, account: String) {
-        filters[account]?.removeAll { $0.id == id }
+    /// Leaves the slot empty (so Settings shows the error) unless a good
+    /// list is already cached.
+    mutating func loadFailed(_ message: String, account: String) {
+        loadErrors[account] = message
     }
 
-    /// The new filter takes the old one's place in the list.
-    mutating func replaced(id: String, with filter: GFilter, account: String) {
-        guard var list = filters[account], let index = list.firstIndex(where: { $0.id == id }) else {
-            inserted(filter, account: account)
-            return
+    mutating func setDemo(account: String) {
+        filters[account] = []
+        loadErrors[account] = nil
+    }
+
+    /// Applies only to an account whose list is loaded: a removed account
+    /// (forgotten) or one never read gets nothing back.
+    mutating func apply(_ edit: Edit, account: String) {
+        guard var list = filters[account] else { return }
+        switch edit {
+        case .created(let filter):
+            list.removeAll { $0.id == filter.id }
+            list.append(filter)
+        case .replaced(let oldId, let filter):
+            if list.contains(where: { $0.id == oldId }) {
+                // The new filter takes the old one's place in the list.
+                list = list.filter { $0.id != filter.id }
+                    .map { $0.id == oldId ? filter : $0 }
+            } else {
+                list.removeAll { $0.id == filter.id }
+                list.append(filter)
+            }
+        case .deleted(let id):
+            list.removeAll { $0.id == id }
         }
-        list.removeAll { $0.id == filter.id }
-        let at = list.firstIndex(where: { $0.id == id }) ?? index
-        list[at] = filter
         filters[account] = list
+        revisions[account, default: 0] += 1
+    }
+
+    /// What a failed edit still changed on Gmail.
+    mutating func apply(failure: GmailFilterError, account: String) {
+        if case .oldFilterKept(let created, _) = failure {
+            apply(.created(created), account: account)
+        }
     }
 
     /// DEC-019: nothing of a removed account stays in memory.
     mutating func forget(account: String) {
         filters[account] = nil
         loadErrors[account] = nil
+        revisions[account] = nil
     }
 }
 
 // MARK: - Editor model
 
 /// The editor's fields, laid out like Gmail Web's filter dialog. Built from
-/// an existing filter, it keeps what the dialog does not show (forwarding,
-/// extra labels, excludeChats) so an edit never drops it.
+/// an existing filter, it keeps the actions the dialog has no control for
+/// (extra labels, other system labels) and excludeChats; the sheet lists
+/// them read-only and can drop them. Forwarding is never sent.
 struct GmailFilterDraft: Equatable {
     enum SizeComparison: String, CaseIterable { case larger, smaller }
     enum SizeUnit: Int, CaseIterable {
@@ -163,11 +219,16 @@ struct GmailFilterDraft: Equatable {
     var importance: Importance = .unchanged
     var category: String?
 
-    // Kept from the original, not editable here.
+    // Kept from the original, listed read-only in the sheet.
     var keptAddLabelIds: [String] = []
     var keptRemoveLabelIds: [String] = []
-    var forward: String?
     var excludeChats: Bool?
+    /// The original's forwarding address, shown only. Never encoded: such a
+    /// filter is not saved from here (`problem`, `GmailClient.createFilter`).
+    var forward: String?
+
+    /// Longest text accepted in one criterion field.
+    static let maxFieldLength = 1_500
 
     init() {}
 
@@ -247,7 +308,7 @@ struct GmailFilterDraft: Equatable {
         remove += keptRemoveLabelIds.filter { !remove.contains($0) }
         return GFilter.Action(addLabelIds: add.isEmpty ? nil : add,
                               removeLabelIds: remove.isEmpty ? nil : remove,
-                              forward: forward)
+                              forward: nil)
     }
 
     var body: GFilter.Body { GFilter.Body(criteria: criteria, action: action) }
@@ -256,10 +317,24 @@ struct GmailFilterDraft: Equatable {
     /// for: such a filter is deleted here but edited in Gmail.
     var isForwarding: Bool { forward != nil }
 
+    /// Actions kept from the original that the dialog has no control for.
+    var hasHiddenActions: Bool { !keptAddLabelIds.isEmpty || !keptRemoveLabelIds.isEmpty }
+
+    mutating func dropHiddenActions() {
+        keptAddLabelIds = []
+        keptRemoveLabelIds = []
+    }
+
+    /// Saving asks first: the filter deletes mail, or hides it as read.
+    var needsConfirmation: Bool { delete || (skipInbox && markRead) }
+
     /// The first reason Gmail Web would not save this filter, or nil.
     var problem: String? {
         if isForwarding {
             return "This filter forwards mail. Edit it in Gmail."
+        }
+        if [from, to, subject, hasWords, doesNotHave].contains(where: { $0.count > Self.maxFieldLength }) {
+            return "Each criterion can be at most \(Self.maxFieldLength) characters."
         }
         let sizeText = sizeValue.trimmingCharacters(in: .whitespaces)
         if !sizeText.isEmpty, sizeBytes == nil {
@@ -316,8 +391,11 @@ enum GmailFilterPreview {
                       sizeNotChecked: criteria.size != nil)
     }
 
-    /// The account's most recent messages outside Trash and Spam, as Gmail
-    /// Web's filter search shows them.
+    /// Labels whose messages a filter never sees: it runs on incoming mail,
+    /// and Gmail Web's filter search leaves Trash and Spam out.
+    static let excludedLabels: Set<String> = ["TRASH", "SPAM", "SENT", "DRAFT"]
+
+    /// The account's most recent received messages outside Trash and Spam.
     static func fetch(_ db: Database, account: String,
                       criteria: GFilter.Criteria) throws -> Result {
         let rows = try Message.fetchAll(db, sql: """
@@ -326,13 +404,16 @@ enum GmailFilterPreview {
             """, arguments: [account, scanLimit * 2])
             .filter { message in
                 let labels = Set(message.labelIds.split(separator: " ").map(String.init))
-                return labels.isDisjoint(with: ["TRASH", "SPAM"])
+                return labels.isDisjoint(with: excludedLabels)
             }
             .prefix(scanLimit)
-        // Bodies live off-row since v24.
-        let bodies = try MessageBody.fetchAll(db, keys: rows.map(\.id))
-        let bodyById = Dictionary(bodies.map { ($0.messageId, $0.bodyText) },
+        // Bodies live off-row since v24; only free-text criteria read them.
+        var bodyById: [String: String] = [:]
+        if criteria.query != nil || criteria.negatedQuery != nil {
+            let bodies = try MessageBody.fetchAll(db, keys: rows.map(\.id))
+            bodyById = Dictionary(bodies.map { ($0.messageId, $0.bodyText) },
                                   uniquingKeysWith: { first, _ in first })
+        }
         let messages = rows.map { row -> (hit: Hit, fields: GmailFilterMatch.MessageFields) in
             var message = row
             if message.bodyText.isEmpty { message.bodyText = bodyById[message.id] ?? "" }

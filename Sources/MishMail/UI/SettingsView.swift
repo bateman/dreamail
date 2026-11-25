@@ -474,6 +474,7 @@ struct GmailFiltersSettings: View {
                         }
                         accountSection(account.id)
                         Button("New filter…") {
+                            deleteError = nil
                             editing = GmailFilterEditTarget(accountId: account.id, original: nil)
                         }
                         .font(.system(size: 12))
@@ -531,7 +532,7 @@ struct GmailFiltersSettings: View {
         do {
             try await store.deleteFilter(filter, account: target.accountId)
         } catch {
-            deleteError = error.localizedDescription
+            deleteError = "\(target.accountId): \(error.localizedDescription)"
         }
     }
 
@@ -540,6 +541,7 @@ struct GmailFiltersSettings: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             GmailFilterSentenceRow(filter: filter, accountId: accountId)
             Button {
+                deleteError = nil
                 editing = GmailFilterEditTarget(accountId: accountId, original: filter)
             } label: { Image(systemName: "pencil") }
             .buttonStyle(.borderless)
@@ -586,6 +588,7 @@ struct GmailFiltersSettings: View {
     }
 
     private func load() async {
+        deleteError = nil
         // Shared cache with the per-message matching-filters disclosure.
         // Force refresh when opening Settings so edits made in Gmail show up.
         await withTaskGroup(of: Void.self) { group in

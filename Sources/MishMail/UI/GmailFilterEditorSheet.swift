@@ -15,10 +15,17 @@ struct GmailFilterEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     let target: GmailFilterEditTarget
 
+    private enum PreviewState: Equatable {
+        case none
+        case result(GmailFilterPreview.Result)
+        case failed
+    }
+
     @State private var draft = GmailFilterDraft()
     @State private var saving = false
     @State private var error: String?
-    @State private var preview: GmailFilterPreview.Result?
+    @State private var preview: PreviewState = .none
+    @State private var confirming = false
     /// The edit reached Gmail but left the original behind: saving again
     /// would add a third filter.
     @State private var finished = false
@@ -28,9 +35,11 @@ struct GmailFilterEditorSheet: View {
         _draft = State(initialValue: target.original.map(GmailFilterDraft.init) ?? GmailFilterDraft())
     }
 
+    /// Compared as drafts: Gmail's label order and empty fields differ from
+    /// a re-encoding of the same filter.
     private var unchanged: Bool {
         guard let original = target.original else { return false }
-        return draft.body == original.body
+        return draft == GmailFilterDraft(original)
     }
 
     var body: some View {
@@ -93,6 +102,22 @@ struct GmailFilterEditorSheet: View {
                             Text(category.title).tag(Optional(category.id))
                         }
                     }
+                    if draft.hasHiddenActions {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("Also: " + phraseList(hiddenActionPhrases))
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("filterHiddenActions")
+                            Spacer()
+                            Button("Remove") { draft.dropHiddenActions() }
+                                .font(.caption)
+                                .help("Stop applying these actions when the filter is saved")
+                        }
+                    }
+                    if draft.excludeChats == true {
+                        Text("Also: leaves chats out (set in Gmail).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if let forward = draft.forward {
                         Label("Forwards to \(forward). Edit forwarding in Gmail.",
                               systemImage: "arrowshape.turn.up.right")
@@ -105,17 +130,47 @@ struct GmailFilterEditorSheet: View {
             footer
         }
         .frame(width: 520, height: 640)
+        .interactiveDismissDisabled(saving)
         .task(id: draft.criteria) { await refreshPreview() }
+        .confirmationDialog("Save this filter?", isPresented: $confirming) {
+            Button(target.original == nil ? "Create filter" : "Save", role: .destructive) {
+                Task { await save() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("For \(target.accountId), Gmail will do this to every new message that matches: \(phraseList(actionPhrases)).")
+        }
+    }
+
+    private var actionPhrases: [GmailFilterDisplay.Phrase] {
+        GmailFilterDisplay.actionPhrases(
+            for: GFilter(id: "", criteria: draft.criteria, action: draft.action)
+        ) { store.labelName($0, account: target.accountId) }
+    }
+
+    private var hiddenActionPhrases: [GmailFilterDisplay.Phrase] {
+        let action = GFilter.Action(
+            addLabelIds: draft.keptAddLabelIds.isEmpty ? nil : draft.keptAddLabelIds,
+            removeLabelIds: draft.keptRemoveLabelIds.isEmpty ? nil : draft.keptRemoveLabelIds,
+            forward: nil)
+        return GmailFilterDisplay.actionPhrases(for: GFilter(id: "", criteria: nil, action: action)) {
+            store.labelName($0, account: target.accountId)
+        }
+    }
+
+    private func phraseList(_ phrases: [GmailFilterDisplay.Phrase]) -> String {
+        phrases.map { $0.plain + $0.value }.joined(separator: ", ")
     }
 
     @ViewBuilder
     private var previewView: some View {
-        if let preview {
+        switch preview {
+        case .result(let preview):
             if preview.matchCount == 0 {
-                Text("None of the \(preview.scanned) most recent messages match.")
+                Text("None of the \(preview.scanned) most recent received messages match.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("\(preview.matchCount) of the \(preview.scanned) most recent messages match.")
+                Text("\(preview.matchCount) of the \(preview.scanned) most recent received messages match.")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(preview.hits) { hit in
                     VStack(alignment: .leading, spacing: 2) {
@@ -129,7 +184,13 @@ struct GmailFilterEditorSheet: View {
                 Text("Message sizes aren't stored on this Mac, so a size criterion matches nothing here; Gmail still applies it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-        } else {
+            Text("Approximate: Gmail applies its own search rules.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .failed:
+            Label("Couldn't read the mail on this Mac for the preview.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.caption).foregroundStyle(.secondary)
+        case .none:
             Text("Add a criterion to see which messages match.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -148,8 +209,13 @@ struct GmailFilterEditorSheet: View {
                 Spacer()
                 Button(finished ? "Close" : "Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .disabled(saving)
                 Button(target.original == nil ? "Create filter" : "Save") {
-                    Task { await save() }
+                    if draft.needsConfirmation {
+                        confirming = true
+                    } else {
+                        Task { await save() }
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(saving || finished || draft.problem != nil || unchanged)
@@ -167,12 +233,18 @@ struct GmailFilterEditorSheet: View {
             && criteria.query == nil && criteria.negatedQuery == nil
             && criteria.hasAttachment == nil && criteria.size == nil
         guard !empty else {
-            preview = nil
+            preview = .none
             return
         }
-        let result = await store.previewFilter(criteria, account: target.accountId)
+        let state: PreviewState
+        do {
+            let result = try await store.previewFilter(criteria, account: target.accountId)
+            state = .result(result)
+        } catch {
+            state = .failed
+        }
         guard !Task.isCancelled else { return }
-        preview = result
+        preview = state
     }
 
     private func save() async {
@@ -182,9 +254,9 @@ struct GmailFilterEditorSheet: View {
         defer { saving = false }
         do {
             if let original = target.original {
-                try await store.replaceFilter(original, with: draft.body, account: target.accountId)
+                try await store.replaceFilter(original, with: draft, account: target.accountId)
             } else {
-                try await store.createFilter(draft.body, account: target.accountId)
+                try await store.createFilter(draft, account: target.accountId)
             }
             dismiss()
         } catch {

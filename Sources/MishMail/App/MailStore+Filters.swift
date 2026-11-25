@@ -2,37 +2,36 @@ import Foundation
 
 /// Creating, editing and deleting Gmail filters (Settings → Gmail filters).
 /// Each call throws a `GmailFilterError` for the sheet to show and updates
-/// `filterCache` only with what Gmail confirmed.
+/// `filterCache` only with what Gmail confirmed. When the outcome is unknown
+/// (timeout, 5xx), the list is read again from Gmail.
 extension MailStore {
 
-    func createFilter(_ body: GFilter.Body, account accountId: String) async throws {
+    func createFilter(_ draft: GmailFilterDraft, account accountId: String) async throws {
         try requireFilterEdits(accountId)
         do {
-            let created = try await client(for: accountId).createFilter(body)
+            let created = try await client(for: accountId).createFilter(draft.body)
             guard isKnownAccount(accountId) else { return }
-            filterCache.inserted(created, account: accountId)
+            filterCache.apply(.created(created), account: accountId)
         } catch {
-            throw GmailFilterError(error)
+            throw await filterEditFailed(error, account: accountId)
         }
     }
 
     /// Create-then-delete (`GmailClient.replaceFilter`). When the delete
     /// fails both filters are listed, as they both exist on Gmail.
-    func replaceFilter(_ original: GFilter, with body: GFilter.Body,
+    func replaceFilter(_ original: GFilter, with draft: GmailFilterDraft,
                        account accountId: String) async throws {
         try requireFilterEdits(accountId)
-        guard body != original.body else { return }
+        // Drafts, not bodies: label order and empty fields differ between
+        // Gmail's copy and a re-encoding of the same filter.
+        guard draft != GmailFilterDraft(original) else { return }
         do {
             let created = try await client(for: accountId)
-                .replaceFilter(id: original.id, with: body)
+                .replaceFilter(id: original.id, with: draft.body)
             guard isKnownAccount(accountId) else { return }
-            filterCache.replaced(id: original.id, with: created, account: accountId)
+            filterCache.apply(.replaced(oldId: original.id, with: created), account: accountId)
         } catch {
-            let failure = GmailFilterError(error)
-            if case .oldFilterKept(let created, _) = failure, isKnownAccount(accountId) {
-                filterCache.inserted(created, account: accountId)
-            }
-            throw failure
+            throw await filterEditFailed(error, account: accountId)
         }
     }
 
@@ -41,19 +40,30 @@ extension MailStore {
         do {
             try await client(for: accountId).deleteFilter(id: filter.id)
             guard isKnownAccount(accountId) else { return }
-            filterCache.removed(id: filter.id, account: accountId)
+            filterCache.apply(.deleted(id: filter.id), account: accountId)
         } catch {
-            throw GmailFilterError(error)
+            throw await filterEditFailed(error, account: accountId)
         }
     }
 
-    /// Local messages the criteria would match, off the main actor.
+    /// Local messages the criteria would match, off the main actor. Throws
+    /// when the local cache can't be read.
     func previewFilter(_ criteria: GFilter.Criteria,
-                       account accountId: String) async -> GmailFilterPreview.Result? {
+                       account accountId: String) async throws -> GmailFilterPreview.Result {
         let pool = db
-        return try? await pool.read { db in
+        return try await pool.read { db in
             try GmailFilterPreview.fetch(db, account: accountId, criteria: criteria)
         }
+    }
+
+    private func filterEditFailed(_ error: Error, account accountId: String) async -> GmailFilterError {
+        let failure = GmailFilterError(error)
+        guard isKnownAccount(accountId) else { return failure }
+        filterCache.apply(failure: failure, account: accountId)
+        if GmailFilterError.outcomeUnknown(error) {
+            await ensureFiltersLoaded(for: accountId, force: true)
+        }
+        return failure
     }
 
     private func requireFilterEdits(_ accountId: String) throws {

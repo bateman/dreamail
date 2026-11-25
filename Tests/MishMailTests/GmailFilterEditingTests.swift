@@ -189,6 +189,77 @@ final class GmailFilterEditingTests: XCTestCase {
         XCTAssertEqual(draft.body.criteria, filter.criteria)
     }
 
+    /// Gmail's label order differs from the editor's encoding: an untouched
+    /// filter must still count as unchanged, or Save would create + delete.
+    func testAnUntouchedFilterIsUnchangedWhateverItsLabelOrder() {
+        let filter = GFilter(
+            id: "F",
+            criteria: .init(from: "a@b.com", to: nil, subject: nil, query: nil,
+                            negatedQuery: nil, hasAttachment: false, size: nil, sizeComparison: nil),
+            action: .init(addLabelIds: ["Label_3", "STARRED"], removeLabelIds: ["UNREAD", "INBOX"],
+                          forward: nil))
+        let draft = GmailFilterDraft(filter)
+        XCTAssertNotEqual(draft.body, filter.body, "the bodies differ in order and in hasAttachment")
+        XCTAssertEqual(draft, GmailFilterDraft(filter))
+        var edited = draft
+        edited.star = false
+        XCTAssertNotEqual(edited, GmailFilterDraft(filter))
+    }
+
+    /// R2: actions the dialog has no control for are visible and droppable.
+    func testHiddenActionsAreListedAndCanBeDropped() {
+        let filter = GFilter(
+            id: "F",
+            criteria: .init(from: "a@b.com", to: nil, subject: nil, query: nil,
+                            negatedQuery: nil, hasAttachment: nil, size: nil, sizeComparison: nil),
+            action: .init(addLabelIds: ["Label_1", "Label_2", "SPAM", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"],
+                          removeLabelIds: ["Label_9"], forward: nil))
+        var draft = GmailFilterDraft(filter)
+        XCTAssertTrue(draft.hasHiddenActions)
+        XCTAssertEqual(draft.keptAddLabelIds, ["Label_2", "SPAM", "CATEGORY_FORUMS"])
+        draft.labelId = nil
+        XCTAssertTrue(draft.hasHiddenActions, "clearing the label still shows the second one")
+        draft.dropHiddenActions()
+        XCTAssertFalse(draft.hasHiddenActions)
+        XCTAssertEqual(draft.body.action.addLabelIds, ["CATEGORY_SOCIAL"])
+        XCTAssertNil(draft.body.action.removeLabelIds)
+    }
+
+    /// R3: filters that delete mail, or archive it as read, ask first.
+    func testDestructiveFiltersNeedConfirmation() {
+        var draft = GmailFilterDraft()
+        draft.from = "a@b.com"
+        draft.skipInbox = true
+        XCTAssertFalse(draft.needsConfirmation)
+        draft.markRead = true
+        XCTAssertTrue(draft.needsConfirmation)
+        draft = GmailFilterDraft()
+        draft.delete = true
+        XCTAssertTrue(draft.needsConfirmation)
+    }
+
+    func testOverlongCriteriaAreRefused() {
+        var draft = GmailFilterDraft()
+        draft.star = true
+        draft.hasWords = String(repeating: "a", count: GmailFilterDraft.maxFieldLength + 1)
+        XCTAssertEqual(draft.problem, "Each criterion can be at most 1500 characters.")
+        draft.hasWords = String(repeating: "a", count: GmailFilterDraft.maxFieldLength)
+        XCTAssertNil(draft.problem)
+    }
+
+    /// R6: only a failure that may have been applied re-reads the list.
+    func testOutcomeIsUnknownOnlyForTransportAnd5xx() {
+        XCTAssertTrue(GmailFilterError.outcomeUnknown(URLError(.timedOut)))
+        XCTAssertTrue(GmailFilterError.outcomeUnknown(GmailError.http(503, "")))
+        XCTAssertTrue(GmailFilterError.outcomeUnknown(
+            GmailFilterError.oldFilterKept(created: original, cause: .other("x"))))
+        XCTAssertFalse(GmailFilterError.outcomeUnknown(GmailError.http(400, "")))
+        XCTAssertFalse(GmailFilterError.outcomeUnknown(GmailError.http(403, "")))
+        XCTAssertFalse(GmailFilterError.outcomeUnknown(GmailError.http(429, "")))
+        XCTAssertFalse(GmailFilterError.outcomeUnknown(GmailFilterError.forwardingNotSupported))
+        XCTAssertFalse(GmailFilterError.outcomeUnknown(CancellationError()))
+    }
+
     /// What the dialog does not show survives an edit of what it does.
     func testAnEditKeepsWhatTheDialogDoesNotShow() {
         let filter = GFilter(
@@ -253,8 +324,31 @@ final class GmailFilterEditingTests: XCTestCase {
         let draft = GmailFilterDraft(filter)
         XCTAssertTrue(draft.isForwarding)
         XCTAssertNotNil(draft.problem)
-        XCTAssertEqual(draft.body.action.forward, "me@elsewhere.com")
+        XCTAssertNil(draft.body.action.forward, "a forwarding address is never encoded")
         XCTAssertFalse(GmailFilterDraft().isForwarding)
+    }
+
+    /// The client refuses forwarding itself, whatever the caller sends.
+    func testClientNeverSendsAForwardingFilter() async {
+        FilterStubProtocol.state.replies = [
+            .init(method: "POST", url: filtersURL, status: 200, body: createdJSON),
+        ]
+        let body = GFilter.Body(
+            criteria: original.body.criteria,
+            action: .init(addLabelIds: nil, removeLabelIds: nil, forward: "me@elsewhere.com"))
+        do {
+            _ = try await client.createFilter(body)
+            XCTFail("forwarding filter sent")
+        } catch {
+            XCTAssertEqual(error as? GmailFilterError, .forwardingNotSupported)
+        }
+        do {
+            _ = try await client.replaceFilter(id: original.id, with: body)
+            XCTFail("forwarding filter sent")
+        } catch {
+            XCTAssertEqual(error as? GmailFilterError, .forwardingNotSupported)
+        }
+        XCTAssertTrue(FilterStubProtocol.state.seen.isEmpty, "nothing reached the transport")
     }
 
     func testGmailMessageIsFlattenedAndCapped() {
@@ -284,21 +378,55 @@ final class GmailFilterEditingTests: XCTestCase {
 
     func testCacheEditsFollowWhatGmailConfirmed() {
         var cache = GmailFilterCache()
-        cache.filters["a"] = [filter("1"), filter("2"), filter("3")]
-        cache.replaced(id: "2", with: filter("9"), account: "a")
+        cache.loaded([filter("1"), filter("2"), filter("3")], account: "a", revision: 0)
+        cache.apply(.replaced(oldId: "2", with: filter("9")), account: "a")
         XCTAssertEqual(cache.filters["a"]?.map(\.id), ["1", "9", "3"], "an edit keeps its place")
-        cache.inserted(filter("4"), account: "a")
-        cache.removed(id: "1", account: "a")
+        cache.apply(.created(filter("4")), account: "a")
+        cache.apply(.deleted(id: "1"), account: "a")
         XCTAssertEqual(cache.filters["a"]?.map(\.id), ["9", "3", "4"])
-        cache.replaced(id: "missing", with: filter("5"), account: "a")
+        cache.apply(.replaced(oldId: "missing", with: filter("5")), account: "a")
         XCTAssertEqual(cache.filters["a"]?.map(\.id), ["9", "3", "4", "5"])
+    }
+
+    /// R8: a failed delete after a good create lists both filters.
+    func testAFailedDeleteAfterCreateListsBoth() {
+        var cache = GmailFilterCache()
+        cache.loaded([filter("OLD")], account: "a", revision: 0)
+        cache.apply(failure: .oldFilterKept(created: filter("NEW"), cause: .other("x")), account: "a")
+        XCTAssertEqual(cache.filters["a"]?.map(\.id), ["OLD", "NEW"])
+        cache.apply(failure: .quota, account: "a")
+        XCTAssertEqual(cache.filters["a"]?.map(\.id), ["OLD", "NEW"], "other failures change nothing")
+    }
+
+    /// R8: an edit finishing after its account was removed brings nothing back.
+    func testEditsAfterForgetDoNothing() {
+        var cache = GmailFilterCache()
+        cache.loaded([filter("1")], account: "a", revision: 0)
+        cache.forget(account: "a")
+        cache.apply(.created(filter("2")), account: "a")
+        cache.apply(failure: .oldFilterKept(created: filter("3"), cause: .quota), account: "a")
+        XCTAssertNil(cache.filters["a"])
+    }
+
+    /// R6: a list read that started before an edit cannot overwrite it.
+    func testAListReadOlderThanAnEditIsDropped() {
+        var cache = GmailFilterCache()
+        cache.loaded([filter("1")], account: "a", revision: 0)
+        let before = cache.revision("a")
+        cache.apply(.created(filter("2")), account: "a")
+        cache.loaded([filter("1")], account: "a", revision: before)
+        XCTAssertEqual(cache.filters["a"]?.map(\.id), ["1", "2"])
+        cache.loaded([filter("1"), filter("2"), filter("7")], account: "a", revision: cache.revision("a"))
+        XCTAssertEqual(cache.filters["a"]?.map(\.id), ["1", "2", "7"])
     }
 
     /// DEC-019: removing an account drops its filters from memory.
     func testForgettingAnAccountDropsOnlyItsFilters() {
         var cache = GmailFilterCache()
-        cache.filters = ["a": [filter("1")], "b": [filter("2")]]
-        cache.loadErrors = ["a": "x", "b": "y"]
+        cache.loaded([filter("1")], account: "a", revision: 0)
+        cache.loaded([filter("2")], account: "b", revision: 0)
+        cache.loadFailed("x", account: "a")
+        cache.loadFailed("y", account: "b")
         cache.forget(account: "a")
         XCTAssertNil(cache.filters["a"])
         XCTAssertNil(cache.loadErrors["a"])
@@ -360,6 +488,8 @@ final class GmailFilterEditingTests: XCTestCase {
                      body: "coupon", labels: "INBOX", date: base.addingTimeInterval(20))
             try seed(db, account: "b@x.com", id: "4", from: "news@shop.com", subject: "Other account",
                      body: "coupon", labels: "INBOX", date: base)
+            try seed(db, account: "a@x.com", id: "5", from: "news@shop.com", subject: "My reply",
+                     body: "coupon", labels: "SENT", date: base.addingTimeInterval(30))
         }
         var draft = GmailFilterDraft()
         draft.from = "shop.com"
@@ -367,10 +497,28 @@ final class GmailFilterEditingTests: XCTestCase {
         let result = try q.read {
             try GmailFilterPreview.fetch($0, account: "a@x.com", criteria: draft.criteria)
         }
-        XCTAssertEqual(result.scanned, 2, "trash and the other account are left out")
+        XCTAssertEqual(result.scanned, 2, "trash, sent mail and the other account are left out")
         XCTAssertEqual(result.matchCount, 1)
         XCTAssertEqual(result.hits.map(\.subject), ["Sale"], "body text comes from message_body")
         XCTAssertFalse(result.sizeNotChecked)
+    }
+
+    /// R4: `a OR b` in From matches either sender, as in Gmail.
+    func testFromAcceptsOrAlternatives() {
+        let fields = GmailFilterMatch.MessageFields(
+            from: "News <b@y.com>", to: "me@x.com", subject: "Weekly digest", hasAttachment: false)
+        let match = { (from: String) in
+            GmailFilterMatch.matches(GFilter.Criteria(
+                from: from, to: nil, subject: nil, query: nil, negatedQuery: nil,
+                hasAttachment: nil, size: nil, sizeComparison: nil), message: fields)
+        }
+        XCTAssertTrue(match("a@x.com OR b@y.com"))
+        XCTAssertFalse(match("a@x.com OR c@z.com"))
+        XCTAssertTrue(match("News"))
+        let subject = GFilter.Criteria(from: nil, to: nil, subject: "digest OR invoice", query: nil,
+                                       negatedQuery: nil, hasAttachment: nil, size: nil,
+                                       sizeComparison: nil)
+        XCTAssertTrue(GmailFilterMatch.matches(subject, message: fields))
     }
 
     func testPreviewFlagsASizeItCannotCheck() {
