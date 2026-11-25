@@ -84,6 +84,19 @@ minor versions may still change behavior.
   a failed image without alternative text now shows nothing, as in Gmail,
   instead of a blue "?" icon. Images with alternative text are unchanged.
 
+- **Labels like Gmail: the label menu.** Each label in the sidebar has
+  Gmail's menu, on "⋮" (shown on hover and on the open label) and on
+  right-click: label colour, show in label list (show, show if unread, hide),
+  show in message list (show, hide), edit (rename, nest under another label),
+  remove, add sublabel, and Organize Labels. Changing a parent label's colour
+  changes its sublabels too, at any depth; the colour picked last is the one
+  shown, and a new sublabel takes its parent's colour. Renaming or moving a
+  parent takes its sublabels with it; removing a label removes its sublabels
+  and the saved views that show it, after a confirmation that names them
+  (conversations are kept). A label hidden "in message list" no longer shows
+  its chip in the thread list. Label edits need a connection: offline, the
+  action says so and does nothing.
+
 - **Signatures follow Gmail by themselves, with their look.** The signature
   set in Gmail for each sending address is copied in automatically (at
   launch, when an account is added, and when a compose window opens, at most
