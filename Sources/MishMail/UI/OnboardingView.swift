@@ -93,7 +93,7 @@ struct OnboardingView: View {
         HStack(spacing: PMSpacing.md) {
             Image(systemName: "sparkles.rectangle.stack")
                 .font(.system(size: 24))
-                .foregroundStyle(Color.mailAccent)
+                .foregroundStyle(.accentForeground)
                 .frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Look around before connecting Google")
@@ -108,7 +108,7 @@ struct OnboardingView: View {
                 .accessibilityIdentifier("tryDemoInbox")
         }
         .padding(PMSpacing.md)
-        .background(Color.mailAccent.opacity(0.08),
+        .background(.accentFill.opacity(0.08),
                     in: RoundedRectangle(cornerRadius: PMRadius.md))
     }
 
@@ -118,9 +118,9 @@ struct OnboardingView: View {
         HStack(alignment: .top, spacing: PMSpacing.md) {
             Text("\(n)")
                 .font(.system(size: 13, weight: .bold).monospacedDigit())
-                .foregroundStyle(.white)
+                .foregroundStyle(.onAccentFill)
                 .frame(width: 24, height: 24)
-                .background(Color.mailAccent, in: Circle())
+                .background(.accentFill, in: Circle())
             VStack(alignment: .leading, spacing: PMSpacing.sm) {
                 Text(title).font(PMFont.body().weight(.semibold))
                 content()

@@ -66,8 +66,8 @@ struct CommandPalette: View {
                                         }
                                     }
                                     .padding(.horizontal, 10).padding(.vertical, 7)
-                                    .background(
-                                        idx == highlighted ? Color.mailAccent.opacity(0.2) : .clear,
+                                    .background(.accentFill.opacity(
+                                        idx == highlighted ? 0.2 : 0),
                                         in: RoundedRectangle(cornerRadius: PMRadius.sm)
                                     )
                                     .contentShape(Rectangle())

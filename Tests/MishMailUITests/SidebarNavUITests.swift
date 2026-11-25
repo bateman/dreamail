@@ -16,6 +16,8 @@ final class SidebarNavUITests: XCTestCase {
         // argument-domain NSString the way AppKit bool(forKey:) does. Reveal
         // with → like MishMailSmokeTests instead.
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
+                                // A saved accent must not change what this suite sees.
+                                "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
                                 "-threadOpenStyle", "readingPane"]
         app.terminate()
