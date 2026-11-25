@@ -27,6 +27,13 @@ enum DemoSeed {
     }
 
     static let account = "you@example.com"
+
+    /// What the demo account's Gmail returns for its signature: imported at
+    /// launch by the same code as a real account's (no network).
+    static let gmailSignatures: [String: String] = [
+        account: "<div dir=\"ltr\">Alex Rivera<br><b>Example Studio</b><br>"
+            + "<a href=\"https://example.com\">example.com</a></div>",
+    ]
     static let vipSenders: Set<String> = ["dana@brightloop.io", "priya@example.edu"]
 
     static func canActivate(accountIDs: [String]) -> Bool {
@@ -96,6 +103,10 @@ enum DemoSeed {
                 let acct = Account(id: account, displayName: "Personal",
                                    historyId: nil, lastSyncAt: Date(), senderName: "Alex Rivera")
                 try acct.insert(database)
+                // A signature made in the app; the account's Gmail one
+                // arrives through `gmailSignatures`, as for a real account.
+                try SignatureStore.insert(database, accountId: account, name: "Short",
+                                          body: "Alex · Example Studio")
 
                 for label in labels(environment: ProcessInfo.processInfo.environment) {
                     let row = LabelRow(id: "\(account):\(label.id)", accountId: account,

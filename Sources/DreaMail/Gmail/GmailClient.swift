@@ -48,6 +48,9 @@ struct GLabel: Decodable {
     /// Where Gmail lists the label: `labelShow`, `labelShowIfUnread` or
     /// `labelHide`. Mirrored into `LabelRow.listVisibility`.
     var labelListVisibility: String? = nil
+    /// Whether Gmail shows the label's chip on conversations in the message
+    /// list: `show` or `hide`. Mirrored into `LabelRow.messageListVisibility`.
+    var messageListVisibility: String? = nil
 }
 
 struct GLabelList: Decodable { let labels: [GLabel]? }
@@ -100,8 +103,9 @@ struct GSendAs: Decodable, Hashable {
     /// "accepted" | "pending" | … — non-primary rows need accepted to send.
     let verificationStatus: String?
     let treatAsAlias: Bool?
-    /// The address's Gmail signature (HTML). Read only for "Import from
-    /// Gmail"; never logged or kept outside the signature it is copied to.
+    /// The address's Gmail signature (HTML). Read only to copy it into the
+    /// app's signatures (`SignatureStore.applyGmail`), converted; never
+    /// logged.
     var signature: String? = nil
 }
 
@@ -411,7 +415,8 @@ actor GmailClient {
                 }
                 DiagnosticLog.gmailHTTP(account: accountEmail, method: method, path: path,
                                         code: code, body: logged)
-                if method == "GET",
+                let rateLimitAttempts = Self.rateLimitAttempts(method: method, path: path)
+                if rateLimitAttempts > 0,
                    MessageFetchFailureKind.classify(GmailError.http(code, body)) == .rateLimited {
                     guard retryRateLimit else {
                         // The caller owns retries; still record the penalty.
@@ -430,7 +435,7 @@ actor GmailClient {
                         attempt: rateAttempt, kind: .rateLimited,
                         retryAfter: retryAfter, jitter: GmailRetryBackoff.jitter())
                     quota.block(until: Self.quotaNow().addingTimeInterval(delay))
-                    guard rateAttempt + 1 < Self.requestRetryAttempts else {
+                    guard rateAttempt + 1 < rateLimitAttempts else {
                         throw GmailError.http(code, body)
                     }
                     rateAttempt += 1
@@ -455,13 +460,38 @@ actor GmailClient {
         return list.labels ?? []
     }
 
-    /// Creates a user label (409 if the name already exists).
-    func createLabel(name: String) async throws -> GLabel {
-        try await request("POST", "/labels", jsonBody: [
+    /// Creates a user label (409 if the name already exists), with a Gmail
+    /// color when one is given (a sublabel takes its parent's).
+    func createLabel(name: String, color: GmailLabelColor? = nil) async throws -> GLabel {
+        var body: [String: Any] = [
             "name": name,
             "labelListVisibility": "labelShow",
             "messageListVisibility": "show",
-        ])
+        ]
+        if let color { body.merge(Self.labelColorPatchBody(color)) { $1 } }
+        return try await request("POST", "/labels", jsonBody: body)
+    }
+
+    /// `labels.patch` with the fields of `patch` only (name, the two
+    /// visibilities). The answer is the label as Gmail now has it.
+    func patchLabel(id: String, _ patch: GmailLabelPatch) async throws -> GLabel {
+        try await request("PATCH", "/labels/\(Self.pathSegment(id))", jsonBody: patch.body)
+    }
+
+    /// `labels.get`: one label as Gmail has it now.
+    func label(id: String) async throws -> GLabel {
+        try await request("GET", "/labels/\(Self.pathSegment(id))")
+    }
+
+    /// `labels.delete`: the label goes, its conversations stay (they only
+    /// lose it). Gmail deletes this one label, not its sublabels. A label
+    /// already gone (404) counts as deleted.
+    func deleteLabel(id: String) async throws {
+        do {
+            try await requestVoid("DELETE", "/labels/\(Self.pathSegment(id))")
+        } catch GmailError.http(404, _) {
+            return
+        }
     }
 
     /// Sets a user label's color on Gmail (`labels.patch`, gmail.modify
@@ -663,10 +693,21 @@ actor GmailClient {
     nonisolated static let getRetryAttempts = 3
     nonisolated static let requestRetryAttempts = 3
 
+    /// How many times a rate-limited call is tried: GETs up to
+    /// `requestRetryAttempts`; a label write (`labels.patch`, `labels.delete`,
+    /// from the sidebar's label menu and its cascades) twice, one retry after
+    /// the backoff, so a large cascade does not fall straight into rollback;
+    /// any other write once (0: no retry here, the caller owns it).
+    nonisolated static func rateLimitAttempts(method: String, path: String) -> Int {
+        if method == "GET" { return requestRetryAttempts }
+        if path.hasPrefix("/labels/"), method == "PATCH" || method == "DELETE" { return 2 }
+        return 0
+    }
+
     nonisolated static func quotaCost(method: String, path: String, format: String = "full") -> Int {
         if path == "/history" { return 2 }
         if path == "/labels" && method == "POST" { return 5 }
-        if path.hasPrefix("/labels/") && method == "PATCH" { return 5 }
+        if path.hasPrefix("/labels/") && (method == "PATCH" || method == "DELETE") { return 5 }
         if path.hasPrefix("/settings/filters") && method != "GET" { return 5 }
         if path == "/messages" { return 5 }
         if path == "/messages/send" { return 100 }

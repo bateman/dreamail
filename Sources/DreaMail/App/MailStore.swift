@@ -423,6 +423,8 @@ final class MailStore {
     var editingView: SavedView?
     var editingAccountLabels = false
     var showLabelOrganizer = false
+    /// The sidebar label menu's dialogs (`LabelMenuPresentation`).
+    var labelMenu = LabelMenuState()
     enum MailboxOverlay {
         case commands, labels, snoozeThread(MailThread), snoozeChecked
     }
@@ -2048,6 +2050,13 @@ struct ComposeRequest: Identifiable {
         Task { [weak self] in
             await self?.refreshSendIdentities()
             await self?.fireDueScheduledSends()
+        }
+        // Signatures set in Gmail show up by themselves (no dialog on error).
+        Task { [weak self] in
+            guard let self else { return }
+            for account in self.accounts {
+                await self.refreshGmailSignatures(accountId: account.id, force: true)
+            }
         }
         // Last, and off the main actor: the one-time post-v24 VACUUM can take
         // tens of seconds on a large mailbox. Re-check shut-down: the entry
@@ -4144,7 +4153,8 @@ struct ComposeRequest: Identifiable {
     /// Name and display colors for a label in a single lookup — what a
     /// thread row needs for each of its chips.
     func labelChip(_ labelId: String, account accountId: String) -> ThreadRowLabelChip? {
-        guard let row = labelsById[accountId]?[labelId] else { return nil }
+        // "In message list: Hide": Gmail leaves the chip off the rows.
+        guard let row = labelsById[accountId]?[labelId], row.showsInMessageList else { return nil }
         return ThreadRowLabelChip(name: row.name, colors: row.displayColors)
     }
 
@@ -4161,53 +4171,88 @@ struct ComposeRequest: Identifiable {
         labelsByAccount.values.lazy.flatMap { $0 }.first { $0.name == name }?.displayColors ?? .none
     }
 
-    /// Sets (or clears, with nil) a label's local color pick. Clearing it
-    /// shows Gmail's own label color again.
+    /// Sets (or clears, with nil) a label's local color pick, and its
+    /// sublabels' at any depth (the owner's rule: a parent's color goes to
+    /// the labels nested under it). Clearing it shows Gmail's own label
+    /// color again.
     func setLabelColor(_ label: LabelRow, hex: String?) {
+        let ids = labelFamily(label).map(\.id)
         // Only the one column: the row passed in may be older than the
         // stored one (a sync may have renamed it or changed Gmail's colors).
         try? db.write { db in
-            try db.execute(sql: "UPDATE label SET color = ? WHERE id = ?",
-                           arguments: [hex, label.id])
+            try GmailLabelColorEdit.setLocalColor(db, hex: hex, labelRowIds: ids)
         }
         reloadAccounts()
     }
 
     /// Sets (or removes, with nil) a user label's color on Gmail, so it
-    /// shows on the web and the phone too. Shown at once; put back if
-    /// Gmail refuses. A Mac-only color, when set, still wins on display.
+    /// shows on the web and the phone too, and the same color on every
+    /// label nested under it. Shown at once; put back, label by label, where
+    /// Gmail refuses, with a retry for those. A Mac-only color, when set,
+    /// still wins on display.
     func setGmailLabelColor(_ label: LabelRow, to color: GmailLabelColor?) {
         guard !demoMode else {
             showNotice("Changing label colors on Gmail is disabled in the demo inbox")
             return
         }
-        guard label.type == "user", !gmailLabelColorSaving.contains(label.id) else { return }
-        let client = client(for: label.accountId)
+        let family = labelFamily(label).map(\.id)
+        let ids = family.filter { !gmailLabelColorSaving.contains($0) }
+        guard label.type == "user", !ids.isEmpty else { return }
+        // What is picked is what is seen: the Mac-only colors of the label
+        // and its sublabels, which would win on display (DEC-023), go.
+        setGmailLabelColor(rowIds: ids, clearing: Set(family), accountId: label.accountId,
+                           to: color)
+    }
+
+    private func setGmailLabelColor(rowIds ids: [String], clearing: Set<String>, accountId: String,
+                                    to color: GmailLabelColor?) {
+        let client = client(for: accountId)
         let pool = db
-        let id = label.id
-        let accountId = label.accountId
-        gmailLabelColorSaving.insert(id)
+        gmailLabelColorSaving.formUnion(ids)
         Task { @MainActor [weak self] in
-            var failure: Error?
-            do {
-                try await GmailLabelColorEdit.apply(color, labelRowId: id, db: pool,
-                                                    didStore: { self?.reloadAccounts() }) { labelId, color in
+            let result = await GmailLabelColorEdit.applyMany(
+                color, labelRowIds: ids, clearingLocalColor: clearing, db: pool,
+                didStore: { self?.reloadAccounts() }) { labelId, color in
                     try await client.patchLabelColor(id: labelId, color: color)
                 }
-            } catch {
-                failure = error
-            }
             guard let self else { return }
-            self.gmailLabelColorSaving.remove(id)
+            self.gmailLabelColorSaving.subtract(ids)
             self.reloadAccounts()
-            switch GmailLabelColorEdit.outcome(failure, accountKnown: self.isKnownAccount(accountId)) {
+            let outcome = GmailLabelColorEdit.outcome(result.cause,
+                                                      accountKnown: self.isKnownAccount(accountId))
+            switch outcome {
             case .saved, .silent:
                 break
             case .reauthorize:
                 self.requireReauthorization(for: accountId, interactive: true)
             case .banner(let message):
-                self.lastError = message
+                guard ids.count > 1 else {
+                    self.lastError = message
+                    return
+                }
+                // A cascade: name the labels that kept their old color.
+                let names = result.failed.compactMap { id in
+                    self.labelsByAccount[accountId]?.first { $0.id == id }?.name
+                }
+                let reason = result.mixedCauses ? "Some labels could not be updated." : message
+                self.labelMenu.failure = LabelEditFailure(
+                    title: "Some labels kept their old color",
+                    message: "\(reason)\n\n" + LabelEditFailure.list(names),
+                    retry: self.colorRetry(result.retryable, clearing: clearing,
+                                           accountId: accountId, to: color))
             }
+        }
+    }
+
+    /// Retry for the labels a retry can fix; nil when there are none.
+    private func colorRetry(_ ids: [String], clearing: Set<String>, accountId: String,
+                            to color: GmailLabelColor?) -> (@MainActor () -> Void)? {
+        guard !ids.isEmpty else { return nil }
+        return { [weak self] in
+            guard let self else { return }
+            let again = ids.filter { !self.gmailLabelColorSaving.contains($0) }
+            guard !again.isEmpty else { return }
+            self.setGmailLabelColor(rowIds: again, clearing: clearing, accountId: accountId, to: color)
         }
     }
 
@@ -5077,6 +5122,9 @@ struct ComposeRequest: Identifiable {
     /// Every account's signatures and defaults (`SignatureStore`). Written
     /// only by `MailStore+Signatures`.
     var signatureBook: SignatureBook = .empty
+    /// Each account's last refresh of its signatures from Gmail, in memory
+    /// only (`SignatureSyncPolicy`). Written only by `MailStore+Signatures`.
+    var signatureSync: [String: SignatureSyncState] = [:]
 
     private func reloadSnippets() {
         allSnippets = (try? db.read { try Snippet.order(Column("name")).fetchAll($0) }) ?? []

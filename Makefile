@@ -275,7 +275,8 @@ ui-test-ci:
 # never falls out of both. No UI_SHARD: the whole suite.
 UI_SHARD_1 = ThreadListSectionSpacingUITests ThreadMessageRowsUITests \
 	AccentColorUITests SidebarIconTintUITests DreaMailSmokeTests \
-	ThreadRowHoverActionsUITests SingleMessageReadingPaneUITests
+	ThreadRowHoverActionsUITests SingleMessageReadingPaneUITests \
+	SignatureMenuUITests
 UI_SHARD_FLAGS = $(if $(filter 1,$(UI_SHARD)),$(UI_SHARD_1:%=-only-testing:DreaMailUITests/%)) \
 	$(if $(filter 2,$(UI_SHARD)),$(UI_SHARD_1:%=-skip-testing:DreaMailUITests/%))
 ui-test: gen

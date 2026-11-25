@@ -278,6 +278,12 @@ actor SyncEngine {
 
     // MARK: - Labels
 
+    /// The label list only, read again from Gmail: what the label menu
+    /// does after an edit that may have half landed, without a mail sync.
+    func refreshLabels() async throws {
+        try await syncLabels()
+    }
+
     private func syncLabels() async throws {
         let labels = try await client.labels()
         try await db.write { [accountId] db in
@@ -312,7 +318,8 @@ actor SyncEngine {
                                sortOrder: existing?.sortOrder ?? LabelRow.unsorted,
                                gmailBackgroundColor: gmailColors.background,
                                gmailTextColor: gmailColors.text,
-                               listVisibility: l.labelListVisibility)
+                               listVisibility: l.labelListVisibility,
+                               messageListVisibility: l.messageListVisibility)
             // Runs every pass, and labels almost never change between
             // passes — write only rows that differ from the stored one.
             if row != existing { try row.save(db) }
