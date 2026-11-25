@@ -1086,7 +1086,6 @@ struct ComposeView: View {
                                    rowTitle: { menuTitle($0) },
                                    openRequest: fromOpenRequest)
                 Spacer()
-                signatureMenu
             }
             .padding(.vertical, 4)
             .zIndex(4)
@@ -1356,6 +1355,9 @@ struct ComposeView: View {
                         // chain glyph isn't clipped on its left bearing.
                         footerButton(ComposeToolbarItem.link) { openLinkSheet() }
                     }
+
+                    // Gmail's "Insert signature" sits in the bottom toolbar.
+                    signatureMenu
 
                     if composeToolVisible(.snippets) {
                         Button {
@@ -1958,21 +1960,22 @@ struct ComposeView: View {
                 signatureToggle(signature.name, signature)
             }
             Divider()
-            Button("Manage Signatures…") {
-                UserDefaults.standard.set(SettingsView.Pane.signatures.rawValue,
-                                          forKey: "settingsPane")
+            Button("Manage signatures") {
+                SignatureSettings.open(accountId: fromAccountId)
                 openSettings()
             }
         } label: {
             Image(systemName: "signature")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
+                .frame(width: 24, height: 22)
+                .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Signature")
-        .accessibilityLabel("Signature")
+        .help("Insert signature")
+        .accessibilityLabel("Insert signature")
         .accessibilityIdentifier("compose.signature")
     }
 

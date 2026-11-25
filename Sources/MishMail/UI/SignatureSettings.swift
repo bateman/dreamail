@@ -8,7 +8,18 @@ import SwiftUI
 /// links and lists; that is what the recipient sees rendered.
 struct SignatureSettings: View {
     @Environment(MailStore.self) private var store
-    @State private var accountId = ""
+    /// The account shown; kept so "Show Signatures…" and compose's "Manage
+    /// signatures" can open the pane on a given account.
+    @AppStorage(SignatureSettings.accountKey) private var accountId = ""
+
+    static let accountKey = "settingsSignaturesAccount"
+
+    /// Opens on `accountId` the next time the pane shows.
+    static func open(accountId: String) {
+        UserDefaults.standard.set(accountId, forKey: accountKey)
+        UserDefaults.standard.set(SettingsView.Pane.signatures.rawValue, forKey: "settingsPane")
+    }
+
     @State private var editing: SignatureRecord?
     @State private var deleting: SignatureRecord?
     @State private var importing = false
@@ -341,5 +352,20 @@ private struct GmailSignatureImportSheet: View {
         case 1: "Imported without its image: MishMail signatures hold text, formatting and links only."
         default: "Imported without its \(dropped) images: MishMail signatures hold text, formatting and links only."
         }
+    }
+}
+
+/// Settings → Accounts, one account's box: opens the Signatures pane on it.
+struct ShowSignaturesButton: View {
+    let accountId: String
+    @AppStorage("settingsPane") private var pane: SettingsView.Pane = .accounts
+    @AppStorage(SignatureSettings.accountKey) private var signaturesAccount = ""
+
+    var body: some View {
+        Button("Show Signatures…") {
+            signaturesAccount = accountId
+            pane = .signatures
+        }
+        .accessibilityIdentifier("settings.account.showSignatures")
     }
 }

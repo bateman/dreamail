@@ -412,6 +412,7 @@ struct AccountsSettings: View {
                             }
                         }
                         SyncWindowPicker(accountId: account.id)
+                        ShowSignaturesButton(accountId: account.id)
                         if store.calendarUIEnabled {
                             CalendarAccountSettings(accountId: account.id)
                         }
