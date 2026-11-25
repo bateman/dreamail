@@ -442,10 +442,13 @@ struct AccountsSettings: View {
     }
 }
 
-// MARK: - Gmail filters (read-only, plain-language sentences)
+// MARK: - Gmail filters (plain-language sentences; editor in GmailFilterEditorSheet)
 
 struct GmailFiltersSettings: View {
     @Environment(MailStore.self) var store
+    @State private var editing: GmailFilterEditTarget?
+    @State private var deleting: GmailFilterEditTarget?
+    @State private var deleteError: String?
 
     private var anyLoading: Bool {
         store.accounts.contains { store.filtersLoading.contains($0.id) }
@@ -453,7 +456,7 @@ struct GmailFiltersSettings: View {
 
     var body: some View {
         PaneScaffold(title: "Gmail filters",
-                     subtitle: "The following Gmail filters are applied to all incoming mail") {
+                     subtitle: "Gmail applies these filters to all incoming mail. Changes here are saved to Gmail.") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if store.accounts.isEmpty {
@@ -470,6 +473,18 @@ struct GmailFiltersSettings: View {
                                 .padding(.top, 16).padding(.bottom, 4)
                         }
                         accountSection(account.id)
+                        Button("New filter…") {
+                            editing = GmailFilterEditTarget(accountId: account.id, original: nil)
+                        }
+                        .font(.system(size: 12))
+                        .disabled(store.demoMode || store.filtersByAccount[account.id] == nil)
+                        .padding(.horizontal, 20).padding(.vertical, 8)
+                        .accessibilityIdentifier("newGmailFilter")
+                    }
+                    if let deleteError {
+                        Label(deleteError, systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 20).padding(.vertical, 6)
                     }
                     HStack {
                         if anyLoading { ProgressView().controlSize(.small) }
@@ -493,6 +508,51 @@ struct GmailFiltersSettings: View {
             }
         }
         .task { await load() }
+        .sheet(item: $editing) { target in
+            GmailFilterEditorSheet(target: target)
+        }
+        .confirmationDialog("Delete this filter?",
+                            isPresented: Binding(get: { deleting != nil },
+                                                 set: { if !$0 { deleting = nil } }),
+                            presenting: deleting) { target in
+            Button("Delete", role: .destructive) {
+                Task { await delete(target) }
+            }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { _ in
+            Text("Gmail stops applying it to new mail. Mail it already sorted stays as it is.")
+        }
+    }
+
+    private func delete(_ target: GmailFilterEditTarget) async {
+        guard let filter = target.original else { return }
+        deleting = nil
+        deleteError = nil
+        do {
+            try await store.deleteFilter(filter, account: target.accountId)
+        } catch {
+            deleteError = error.localizedDescription
+        }
+    }
+
+    @ViewBuilder
+    private func filterRow(_ filter: GFilter, accountId: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            GmailFilterSentenceRow(filter: filter, accountId: accountId)
+            Button {
+                editing = GmailFilterEditTarget(accountId: accountId, original: filter)
+            } label: { Image(systemName: "pencil") }
+            .buttonStyle(.borderless)
+            .disabled(store.demoMode || filter.action?.forward != nil)
+            .help(filter.action?.forward != nil ? "Filters that forward mail are edited in Gmail"
+                                                : "Edit filter")
+            Button {
+                deleting = GmailFilterEditTarget(accountId: accountId, original: filter)
+            } label: { Image(systemName: "trash") }
+            .buttonStyle(.borderless)
+            .disabled(store.demoMode)
+            .help("Delete filter")
+        }
     }
 
     @ViewBuilder
@@ -509,7 +569,7 @@ struct GmailFiltersSettings: View {
                     .padding(.horizontal, 20).padding(.vertical, 10)
             }
             ForEach(filters) { filter in
-                GmailFilterSentenceRow(filter: filter, accountId: accountId)
+                filterRow(filter, accountId: accountId)
                     .padding(.horizontal, 20).padding(.vertical, 12)
                 Divider().padding(.leading, 20)
             }

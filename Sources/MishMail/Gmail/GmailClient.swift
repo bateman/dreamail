@@ -49,9 +49,11 @@ struct GLabel: Decodable {
 
 struct GLabelList: Decodable { let labels: [GLabel]? }
 
-/// A Gmail filter (settings.filters). Read-only in this app.
-struct GFilter: Decodable, Identifiable, Hashable {
-    struct Criteria: Decodable, Hashable {
+/// A Gmail filter (settings.filters). Created and deleted from Settings →
+/// Gmail filters; Gmail has no update call, so an edit is a create plus a
+/// delete (`GmailClient.replaceFilter`).
+struct GFilter: Codable, Identifiable, Hashable {
+    struct Criteria: Codable, Hashable {
         let from: String?
         let to: String?
         let subject: String?
@@ -60,15 +62,29 @@ struct GFilter: Decodable, Identifiable, Hashable {
         let hasAttachment: Bool?
         let size: Int?                 // bytes
         let sizeComparison: String?    // "larger" | "smaller"
+        /// Not editable here; carried through an edit unchanged.
+        var excludeChats: Bool? = nil
     }
-    struct Action: Decodable, Hashable {
+    struct Action: Codable, Hashable {
         let addLabelIds: [String]?
         let removeLabelIds: [String]?
         let forward: String?
     }
+    /// What a create sends: everything but the server-assigned id.
+    struct Body: Codable, Hashable {
+        var criteria: Criteria
+        var action: Action
+    }
     let id: String
     let criteria: Criteria?
     let action: Action?
+
+    var body: Body {
+        Body(criteria: criteria ?? .init(from: nil, to: nil, subject: nil, query: nil,
+                                         negatedQuery: nil, hasAttachment: nil,
+                                         size: nil, sizeComparison: nil),
+             action: action ?? .init(addLabelIds: nil, removeLabelIds: nil, forward: nil))
+    }
 }
 
 /// A Gmail "Send mail as" identity (settings.sendAs). Primary + verified
@@ -262,8 +278,19 @@ actor GmailClient {
     private var tokenCache = AccessTokenCache()
     private var tokenRefreshTask: Task<(String, Int), Error>?
 
+    /// Tests only: a stub session and a fixed access token, so the REST
+    /// calls run against a URLProtocol without the Keychain or OAuth.
+    private let testSession: URLSession?
+    private let testAccessToken: String?
+
     init(accountEmail: String) {
+        self.init(accountEmail: accountEmail, testSession: nil, testAccessToken: nil)
+    }
+
+    init(accountEmail: String, testSession: URLSession?, testAccessToken: String?) {
         self.accountEmail = accountEmail
+        self.testSession = testSession
+        self.testAccessToken = testAccessToken
     }
 
     /// One client per mailbox. SyncEngine and MailStore both use this entry
@@ -277,6 +304,7 @@ actor GmailClient {
     private var base: String { "https://gmail.googleapis.com/gmail/v1/users/me" }
 
     private func validToken() async throws -> String {
+        if let testAccessToken { return testAccessToken }
         if let t = tokenCache.token(now: Date()) { return t }
         let generation = tokenCache.generation
         let refresh: String
@@ -361,7 +389,7 @@ actor GmailClient {
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)
             }
-            let (data, response) = try await GoogleHTTP.session.data(for: req)
+            let (data, response) = try await (testSession ?? GoogleHTTP.session).data(for: req)
             let http = response as? HTTPURLResponse
             let code = http?.statusCode ?? 0
             guard !(code == 401 && !didRefreshAfter401) else {
@@ -436,6 +464,45 @@ actor GmailClient {
         struct List: Decodable { let filter: [GFilter]? }
         let list: List = try await request("GET", "/settings/filters")
         return list.filter ?? []
+    }
+
+    /// Creates a filter. Same scope as `listFilters`. A filter that forwards
+    /// also needs gmail.settings.sharing, which MishMail does not request:
+    /// the editor never sends one (`GmailFilterDraft`).
+    func createFilter(_ body: GFilter.Body) async throws -> GFilter {
+        let data = try JSONEncoder().encode(body)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GmailError.http(400, "")
+        }
+        return try await request("POST", "/settings/filters", jsonBody: json)
+    }
+
+    /// Deletes a filter. A filter already gone (404) counts as deleted.
+    func deleteFilter(id: String) async throws {
+        do {
+            try await requestVoid("DELETE", "/settings/filters/\(Self.pathSegment(id))")
+        } catch GmailError.http(404, _) {
+            return
+        }
+    }
+
+    /// Gmail has no filter update: create the new filter first, then delete
+    /// the old one. A failed create leaves the original untouched; a failed
+    /// delete leaves both and says so (`GmailFilterError.oldFilterKept`).
+    func replaceFilter(id: String, with body: GFilter.Body) async throws -> GFilter {
+        let created = try await createFilter(body)
+        do {
+            try await deleteFilter(id: id)
+        } catch {
+            throw GmailFilterError.oldFilterKept(created: created,
+                                                 cause: GmailFilterError(error))
+        }
+        return created
+    }
+
+    /// Filter ids are opaque server tokens; keep anything else out of the path.
+    nonisolated static func pathSegment(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
     }
 
     /// "Send mail as" identities for this mailbox (primary + aliases).
@@ -551,6 +618,7 @@ actor GmailClient {
     nonisolated static func quotaCost(method: String, path: String, format: String = "full") -> Int {
         if path == "/history" { return 2 }
         if path == "/labels" && method == "POST" { return 5 }
+        if path.hasPrefix("/settings/filters") && method != "GET" { return 5 }
         if path == "/messages" { return 5 }
         if path == "/messages/send" { return 100 }
         if path.contains("/attachments/") { return 20 }

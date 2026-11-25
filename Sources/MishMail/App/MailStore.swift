@@ -821,16 +821,19 @@ final class MailStore {
         computeVIPThreadIds(threads: threads, activeVIP: activeVIP)
     }
 
-    // MARK: - Gmail filters (read-only cache)
+    // MARK: - Gmail filters (in-memory cache; edits in MailStore+Filters)
 
+    /// Per-account Gmail filters and load errors. Written here and by the
+    /// filter edits in MailStore+Filters.swift; dropped with the account.
+    var filterCache = GmailFilterCache()
     /// Per-account Gmail filters, loaded lazily for Settings and for the
     /// "matching filters" disclosure under each message card. Nil entry means
     /// not yet attempted; empty array means loaded and the account has none.
-    private(set) var filtersByAccount: [String: [GFilter]] = [:]
+    var filtersByAccount: [String: [GFilter]] { filterCache.filters }
     /// Human-readable load failure per account (scope missing, network, …).
     /// Cleared on success. On transient failure we keep any previous cache so
     /// matching-filter sections don't vanish because of a blip.
-    private(set) var filtersLoadError: [String: String] = [:]
+    var filtersLoadError: [String: String] { filterCache.loadErrors }
     /// Accounts currently mid-fetch — UI can show a spinner. Backed by a
     /// refcount so overlapping force+lazy loads don't drop the spinner early.
     private(set) var filtersLoading: Set<String> = []
@@ -846,8 +849,8 @@ final class MailStore {
     /// fetch so Settings still gets a refresh.
     func ensureFiltersLoaded(for accountId: String, force: Bool = false) async {
         guard !demoMode else {
-            filtersByAccount[accountId] = []
-            filtersLoadError[accountId] = nil
+            filterCache.filters[accountId] = []
+            filterCache.loadErrors[accountId] = nil
             return
         }
         if !force, filtersByAccount[accountId] != nil { return }
@@ -900,17 +903,19 @@ final class MailStore {
         let client = client(for: accountId)
         do {
             let filters = try await client.listFilters()
-            filtersByAccount[accountId] = filters
-            filtersLoadError[accountId] = nil
-        } catch GmailError.http(403, _) {
-            filtersLoadError[accountId] =
-                "MishMail doesn't have permission to read this account's filters yet. Sign in to it again with Add Google Account… (Accounts pane) to grant it; the account and its mail stay as they are."
-            // Keep any previous good cache; only leave the slot empty when we
-            // never had one (so UI can show the scope error).
-            if previous == nil { filtersByAccount[accountId] = nil }
+            // The account may have been removed while the list was in flight.
+            guard isKnownAccount(accountId) else { return }
+            filterCache.filters[accountId] = filters
+            filterCache.loadErrors[accountId] = nil
         } catch {
-            filtersLoadError[accountId] = error.localizedDescription
-            if previous == nil { filtersByAccount[accountId] = nil }
+            guard isKnownAccount(accountId) else { return }
+            let failure = GmailFilterError(error)
+            filterCache.loadErrors[accountId] = failure == .missingScope
+                ? "MishMail doesn't have permission to read this account's filters yet. Sign in to it again with Add Google Account… (Accounts pane) to grant it; the account and its mail stay as they are."
+                : failure.localizedDescription
+            // Keep any previous good cache; only leave the slot empty when we
+            // never had one (so UI can show the error).
+            if previous == nil { filterCache.filters[accountId] = nil }
         }
     }
 
@@ -2042,8 +2047,7 @@ struct ComposeRequest: Identifiable {
         reloadScheduledSends()
         reloadLocalDrafts()
         sendIdentities = []
-        filtersByAccount[DemoSeed.account] = nil
-        filtersLoadError[DemoSeed.account] = nil
+        filterCache.forget(account: DemoSeed.account)
         return true
     }
 
