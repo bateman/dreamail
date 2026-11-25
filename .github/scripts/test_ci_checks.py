@@ -400,7 +400,7 @@ class NeedsBuildTests(TempFiles):
         scanned, offenders = 0, []
         for path in sorted((REPO / "Tests").rglob("*.swift")):
             text = path.read_text()
-            if "repoRoot" not in text and "repoFile(" not in text:
+            if not any(key in text for key in ("repoRoot", "repoFile(", "#filePath")):
                 continue
             scanned += 1
             offenders += [f"{path.relative_to(REPO)}: {m.group()}"

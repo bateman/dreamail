@@ -82,16 +82,13 @@ jobs:
         run: python3 .github/scripts/needs-build.py "$BASE" >> "$GITHUB_OUTPUT"
 
   test:
-    # A manual run on a branch other than main is for the UI smoke tests
-    # (`make ui-test-ci`): the pull request has run this job on the same
-    # commit. There the job is skipped under another name, so that its check
-    # cannot stand in for the pull request's "Unit tests & build" check.
-    name: ${{ (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'Unit tests & build (left to the pull request)' || 'Unit tests & build' }}
+    # A fixed name: GitHub does not evaluate the name of a skipped job.
+    name: Unit tests & build
     needs: changes
     # A skipped job counts as passed for a required check. The job runs
     # unless `changes` positively found a docs-only change: if `changes`
     # failed, its output is empty and the tests run.
-    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
     runs-on: macos-26
     # A cold build and test run takes about six minutes.
     timeout-minutes: 25

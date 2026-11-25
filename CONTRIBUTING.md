@@ -26,14 +26,15 @@ Signing defaults to portable ad-hoc; see
 
 `make test` must pass before every commit (the pre-commit hook enforces this
 locally, and CI runs it on every push to `main` and every pull request).
-CI skips the macOS build and tests when a change touches only files that
-neither the build nor a test reads: `docs/`, `reviews/`, `.claude/`,
-`CHANGELOG.md` and `CLAUDE.md` (`.github/scripts/needs-build.py`).
+CI skips the macOS build and tests when a change into `main` touches only
+files that neither the build nor a test reads: `docs/`, `reviews/`,
+`.claude/`, `CHANGELOG.md` and `CLAUDE.md` (`.github/scripts/needs-build.py`).
+So judge a commit on `main` by its own run (`gh run list --commit <sha>`):
+a docs-only commit after a red one has a green run.
 `make ui-test` is a separate CI job for launch, demo navigation, compose, and
 Settings. It takes about eleven minutes, so it runs only for a release:
 `make release` starts it and waits, and `make ui-test-ci` starts it by hand
-for a pushed branch (on a branch other than `main` that run leaves the unit
-tests to the pull request). Run it for a change to the UI structure. Tests live in
+for a pushed branch. Run it for a change to the UI structure. Tests live in
 `Tests/MishMailTests` and cover the non-UI core: message/MIME parsing, the
 DB schema and migrations, thread derivation, search-query parsing, and
 send-scheduling. The test target is **hostless** — it compiles `Gmail/`,
