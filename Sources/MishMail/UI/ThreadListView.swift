@@ -595,7 +595,8 @@ private struct ThreadListSections: View, Equatable {
                         onStar: { store.toggleStar(thread) },
                         onArchive: { store.archive(thread) },
                         onSnooze: { store.mailboxOverlay = .snoozeThread(thread) },
-                        onTrash: { store.trash(thread) }
+                        onTrash: { store.trash(thread) },
+                        onToggleRead: { store.setRead(thread, read: thread.isUnread) }
                     )
                         .tag(thread.id)
                         .id(thread.id)
@@ -803,6 +804,7 @@ private struct FocusedThreadRow: View {
     let onArchive: () -> Void
     let onSnooze: () -> Void
     let onTrash: () -> Void
+    let onToggleRead: () -> Void
 
     var body: some View {
         var focused = model
@@ -814,7 +816,8 @@ private struct FocusedThreadRow: View {
             onStar: onStar,
             onArchive: onArchive,
             onSnooze: onSnooze,
-            onTrash: onTrash
+            onTrash: onTrash,
+            onToggleRead: onToggleRead
         )
         .equatable()
     }
@@ -1747,7 +1750,7 @@ struct ThreadRowModel: Equatable {
 }
 
 /// Dense single-line row:
-/// [check] [dot] participants   subject  snippet…………  [ai] [icons] time
+/// [check] [star] [dot] participants   subject  snippet…………  [ai] [labels] time|actions
 ///
 /// No `@EnvironmentObject` — observing MailStore made every ↓ re-render every
 /// visible row. Actions arrive as closures; body skips when `model` is equal.
@@ -1760,6 +1763,7 @@ struct ThreadRow: View, Equatable {
     let onArchive: () -> Void
     let onSnooze: () -> Void
     let onTrash: () -> Void
+    let onToggleRead: () -> Void
     @State private var hovering = false
     /// `.increased` while the row is the emphasized selection.
     @Environment(\.backgroundProminence) private var prominence
@@ -1813,6 +1817,19 @@ struct ThreadRow: View, Equatable {
             .buttonStyle(.plain)
             .opacity(showCheckbox ? 1 : 0)
             .help(isChecked ? "Deselect (x)" : "Select (x). Shift-click for a range.")
+
+            // Gmail's place for the star: first, before the sender.
+            Button(action: onStar) {
+                Image(systemName: thread.isStarred ? "star.fill" : "star")
+                    .font(.system(size: 14 * fontScale))
+                    .foregroundStyle(thread.isStarred ? inked(.yellow) : inked(.secondary, emphasis: 0.8))
+                    .frame(width: 16 * fontScale, height: 16 * fontScale)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PressScaleButtonStyle())
+            .help(thread.isStarred ? "Unstar" : "Star")
+            .accessibilityLabel(thread.isStarred ? "Unstar" : "Star")
+            .accessibilityIdentifier("rowStar")
 
             Circle()
                 .fill(thread.isUnread ? inked(accent.foreground) : .clear)
@@ -1877,51 +1894,52 @@ struct ThreadRow: View, Equatable {
                 }
             }
 
-            // Fixed-height trailing area: icons overlay the timestamp on
-            // hover so the row never changes size.
-            ZStack(alignment: .trailing) {
-                HStack(spacing: 5) {
-                    // User labels as Gmail-style chips right before the date.
-                    HStack(spacing: LabelChipMetrics(fontSize: ThreadRowChipLayout.fontSize * fontScale).spacing) {
-                        ForEach(model.userLabels.prefix(2), id: \.name) { chip in
-                            labelPill(chip)
-                        }
+            // Fixed-height trailing area. Labels, paperclip and reminder stay
+            // put; the date and the hover buttons share one fixed-width slot.
+            HStack(spacing: 5) {
+                // User labels as Gmail-style chips right before the date.
+                HStack(spacing: LabelChipMetrics(fontSize: ThreadRowChipLayout.fontSize * fontScale).spacing) {
+                    ForEach(model.userLabels.prefix(2), id: \.name) { chip in
+                        labelPill(chip)
                     }
-                    // In a tight row the chips truncate before the date.
-                    .layoutPriority(-1)
-                    if model.userLabels.count > 2 {
-                        Text("+\(model.userLabels.count - 2)")
-                            .font(.system(size: 11 * fontScale).monospacedDigit())
-                            .foregroundStyle(inked(.secondary, emphasis: 0.8))
-                    }
-                    if thread.hasAttachment {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.secondary, emphasis: 0.8))
-                    }
-                    if thread.reminderAt != nil {
-                        // Neutral like the paperclip: the glyph is the cue.
-                        Image(systemName: "bell.fill")
-                            .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.secondary, emphasis: 0.8))
-                    }
-                    if thread.isStarred {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.yellow))
-                    }
+                }
+                // In a tight row the chips truncate before the date.
+                .layoutPriority(-1)
+                if model.userLabels.count > 2 {
+                    Text("+\(model.userLabels.count - 2)")
+                        .font(.system(size: 11 * fontScale).monospacedDigit())
+                        .foregroundStyle(inked(.secondary, emphasis: 0.8))
+                }
+                if thread.hasAttachment {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.secondary, emphasis: 0.8))
+                }
+                if thread.reminderAt != nil {
+                    // Neutral like the paperclip: the glyph is the cue.
+                    Image(systemName: "bell.fill")
+                        .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.secondary, emphasis: 0.8))
+                }
+                // The date sets the slot's width when it is wider than the
+                // buttons (a prior-year date, a long locale, a large text
+                // size); `fixedSize` keeps it from being clipped.
+                ZStack(alignment: .trailing) {
                     Text(thread.lastDate, format: relativeFormat)
                         .font(.system(size: 12 * fontScale).monospacedDigit())
                         .foregroundStyle(inked(.secondary, emphasis: 0.8))
-                        .frame(minWidth: 52, alignment: .trailing)
+                        .fixedSize()
+                        .frame(minWidth: ThreadRowActionLayout.actionsWidth(fontScale: fontScale),
+                               alignment: .trailing)
+                        .opacity(hovering ? 0 : 1)
+                    HStack(spacing: ThreadRowActionLayout.spacing) {
+                        ForEach(ThreadRowHoverAction.allCases, id: \.self) { action in
+                            hoverButton(action)
+                        }
+                    }
+                    .opacity(hovering ? 1 : 0)
+                    // Hidden buttons must not take clicks or VoiceOver focus.
+                    .allowsHitTesting(hovering)
+                    .accessibilityHidden(!hovering)
                 }
-                .opacity(hovering ? 0 : 1)
-
-                HStack(spacing: 2) {
-                    hoverButton("star", filled: thread.isStarred, action: onStar)
-                    hoverButton("archivebox", action: onArchive)
-                    hoverButton("clock", action: onSnooze)
-                    hoverButton("trash", action: onTrash)
-                }
-                .opacity(hovering ? 1 : 0)
-                .scaleEffect(hovering ? 1 : 0.96)
             }
             // Match the visual icon size (~13pt + small pad). Hit expansion is
             // layout-neutral via pmHitTarget so rows stay dense.
@@ -1937,13 +1955,22 @@ struct ThreadRow: View, Equatable {
         // macOS, so clicking a thread would no longer select/open it.
         .onHover { hovering = $0 }
         .pmPointingHandCursor()
-        .accessibilityElement(children: .ignore)
+        // VoiceOver reads the row as one element with named actions. UI tests
+        // (MISHMAIL_UI_ROW_BUTTONS=1 only) also need the buttons in the tree.
+        .accessibilityElement(children: Self.exposesButtons ? .contain : .ignore)
         .accessibilityLabel(model.display.accessibilityLabel)
         .accessibilityAction(named: "Archive", onArchive)
         .accessibilityAction(named: "Trash", onTrash)
         .accessibilityAction(named: thread.isStarred ? "Unstar" : "Star", onStar)
         .accessibilityAction(named: "Snooze", onSnooze)
+        .accessibilityAction(named: ThreadRowHoverAction.toggleRead.title(isUnread: thread.isUnread), onToggleRead)
     }
+
+    /// Set only by the hover-actions UI tests. `.contain` changes the row's
+    /// accessibility frame, which the section-spacing tests measure.
+    private static let exposesButtons =
+        ProcessInfo.processInfo.environment["MISHMAIL_UI_TEST"] == "1"
+        && ProcessInfo.processInfo.environment["MISHMAIL_UI_ROW_BUTTONS"] == "1"
 
     private var participantsDisplay: String {
         thread.participants.isEmpty ? thread.fromDisplay : thread.participants
@@ -1990,25 +2017,31 @@ struct ThreadRow: View, Equatable {
         return thread.isUnread ? .content : .readRow
     }
 
-    private func hoverButton(_ icon: String, filled: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: filled ? "\(icon).fill" : icon)
-                .font(.system(size: 13 * fontScale))
-                .foregroundStyle(filled && icon == "star" ? inked(.yellow) : inked(.secondary, emphasis: 0.8))
-                .padding(3)
-                // Dense row: expand hit without inflating the 18pt trailing strip
-                // (full 40×40 would collide with neighbors — skill allows shrink).
-                .pmHitTarget(extra: 6)
+    private func hoverButton(_ action: ThreadRowHoverAction) -> some View {
+        let isUnread = thread.isUnread
+        let title = action.title(isUnread: isUnread)
+        return Button {
+            switch action {
+            case .archive: onArchive()
+            case .trash: onTrash()
+            case .toggleRead: onToggleRead()
+            case .snooze: onSnooze()
+            }
+        } label: {
+            Image(systemName: action.symbol(isUnread: isUnread))
+                .font(.system(size: ThreadRowActionLayout.iconSize * fontScale))
+                .foregroundStyle(inked(.secondary, emphasis: 0.8))
+                .padding(.horizontal, ThreadRowActionLayout.iconPaddingH)
+                .padding(.vertical, ThreadRowActionLayout.iconPaddingV)
+                // Dense row: expand hit without inflating the 18pt trailing strip.
+                .padding(.vertical, ThreadRowActionLayout.hitExtraV)
+                .contentShape(Rectangle())
+                .padding(.vertical, -ThreadRowActionLayout.hitExtraV)
         }
         .buttonStyle(PressScaleButtonStyle())
-        .help(icon == "star" ? (filled ? "Unstar" : "Star")
-              : icon == "archivebox" ? "Archive"
-              : icon == "clock" ? "Snooze"
-              : "Trash")
-        .accessibilityLabel(icon == "star" ? (filled ? "Unstar" : "Star")
-                            : icon == "archivebox" ? "Archive"
-                            : icon == "clock" ? "Snooze"
-                            : "Trash")
+        .help(title)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier("rowAction.\(action.rawValue)")
     }
 
     private var relativeFormat: Date.FormatStyle {
