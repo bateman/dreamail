@@ -228,7 +228,7 @@ Aggiornato il 25 novembre 2026.
 
 ### Avvio, build, aggiornamenti
 
-- ☑ **C-01** Build locale e avvio (`make run DEMO=0` o `make install`).
+- ☑ **C-01** Build locale e avvio (`make run` o `make install`).
 - ☑ **C-02** Account Gmail reale collegato e in uso.
 - ☐ **C-03** Pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub.
 - ☐ **C-04** `make install`: controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto).
@@ -290,7 +290,7 @@ Aggiornato il 25 novembre 2026.
 
 ### Aggiunti dalle PR unite dopo il 25 novembre 2026
 
-- ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme. **Provato dal proprietario il 25 novembre 2026: non superato** (più lento di prima, corpo tagliato, 20–30 s su alcune mail alla prima apertura); correzione nella PR #59.
+- ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme. **Provato dal proprietario il 25 novembre 2026: non superato** (più lento di prima, corpo tagliato, 20–30 s su alcune mail alla prima apertura); correzione nella PR #59. Dopo la correzione (PR #59) il proprietario ha confermato che il corpo compare a tutta altezza; il logo mancante della ricevuta SumUp non è un difetto (non si vede nemmeno su Gmail web: il server non lo serve più). Resta da confermare che la velocità di apertura sia tornata normale.
 - ☐ **C-40** Inviti di calendario (PR #51): invito da Google Calendar, da Outlook/Exchange e da Apple Calendar; Accetta, Forse, Rifiuta cambiano lo stato presso l'organizzatore; riga "Reply from … goes to …"; avviso arancione se l'organizzatore non è il mittente; evento spostato chiede di nuovo; occorrenza o serie annullata senza pulsanti; risposta da un alias. Passi completi nel corpo della PR #51.
 - ☐ **C-41** Colore delle label su Gmail (PR #48): MishMail → Organize Labels → clic sul pallino di una label utente → "Color on Gmail"; il colore compare subito e, entro un minuto, su Gmail web e telefono; dopo una sync non torna indietro; "No color on Gmail" toglie davvero il colore (non verificato: la documentazione non lo dice); senza rete torna il colore vecchio con un avviso; il colore solo-Mac resta prevalente. Passi completi nel corpo della PR #48.
 - ☐ **C-42** Shortcut di Gmail (PR #50): `m` silenzia davvero su un account reale e `m` di nuovo toglie il silenzio (non verificato: l'API di Gmail potrebbe rifiutare la label `MUTED`; in quel caso la conversazione torna con un avviso); `+` / `-` importanza; `v` sposta, anche da una vista label, dal Cestino, con righe spuntate di due account e dalla barra della conversazione con altre righe spuntate; `n` / `p` / `;` / `:` in una conversazione; tutti i tasti su tastiera italiana. Passi completi nel corpo della PR #50.
@@ -299,6 +299,8 @@ Aggiornato il 25 novembre 2026.
 - ☐ **C-45** Google Calendar (PR #55 e #57, solo con `MISHMAIL_CALENDAR = YES` in `Local.xcconfig`, da provare quando l'interfaccia è unita): consenso reale; risposta a un invito di un organizzatore Google (deve ricevere una sola notifica: non verificato); risposta a un invito Outlook; "Add to Google Calendar" su un evento già presente (non verificato cosa fa Google con un identificativo esistente); rimozione dell'account: permesso e calendari scelti spariscono.
 - ☐ **C-46** Azioni al passaggio del mouse (PR #52): con il mouse su una riga della lista compaiono, da sinistra, archivia, cestina, segna come non letta/letta, posticipa; ciascuna agisce su quella riga senza aprire la conversazione; la stella è a sinistra del mittente; la data non è tagliata con testo grande; la riga non salta entrando e uscendo con il mouse; resa con il pannello di lettura aperto (lista stretta).
 - ☐ **C-47** Badge dei non letti per account (PR #58): nel selettore degli account ogni foto profilo ha il suo numero in alto a destra, sopra l'anello; sparisce a zero; "99+" oltre 99; nessun badge su "tutti gli account"; la somma coincide con il Dock se il badge del Dock conta tutti gli account; alone e contrasto in modalità chiara e scura.
+- ☐ **C-48** Impostazioni per account (PR #60): MishMail → ⌘, → Accounts: ogni account ha il proprio interruttore "Show sender and subject in notifications" (gli account esistenti mantengono la scelta di prima); con l'interruttore acceso su un account e spento su un altro, le notifiche del secondo restano generiche; spegnendolo, le notifiche già consegnate di quell'account spariscono dal Centro notifiche (non verificato contro un vero Centro notifiche); "Show Filters…" apre i filtri di quell'account.
+- ☐ **C-49** Intestazioni della lista più scure (PR #64) e `make run` con l'account reale (PR #66): "Today", "Yesterday" e le altre sono più scure di mittente e oggetto dei messaggi letti, in modalità chiara e scura; `make run` apre l'account reale, `make run DEMO=1` la casella finta.
 
 ## Ondata 3 — parità Gmail
 
@@ -422,4 +424,11 @@ Aggiornato il 25 novembre 2026.
 | 4A | `feature/google-calendar-ui` | #57 | Unito (interfaccia, dietro `MISHMAIL_CALENDAR`); da provare con account reali (C-45) |
 | 3D | `feature/snooze-gmail-alignment` | #47 | Unito |
 | — | `ux/account-avatar-unread-badge` | #58 | Unito |
-| — | `perf/remote-image-cache-regression` | #59 | In lavorazione: regressione di #42 segnalata dal proprietario (corpo tagliato e 20–30 s alla prima apertura con immagini lente) |
+| — | `perf/remote-image-cache-regression` | #59 | Unito: l'altezza del corpo si misura appena la pagina è pronta, senza aspettare le immagini. Innesco probabile del difetto: #40 (immagini remote per impostazione predefinita), non #42 |
+| — | `ux/per-account-settings` | #60 | Unito |
+| — | `ux/darker-section-headers` | #64 | Unito (livello semplice) |
+| — | `chore/make-run-real-account-default` | #66 | Unito (livello semplice) |
+| — | `feature/account-signatures` | #61 | In review |
+| — | `ux/account-rail` | #62 | In lavorazione (livello basso rischio) |
+| — | `ux/gmail-style-sidebar` | #63 | In lavorazione |
+| — | `ux/restore-window-size` | #65 | In lavorazione (livello basso rischio) |

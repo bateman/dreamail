@@ -2023,6 +2023,7 @@ struct ComposeRequest: Identifiable {
         rebuildMetadataIfNeeded()
         reloadSnippets()
         seedDefaultSnippetsIfNeeded()
+        reloadSignatures()
 
         // Send-as identities before firing due scheduled sends, so From
         // headers get alias display names rather than bare emails.
@@ -5053,6 +5054,10 @@ struct ComposeRequest: Identifiable {
     /// (and the startup seed) refreshes it after writing, so compose's `/`
     /// picker and Settings' table update live without a manual reload.
     private(set) var allSnippets: [Snippet] = []
+
+    /// Every account's signatures and defaults (`SignatureStore`). Written
+    /// only by `MailStore+Signatures`.
+    var signatureBook: SignatureBook = .empty
 
     private func reloadSnippets() {
         allSnippets = (try? db.read { try Snippet.order(Column("name")).fetchAll($0) }) ?? []

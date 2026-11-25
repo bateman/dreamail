@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.18
+Versione: 0.19
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -68,6 +68,9 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-054 | **Nel dubbio, come fa Gmail** | Quando una richiesta lascia aperta una scelta e serve un'assunzione, si prende il comportamento di Gmail (prima il web) e la si dichiara nel messaggio che avvia il lavoro, senza fermarsi a chiedere. Le decisioni già registrate che si scostano da Gmail di proposito restano valide. Regola scritta anche in `CLAUDE.md`. |
 | DEC-055 | **Firme per account** | Più firme con nome per account, una predefinita per i nuovi messaggi e una per risposte e inoltri; nel database cifrato, cancellate con l'account; "Importa da Gmail" copia la firma di Gmail senza riscriverla su Gmail; in composizione la firma del mittente entra da sola, segue il cambio di mittente se non è stata modificata a mano, e si sceglie da un menu che include "Nessuna firma". |
 | DEC-056 | **Impostazioni per account** | "Show sender and subject in notifications" diventa un'impostazione di ciascun account: gli account esistenti ereditano il valore globale, i nuovi partono spenti (DEC-014). I filtri Gmail si vedono e si modificano per account. |
+| DEC-057 | **Barra laterale come Gmail e barra degli account** | La barra laterale segue Gmail: viste di sistema nel suo ordine, riga "More", sezione "Labels" con le label ad albero; ciò che è solo di MishMail (Reminders, Outbox, viste salvate) trova posto sotto "More" o in una sezione "Views". A sinistra una barra degli account sempre visibile, di colore fisso (non l'accent) diverso in modalità chiara e scura, con le foto profilo e i non letti per account; in basso Settings e, in futuro, altri collegamenti. |
+| DEC-058 | **`make run` con l'account reale** | `DEMO=0` è il predefinito; la casella finta resta per i test di interfaccia e per chi la chiede con `DEMO=1`. Il codice del demo non viene tolto. |
+| DEC-059 | **Rilasci della libreria OpenPGP** | Il workflow "Release" di `bateman/dreamail-openpgp` può essere lanciato dall'orchestratore. La libreria si compila senza LTO, perché gli oggetti in bitcode di Rust non sono leggibili da Xcode. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -465,6 +468,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-25 | **0.16** | Aggiunta DEC-050: libreria OpenPGP in un repository separato. |
 | 2026-11-25 | **0.17** | Aggiunte DEC-051 (Ed448/X448 e algoritmi deboli rifiutati, avvisi accettati), DEC-052 (e-mail prima del calendario), DEC-053 (badge dei non letti sulla foto profilo). |
 | 2026-11-25 | **0.18** | Aggiunte DEC-054 (nel dubbio, come fa Gmail), DEC-055 (firme per account), DEC-056 (impostazioni per account). |
+| 2026-11-25 | **0.19** | Aggiunte DEC-057 (barra laterale come Gmail e barra degli account), DEC-058 (`make run` con l'account reale), DEC-059 (rilasci della libreria OpenPGP). |
 
 ---
 

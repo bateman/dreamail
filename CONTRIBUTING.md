@@ -11,7 +11,8 @@ make hooks     # pre-commit runs the tests; post-merge removes merged branches a
 make test      # generate the project + run the unit tests
 make ui-test   # launch the fictional inbox and smoke-test the core UI
 make build     # build the app
-make run       # open the isolated Debug app with fictional demo mail
+make run       # open the isolated Debug app with your real account (needs signing)
+make demo      # same app with fictional demo mail (no signing needed)
 make checks    # shellcheck + Python script tests + CI pin checks (no Xcode)
 ```
 

@@ -6,6 +6,9 @@ import AppKit
 final class ComposeBodyFormatTarget {
     var apply: ((ComposeBodyEditor.FormatAction) -> Void)?
     func run(_ action: ComposeBodyEditor.FormatAction) { apply?(action) }
+    /// Rewrites the body as one undoable edit (only the changed span is
+    /// replaced) and parks the caret. False when no editor is mounted yet.
+    var replaceText: ((String, Int) -> Bool)?
 }
 
 /// Markdown-aware compose body editor.
@@ -264,6 +267,24 @@ struct ComposeBodyEditor: NSViewRepresentable {
             formatTarget?.apply = { [weak self] action in
                 self?.apply(action)
             }
+            formatTarget?.replaceText = { [weak self] newText, caret in
+                self?.replaceUndoably(with: newText, caretUTF16: caret) ?? false
+            }
+        }
+
+        /// A programmatic rewrite (a signature swap) through the text
+        /// system: shouldChangeText + didChangeText register it as one undo
+        /// step, so ⌘Z brings the text back and earlier undo records keep
+        /// pointing into the same string. Focus is not taken.
+        func replaceUndoably(with newText: String, caretUTF16: Int) -> Bool {
+            guard let textView,
+                  UndoableTextEdit.replace(in: textView, with: newText, actionName: "Signature")
+            else { return false }
+            let length = (newText as NSString).length
+            textView.setSelectedRange(NSRange(location: min(max(caretUTF16, 0), length), length: 0))
+            text.wrappedValue = newText
+            Self.highlight(textView, fontSize: fontSize)
+            return true
         }
 
         private func publishCaret(_ textView: NSTextView) {
@@ -373,22 +394,7 @@ struct ComposeBodyEditor: NSViewRepresentable {
         /// not a whole-document replacement.
         static func changedSpan(from old: String, to new: String)
             -> (range: NSRange, replacement: String)? {
-            let o = old as NSString, n = new as NSString
-            if o.length == n.length, o.isEqual(to: new) { return nil }
-            var start = 0
-            let minLen = min(o.length, n.length)
-            while start < minLen, o.character(at: start) == n.character(at: start) {
-                start += 1
-            }
-            var oEnd = o.length, nEnd = n.length
-            while oEnd > start, nEnd > start,
-                  o.character(at: oEnd - 1) == n.character(at: nEnd - 1) {
-                oEnd -= 1
-                nEnd -= 1
-            }
-            let range = NSRange(location: start, length: oEnd - start)
-            let replacement = n.substring(with: NSRange(location: start, length: nEnd - start))
-            return (range, replacement)
+            UndoableTextEdit.changedSpan(from: old, to: new)
         }
 
         // Cached once — highlight runs on every keystroke.
@@ -872,7 +878,7 @@ struct ComposeFormatBar: View {
         case .quote: action(.quote)
         case .bullet: action(.bullet)
         case .math: action(.math)
-        case .attach, .link, .snippets, .ai: break
+        case .attach, .link, .signature, .snippets, .ai: break
         }
     }
 
