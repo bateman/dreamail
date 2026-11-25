@@ -39,6 +39,7 @@ private struct MailIconModifier: ViewModifier {
     @Environment(\.sidebarRowSize) private var rowSize
     /// `.increased` inside a row drawn over the emphasized (accent) selection.
     @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.mailAccent) private var accent
 
     func body(content: Content) -> some View {
         let metrics = MailIconMetrics(rowSize: rowSize)
@@ -46,29 +47,31 @@ private struct MailIconModifier: ViewModifier {
             .font(metrics.font)
             .imageScale(.medium)
             .symbolRenderingMode(.monochrome)
-            .foregroundStyle(.mailIcon(selected: selected, prominence: prominence))
+            .foregroundStyle(.mailIcon(selected: selected, prominence: prominence, accent: accent))
             .frame(width: metrics.columnWidth)
     }
 }
 
 private struct MailRowTitleModifier: ViewModifier {
     @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.mailAccent) private var accent
 
     func body(content: Content) -> some View {
-        content.foregroundStyle(.mailRowTitle(prominence: prominence))
+        content.foregroundStyle(.mailRowTitle(prominence: prominence, accent: accent))
     }
 }
 
 extension View {
     /// The one style for sidebar glyphs (see `MailIconMetrics`), in the
     /// monochrome `mailIcon` tint: never the accent, selected or not. On the
-    /// solid accent capsule of an emphasized selection it is white.
+    /// solid accent capsule of an emphasized selection it is white (with a
+    /// custom accent: white or black, by `AccentPalette.onFill`).
     func mailIconStyle(selected: Bool) -> some View {
         modifier(MailIconModifier(selected: selected))
     }
 
-    /// Title of a navigation sidebar row: the label colour, white on an
-    /// emphasized selection (never the accent).
+    /// Title of a navigation sidebar row: the label colour, white (or the
+    /// custom accent's `onFill`) on an emphasized selection; never the accent.
     func mailRowTitleStyle() -> some View {
         modifier(MailRowTitleModifier())
     }

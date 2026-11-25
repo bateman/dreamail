@@ -104,7 +104,7 @@ enum GmailFilterDisplay {
     private static func styled(_ phrase: Phrase) -> Text {
         let lead = Text(phrase.plain).foregroundColor(.primary)
         guard !phrase.value.isEmpty else { return lead }
-        return lead + Text(phrase.value).foregroundColor(.accentColor)
+        return lead + Text(phrase.value).foregroundStyle(.accentTextOrSystem)
     }
 }
 

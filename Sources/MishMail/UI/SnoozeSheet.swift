@@ -6,6 +6,7 @@ import AppKit
 /// "aug 12") and pick from live suggestions, or choose a preset. Fully
 /// keyboard-driven: ↑/↓ move, Return picks, Esc cancels.
 struct DatePickSheet: View {
+    @Environment(\.mailAccent) private var accent
     struct Preset {
         let title: String
         let date: Date
@@ -80,9 +81,9 @@ struct DatePickSheet: View {
                         }
                         .buttonStyle(.plain)
                         .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(i == highlight ? Color.accentColor : .clear,
+                        .background(i == highlight ? accent.fillOrSystem : .clear,
                                     in: RoundedRectangle(cornerRadius: 5))
-                        .foregroundStyle(i == highlight ? Color.white : Color.primary)
+                        .foregroundStyle(i == highlight ? accent.onFillOrSystem : Color.primary)
                         .onHover { if $0 { highlight = i } }
                     }
                 }

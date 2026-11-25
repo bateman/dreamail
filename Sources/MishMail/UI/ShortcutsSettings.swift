@@ -3,6 +3,7 @@ import SwiftUI
 /// Settings pane: rebind the Gmail-style single-key shortcuts. Click a
 /// key capsule, press the new key; conflicts are refused with a warning.
 struct ShortcutsSettings: View {
+    @Environment(\.mailAccent) private var accent
     @ObservedObject var bindings: KeyBindings
     @State private var listening: ShortcutCommand?
     @State private var warning: String?
@@ -52,7 +53,7 @@ struct ShortcutsSettings: View {
                     .frame(minWidth: 44)
                     .padding(.vertical, 3).padding(.horizontal, 8)
                     .background(listening == spec.command
-                                    ? Color.accentColor.opacity(0.18)
+                                    ? accent.fillOrSystem.opacity(0.18)
                                     : Color.primary.opacity(0.06),
                                 in: RoundedRectangle(cornerRadius: 5))
             }

@@ -35,6 +35,8 @@ final class SidebarIconTintUITests: XCTestCase {
         app.launchEnvironment["MISHMAIL_DEMO"] = "1"
         app.launchEnvironment["MISHMAIL_UI_TEST"] = "1"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
+                                // A saved accent must not change what this suite sees.
+                                "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
                                 "-threadOpenStyle", "readingPane"]
         if let accent { app.launchArguments += ["-AppleAccentColor", accent] }

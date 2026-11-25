@@ -7,6 +7,7 @@ import SwiftUI
 /// RSVP does not write to any local calendar — use **Open in Calendar** (or
 /// Save / Quick Look) to hand the original `.ics` to Calendar.app.
 struct CalendarInviteCard: View {
+    @Environment(\.mailAccent) private var accent
     @Environment(MailStore.self) private var store
     let message: Message
     let attachment: AttachmentRow
@@ -70,10 +71,10 @@ struct CalendarInviteCard: View {
                 Image(systemName: invite.isCancelled
                       ? "calendar.badge.minus" : "calendar")
                     .font(.system(size: 18 * fontScale, weight: .semibold))
-                    .foregroundStyle(invite.isCancelled ? Color.secondary : Color.mailAccent)
+                    .foregroundStyle(invite.isCancelled ? Color.secondary : accent.foreground)
                     .frame(width: 28, height: 28)
                     .background(
-                        (invite.isCancelled ? Color.secondary : Color.mailAccent)
+                        (invite.isCancelled ? Color.secondary : accent.fill)
                             .opacity(0.12),
                         in: RoundedRectangle(cornerRadius: PMRadius.sm)
                     )
@@ -137,7 +138,7 @@ struct CalendarInviteCard: View {
             RoundedRectangle(cornerRadius: PMRadius.md)
                 .strokeBorder(
                     invite.isActionable
-                        ? Color.mailAccent.opacity(0.22)
+                        ? accent.fill.opacity(0.22)
                         : Color.primary.opacity(0.08),
                     lineWidth: 1)
         }

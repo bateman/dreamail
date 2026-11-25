@@ -29,6 +29,8 @@ struct LabelPill<Trailing: View>: View {
     let maxWidth: CGFloat?
     let trailing: () -> Trailing
     @Environment(\.colorScheme) private var colorScheme
+    /// On the selection the chip sits on the accent in effect.
+    @Environment(\.mailAccent) private var accent
 
     /// A chip with medium-weight text of `fontSize` points (already
     /// multiplied by the list's font scale), sized by `LabelChipMetrics`.
@@ -62,7 +64,8 @@ struct LabelPill<Trailing: View>: View {
     }
 
     var body: some View {
-        let style = LabelPillStyle.resolve(colors, appearance: .init(colorScheme), surface: surface)
+        let style = LabelPillStyle.resolve(colors, appearance: .init(colorScheme), surface: surface,
+                                           selectionFill: accent.paintsSelection ? accent.custom : nil)
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         CappedWidth(maxWidth: maxWidth ?? .infinity) {
             HStack(spacing: 4) {
