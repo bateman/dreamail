@@ -372,6 +372,9 @@ struct ContentView: View {
             AccountRail()
             interactionLayer
         }
+        .overlay(alignment: .topLeading) {
+            AccountRailTopBand(sidebarVisible: !sidebarHidden)
+        }
         // Single ComposeView host for both floating and inline so presentation
         // flips keep editor state. Floating = bottom-trailing card; inline =
         // bottom of the reading-pane column (leading inset skips sidebar/list).
@@ -1968,6 +1971,10 @@ struct Sidebar: View {
             Color.clear.frame(height: 8)
         }
         .background(Color.mailSidebar)
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxX } action: {
+            store.sidebarTrailingEdge = $0
+        }
+        .onDisappear { store.sidebarTrailingEdge = nil }
         .sheet(item: $newLabel) { request in
             NewLabelSheet(request: request)
         }

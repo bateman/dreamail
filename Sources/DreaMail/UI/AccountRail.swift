@@ -11,7 +11,7 @@ extension AccountRailPalette {
 /// (ring, unread badge), "All accounts" first when there are several, a "+"
 /// to add an account, and at the bottom the Settings button.
 struct AccountRail: View {
-    static let avatarSize: CGFloat = 40
+    static let avatarSize = AccountRailMetrics.avatarSize
     static let width = AccountRailMetrics.width
     static let showAddAccountKey = AccountRailMetrics.showAddAccountKey
     static let showAddAccountDefault = AccountRailMetrics.showAddAccountDefault
@@ -48,8 +48,8 @@ struct AccountRail: View {
         }
         .frame(width: Self.width)
         .frame(maxHeight: .infinity)
-        // Behind the title bar too, so there is no seam under the traffic
-        // lights.
+        // Behind the title bar too, so it joins the top band
+        // (`AccountRailTopBand`) with no seam.
         .background(AccountRailPalette.background.ignoresSafeArea())
         // A drop outside an account avatar still clears the dragged id.
         .onDrop(of: [.text], isTargeted: nil) { _ in
@@ -189,6 +189,30 @@ struct AccountRail: View {
             .accessibilityIdentifier("accountRail.settings")
         }
         .padding(.bottom, 10)
+    }
+}
+
+/// The top of the upside-down "L": a band in the rail's colour, as tall as the
+/// title-bar row, from the window's left edge across the window buttons to the
+/// sidebar's right edge. An overlay of the window's content, so it also covers
+/// the top of the sidebar; toolbar items (the sidebar toggle) stay above it.
+struct AccountRailTopBand: View {
+    @Environment(MailStore.self) private var store
+    let sidebarVisible: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let top = proxy.safeAreaInsets.top
+            AccountRailPalette.background
+                .frame(width: AccountRailMetrics.bandWidth(
+                           sidebarTrailing: store.sidebarTrailingEdge,
+                           sidebarVisible: sidebarVisible),
+                       height: AccountRailMetrics.bandHeight(safeAreaTop: top))
+                .offset(y: -top)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("accountRail.topBand")
+        }
+        .allowsHitTesting(false)
     }
 }
 

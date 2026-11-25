@@ -458,6 +458,10 @@ final class MailStore {
     }
     var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
 
+    /// Right edge of the sidebar in window coordinates, while it is on screen
+    /// (the account rail's top band ends there).
+    var sidebarTrailingEdge: CGFloat?
+
     /// Ask AI side panel visibility.
     var showAskAI = false
     /// The Ask AI agent loop. Created on first use, so a launch that never

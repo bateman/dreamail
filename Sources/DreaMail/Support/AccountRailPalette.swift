@@ -29,9 +29,30 @@ enum AccountRailMetrics {
     static let windowButtonsExtent: CGFloat = 80
     /// Visible margin right of the window buttons.
     static let windowButtonsMargin: CGFloat = 10
-    /// Rail width (90 pt): the window buttons plus a margin. Everything that
+    /// Avatar diameter and the rail's padding on each side of it.
+    static let avatarSize: CGFloat = 40
+    static let horizontalPadding: CGFloat = 12
+    /// Rail width (64 pt): just wide enough for the avatars. Everything that
     /// depends on the rail's width reads this constant.
-    static let width: CGFloat = windowButtonsExtent + windowButtonsMargin
+    static let width: CGFloat = avatarSize + 2 * horizontalPadding
+    /// The top band must reach at least this far from the window's left edge,
+    /// so it covers the three window buttons even when the sidebar is hidden.
+    static let bandMinimumWidth: CGFloat = windowButtonsExtent + windowButtonsMargin
+    /// Band height when the window reports no top safe area (title-bar row).
+    static let bandFallbackHeight: CGFloat = 52
+
+    /// Band height: the title-bar row, which is the window's top safe area.
+    static func bandHeight(safeAreaTop: CGFloat) -> CGFloat {
+        safeAreaTop > 0 ? safeAreaTop : bandFallbackHeight
+    }
+
+    /// Band width: from the window's left edge to the sidebar's right edge
+    /// (window coordinates), never less than `bandMinimumWidth`. A hidden
+    /// sidebar, or none measured yet, leaves the minimum.
+    static func bandWidth(sidebarTrailing: CGFloat?, sidebarVisible: Bool) -> CGFloat {
+        guard sidebarVisible, let sidebarTrailing else { return bandMinimumWidth }
+        return max(bandMinimumWidth, sidebarTrailing)
+    }
     /// Settings → Appearance: show the "+" (add account) entry. App-wide.
     static let showAddAccountKey = "showAddAccountInRail"
     static let showAddAccountDefault = true
