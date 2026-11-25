@@ -171,12 +171,16 @@ final class CalendarStubTransport: @unchecked Sendable {
         return recorded
     }
 
+    /// Synchronous: NSLock is not available from async contexts.
+    private func record(_ request: URLRequest) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        recorded.append(request)
+        return recorded.count - 1
+    }
+
     var transport: CalendarTransport {
         CalendarTransport { [self] request in
-            lock.lock()
-            recorded.append(request)
-            let index = recorded.count - 1
-            lock.unlock()
+            let index = record(request)
             let (status, body, headers) = respond(request, index)
             let response = HTTPURLResponse(url: request.url!, statusCode: status,
                                            httpVersion: nil, headerFields: headers)!
@@ -219,15 +223,16 @@ final class CalendarStubSteps: @unchecked Sendable {
         return log
     }
 
-    private func note(_ s: String) {
-        lock.lock(); log.append(s); lock.unlock()
+    private func note(_ s: String, asked: [String]? = nil) {
+        lock.lock(); defer { lock.unlock() }
+        log.append(s)
+        if let asked { askedScopes = asked }
     }
 
     var steps: CalendarAuthorization.Steps {
         CalendarAuthorization.Steps(
             authorize: { [self] scopes, hint in
-                note("authorize:\(hint)")
-                lock.lock(); askedScopes = scopes; lock.unlock()
+                note("authorize:\(hint)", asked: scopes)
                 return .init(refreshToken: "r", accessToken: "a", grantedScopes: grantedScopes)
             },
             signedInEmail: { [self] _ in
