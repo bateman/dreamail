@@ -321,6 +321,9 @@ final class MailStore {
         presentedError?.recovery ?? .none
     }
     private(set) var demoMode = DemoSeed.isActive
+    /// Label row ids whose Gmail color is being saved; the organizer
+    /// disables the Gmail swatches for them meanwhile.
+    var gmailLabelColorSaving: Set<String> = []
     /// Account ids whose saved sign-in Google has rejected (expired/revoked
     /// refresh token); the Accounts settings pane offers a "Reauthorize"
     /// button for these.
@@ -4003,6 +4006,36 @@ struct ComposeRequest: Identifiable {
         try? db.write { db in
             try db.execute(sql: "UPDATE label SET color = ? WHERE id = ?",
                            arguments: [hex, label.id])
+        }
+        reloadAccounts()
+    }
+
+    /// Sets (or removes, with nil) a user label's color on Gmail, so it
+    /// shows on the web and the phone too. Shown at once; put back if
+    /// Gmail refuses. A Mac-only color, when set, still wins on display.
+    func setGmailLabelColor(_ label: LabelRow, to color: GmailLabelColor?) {
+        guard !demoMode else {
+            showNotice("Changing label colors on Gmail is disabled in the demo inbox")
+            return
+        }
+        guard label.type == "user", !gmailLabelColorSaving.contains(label.id) else { return }
+        let client = client(for: label.accountId)
+        let pool = db
+        let id = label.id
+        gmailLabelColorSaving.insert(id)
+        Task { @MainActor [weak self] in
+            var failure: Error?
+            do {
+                try await GmailLabelColorEdit.apply(color?.colors, labelRowId: id, db: pool) { labelId, color in
+                    try await client.patchLabelColor(id: labelId, color: color)
+                }
+            } catch {
+                failure = error
+            }
+            guard let self else { return }
+            self.gmailLabelColorSaving.remove(id)
+            self.reloadAccounts()
+            if let failure { self.lastError = GmailLabelColorEdit.errorMessage(failure) }
         }
         reloadAccounts()
     }
