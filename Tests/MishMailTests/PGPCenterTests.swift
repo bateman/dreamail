@@ -30,12 +30,17 @@ final class PGPCenterTests: XCTestCase {
         mimeType: "application/pgp-signature", size: 1)]
 
     /// Raw messages handed out, with a count of requests.
-    private final class RawSource {
-        var raw: Data
-        var requests: [String] = []
+    private final class RawSource: @unchecked Sendable {
+        private let lock = NSLock()
+        private let raw: Data
+        private var asked: [String] = []
         init(_ raw: Data) { self.raw = raw }
+        var requests: [String] {
+            lock.lock(); defer { lock.unlock() }
+            return asked
+        }
         func fetch(_ id: String) async throws -> Data {
-            requests.append(id)
+            lock.withLock { asked.append(id) }
             return raw
         }
     }
