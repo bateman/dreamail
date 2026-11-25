@@ -23,7 +23,9 @@ enum CalendarScope {
     static let freeBusy = prefix + "calendar.freebusy"
 
     /// Option B of the design: availability, answering on the calendar and
-    /// "add to calendar". Pending the owner's decision.
+    /// "add to calendar". `calendar.events` (all calendars, shared ones
+    /// included) is the owner's choice (DEC-048), over the narrower
+    /// `calendar.events.owned`.
     static let recommended = [eventsFreeBusy, events, calendarListReadOnly]
 
     /// Asked for with the Calendar scopes so the grant can be checked
