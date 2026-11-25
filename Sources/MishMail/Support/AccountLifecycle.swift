@@ -299,7 +299,7 @@ enum AccountLifecycle {
     /// UserDefaults keys that belong to an account: the one-time backfill
     /// flags (key strings match `SyncEngine.performSyncNow`), the backfill
     /// cursor, its Keep-mail-from window, the category filter of each of its
-    /// labels, and the RSVPs sent from it.
+    /// labels, its sidebar disclosure state, and the RSVPs sent from it.
     static func accountDefaultsKeys(accountId: String,
                                     in defaults: UserDefaults = .standard) -> [String] {
         var keys = ["backfill.window.\(accountId)",
@@ -307,6 +307,8 @@ enum AccountLifecycle {
                     SyncEngine.attachmentRepairDefaultsKey(accountId: accountId),
                     WindowBackfill.listedKey(accountId: accountId),
                     "syncWindowDays.\(accountId)"]
+        // Which of its labels are open in the sidebar (label ids only).
+        keys += SidebarDisclosure.keys(accountId: accountId)
         // `categoryFilter.label.<account>.<labelId>` (`MailboxView.prefsKey`).
         // Gmail label ids have no dot, so a remainder with one belongs to a
         // longer address that starts with this one.

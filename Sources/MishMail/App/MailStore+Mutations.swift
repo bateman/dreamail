@@ -700,6 +700,10 @@ extension MailStore {
             return !SidebarCounts.isActivelySnoozed(t) || t.inTrash
         case .trash:
             return !t.inTrash
+        case .spam:
+            return !t.inSpam
+        case .important:
+            return t.inSpam || !t.isImportant
         case .allMail:
             return false
         default:

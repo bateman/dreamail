@@ -60,6 +60,20 @@ enum ThreadListQuery {
                    now: now)
     }
 
+    /// Gmail's Important view: the IMPORTANT system label, out of trash and
+    /// spam. Matched as a whole `labelIds` token (as `PriorityCandidates`),
+    /// so a user label whose id merely contains the word cannot match.
+    static func important() -> QueryInterfaceRequest<MailThread> {
+        MailThread.filter(Column("inTrash") == false && Column("inSpam") == false)
+            .filter(sql: "(' ' || labelIds || ' ') LIKE '% IMPORTANT %'")
+    }
+
+    /// Gmail's Spam view: what the cache holds of it (see the PR notes:
+    /// the backfill does not list spam, history and "Report spam" do).
+    static func spam() -> QueryInterfaceRequest<MailThread> {
+        MailThread.filter(Column("inSpam") == true)
+    }
+
     /// Match gmail.com's Promotions tab: in-inbox category mail, never spam.
     static func promotions() -> QueryInterfaceRequest<MailThread> {
         MailThread.filter(Column("inTrash") == false

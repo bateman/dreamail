@@ -644,6 +644,11 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// refreshed on every label sync; nil when the label has no color.
     var gmailBackgroundColor: String? = nil
     var gmailTextColor: String? = nil
+    /// Gmail's `labelListVisibility` (`labelShow`, `labelShowIfUnread`,
+    /// `labelHide`), refreshed on every label sync (v65). nil reads as
+    /// `labelShow`, Gmail's default. Drives where the sidebar shows the label
+    /// (`SidebarLabelTree`).
+    var listVisibility: String? = nil
 
     /// The colors a label is drawn with: the local pick when there is one
     /// (its text color is then chosen for contrast), else Gmail's pair.
@@ -2881,6 +2886,26 @@ final class AppDatabase: @unchecked Sendable {
             if legacyNotificationDetails {
                 try db.execute(sql: "UPDATE account SET notificationDetails = 1")
             }
+        }
+
+        // v65 (after v63 and v64): the Gmail-style sidebar. Gmail's per-label list visibility,
+        // and two partial indexes for its counts: unread live mail (the
+        // grouped per-label unread count joins `thread_label` from it) and
+        // unread spam (the Spam row).
+        m.registerMigration("v65") { db in
+            try db.alter(table: "label") { t in
+                t.add(column: "listVisibility", .text)
+            }
+            try db.execute(sql: """
+                CREATE INDEX thread_unread_live
+                ON thread(accountId)
+                WHERE isUnread = 1 AND inTrash = 0 AND inSpam = 0
+                """)
+            try db.execute(sql: """
+                CREATE INDEX thread_unread_spam
+                ON thread(accountId)
+                WHERE isUnread = 1 AND inSpam = 1
+                """)
         }
         return m
     }

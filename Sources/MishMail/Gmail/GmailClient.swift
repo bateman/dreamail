@@ -45,6 +45,9 @@ struct GLabel: Decodable {
     /// Gmail's label color, when the user picked one in Gmail. Mirrored into
     /// `LabelRow.gmailBackgroundColor` / `gmailTextColor` on every sync.
     let color: GColor?
+    /// Where Gmail lists the label: `labelShow`, `labelShowIfUnread` or
+    /// `labelHide`. Mirrored into `LabelRow.listVisibility`.
+    var labelListVisibility: String? = nil
 }
 
 struct GLabelList: Decodable { let labels: [GLabel]? }

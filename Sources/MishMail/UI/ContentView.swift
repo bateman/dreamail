@@ -1812,6 +1812,8 @@ struct Sidebar: View {
     // Driven by `/` (Gmail-style) via store.searchFocusToken.
     @FocusState private var searchFocused: Bool
     @State private var viewToDelete: SavedView?
+    @State private var disclosure = SidebarDisclosureModel()
+    @State private var newLabel: NewLabelRequest?
 
     private var confirmingViewDeleteShown: Binding<Bool> {
         Binding(
@@ -1863,13 +1865,55 @@ struct Sidebar: View {
                 // result row can land before the panel is torn down.
                 .onChange(of: searchFocused) { store.noteSearchFocused(searchFocused) }
             List(selection: bound.selectedView) {
-                Section("Views") {
+                // Gmail's system views, in Gmail's order.
+                Section {
                     sidebarItem(.inbox, badge: store.unreadCounts["inbox"])
-                    sidebarItem(.promotions, badge: store.unreadCounts["promotions"])
-                    sidebarItem(.social, badge: store.unreadCounts["social"])
                     sidebarItem(.starred, badge: store.unreadCounts["starred"])
                     sidebarItem(.snoozed, badge: store.unreadCounts["snoozed"])
-                    sidebarItem(.labels)
+                    sidebarItem(.important)
+                    sidebarItem(.sent)
+                    // Count is total drafts (not unread).
+                    sidebarItem(.drafts, badge: store.unreadCounts["drafts"])
+                    sidebarItem(.allMail)
+                    sidebarItem(.trash)
+                    // Mail waiting to go out and reminders never hide
+                    // behind "More" (Gmail lists its Outbox the same way).
+                    if outboxShown {
+                        sidebarItem(.outbox, badge: moreBadge(.outbox))
+                    }
+                    if hasReminders {
+                        sidebarItem(.reminders, badge: moreBadge(.reminders))
+                    }
+                    SidebarMoreToggle(open: disclosure.moreOpen, identifier: "sidebar.more") {
+                        disclosure.moreOpen.toggle()
+                    }
+                    if disclosure.moreOpen {
+                        moreItems
+                    } else if isBehindMore(store.selectedView) {
+                        // Closed "More": the open view stays visible.
+                        sidebarItem(store.selectedView, badge: moreBadge(store.selectedView))
+                    }
+                }
+                Section {
+                    labelTrees
+                } header: {
+                    HStack {
+                        Text("Labels")
+                        Spacer()
+                        Button {
+                            newLabel = NewLabelRequest(
+                                accountId: store.activeAccountId
+                                    ?? (store.accounts.count == 1 ? store.accounts.first?.id : nil))
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Create new label")
+                        .accessibilityLabel("Create new label")
+                        .accessibilityIdentifier("sidebar.labels.add")
+                    }
+                }
+                Section("Views") {
                     ForEach(store.savedViews) { view in
                         sidebarItem(.saved(view.id ?? -1, view.name))
                             .contextMenu {
@@ -1891,22 +1935,6 @@ struct Sidebar: View {
                         .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                }
-                Section("Mail") {
-                    sidebarItem(.allMail)
-                    sidebarItem(.sent)
-                    // Count is total drafts (not unread).
-                    sidebarItem(.drafts, badge: store.unreadCounts["drafts"])
-                    // Only surfaces once something is scheduled (Gmail-style).
-                    if !store.scheduledSends.isEmpty || store.selectedView == .scheduled {
-                        sidebarItem(.scheduled, badge: store.scheduledSends.count)
-                    }
-                    // Drafts kept locally while offline; gone once uploaded.
-                    if !store.localDrafts.isEmpty || store.selectedView == .outbox {
-                        sidebarItem(.outbox, badge: store.localDrafts.count)
-                    }
-                    sidebarItem(.reminders, badge: store.unreadCounts["reminders"])
-                    sidebarItem(.trash)
                 }
             }
             .listStyle(.sidebar)
@@ -1952,6 +1980,9 @@ struct Sidebar: View {
             Color.clear.frame(height: 8)
         }
         .background(Color.mailSidebar)
+        .sheet(item: $newLabel) { request in
+            NewLabelSheet(request: request)
+        }
         .confirmationDialog(
             "Delete saved view?",
             isPresented: confirmingViewDeleteShown,
@@ -1967,6 +1998,95 @@ struct Sidebar: View {
         }
     }
 
+
+    /// What Gmail keeps behind "More", plus MishMail's own views.
+    @ViewBuilder private var moreItems: some View {
+        // Only surfaces once something is scheduled (Gmail-style).
+        if !store.scheduledSends.isEmpty || store.selectedView == .scheduled {
+            sidebarItem(.scheduled, badge: moreBadge(.scheduled))
+        }
+        if !hasReminders {
+            sidebarItem(.reminders, badge: moreBadge(.reminders))
+        }
+        sidebarItem(.spam, badge: moreBadge(.spam))
+        DisclosureGroup(isExpanded: disclosureBinding(\.categoriesOpen)) {
+            sidebarItem(.promotions, badge: moreBadge(.promotions))
+            sidebarItem(.social, badge: moreBadge(.social))
+        } label: {
+            Label {
+                Text("Categories").mailRowTitleStyle()
+            } icon: {
+                Image(systemName: "tag.square").mailIconStyle(selected: false)
+            }
+            .accessibilityIdentifier("sidebar.categories")
+        }
+        // Closed "Categories": the open category stays visible.
+        if !disclosure.categoriesOpen,
+           store.selectedView == .promotions || store.selectedView == .social {
+            sidebarItem(store.selectedView, badge: moreBadge(store.selectedView))
+        }
+    }
+
+    /// Drafts kept locally while offline; gone once uploaded.
+    private var outboxShown: Bool {
+        !store.localDrafts.isEmpty || store.selectedView == .outbox
+    }
+
+    /// Any conversation with a reminder (the Reminders count).
+    private var hasReminders: Bool {
+        (store.unreadCounts["reminders"] ?? 0) > 0
+    }
+
+    /// Whether `view` only appears inside the "More" row right now.
+    private func isBehindMore(_ view: MailboxView) -> Bool {
+        switch view {
+        case .scheduled, .spam, .promotions, .social: return true
+        case .reminders: return !hasReminders
+        default: return false
+        }
+    }
+
+    private func disclosureBinding(_ path: ReferenceWritableKeyPath<SidebarDisclosureModel, Bool>) -> Binding<Bool> {
+        Binding(get: { disclosure[keyPath: path] },
+                set: { disclosure[keyPath: path] = $0 })
+    }
+
+    private func moreBadge(_ view: MailboxView) -> Int? {
+        switch view {
+        case .scheduled: return store.scheduledSends.count
+        case .outbox: return store.localDrafts.count
+        case .reminders: return store.unreadCounts["reminders"]
+        case .spam: return store.unreadCounts["spam"]
+        case .promotions: return store.unreadCounts["promotions"]
+        case .social: return store.unreadCounts["social"]
+        default: return nil
+        }
+    }
+
+    /// The labels of the account in scope; with every account in scope, one
+    /// collapsible tree per account under its name and colored dot.
+    @ViewBuilder private var labelTrees: some View {
+        let onNewLabel: (NewLabelRequest) -> Void = { newLabel = $0 }
+        if let account = store.activeAccountId {
+            SidebarLabelTreeView(accountId: account, disclosure: disclosure,
+                                 onNewLabel: onNewLabel)
+        } else if store.accounts.count == 1, let only = store.accounts.first {
+            SidebarLabelTreeView(accountId: only.id, disclosure: disclosure,
+                                 onNewLabel: onNewLabel)
+        } else {
+            ForEach(store.accounts) { account in
+                DisclosureGroup(isExpanded: Binding(
+                    get: { disclosure.accountOpen(account.id) },
+                    set: { disclosure.setAccountOpen(account.id, $0) })
+                ) {
+                    SidebarLabelTreeView(accountId: account.id, disclosure: disclosure,
+                                         onNewLabel: onNewLabel)
+                } label: {
+                    SidebarAccountHeader(account: account)
+                }
+            }
+        }
+    }
 
     /// Sidebar row, Gmail-style: a monochrome outline glyph; the selected row
     /// gets the filled glyph, a darker tint and a bold title.
@@ -2025,7 +2145,7 @@ struct Sidebar: View {
 /// A sidebar row's count, hidden at zero. Without a painted selection it
 /// is exactly the old `.badge(Int)`; on a selection the app paints in a
 /// custom accent the number takes the selection ink (`SidebarBadgeStyle`).
-private struct SidebarCount: ViewModifier {
+struct SidebarCount: ViewModifier {
     let count: Int
     let painted: Bool
 

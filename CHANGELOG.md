@@ -6,6 +6,24 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Sidebar like Gmail.** System views in Gmail's order with Important, a
+  "More" row (Scheduled, Reminders, Spam, Categories), and your labels as a
+  tree with colours, unread counts and Gmail's show/hide setting. "+" next to
+  Labels creates a label, also nested. Outbox and Reminders stay visible when
+  they hold something. Spam shows what this Mac has: spam received since the
+  account was added; older spam stays on Gmail. The all-labels view moved to
+  Go ▸ Labels (`g l`). Switching account while a label is open goes to the
+  Inbox.
+
+- **The window reopens as you left it.** At launch the main window comes back
+  with the size and position it had when it was closed.
+
+- **Account rail.** An always-visible strip left of the sidebar shows one
+  avatar per account with its unread count, "All accounts" when there are
+  several, "+" to add an account, and Settings at the bottom. It replaces the
+  account switcher and the Settings row in the sidebar; ⌘1…⌘9 work as before.
+  A window narrower than 1144 pt now uses the compact layout.
+
 - **A remote image that fails to load is hidden.** With remote images allowed,
   a failed image without alternative text now shows nothing, as in Gmail,
   instead of a blue "?" icon. Images with alternative text are unchanged.
@@ -36,7 +54,7 @@ minor versions may still change behavior.
   conversation, archive, trash, mark as unread or read and snooze appear at the
   right end of the row, in this order, as in Gmail. The star now sits to the
   left of the sender.
-- **Unread count on each profile photo.** The account switcher shows each
+- **Unread count on each profile photo.** The account rail shows each
   account's unread count as a badge in the top-right corner of its photo ("99+"
   above 99). The badges add up to the Dock badge when that counts all accounts.
 - **Google Calendar interface (off).** Behind the `MISHMAIL_CALENDAR` build
