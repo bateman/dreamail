@@ -301,6 +301,9 @@ Aggiornato il 25 novembre 2026.
 - ☐ **C-47** Badge dei non letti per account (PR #58): nel selettore degli account ogni foto profilo ha il suo numero in alto a destra, sopra l'anello; sparisce a zero; "99+" oltre 99; nessun badge su "tutti gli account"; la somma coincide con il Dock se il badge del Dock conta tutti gli account; alone e contrasto in modalità chiara e scura.
 - ☐ **C-48** Impostazioni per account (PR #60): MishMail → ⌘, → Accounts: ogni account ha il proprio interruttore "Show sender and subject in notifications" (gli account esistenti mantengono la scelta di prima); con l'interruttore acceso su un account e spento su un altro, le notifiche del secondo restano generiche; spegnendolo, le notifiche già consegnate di quell'account spariscono dal Centro notifiche (non verificato contro un vero Centro notifiche); "Show Filters…" apre i filtri di quell'account.
 - ☐ **C-49** Intestazioni della lista più scure (PR #64) e `make run` con l'account reale (PR #66): "Today", "Yesterday" e le altre sono più scure di mittente e oggetto dei messaggi letti, in modalità chiara e scura; `make run` apre l'account reale, `make run DEMO=1` la casella finta.
+- ☐ **C-50** Firme per account (PR #61): MishMail → Settings (⌘,) → Signatures. Creare due firme, impostare la predefinita per i nuovi messaggi e per le risposte di ogni indirizzo; "Import from Gmail" porta le firme di Gmail (una firma con tabella resta leggibile, le immagini sono tolte e la cosa è detta). In composizione: la firma predefinita compare da sola; cambiando From la firma cambia; il menu "Insert signature / No signature / Manage signatures" la sostituisce o la toglie; un P.S. scritto sotto la firma non viene cancellato; ⌘Z annulla il cambio.
+- ☐ **C-51** Immagini fallite nascoste (PR #67): aprire la ricevuta SumUp: al posto del "?" blu non compare nulla. Da guardare: un'immagine fallita con testo alternativo e dimensioni fisse potrebbe mostrare ancora il "?" (non verificato).
+- ☐ **C-52** Barra degli account (PR #62): striscia sempre visibile a sinistra della barra laterale. Un avatar per account con il suo numero di non letti; clic cambia account; "All accounts" in cima con più account; "+" aggiunge un account; ingranaggio in basso apre Settings. ⌘1…⌘9 come prima; trascinare un avatar riordina gli account; colori in modalità chiara e scura; gli avvisi in basso (annulla) non coprono l'ingranaggio; con un solo account l'avatar appare selezionato.
 
 ## Ondata 3 — parità Gmail
 
@@ -428,7 +431,10 @@ Aggiornato il 25 novembre 2026.
 | — | `ux/per-account-settings` | #60 | Unito |
 | — | `ux/darker-section-headers` | #64 | Unito (livello semplice) |
 | — | `chore/make-run-real-account-default` | #66 | Unito (livello semplice) |
-| — | `feature/account-signatures` | #61 | In review |
-| — | `ux/account-rail` | #62 | In lavorazione (livello basso rischio) |
+| — | `feature/account-signatures` | #61 | Unito |
+| — | `ux/account-rail` | #62 | Unito (livello basso rischio) |
 | — | `ux/gmail-style-sidebar` | #63 | In lavorazione |
 | — | `ux/restore-window-size` | #65 | In lavorazione (livello basso rischio) |
+| — | `perf/remote-image-cache-regression` | #67 | Unito (livello basso rischio) |
+| — | `feature/openpgp-library-wiring` | #68 | In lavorazione (libreria v0.1.0, commit `adad8a1`) |
+| — | `docs/study-google-chat`, `docs/study-google-calendar`, `docs/study-rebranding-dreamail` | — | Studi in corso (solo documenti in `docs/studi/`) |

@@ -54,7 +54,7 @@ final class AccountRingStyleTests: XCTestCase {
         for id in ["a@x.com", "fabio@example.com", "you@example.com", "z@y.org"] {
             for bad in [nil, "", "zzz", "#12345"] as [String?] {
                 let style = AccountRingStyle.resolve(storedHex: bad, accountId: id,
-                                                     appearance: .light, surface: .sidebar)
+                                                     appearance: .light, surface: .rail)
                 XCTAssertEqual(style.color,
                                LabelRGB(hexString: AccountLabelColor.defaultHex(for: id)),
                                "\(id) \(bad ?? "nil")")
@@ -98,37 +98,30 @@ final class AccountRingStyleTests: XCTestCase {
         }
         // Light: white and near-white melt into the surfaces, saturated
         // colors do not.
-        XCTAssertTrue(hairline("#ffffff", .light, .sidebar))
-        XCTAssertTrue(hairline("#f7f7f5", .light, .sidebar))
-        XCTAssertTrue(hairline("#ffffff", .light, .popover))
+        XCTAssertTrue(hairline("#ffffff", .light, .rail))
+        XCTAssertTrue(hairline("#e4e5e8", .light, .rail))
         XCTAssertTrue(hairline("#fef1d1", .light, .groupedForm))
-        XCTAssertFalse(hairline("#0088ff", .light, .sidebar))
-        XCTAssertFalse(hairline("#000000", .light, .popover))
+        XCTAssertFalse(hairline("#0088ff", .light, .rail))
+        XCTAssertFalse(hairline("#000000", .light, .groupedForm))
         // Dark: black and near-black melt in, light colors do not.
-        XCTAssertTrue(hairline("#000000", .dark, .sidebar))
-        XCTAssertTrue(hairline("#232323", .dark, .sidebar))
-        XCTAssertTrue(hairline("#191919", .dark, .popover))
+        XCTAssertTrue(hairline("#000000", .dark, .rail))
+        XCTAssertTrue(hairline("#1a1d23", .dark, .rail))
         XCTAssertTrue(hairline("#0d3472", .dark, .groupedForm))
-        XCTAssertFalse(hairline("#ffffff", .dark, .sidebar))
-        XCTAssertFalse(hairline("#ff8d28", .dark, .popover))
+        XCTAssertFalse(hairline("#ffffff", .dark, .rail))
+        XCTAssertFalse(hairline("#ff8d28", .dark, .groupedForm))
     }
 
-    func testEveryDefaultColorIsVisibleWithoutAHairlineOnTheSidebar() {
+    func testEveryDefaultColorIsVisibleWithoutAHairlineOnTheRail() {
         // The defaults follow the avatar palette: saturated system colors
-        // that need no hairline on the sidebar in either appearance.
+        // that need no hairline on the rail in either appearance.
         for value in AccountLabelColor.defaultPalette {
             let hex = AccountLabelColor.hex(value)
             for appearance in AccountRingStyle.Appearance.allCases {
                 let style = AccountRingStyle.resolve(storedHex: hex, accountId: "a@x.com",
-                                                     appearance: appearance, surface: .sidebar)
+                                                     appearance: appearance, surface: .rail)
                 XCTAssertFalse(style.needsHairline, "\(hex) \(appearance)")
             }
         }
-    }
-
-    func testSidebarSurfaceMatchesTheSidebarBackground() {
-        XCTAssertEqual(AccountRingStyle.surfaceColors(.sidebar, .light), [LabelRGB(hex: 0xF7F7F5)])
-        XCTAssertEqual(AccountRingStyle.surfaceColors(.sidebar, .dark), [LabelRGB(hex: 0x232323)])
     }
 
     func testRingColorIsTheStoredOrDefaultSRGB() {
@@ -167,12 +160,11 @@ final class AccountRingStyleTests: XCTestCase {
                           "the hairline leaves the ring visible")
     }
 
-    /// Header and Settings: 35 pt frame, 27 pt photo (28 pt before the
-    /// ring). Popover rows: 29 pt frame, 21 pt photo (24 pt before).
-    func testPhotoKeepsAboutItsFormerSize() {
+    /// Rail: 40 pt frame, 32 pt photo. Settings: 35 pt frame, 27 pt photo.
+    func testPhotoFitsInsideTheRing() {
+        XCTAssertEqual(AccountRingMetrics(size: 40).photoDiameter, 32)
         XCTAssertEqual(AccountRingMetrics(size: 35).photoDiameter, 27)
-        XCTAssertEqual(AccountRingMetrics(size: 29).photoDiameter, 21)
-        for size in [29.0, 35.0] {
+        for size in [35.0, 40.0] {
             let m = AccountRingMetrics(size: size)
             XCTAssertEqual(m.photoDiameter + 2 * (AccountRingMetrics.ringWidth
                                                   + AccountRingMetrics.gap), size)

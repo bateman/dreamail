@@ -145,7 +145,7 @@ struct MishMailApp: App {
                 // The accent provider: environment value and `.tint` for
                 // everything in the window, sheets and popovers included.
                 .mailAccentRoot(tintsDefault: true)
-                .frame(minWidth: 900, minHeight: 560)
+                .frame(minWidth: 900 + AccountRail.width, minHeight: 560)
                 .background(MainWindowFrame())
                 .onChange(of: appThemeRaw) {
                     AppTheme.apply(.from(raw: appThemeRaw))
