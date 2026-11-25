@@ -42,7 +42,7 @@ final class ThreadRowActionsTests: XCTestCase {
             last = width
             // Each button is at least 14 pt wide (14.4 pt at the smallest
             // scale, 17 pt at scale 1) and, with the vertical hit extension,
-            // at least 20 pt tall.
+            // at least 20 pt tall (about 34 pt at scale 1).
             XCTAssertGreaterThanOrEqual(width / Double(ThreadRowHoverAction.allCases.count), 14)
             XCTAssertGreaterThanOrEqual(
                 ThreadRowActionLayout.iconSize * scale + 2 * ThreadRowActionLayout.iconPaddingV

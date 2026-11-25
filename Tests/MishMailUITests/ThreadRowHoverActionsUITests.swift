@@ -70,24 +70,16 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
     }
 
     /// A click on a button of a row that is not the selected one acts on that
-    /// row only: the reading pane keeps the open conversation.
+    /// row only: the reading pane stays as it was (here: closed).
     func testActionsOnAnUnselectedRowLeaveTheReadingPaneAlone() {
         let app = launch()
         let read = row(app, "t3")      // read, and not the open conversation
         let other = row(app, "t4")     // read too
         XCTAssertTrue(read.waitForExistence(timeout: 10), "demo inbox should load")
         XCTAssertTrue(other.waitForExistence(timeout: 5))
-        // Nothing is open at launch: open the top conversation, t1.
-        let top = row(app, "t1")
-        XCTAssertTrue(top.waitForExistence(timeout: 5))
-        top.click()
+        // Nothing is open at launch (no conversation in the reading pane).
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
-        XCTAssertTrue(subject.waitForExistence(timeout: 10), "the reading pane shows a conversation")
-        let open = subject.label
-        XCTAssertFalse(open.contains("CI passed"), "t3 is not the open conversation")
-        // The list re-lays out beside the reading pane: wait for the rows.
-        XCTAssertTrue(read.waitForExistence(timeout: 10), "t3 is still listed")
-        XCTAssertTrue(other.waitForExistence(timeout: 10), "t4 is still listed")
+        XCTAssertFalse(subject.exists, "no conversation is open at launch")
         XCTAssertTrue(read.label.hasPrefix("Read"), "t3 starts read: \(read.label)")
 
         read.hover()
@@ -96,7 +88,8 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         toggle.click()
         XCTAssertTrue(UITestWait.until { read.label.hasPrefix("Unread") },
                       "mark unread applied to the row: \(read.label)")
-        XCTAssertEqual(subject.label, open, "the reading pane did not change")
+        XCTAssertFalse(subject.waitForExistence(timeout: 2),
+                       "acting on a row must not open its conversation")
 
         other.hover()
         let trash = button(other, "trash")
@@ -104,7 +97,8 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         trash.click()
         XCTAssertTrue(other.waitForNonExistence(timeout: 10), "trash removed that row")
         XCTAssertTrue(read.exists, "and only that row")
-        XCTAssertEqual(subject.label, open, "the reading pane did not change")
+        XCTAssertFalse(subject.waitForExistence(timeout: 2),
+                       "the reading pane did not change")
     }
 }
 
