@@ -379,21 +379,4 @@ final class AccentColorTests: XCTestCase {
         XCTAssertNil(SelectionInk.color(prominence: .standard, accent: red))
         XCTAssertNil(SelectionInk.color(prominence: .increased, accent: .default))
     }
-
-    /// The ink a selected row draws on the painted accent, per accent: the
-    /// UI suite renders the red case (white ink); the yellow one (black
-    /// ink) is the same drawing path, so the rule is checked here.
-    func testSelectionInkOnRedIsWhiteAndOnYellowIsBlack() throws {
-        for (hex, ink) in [(0xD0201A, "#ffffff"), (0xFFCC00, "#000000")] {
-            let accent = MailAccent(custom: LabelRGB(hex: hex))
-            if #available(macOS 26, *) {
-                XCTAssertNotNil(SelectionInk.color(prominence: .increased, accent: accent),
-                                "a selected row draws the ink on \(hex)")
-            }
-            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-                let drawn = try XCTUnwrap(AppearanceColorSupport.resolve(accent.nsColor(\.onFill), in: appearance))
-                XCTAssertEqual(PickedColor.hex(from: drawn), ink, "ink on \(String(hex, radix: 16)) in \(appearance.rawValue)")
-            }
-        }
-    }
 }

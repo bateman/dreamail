@@ -29,13 +29,13 @@ final class AccentColorUITests: XCTestCase {
         try checkSelections(Self.red)
     }
 
-    // No yellow launch: black ink is rendered by the Settings test below
-    // (the #eb5757 swatch), and black on #ffcc00 is the rule's business,
-    // checked by AccentColorTests.testSelectionInkOnRedIsWhiteAndOnYellowIsBlack.
+    // No yellow launch: the Settings test below renders black ink (the
+    // #eb5757 swatch) in the sidebar and the thread list, and black on
+    // #ffcc00 is the rule's business (AccentColorTests, `spread`).
 
     /// The real feature path: pick a swatch in Settings → Appearance, and
-    /// the main window's selected sidebar row is repainted without a
-    /// relaunch; Default brings the system highlight back. No `-accentColor`
+    /// the main window's selected sidebar and thread rows are repainted
+    /// without a relaunch; Default brings the system highlight back. No `-accentColor`
     /// argument here: the argument domain would hide what Settings writes.
     func testPickingASwatchInSettingsRepaintsTheSidebarLive() throws {
         let (app, main) = launch(accentArgument: nil)
@@ -52,6 +52,9 @@ final class AccentColorUITests: XCTestCase {
         try refocus(inbox, app: app, main: main)
         try assertRow(strip, in: main, is: .accent(Self.redSwatch), "sidebar, after picking Red")
         try assertNoSystemBlue(around: inbox, in: main, "sidebar, after picking Red")
+        // The thread list draws the same black ink on its selected row.
+        let selected = try focusThreadList(app: app, window: main, accent: Self.redSwatch)
+        try assertRow(selected, in: main, is: .accent(Self.redSwatch), "thread list, after picking Red")
 
         // Default again: the system highlight is back.
         try setAccent(app: app, swatch: nil)

@@ -182,11 +182,10 @@ enum DemoSeed {
         return userLabels.filter { smallLabelIds.contains($0.id) }
     }
 
-    /// The labels the demo threads carry, plus the ones the UI tests name:
-    /// the picker's short list, and the nested Clients/… and Vendors/… trees.
+    /// The labels the demo threads carry, plus the nested Clients/… and
+    /// Vendors/… trees the sidebar tests open.
     static let smallLabelIds: Set<String> = [
         "Label_work", "Label_research", "Label_personal", "Label_investment",
-        "Label_travel", "Label_family", "Label_friends",
         "Label_clients", "Label_clients_acme", "Label_clients_northwind", "Label_clients_brightloop",
         "Label_vendors", "Label_vendors_aws", "Label_vendors_stripe",
     ]
