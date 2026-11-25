@@ -17,10 +17,14 @@ import Foundation
 ///   the link text names another address.
 ///
 /// Everything else goes: scripts, styles, `<link>`, frames, forms, images
-/// (counted: nothing remote is fetched, at render or by the recipient's
-/// client from what DreaMail sends), event handlers, classes and ids, and
-/// any style with `url(`, `expression`, `position`, escapes, or a negative
-/// margin (which could pull it over the text around it). Text is escaped.
+/// (nothing remote is fetched, at render or by the recipient's client from
+/// what DreaMail sends), event handlers, classes and ids, declarations, and
+/// any style with `url(`, `expression`, `position`, escapes, a negative
+/// value, a line height under one line, `height` or `max-height` (which
+/// could pull it over the text around it). Text is escaped. Input over
+/// 10,000 characters, nesting deeper than `maxDepth`, or a rebuild that
+/// would break either limit keeps no HTML at all, so what Settings shows,
+/// the compose preview and the sent message always agree.
 enum SignatureHTML {
     struct Result: Equatable {
         var html: String
@@ -45,6 +49,9 @@ enum SignatureHTML {
     /// Deeper nesting is refused: no real signature comes near it, and the
     /// parser and `write` recurse once per level.
     static let maxDepth = 64
+
+    /// Elements whose end HTML implies (a new sibling or the parent's end).
+    static let impliedEnd: Set<String> = ["p", "li", "td", "th", "tr", "tbody", "thead", "tfoot"]
 
     /// Elements that may carry a `height` attribute.
     static let heightElements: Set<String> = ["table", "tr", "td", "th"]
@@ -101,18 +108,26 @@ enum SignatureHTML {
     /// Rebuilt HTML, or nil when nothing could be read (too large, not
     /// parseable, or no text left).
     static func sanitize(_ html: String) -> Result? {
-        guard html.utf16.count <= SignatureImport.maxInputLength,
-              let ready = prepare(html), ready.depth <= maxDepth else { return nil }
+        guard html.utf16.count <= SignatureImport.maxInputLength else { return nil }
+        let ready = prepare(html)
+        guard ready.depth <= maxDepth else { return nil }
         let wrapped = "<html><body>\(ready.html)</body></html>"
         guard let doc = try? XMLDocument(xmlString: wrapped, options: [.documentTidyHTML]),
               let root = doc.rootElement() else { return nil }
         let body = root.elements(forName: "body").first ?? root
         // The parser wraps lines; a space it leaves before a block's end
         // changes nothing on screen, so it goes too.
-        let out = (body.children ?? []).map { write($0, depth: 0) }.joined()
-            .replacingOccurrences(of: #"\s+(</(div|p|td|th|tr|li|table|tbody|thead|tfoot|ul|ol|center|h[1-6])>)"#,
-                                  with: "$1", options: .regularExpression)
+        var tooDeep = false
+        // (?<!\s): a match starts only where a run of white space starts, so
+        // a long run is scanned once, not once per character.
+        let out = (body.children ?? []).map { write($0, depth: 0, tooDeep: &tooDeep) }.joined()
+            .replacingOccurrences(
+                of: #"(?<!\s)\s+(</(div|p|td|th|tr|li|table|tbody|thead|tfoot|ul|ol|center|h[1-6]|blockquote)>)"#,
+                with: "$1", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        // The parser may add levels (tbody), escaping may lengthen: a rebuild
+        // over either limit would be refused at preview or send, so none.
+        guard !tooDeep, out.utf16.count <= SignatureImport.maxInputLength else { return nil }
         let visible = out.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
             .decodingHTMLEntities()
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -127,11 +142,15 @@ enum SignatureHTML {
     /// loses its tags, content kept, so the HTML 4 parser never meets one
     /// it rejects (`<svg>`, `<o:p>`, `<wbr>`). An opener with no end (a
     /// comment, a tag, a dropped element) ends the input there. Also
-    /// returns the deepest nesting of kept elements. Shared with
-    /// `SignatureImport`.
-    static func prepare(_ html: String) -> (html: String, depth: Int)? {
+    /// returns the deepest nesting of kept elements, counted on a stack of
+    /// open names: a closing tag that is not the innermost open element
+    /// (after the ones HTML closes by itself: p, li, td, th, tr, table
+    /// sections) is dropped, so stray closers cannot hide depth from the
+    /// count. Shared with `SignatureImport`.
+    static func prepare(_ html: String) -> (html: String, depth: Int) {
         var out = ""
-        var depth = 0, deepest = 0
+        var open: [String] = []
+        var deepest = 0
         var i = html.startIndex
         while let lt = html[i...].firstIndex(of: "<") {
             out += html[i..<lt]
@@ -170,7 +189,15 @@ enum SignatureHTML {
                 i = afterLT
                 continue
             }
-            guard let gt = html[nameEnd...].firstIndex(of: ">") else { return (out, deepest) }
+            // A "<" before the tag's ">" ends it for the parser: this "<" is text.
+            guard let stop = html[nameEnd...].firstIndex(where: { $0 == ">" || $0 == "<" })
+            else { return (out, deepest) }
+            guard html[stop] == ">" else {
+                out += "&lt;"
+                i = afterLT
+                continue
+            }
+            let gt = stop
             let name = html[nameStart..<nameEnd].lowercased()
             let tag = html[lt...gt]
             i = html.index(after: gt)
@@ -185,13 +212,24 @@ enum SignatureHTML {
                 continue
             }
             guard allowedElements.contains(name) || name == "img" else { continue }
-            out += tag
-            if name == "img" || voidElements.contains(name) || tag.hasSuffix("/>") { continue }
+            if name == "img" || voidElements.contains(name) || tag.hasSuffix("/>") {
+                if !closing { out += tag }
+                continue
+            }
             if closing {
-                depth = max(0, depth - 1)
+                while let last = open.last, last != name, impliedEnd.contains(last) {
+                    open.removeLast()
+                }
+                guard open.last == name else { continue }
+                open.removeLast()
+                out += tag
             } else {
-                depth += 1
-                deepest = max(deepest, depth)
+                if let last = open.last, last == name, impliedEnd.contains(name) {
+                    open.removeLast()
+                }
+                open.append(name)
+                deepest = max(deepest, open.count)
+                out += tag
             }
         }
         out += html[i...]
@@ -200,8 +238,7 @@ enum SignatureHTML {
 
     // MARK: - Writing
 
-    private static func write(_ node: XMLNode, depth: Int) -> String {
-        guard depth <= maxDepth else { return "" }
+    private static func write(_ node: XMLNode, depth: Int, tooDeep: inout Bool) -> String {
         switch node.kind {
         case .text:
             // HTML folds white space; the parser may wrap long lines.
@@ -210,10 +247,15 @@ enum SignatureHTML {
                 .replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression))
         case .element:
             guard let element = node as? XMLElement else { return "" }
+            // `depth` ancestors: this element is level depth + 1.
+            guard depth < maxDepth else {
+                tooDeep = true
+                return ""
+            }
             let name = (element.name ?? "").lowercased()
             if name == "img" || droppedWhole.contains(name) { return "" }
             let inner = (element.children ?? []).map {
-                write($0, depth: depth + 1)
+                write($0, depth: depth + 1, tooDeep: &tooDeep)
             }.joined()
             guard allowedElements.contains(name) else { return inner }
             var attrs = attributes(of: element, name: name)
@@ -290,7 +332,7 @@ enum SignatureHTML {
                 .trimmingCharacters(in: .whitespaces)) { return nil }
             // Nothing may pull the signature over the text around it: no
             // negative value anywhere, no line height below one line.
-            if lower.range(of: #"(^|[\s,(:])-\s*\.?[0-9]"#, options: .regularExpression) != nil {
+            if lower.range(of: #"-\s*\.?[0-9]"#, options: .regularExpression) != nil {
                 return nil
             }
             if property == "line-height", !isAtLeastOneLine(lower) { return nil }

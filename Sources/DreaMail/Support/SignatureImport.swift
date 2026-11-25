@@ -37,7 +37,7 @@ enum SignatureImport {
         s = s.replacingOccurrences(of: "\n", with: " ")
         // Comments, declarations, scripts, styles, forms and unknown tags go
         // in one linear pass (`SignatureHTML.prepare`).
-        s = SignatureHTML.prepare(s)?.html ?? ""
+        s = SignatureHTML.prepare(s).html
         let images = count(#"<img\b"#, in: s)
         s = s.replacingOccurrences(of: #"<img\b[^>]*>"#, with: "",
                                    options: [.regularExpression, .caseInsensitive])

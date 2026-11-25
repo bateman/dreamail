@@ -124,7 +124,8 @@ enum ComposeSignature {
         let plain = ComposeQuote.signatureBlockHTML(text)
         // Only in the authored head, which every builder writes first: a
         // quoted message may carry the same block (one DreaMail sent).
-        let quote = html.range(of: "<div class=\"gmail_quote\"")?.lowerBound ?? html.endIndex
+        // Gmail web writes `class="gmail_quote gmail_quote_container"`.
+        let quote = html.range(of: "<div class=\"gmail_quote")?.lowerBound ?? html.endIndex
         guard let range = html.range(of: plain, range: html.startIndex..<quote) else { return html }
         return html.replacingCharacters(in: range, with: htmlBlock(innerHTML: rich.html))
     }
