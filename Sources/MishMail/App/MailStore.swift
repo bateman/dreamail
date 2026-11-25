@@ -1944,6 +1944,8 @@ struct ComposeRequest: Identifiable {
         // Purge a pre-redaction log and age out old lines even when no
         // error is logged this session.
         DiagnosticLog.maintainAtLaunch()
+        // Earlier builds kept invite answers in plain-text UserDefaults.
+        CalendarRSVPStore.purgeLegacyDefaults()
         reloadScheduledSends()
         reloadLocalDrafts()
         await reloadPendingThreadOpCount()
@@ -4419,17 +4421,19 @@ struct ComposeRequest: Identifiable {
             showNotice("RSVP is disabled in the demo inbox")
             return
         }
+        // The card offers the buttons only then; checked again here because
+        // the To below comes from the untrusted ICS.
+        guard invite.isActionable else {
+            lastError = "This invite can't be answered."
+            return
+        }
         // Prefer a send-as address listed as ATTENDEE on the invite (the
         // address the organizer's calendar already knows), then fall back to
         // a To/Cc match, then the mailbox primary.
-        let identity = preferredRSVPIdentity(for: message, invite: invite)
+        let identity = rsvpIdentity(for: message, invite: invite)
         let fromEmail = identity.email
         let displayName = identity.displayName
         let organizer = invite.organizerEmail
-        guard !organizer.isEmpty else {
-            lastError = "This invite has no organizer to reply to."
-            return
-        }
         let attachment = invite.replyAttachment(
             status: status, attendeeEmail: fromEmail, attendeeName: displayName)
         let subject = invite.replySubject(status: status)
@@ -4447,38 +4451,70 @@ struct ComposeRequest: Identifiable {
                 replyTo: message,
                 attachments: [attachment]
             )
-            CalendarInvite.storeRSVP(
-                status, accountId: message.accountId, uid: invite.uid,
-                recurrenceIdLine: invite.recurrenceIdLine)
+            // The reply went out; failing to remember it only leaves the
+            // buttons unselected.
+            let accountId = message.accountId, messageId = message.id
+            _ = try? await db.write { db in
+                try CalendarRSVPStore.record(
+                    db, status: status, invite: invite,
+                    accountId: accountId, messageId: messageId)
+            }
             showNotice("\(status.subjectPrefix) — reply sent to \(organizer)")
         } catch {
             lastError = error.localizedDescription
         }
     }
 
-    /// Identity used on the RSVP. Order:
-    /// 1. send-as listed in the invite's ATTENDEE lines (most reliable),
-    /// 2. send-as appearing on the message To/Cc,
+    /// The answers already sent for `invites` (see `CalendarRSVPStore.current`),
+    /// by `CalendarInvite.rsvpDefaultsKey`.
+    func storedRSVPs(for invites: [CalendarInvite],
+                     accountId: String) async -> [String: CalendarInvite.RSVP] {
+        let found = try? await db.read { db in
+            var map: [String: CalendarInvite.RSVP] = [:]
+            for invite in invites {
+                if let status = try CalendarRSVPStore.current(
+                    db, invite: invite, accountId: accountId) {
+                    map[CalendarInvite.rsvpDefaultsKey(
+                        accountId: accountId, uid: invite.uid,
+                        recurrenceIdLine: invite.recurrenceIdLine)] = status
+                }
+            }
+            return map
+        }
+        return found ?? [:]
+    }
+
+    /// Identity used on the RSVP (also shown on the invite card). Order:
+    /// 1. a send-as listed in the invite's ATTENDEE lines *and* on the
+    ///    message's Delivered-To / To / Cc (the ATTENDEE list alone is the
+    ///    ICS author's choice, so it can't pick which alias answers),
+    /// 2. the send-as the message was delivered to, then one on To / Cc,
     /// 3. mailbox primary.
-    private func preferredRSVPIdentity(
+    func rsvpIdentity(
         for message: Message, invite: CalendarInvite
     ) -> (email: String, displayName: String) {
         let candidates = fromIdentities(forMailbox: message.accountId)
         let attendeeSet = Set(invite.attendeeEmails.map { $0.lowercased() })
-        if let match = candidates.first(where: { attendeeSet.contains($0.email.lowercased()) }) {
-            return (match.email, match.displayName)
-        }
-        let headerEmails: Set<String> = {
+        func emails(_ header: String) -> Set<String> {
             var set = Set<String>()
-            for header in [message.toHeader, message.ccHeader] {
-                for addr in MessageParser.splitAddresses(header) {
-                    let e = MessageParser.emailAddress(addr).lowercased()
-                    if !e.isEmpty { set.insert(e) }
-                }
+            for addr in MessageParser.splitAddresses(header) {
+                let e = MessageParser.emailAddress(addr).lowercased()
+                if !e.isEmpty { set.insert(e) }
             }
             return set
-        }()
-        if let match = candidates.first(where: { headerEmails.contains($0.email.lowercased()) }) {
+        }
+        let delivered = emails(message.deliveredTo ?? "")
+        let headerEmails = delivered
+            .union(emails(message.toHeader))
+            .union(emails(message.ccHeader))
+        if let match = candidates.first(where: {
+            let e = $0.email.lowercased()
+            return attendeeSet.contains(e) && headerEmails.contains(e)
+        }) {
+            return (match.email, match.displayName)
+        }
+        if let match = candidates.first(where: { delivered.contains($0.email.lowercased()) })
+            ?? candidates.first(where: { headerEmails.contains($0.email.lowercased()) }) {
             return (match.email, match.displayName)
         }
         if let primary = candidates.first(where: \.isPrimary) ?? candidates.first {

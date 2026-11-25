@@ -241,23 +241,6 @@ final class CalendarInviteTests: XCTestCase {
             "invite.ics")
     }
 
-    func testRSVPPersistenceRoundTrip() {
-        // Dedicated suite so we don't clobber the user's defaults.
-        let suite = "CalendarInviteTests.\(UUID().uuidString)"
-        let ud = UserDefaults(suiteName: suite)!
-        defer { ud.removePersistentDomain(forName: suite) }
-        XCTAssertNil(CalendarInvite.storedRSVP(accountId: "ron@x.com",
-                                               uid: "abc@google.com",
-                                               defaults: ud))
-        CalendarInvite.storeRSVP(.accepted, accountId: "ron@x.com",
-                                 uid: "abc@google.com", defaults: ud)
-        XCTAssertEqual(
-            CalendarInvite.storedRSVP(accountId: "ron@x.com",
-                                      uid: "abc@google.com",
-                                      defaults: ud),
-            .accepted)
-    }
-
     func testWhenDescriptionAllDay() {
         let ics = """
             BEGIN:VCALENDAR
@@ -684,24 +667,6 @@ final class CalendarInviteTests: XCTestCase {
         XCTAssertEqual(parsed?.name, "ORGANIZER")
         XCTAssertEqual(parsed?.params["CN"], "Boger; Ron")
         XCTAssertEqual(parsed?.value, "mailto:ron@x.com")
-    }
-
-    func testRSVPPersistenceIsPerRecurrenceInstance() {
-        let suite = "CalendarInviteTests.rid.\(UUID().uuidString)"
-        let ud = UserDefaults(suiteName: suite)!
-        defer { ud.removePersistentDomain(forName: suite) }
-        let rid = "RECURRENCE-ID:20260805T170000Z"
-        CalendarInvite.storeRSVP(.accepted, accountId: "ron@x.com",
-                                 uid: "series@x.com",
-                                 recurrenceIdLine: rid, defaults: ud)
-        // Master (no RID) is still unanswered.
-        XCTAssertNil(CalendarInvite.storedRSVP(
-            accountId: "ron@x.com", uid: "series@x.com", defaults: ud))
-        XCTAssertEqual(
-            CalendarInvite.storedRSVP(
-                accountId: "ron@x.com", uid: "series@x.com",
-                recurrenceIdLine: rid, defaults: ud),
-            .accepted)
     }
 
     // MARK: - Line folding + multi-VEVENT
