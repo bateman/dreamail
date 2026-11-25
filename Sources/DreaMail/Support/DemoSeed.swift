@@ -183,9 +183,12 @@ enum DemoSeed {
     }
 
     /// The labels the demo threads carry, plus the nested Clients/… and
-    /// Vendors/… trees the sidebar tests open.
+    /// Vendors/… trees the sidebar tests open, and Travel, Family and
+    /// Friends: without them SidebarLabelTreeUITests' click on Vendors'
+    /// disclosure triangle did not open it (CI, November 2026).
     static let smallLabelIds: Set<String> = [
         "Label_work", "Label_research", "Label_personal", "Label_investment",
+        "Label_travel", "Label_family", "Label_friends",
         "Label_clients", "Label_clients_acme", "Label_clients_northwind", "Label_clients_brightloop",
         "Label_vendors", "Label_vendors_aws", "Label_vendors_stripe",
     ]
