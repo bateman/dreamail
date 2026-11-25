@@ -35,7 +35,7 @@ final class AccountRailUITests: XCTestCase {
                        window.buttons[XCUIIdentifierFullScreenWindow]] {
             XCTAssertTrue(button.exists)
             XCTAssertLessThan(button.frame.maxX, railRight,
-                              "window button \(button.identifier) must lie inside the rail")
+                              "window button \(button.identifier) \(button.frame) must lie inside the rail (right edge \(railRight), window \(window.frame))")
         }
         let zoom = window.buttons[XCUIIdentifierFullScreenWindow]
         XCTAssertGreaterThanOrEqual(railRight - zoom.frame.maxX, 8,
@@ -43,7 +43,7 @@ final class AccountRailUITests: XCTestCase {
     }
 
     func testAppearanceToggleHidesAndShowsTheAddEntry() {
-        let app = launch(extra: ["-showAddAccountInRail", "YES"])
+        let app = launch()
         let add = element(app, "accountRail.add")
         XCTAssertTrue(add.waitForExistence(timeout: 10), "+ is shown by default")
 

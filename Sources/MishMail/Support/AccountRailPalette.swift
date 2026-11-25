@@ -23,12 +23,13 @@ enum AccountRailPalette {
 /// Pure measures of the account rail (the view is in `AccountRail.swift`).
 enum AccountRailMetrics {
     /// Right edge of the zoom (green) window button, measured from the
-    /// window's left edge: ~70 pt with the larger macOS 26 buttons, ~61 pt
-    /// before. The rail must cover the three buttons entirely.
-    static let windowButtonsExtent: CGFloat = 70
+    /// window's left edge. Measured on macOS 26 in CI (the UI test reports
+    /// the frame): 80 pt; it was ~61 pt before macOS 26. The rail must cover
+    /// the three buttons entirely.
+    static let windowButtonsExtent: CGFloat = 80
     /// Visible margin right of the window buttons.
     static let windowButtonsMargin: CGFloat = 10
-    /// Rail width (80 pt): the window buttons plus a margin. Everything that
+    /// Rail width (90 pt): the window buttons plus a margin. Everything that
     /// depends on the rail's width reads this constant.
     static let width: CGFloat = windowButtonsExtent + windowButtonsMargin
     /// Settings → Appearance: show the "+" (add account) entry. App-wide.

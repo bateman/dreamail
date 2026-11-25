@@ -60,7 +60,7 @@ final class AccountRailPaletteTests: XCTestCase {
     }
 
     func testRailCoversTheWindowButtonsWithAMargin() {
-        XCTAssertEqual(AccountRailMetrics.width, 80)
+        XCTAssertEqual(AccountRailMetrics.width, 90)
         XCTAssertGreaterThanOrEqual(AccountRailMetrics.width,
                                     AccountRailMetrics.windowButtonsExtent + AccountRailMetrics.windowButtonsMargin)
         XCTAssertGreaterThanOrEqual(AccountRailMetrics.windowButtonsMargin, 8)
