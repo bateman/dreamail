@@ -689,7 +689,7 @@ final class RemoteImageCacheTests: XCTestCase {
             try self.addMessage(db, account: self.me, gmailId: "m1", body: self.html([self.a, self.b]))
         }
         let store = RemoteImageStore(db: pool)
-        try await pool.write { db in
+        _ = try await pool.write { db in
             try RemoteImageCache.store(db, .init(messageId: message.id, accountId: self.me, images: [
                 .init(urlKey: RemoteImageHTML.urlKey(self.a), mimeType: "image/png", data: self.png(1)),
             ]), now: Date())
