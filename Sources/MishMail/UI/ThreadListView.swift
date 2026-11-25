@@ -2024,7 +2024,8 @@ struct ThreadRow: View, Equatable {
             Image(systemName: action.symbol(isUnread: isUnread))
                 .font(.system(size: ThreadRowActionLayout.iconSize * fontScale))
                 .foregroundStyle(inked(.secondary, emphasis: 0.8))
-                .padding(ThreadRowActionLayout.iconPadding)
+                .padding(.horizontal, ThreadRowActionLayout.iconPaddingH)
+                .padding(.vertical, ThreadRowActionLayout.iconPaddingV)
                 // Dense row: expand hit without inflating the 18pt trailing strip.
                 .pmHitTarget(extra: ThreadRowActionLayout.hitExtra)
         }
