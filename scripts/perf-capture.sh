@@ -1,7 +1,7 @@
 #!/bin/bash
 # Dump the reading-pane perf timeline from the running/just-quit Debug app.
 #
-#   1) PERF=1 make run DEMO=1
+#   1) PERF=1 make run DEMO=1  (the demo inbox)
 #   2) open a conversation, then delete 4-5 in a row (d), pausing ~1s between
 #   3) scripts/perf-capture.sh
 #
