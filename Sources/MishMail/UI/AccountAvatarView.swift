@@ -67,15 +67,6 @@ struct AccountAvatarView: View {
         return unread > 0 ? "\(base), \(unread) unread" : base
     }
 
-    /// Largest number the avatar badge shows; above it reads "99+". Lower
-    /// than the Dock's cap so the capsule stays small on a 29-35 pt avatar.
-    static let badgeCap = 99
-
-    static func badgeLabel(for count: Int) -> String {
-        if count <= 0 { return "" }
-        return count > badgeCap ? "\(badgeCap)+" : String(count)
-    }
-
     /// Outline in the surface's own color, so the badge reads as cut out of
     /// it; the window color where the avatar has no ring (no known surface).
     private var badgeOutline: Color {
@@ -87,7 +78,7 @@ struct AccountAvatarView: View {
 
     /// White on a dark red passes contrast in both appearances.
     private var unreadBadge: some View {
-        Text(Self.badgeLabel(for: unread))
+        Text(DockBadge.avatarLabel(for: unread))
             .font(.system(size: 9.5, weight: .bold).monospacedDigit())
             .foregroundStyle(.white)
             .padding(.horizontal, 4)

@@ -394,11 +394,11 @@ final class DockBadgeTests: XCTestCase {
 
     /// The avatar badge caps at 99+, lower than the Dock's 999+.
     func testAvatarBadgeLabelCapsAtNinetyNine() {
-        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 0), "")
-        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 7), "7")
-        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 99), "99")
-        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 100), "99+")
-        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 5000), "99+")
+        XCTAssertEqual(DockBadge.avatarLabel(for: 0), "")
+        XCTAssertEqual(DockBadge.avatarLabel(for: 7), "7")
+        XCTAssertEqual(DockBadge.avatarLabel(for: 99), "99")
+        XCTAssertEqual(DockBadge.avatarLabel(for: 100), "99+")
+        XCTAssertEqual(DockBadge.avatarLabel(for: 5000), "99+")
         XCTAssertEqual(DockBadge.label(for: 100), "100", "the Dock cap is unchanged")
     }
 

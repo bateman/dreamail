@@ -50,6 +50,16 @@ enum DockBadge {
         return count > cap ? "\(cap)+" : String(count)
     }
 
+    /// Largest number the avatar badge shows; above it reads "99+". Lower
+    /// than the Dock's cap so the capsule stays small on a 29-35 pt avatar.
+    static let avatarCap = 99
+
+    /// Text of the badge on an account's avatar. Empty = no badge.
+    static func avatarLabel(for count: Int) -> String {
+        if count <= 0 { return "" }
+        return count > avatarCap ? "\(avatarCap)+" : String(count)
+    }
+
     /// Number for the notification-center badge, which takes no text.
     static func systemCount(for count: Int) -> Int {
         min(max(count, 0), cap)
