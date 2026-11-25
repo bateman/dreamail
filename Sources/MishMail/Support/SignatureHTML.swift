@@ -81,7 +81,11 @@ enum SignatureHTML {
               let root = doc.rootElement() else { return nil }
         let body = root.elements(forName: "body").first ?? root
         var images = 0
+        // The parser wraps lines; a space it leaves before a block's end
+        // changes nothing on screen, so it goes too.
         let out = (body.children ?? []).map { write($0, images: &images) }.joined()
+            .replacingOccurrences(of: #"\s+(</(div|p|td|th|tr|li|table|tbody|thead|tfoot|ul|ol|center|h[1-6])>)"#,
+                                  with: "$1", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let visible = out.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
             .decodingHTMLEntities()

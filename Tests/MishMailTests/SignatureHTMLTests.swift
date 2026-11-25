@@ -36,8 +36,10 @@ final class SignatureHTMLTests: XCTestCase {
     ]
 
     private func assertPreserved(_ html: String, file: StaticString = #filePath, line: UInt = #line) {
+        // The parser may change the case of colour values (#6AA84F).
         for piece in Self.preserved {
-            XCTAssertTrue(html.contains(piece), "missing \(piece) in \(html)", file: file, line: line)
+            XCTAssertTrue(html.lowercased().contains(piece.lowercased()),
+                          "missing \(piece) in \(html)", file: file, line: line)
         }
     }
 

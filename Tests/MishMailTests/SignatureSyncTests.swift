@@ -304,6 +304,7 @@ final class SignatureSyncMigrationOrderTests: XCTestCase {
             try db.alter(table: "signature") { t in
                 t.drop(column: "gmailAddress")
                 t.drop(column: "editedHere")
+                t.drop(column: "html")
             }
             try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'v67'")
         }
