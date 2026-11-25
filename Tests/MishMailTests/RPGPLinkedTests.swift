@@ -257,18 +257,30 @@ final class RPGPLinkedTests: XCTestCase {
         XCTAssertEqual(decrypted.plaintext, Data("secret".utf8))
     }
 
-    /// GnuPG's own OCB packet (type 20) is not RFC 9580 and the library
-    /// refuses it: an error, never plaintext.
-    func testAGnuPGOCBMessageIsRefusedWithoutPlaintext() async throws {
+    /// Whether the pinned library reads GnuPG's own OCB packet (type 20,
+    /// not in RFC 9580). The pin bump that adds it flips this, and the test
+    /// below then expects the plaintext.
+    private static let pinnedLibraryReadsGnuPGOCB = false
+
+    /// Today: an error, never plaintext, shown as an unsupported format
+    /// rather than a damaged message.
+    func testAGnuPGOCBMessage() async throws {
         let bob = try gnupg.makeKey("Bob <bob@example.org>", gnupgAEAD: true)
         let (engine, _, _, _) = try makeEngine()
         _ = try await engine.importSecretKeys(try gnupg.secretKey(bob))
         let message = try gnupg.encrypt(Data("secret".utf8), to: bob, signedBy: nil)
         do {
-            let leaked = try await engine.decrypt(message)
-            XCTFail("decrypted \(leaked.plaintext.count) bytes of a non-standard packet")
+            let decrypted = try await engine.decrypt(message)
+            XCTAssertTrue(Self.pinnedLibraryReadsGnuPGOCB,
+                          "decrypted \(decrypted.plaintext.count) bytes the pinned library should refuse")
+            XCTAssertEqual(decrypted.plaintext, Data("secret".utf8))
         } catch {
-            XCTAssertNotNil(error as? PGPEngineError)
+            XCTAssertFalse(Self.pinnedLibraryReadsGnuPGOCB, "\(error)")
+            let failure = try XCTUnwrap(error as? PGPEngineError)
+            let security = PGPMessageSecurity(encryption: .failed(failure), signature: .unsigned,
+                                              fromHeader: "Alice <alice@example.org>")
+            XCTAssertEqual(PGPDisplay.body(for: security, indicator: PGPSecurityRules.indicator(for: security)),
+                           .notice(.unsupportedFormat))
         }
     }
 

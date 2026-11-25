@@ -16,6 +16,10 @@ enum PGPBodyDisplay: Sendable, Equatable {
 
 enum PGPBodyNotice: Sendable, Equatable {
     case unavailable, noSecretKey, passphraseRequired, notIntegrityProtected, cannotDecrypt
+    /// A format or algorithm the engine does not read (GnuPG's own OCB
+    /// packet, for one, which the library reports as malformed today):
+    /// not called damaged.
+    case unsupportedFormat
     /// Decrypted, but there is no text part to show.
     case noReadableText
 
@@ -31,6 +35,8 @@ enum PGPBodyNotice: Sendable, Equatable {
             return "This encrypted message failed its integrity check, so it isn’t shown. It may have been changed on the way."
         case .cannotDecrypt:
             return "This encrypted message can’t be decrypted."
+        case .unsupportedFormat:
+            return "Can’t decrypt this message: its format isn’t supported by this version of MishMail."
         case .noReadableText:
             return "This encrypted message has no text to show."
         }
@@ -89,7 +95,8 @@ enum PGPDisplay {
             case .noSecretKey: return .notice(.noSecretKey)
             case .passphraseRequired: return .notice(.passphraseRequired)
             case .notIntegrityProtected: return .notice(.notIntegrityProtected)
-            case .tooLarge, .malformed, .unsupported: return .notice(.cannotDecrypt)
+            case .malformed, .unsupported: return .notice(.unsupportedFormat)
+            case .tooLarge: return .notice(.cannotDecrypt)
             }
         case .decrypted(let result, let whole):
             guard whole, indicator.render.decryptedContent == .inline else { return .original }

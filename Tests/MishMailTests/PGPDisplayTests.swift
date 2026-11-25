@@ -112,7 +112,7 @@ final class PGPDisplayTests: XCTestCase {
             (.unavailable, .unavailable), (.noSecretKey, .noSecretKey),
             (.passphraseRequired, .passphraseRequired),
             (.notIntegrityProtected, .notIntegrityProtected),
-            (.malformed, .cannotDecrypt), (.tooLarge, .cannotDecrypt), (.unsupported, .cannotDecrypt),
+            (.malformed, .unsupportedFormat), (.unsupported, .unsupportedFormat), (.tooLarge, .cannotDecrypt),
         ]
         for (error, notice) in cases {
             let security = PGPMessageSecurity(encryption: .failed(error), signature: .unsigned,
