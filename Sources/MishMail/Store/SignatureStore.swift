@@ -2,10 +2,12 @@ import Foundation
 import GRDB
 
 /// One named signature of an account. `body` is the compose editor's own
-/// format (Markdown: bold, italic, links, lists), never HTML: the HTML a
-/// recipient sees is rendered from it at send time by the same code as the
-/// rest of the message (`ComposeQuote.authoredHeadHTML`), which escapes
-/// every character it does not itself emit.
+/// format (Markdown: bold, italic, links, lists): the HTML a recipient sees
+/// is rendered from it at send time by the same code as the rest of the
+/// message (`ComposeQuote.authoredHeadHTML`), which escapes every character
+/// it does not itself emit. A copy of a Gmail signature also keeps Gmail's
+/// look in `html` (rebuilt from an allow-list by `SignatureHTML`), which is
+/// sent instead while the body carries that signature unchanged.
 struct SignatureRecord: Codable, Identifiable, Hashable, FetchableRecord, MutablePersistableRecord {
     static let databaseTableName = "signature"
     var id: Int64?
@@ -19,6 +21,10 @@ struct SignatureRecord: Codable, Identifiable, Hashable, FetchableRecord, Mutabl
     /// The text was changed here after it came from Gmail: a later change
     /// on Gmail is shown, not applied (`SignatureStore.applyGmail`).
     var editedHere = false
+    /// The look of a Gmail copy: Gmail's HTML rebuilt by `SignatureHTML`,
+    /// sent in place of the rendered `body` while the body's signature is
+    /// this one word for word. Nil for a signature made or edited here.
+    var html: String? = nil
     mutating func didInsert(_ inserted: InsertionSuccess) { id = inserted.rowID }
 }
 
@@ -31,6 +37,8 @@ struct SignatureGmailRecord: Codable, Hashable, FetchableRecord, PersistableReco
     /// Lowercased.
     var sendAsEmail: String
     var body: String
+    /// `SignatureHTML`'s rebuild of Gmail's HTML; nil when none was kept.
+    var html: String?
     /// What the conversion left out, to say so in Settings.
     var droppedImages: Int
     var droppedLinks: Int
@@ -38,8 +46,9 @@ struct SignatureGmailRecord: Codable, Hashable, FetchableRecord, PersistableReco
 
 /// One address's signature as read from Gmail.
 enum GmailSignature: Equatable, Sendable {
-    /// Converted text, ready to store.
-    case text(String, droppedImages: Int = 0, droppedLinks: Int = 0)
+    /// Converted text (the editor's Markdown) and the look (rebuilt HTML),
+    /// ready to store.
+    case text(String, html: String? = nil, droppedImages: Int = 0, droppedLinks: Int = 0)
     /// Gmail has one, but it cannot be kept (too large, no text left, or a
     /// line compose would take for quoted mail): what is here stays.
     case unusable(reason: String)
@@ -56,8 +65,8 @@ enum GmailSignature: Equatable, Sendable {
         if ComposeSignature.saveProblem(result.body, maxLength: SignatureStore.maxBodyLength) != nil {
             return .unusable(reason: "a line MishMail cannot keep")
         }
-        return .text(result.body, droppedImages: result.droppedImages,
-                     droppedLinks: result.droppedLinks)
+        return .text(result.body, html: SignatureHTML.sanitize(html)?.html,
+                     droppedImages: result.droppedImages, droppedLinks: result.droppedLinks)
     }
 }
 
@@ -214,12 +223,14 @@ enum SignatureStore {
         try db.alter(table: SignatureRecord.databaseTableName) { t in
             t.add(column: "gmailAddress", .text)
             t.add(column: "editedHere", .boolean).notNull().defaults(to: false)
+            t.add(column: "html", .text)
         }
         try db.create(table: SignatureGmailRecord.databaseTableName) { t in
             t.column("accountId", .text).notNull()
                 .references("account", onDelete: .cascade)
             t.column("sendAsEmail", .text).notNull()
             t.column("body", .text).notNull()
+            t.column("html", .text)
             t.column("droppedImages", .integer).notNull().defaults(to: 0)
             t.column("droppedLinks", .integer).notNull().defaults(to: 0)
             t.primaryKey(["accountId", "sendAsEmail"])
@@ -266,6 +277,10 @@ enum SignatureStore {
             let remote = try SignatureGmailRecord.fetchOne(
                 db, key: ["accountId": row.accountId, "sendAsEmail": address])
             row.editedHere = remote?.body != clean.body
+            // The look follows the text: Gmail's while it is Gmail's text.
+            row.html = row.editedHere ? nil : remote?.html
+        } else if clean.body != row.body {
+            row.html = nil
         }
         row.name = clean.name
         row.body = clean.body
@@ -279,6 +294,7 @@ enum SignatureStore {
               let remote = try SignatureGmailRecord.fetchOne(
                 db, key: ["accountId": row.accountId, "sendAsEmail": address]) else { return }
         row.body = remote.body
+        row.html = remote.html
         row.editedHere = false
         try row.update(db)
     }
@@ -314,26 +330,29 @@ enum SignatureStore {
             .order(Column("id")).fetchAll(db)
         for (rawEmail, signature) in gmail.sorted(by: { $0.key < $1.key }) {
             let email = rawEmail.lowercased()
-            guard case .text(let body, let images, let links) = signature else { continue }
+            guard case .text(let body, let html, let images, let links) = signature else { continue }
             let prev = previous.first { $0.sendAsEmail == email }
             if let i = rows.firstIndex(where: { $0.gmailAddress == email }) {
-                if !rows[i].editedHere, rows[i].body != body {
+                if !rows[i].editedHere, rows[i].body != body || rows[i].html != html {
                     rows[i].body = body
+                    rows[i].html = html
                     try rows[i].update(db)
                     outcome.updated += 1
                 } else if rows[i].editedHere, rows[i].body == body {
                     rows[i].editedHere = false
+                    rows[i].html = html
                     try rows[i].update(db)
                 }
-            } else if prev?.body != body {
+            } else if prev?.body != body || prev?.html != html {
                 if let i = rows.firstIndex(where: { $0.gmailAddress == nil && $0.body == body }) {
                     rows[i].gmailAddress = email
+                    rows[i].html = html
                     try rows[i].update(db)
                 } else {
                     var row = SignatureRecord(
                         id: nil, accountId: accountId,
                         name: String(email.prefix(maxNameLength)), body: body,
-                        createdAt: Date(), gmailAddress: email)
+                        createdAt: Date(), gmailAddress: email, html: html)
                     try row.insert(db)
                     rows.append(row)
                     outcome.added += 1
@@ -349,7 +368,8 @@ enum SignatureStore {
                 }
             }
             try SignatureGmailRecord(accountId: accountId, sendAsEmail: email, body: body,
-                                     droppedImages: images, droppedLinks: links).save(db)
+                                     html: html, droppedImages: images,
+                                     droppedLinks: links).save(db)
         }
         // Gone from Gmail: no signature for the address any more.
         for prev in previous where gmail.keys.first(where: {

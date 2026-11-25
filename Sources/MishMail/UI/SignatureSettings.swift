@@ -135,9 +135,8 @@ struct SignatureSettings: View {
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(signature.name).font(.system(size: 13, weight: .medium))
-                                Text(signature.body.replacingOccurrences(of: "\n", with: " · "))
-                                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                                    .lineLimit(1)
+                                SignaturePreviewBox(html: Self.previewHTML(signature))
+                                    .padding(.vertical, 2)
                                 gmailNote(signature)
                             }
                             Spacer()
@@ -224,6 +223,15 @@ struct SignatureSettings: View {
             Text("No longer on Gmail.")
                 .font(.system(size: 10.5)).foregroundStyle(.orange)
         }
+    }
+
+    /// What a recipient sees: Gmail's look for an unchanged copy, else the
+    /// text as compose renders it.
+    static func previewHTML(_ signature: SignatureRecord) -> String {
+        if let html = signature.html, let rich = SignatureHTML.sanitize(html) {
+            return ComposeSignature.htmlBlock(innerHTML: rich.html)
+        }
+        return ComposeQuote.authoredHeadHTML("-- \n" + signature.body)
     }
 
     /// What the conversion of Gmail's signature left out, in words.
@@ -343,6 +351,11 @@ private struct SignatureEditor: View {
             Text("Written like a message: **bold** (⌘B), *italic* (⌘I), [link](https://…), lists with “- ”. MishMail adds the “-- ” line above it. No images.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if signature.html != nil {
+                Text("This signature has Gmail's layout and colours. A change to its text here sends it as text, without them; “Use Gmail's” brings them back.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let message = saveError ?? problem {
                 Text(message).font(.system(size: 11)).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)

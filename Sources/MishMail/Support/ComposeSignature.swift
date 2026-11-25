@@ -110,6 +110,23 @@ enum ComposeSignature {
         "<div class=\"gmail_signature\" data-smartmail=\"gmail_signature\">-- <br>\(innerHTML)</div>"
     }
 
+    /// The outgoing HTML with Gmail's look for the signature: when the text
+    /// after the last delimiter of `head` is, word for word, a signature
+    /// that kept Gmail's HTML, its rendered block is swapped for that HTML
+    /// (rebuilt again by `SignatureHTML`). A signature edited in compose, or
+    /// made in MishMail, goes out as rendered text.
+    static func withRichSignature(_ html: String, head: String,
+                                  signatures: [SignatureRecord]) -> String {
+        guard let parts = split(head) else { return html }
+        let text = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty,
+              let match = signatures.first(where: { $0.html != nil && normalizedBody($0.body) == text }),
+              let rich = match.html.flatMap({ SignatureHTML.sanitize($0) }) else { return html }
+        let plain = ComposeQuote.signatureBlockHTML(text)
+        guard let range = html.range(of: plain, options: .backwards) else { return html }
+        return html.replacingCharacters(in: range, with: htmlBlock(innerHTML: rich.html))
+    }
+
     /// Where `block` sits in `head`, intact: found, with nothing but
     /// whitespace after it (text typed below the delimiter is part of the
     /// signature by convention, so the block counts as edited).

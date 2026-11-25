@@ -202,7 +202,12 @@ final class SignatureSyncTests: XCTestCase {
 
     func testRemoteImagesAreDroppedAndCounted() throws {
         let html = "<div>Ann<img src=\"https://tracker.example.com/p.gif\"></div>"
-        XCTAssertEqual(GmailSignature.from(html: html), .text("Ann", droppedImages: 1))
+        guard case .text(let body, let rich, let images, _)? = GmailSignature.from(html: html) else {
+            return XCTFail("expected a signature")
+        }
+        XCTAssertEqual(body, "Ann")
+        XCTAssertEqual(images, 1)
+        XCTAssertEqual(rich, "<div>Ann</div>")
         let q = try makeDB()
         try apply(q, [a: GmailSignature.from(html: html)!])
         let record = try XCTUnwrap(try book(q).gmailRecord(accountId: a, email: a))
