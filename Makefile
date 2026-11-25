@@ -201,11 +201,14 @@ test: gen
 # Run the CI workflow, UI smoke tests included, on GitHub for the pushed HEAD
 # and wait for the result. The branch must be pushed. Requires the gh CLI.
 # A manual run is the only event besides a published release that runs the
-# UI job (see .github/workflows/ci.yml).
+# UI job (see .github/workflows/ci.yml). On main, as for `make release`, it
+# is the full run; on any other branch it skips the unit tests and build,
+# which the pull request runs on the same commit.
 ui-test-ci:
 	@ref=$$(git rev-parse --abbrev-ref HEAD); sha=$$(git rev-parse HEAD); \
 	start=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
-	echo "Starting CI with the UI smoke tests on $$ref ($$sha)…"; \
+	if [ "$$ref" = main ]; then what="the full CI run"; else what="the UI smoke tests"; fi; \
+	echo "Starting $$what on $$ref ($$sha)…"; \
 	gh workflow run ci.yml --ref "$$ref" || exit 1; \
 	id=""; for i in 1 2 3 4 5 6 7 8 9 10; do \
 		sleep 3; \

@@ -6,6 +6,13 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Fewer duplicate CI runs.** A change that touches only documentation
+  (`docs/`, `reviews/`, `.claude/`, `CHANGELOG.md`, `CLAUDE.md`) no longer
+  runs the macOS build and tests, on its pull request or on `main`. `make
+  ui-test-ci` on a branch other than `main` runs the UI smoke tests only: the
+  pull request has already run the unit tests on that commit. Only `main`
+  saves the build cache. On `main`, runs for different commits no longer
+  cancel each other, so every merged commit is tested.
 - **Accent colour setting.** Settings ▸ Appearance ▸ Accent color picks the
   colour for selected rows (sidebar, Settings, message list; macOS 26 and
   later), buttons, links, badges and highlights, live in every window; Default
