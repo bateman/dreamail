@@ -1,6 +1,7 @@
 # Dependencies and provenance
 
-MishMail has one third-party package, pinned in `project.yml` by full commit
+MishMail has two third-party packages (GRDB below, and the OpenPGP library in
+its own section), each pinned in `project.yml` by full commit
 SHA rather than by tag, because a tag can be moved after the fact and the
 generated Xcode project (git-ignored) carries no committed lock file. The
 table below is the bill of materials at the scale the project needs
@@ -24,6 +25,27 @@ The xcframework is trusted as DuckDuckGo published it: it has not been
 rebuilt from source or compared with an independent build. Both MIT and
 BSD 3-Clause require their notices in redistributed binaries; how a public
 release ships them is the owner's decision at distribution time.
+
+## OpenPGP library
+
+| | |
+|---|---|
+| Package | `MishMailRPGP`, the project's own OpenPGP engine over rPGP |
+| Upstream | <https://github.com/bateman/dreamail-openpgp> |
+| Release | `v0.1.0` |
+| Commit (`revision:` in `project.yml`) | `adad8a18d07c0ec10695e43bb700479d0d971dfa` |
+| Binary | `MishMailRPGP.xcframework.zip` from the `v0.1.0` GitHub release, a static library declared as a SwiftPM `binaryTarget`; built twice by the library's Release workflow and published only if both builds are identical |
+| Binary SHA-256 (declared in `Package.swift` at that commit) | `0142aaa4c25bbbfc7eca1b27d50eef8d52edd7ca6abef1f8f47a59b1d4944a94` |
+| Recorded | 25 November 2026 |
+| Contents | rPGP (`pgp` =0.21.1, MIT OR Apache-2.0) and 145 crates in all, listed with their licences in the library's `THIRD_PARTY_LICENSES.md`, which ships in the app. `cx448` has no licence text; its algorithms are refused by policy but the code is compiled in |
+| Accepted advisories (DEC-051) | RUSTSEC-2023-0071 (`rsa`, Marvin), RUSTSEC-2026-0387 (`crypto-bigint`) |
+| Linked when | always, also with `MISHMAIL_PGP` off (DEC-060); with the switch off no code path reaches it |
+
+Release `v0.1.1` of the library (commit
+`4c66295af3b5e88fb5e593b48059f7fc2dcbe6b7`, SHA-256
+`441e553914f89dc6565fddc1abd5bf643ec172d5115733914959400e3f78dd3b`) adds
+decryption of GnuPG 2.4's OCB messages; the app moves to it in a separate
+change.
 
 ## What enforces what
 

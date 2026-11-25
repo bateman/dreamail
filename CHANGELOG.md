@@ -6,6 +6,15 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **OpenPGP (off by default).** Signature check and decryption of PGP/MIME
+  and cleartext-signed mail, with an indicator in the message header, and
+  Settings → OpenPGP keys, behind the `MISHMAIL_PGP` build switch (empty by
+  default). Public keys in the encrypted database, secret keys in the
+  Keychain. A key is stored only after a confirmation that shows its
+  fingerprint and every address it claims. The rPGP-based library from
+  `dreamail-openpgp` is now linked into the app also when the switch is off;
+  with the switch off nothing reaches it and nothing is shown.
+
 - **Sidebar like Gmail.** System views in Gmail's order with Important, a
   "More" row (Scheduled, Reminders, Spam, Categories), and your labels as a
   tree with colours, unread counts and Gmail's show/hide setting. "+" next to
@@ -74,10 +83,6 @@ minor versions may still change behavior.
   always sent), add to calendar. Only the Calendar grant and the chosen
   calendars are stored, encrypted and deleted with the account. Nothing changes
   in the app.
-- **OpenPGP engine (off, not linked).** The Swift side of the rPGP-based engine
-  from the separate `dreamail-openpgp` repository (verification, decryption,
-  key import), tested against the library's contract; not part of the app build
-  yet.
 - **OpenPGP groundwork (off).** Recognition of OpenPGP/MIME and inline
   messages, exact signed-byte extraction, and the security and rendering rules,
   behind the `MISHMAIL_PGP` build switch (empty by default). No library, no
