@@ -110,10 +110,37 @@ extension MailStore {
     /// The label picker's Return / click / Space on a label row.
     func labelPickerCommit(_ label: LabelRow, thread: MailThread) {
         switch labelPicker.mode {
-        case .label: toggleLabel(thread, labelId: label.gmailLabelId)
+        case .label:
+            toggleLabel(thread, labelId: label.gmailLabelId)
+            labelPicker.changed = true
         case .move:
             moveThreads(ids: labelPicker.moveTargetIds, toLabel: label.gmailLabelId,
                         accountId: thread.accountId)
+        }
+    }
+
+    /// Return / Space on the highlighted row. A label row is applied (toggled,
+    /// or moved); Return in label mode then closes the picker, Space keeps it
+    /// open. The "Create …" row keeps its own behaviour.
+    func labelPickerActivateHighlighted(closeAfterApply: Bool) {
+        guard let thread = labelPickerThread else { return }
+        let labels = labelPickerLabels(for: thread)
+        let createName = labelPickerCreateName(for: thread)
+        let rowCount = labels.count + (createName != nil ? 1 : 0)
+        let idx = min(labelPicker.highlight, max(rowCount - 1, 0))
+        if let label = labels[safe: idx] {
+            let moveMode = labelPicker.mode == .move
+            if closeAfterApply, !LabelPickerKeyRules.returnTogglesLabel(
+                moveMode: moveMode, changed: labelPicker.changed) {
+                mailboxOverlay = nil   // Return after a pick only closes
+                return
+            }
+            labelPickerCommit(label, thread: thread)
+            if LabelPickerKeyRules.closesAfterApply(moveMode: moveMode, closeKey: closeAfterApply) {
+                mailboxOverlay = nil
+            }
+        } else if let createName {
+            createLabelAndApply(name: createName, thread: thread)
         }
     }
 
