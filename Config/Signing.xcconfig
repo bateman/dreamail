@@ -40,4 +40,10 @@ MISHMAIL_UPDATE_CHANNEL =
 // the AI features in:  MISHMAIL_AI_FEATURES = YES
 MISHMAIL_AI_FEATURES =
 
+// OpenPGP support, expanded into Info.plist as MishMailPGP. Deliberately
+// empty: with it off no OpenPGP surface is shown and no message is inspected
+// for OpenPGP structure. Set it in Local.xcconfig to build it in (today it
+// adds nothing visible: step 4B is groundwork only):  MISHMAIL_PGP = YES
+MISHMAIL_PGP =
+
 #include? "Local.xcconfig"

@@ -128,6 +128,9 @@ endef
 # Debug build may still set MISHMAIL_AI_FEATURES in Local.xcconfig.
 TRACKED_AI_FEATURES := $(shell awk -F= '/^[ \t]*MISHMAIL_AI_FEATURES[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
 SHIP_AI_FLAGS = MISHMAIL_AI_FEATURES=$(TRACKED_AI_FEATURES)
+# OpenPGP support (step 4B): the same rule, for the same reason.
+TRACKED_PGP := $(shell awk -F= '/^[ \t]*MISHMAIL_PGP[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
+SHIP_PGP_FLAGS = MISHMAIL_PGP=$(TRACKED_PGP)
 
 # The built app must carry exactly the tracked switch value.
 define check_ai_switch
@@ -142,6 +145,21 @@ define check_ai_switch
 		exit 1; \
 	fi
 	@echo "AI features in the built app: '$(TRACKED_AI_FEATURES)' (tracked configuration)."
+endef
+
+# The built app must carry exactly the tracked OpenPGP switch value.
+define check_pgp_switch
+	@built=$$(plutil -extract MishMailPGP raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
+		echo "Refusing: the built app has no MishMailPGP key in its Info.plist."; \
+		exit 1; \
+	}; \
+	if [ "$$built" != "$(TRACKED_PGP)" ]; then \
+		echo "Refusing: the built app has MishMailPGP='$$built', but the tracked"; \
+		echo "configuration says '$(TRACKED_PGP)'. Builds that leave this Mac"; \
+		echo "take the OpenPGP switch from Config/Signing.xcconfig only."; \
+		exit 1; \
+	fi
+	@echo "OpenPGP in the built app: '$(TRACKED_PGP)' (tracked configuration)."
 endef
 
 define check_ship_app
@@ -289,9 +307,10 @@ INSTALL_SPEED_FLAGS = ONLY_ACTIVE_ARCH=YES SWIFT_COMPILATION_MODE=incremental
 install: gen require-stable-signing
 	xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 		-destination '$(DESTINATION)' -derivedDataPath $(DD) -quiet \
-		$(INSTALL_SPEED_FLAGS) $(INSTALL_SIGN_FLAGS) $(SHIP_AI_FLAGS)
+		$(INSTALL_SPEED_FLAGS) $(INSTALL_SIGN_FLAGS) $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS)
 	$(call check_relauncher,$(RELEASE_APP))
 	$(call check_ai_switch,$(RELEASE_APP))
+	$(call check_pgp_switch,$(RELEASE_APP))
 	rm -rf /Applications/MishMail.app
 	ditto "$(RELEASE_APP)" /Applications/MishMail.app
 	@echo "Installed MishMail.app → /Applications (your daily driver)."
@@ -381,11 +400,11 @@ release: require-pushed test ui-test-ci
 		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \
 			CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM=$(TEAM) \
-			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS); \
+			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS); \
 	else \
 		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \
-			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS); \
+			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS); \
 	fi
 	# Notarize and staple (Developer ID builds only): the in-app updater and
 	# Gatekeeper both reject un-notarized Developer ID builds. One-time setup:
@@ -401,6 +420,7 @@ release: require-pushed test ui-test-ci
 	fi
 	$(call check_relauncher,$(SHIP_APP))
 	$(call check_ai_switch,$(SHIP_APP))
+	$(call check_pgp_switch,$(SHIP_APP))
 	$(call check_ship_app,$(SHIP_APP))
 	cd $(SHIP_DIR) && \
 		ditto -c -k --keepParent MishMail.app $(ZIP_NAME) && \
