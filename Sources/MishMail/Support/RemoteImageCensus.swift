@@ -17,8 +17,9 @@ struct RemoteImageCensus: Equatable, Sendable {
     /// Failed images shown as their alt text.
     var altShown = 0
     /// Failed, by the kind of URL: `https:` (the host, its answer, or the
-    /// network), `http:` (refused by the CSP), `data:`/`cid:`, and anything
-    /// else (relative, empty, another scheme: nothing to load).
+    /// network), `http:` (requested over https through the CSP's
+    /// `upgrade-insecure-requests`, and that failed), `data:`/`cid:`, and
+    /// anything else (relative, empty, another scheme: nothing to load).
     var remote = 0
     var insecure = 0
     var inline = 0

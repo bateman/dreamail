@@ -155,7 +155,9 @@ enum HTMLBodyLayout {
     /// content cannot steer. A named element (`<img name="documentElement">`,
     /// `<form>` with `<input name="classList">`) shadows `document.x` or a
     /// form's own properties, so these go through the prototypes' own
-    /// getters and methods instead.
+    /// getters and methods instead. Used by every script the app injects
+    /// into message documents that reads the document (image events, census,
+    /// layout and measure).
     static let safeDOMJS = """
     var SAFE = (function(){
       function getter(proto, name){
@@ -163,6 +165,9 @@ enum HTMLBodyLayout {
         return d && d.get;
       }
       var rootGet = getter(Document.prototype, 'documentElement');
+      var bodyGet = getter(Document.prototype, 'body');
+      var scrollHeightGet = getter(Element.prototype, 'scrollHeight');
+      var rect = Element.prototype.getBoundingClientRect;
       var classListGet = getter(Element.prototype, 'classList');
       var parentElementGet = getter(Node.prototype, 'parentElement');
       var parentNodeGet = getter(Node.prototype, 'parentNode');
@@ -175,6 +180,12 @@ enum HTMLBodyLayout {
           var r = rootGet.call(document);
           return (r instanceof HTMLHtmlElement) ? r : null;
         },
+        body: function(){
+          var b = bodyGet.call(document);
+          return (b instanceof HTMLBodyElement) ? b : null;
+        },
+        rect: function(el){ return rect.call(el); },
+        scrollHeight: function(el){ return scrollHeightGet.call(el); },
         one: function(sel){ return qs.call(document, sel); },
         all: function(sel){ return qsa.call(document, sel); },
         make: function(tag){ return make.call(document, tag); },
@@ -646,11 +657,11 @@ enum HTMLBodyLayout {
               if (typeof window !== 'undefined' && window.innerWidth) {
                 w = window.innerWidth;
               }
-              if ((!w || w <= 0) && document.documentElement) {
-                w = document.documentElement.clientWidth || 0;
+              if ((!w || w <= 0) && SAFE.root()) {
+                w = SAFE.root().clientWidth || 0;
               }
-              if ((!w || w <= 0) && document.body) {
-                w = document.body.clientWidth || 0;
+              if ((!w || w <= 0) && SAFE.body()) {
+                w = SAFE.body().clientWidth || 0;
               }
             } catch (e) {}
             return w > 0 ? w : MAX_W;
@@ -662,8 +673,8 @@ enum HTMLBodyLayout {
               if (typeof window !== 'undefined' && window.innerHeight) {
                 h = window.innerHeight;
               }
-              if ((!h || h <= 0) && document.documentElement) {
-                h = document.documentElement.clientHeight || 0;
+              if ((!h || h <= 0) && SAFE.root()) {
+                h = SAFE.root().clientHeight || 0;
               }
             } catch (e) {}
             return h > 0 ? h : 0;
@@ -871,7 +882,7 @@ enum HTMLBodyLayout {
               }
             } catch (e) {}
             try {
-              var els = document.querySelectorAll('[style]');
+              var els = SAFE.all('[style]');
               for (var k = 0; k < els.length; k++) {
                 var attr = els[k].getAttribute('style');
                 if (attr && HAS_VIEWPORT_UNIT.test(attr)) pinStyle(els[k].style);
@@ -896,15 +907,22 @@ enum HTMLBodyLayout {
             }
             window.__mmLastNeutralVH = vh;
             var changed = false;
-            var nodes = document.querySelectorAll('body, body *');
+            var nodes = SAFE.all('body, body *');
             for (var i = 0; i < nodes.length; i++) {
-              var el = nodes[i];
-              if (el.classList && el.classList.contains(NEUTRAL)) continue;
+              /* One node's shadowed property (a form's `classList`, `style`)
+                 must not end the walk. */
+              try { if (neutralizeNode(nodes[i], vh)) changed = true; } catch (e) {}
+            }
+            return changed;
+          }
+
+          function neutralizeNode(el, vh){
+              if (el.classList && el.classList.contains(NEUTRAL)) return false;
               var tag = (el.tagName || '').toLowerCase();
-              if (tag === 'img' || tag === 'svg' || tag === 'video' || tag === 'canvas') continue;
+              if (tag === 'img' || tag === 'svg' || tag === 'video' || tag === 'canvas') return false;
               var cs;
-              try { cs = window.getComputedStyle(el); } catch (e) { continue; }
-              if (!cs) continue;
+              try { cs = window.getComputedStyle(el); } catch (e) { return false; }
+              if (!cs) return false;
               var mh = parseFloat(cs.minHeight);
               var killMin = (mh === mh) && mh >= 200 && Math.abs(mh - vh) <= 2;
               var styleH = '';
@@ -938,25 +956,24 @@ enum HTMLBodyLayout {
               var clipsContent = nearVH && overflowClips && !styleLooksPx
                 && ((el.scrollHeight || 0) > ch + 8);
               var killHeight = nearVH && (authoredPct || authoredVh || clipsContent);
-              if (!killMin && !killHeight) continue;
+              if (!killMin && !killHeight) return false;
               if (killMin) el.style.setProperty('min-height', '0', 'important');
               if (killHeight) el.style.setProperty('height', 'auto', 'important');
               if (el.classList) el.classList.add(NEUTRAL);
-              changed = true;
-            }
-            return changed;
+              return true;
           }
 
           function measure(){
-            var body = document.body;
+            var body = SAFE.body();
             if (!body) return MIN_H;
             var bodyTop = body.getBoundingClientRect().top;
             var bottom = bodyTop;
             var kids = body.children;
             for (var i = 0; i < kids.length; i++) {
               var el = kids[i];
-              var r = el.getBoundingClientRect();
-              var sh = el.scrollHeight || 0;
+              /* Prototype calls: a `form` child can shadow its own. */
+              var r = SAFE.rect(el);
+              var sh = SAFE.scrollHeight(el) || 0;
               /* display:none → height 0. max-height:0 / height:0 overflow
                  preheaders keep full scrollHeight — never extend bottom from
                  a zero border-box (dead-gap regression for quote trails). */
@@ -1164,7 +1181,7 @@ enum HTMLBodyLayout {
              freeze and feedback state, so a mail already frozen against the
              measure/frame loop does not start it again. */
           var reinstall = false;
-          try { reinstall = document.__mmInstalled === true; document.__mmInstalled = true; } catch (e) {}
+          try { reinstall = window.__mmInstalledFor === document; window.__mmInstalledFor = document; } catch (e) {}
           if (!reinstall) {
             window.__mmLastH = 0;
             window.__mmLastVH = 0;
@@ -1219,18 +1236,18 @@ enum HTMLBodyLayout {
           try {
             if (window.__mmRO) { window.__mmRO.disconnect(); window.__mmRO = null; }
           } catch (e) {}
-          if (typeof ResizeObserver !== 'undefined' && document.body) {
+          var observedBody = SAFE.body();
+          if (typeof ResizeObserver !== 'undefined' && observedBody) {
             window.__mmRO = new ResizeObserver(function(){
               /* Re-check after host frame changes — new viewport px can make
                  previously sub-threshold min-heights match 100vh. Coalesced:
                  a resize drag delivers many callbacks per frame. */
               schedulePass(false, true);
             });
-            window.__mmRO.observe(document.body);
+            window.__mmRO.observe(observedBody);
             try {
-              if (document.documentElement) {
-                window.__mmRO.observe(document.documentElement);
-              }
+              var observedRoot = SAFE.root();
+              if (observedRoot) window.__mmRO.observe(observedRoot);
             } catch (e) {}
           }
 

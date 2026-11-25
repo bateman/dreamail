@@ -423,8 +423,7 @@ enum RemoteImageHTML {
         } else if let style = byName["style"], let raw = decoded(style) {
             handled.insert("style")
             let css = Array(raw.utf8)
-            var inner = State(replacements: state.replacements, budget: state.budget,
-                              upgrade: state.upgrade)
+            var inner = State(replacements: state.replacements, budget: state.budget)
             scanCSS(css, 0..<css.count, inline: true, &inner)
             for url in inner.urls { state.found(url) }
             state.budget = inner.budget
@@ -449,7 +448,11 @@ enum RemoteImageHTML {
         for attribute in attributes where !handled.contains(attribute.name) {
             guard !neverLoads(attribute.name, tag: tag), let raw = decoded(attribute) else { continue }
             let squeezed = raw.filter { $0 != "\t" && $0 != "\n" && $0 != "\r" }.lowercased()
-            if squeezed.contains("https:") || squeezed.contains("http:") {
+            // `//host/…` in an image position is upgraded to https before
+            // loading (`<picture><source srcset>`, `<video poster>`…).
+            let imagePosition = ["src", "srcset", "poster"].contains(attribute.name)
+            if squeezed.contains("https:") || squeezed.contains("http:")
+                || (imagePosition && squeezed.contains("//")) {
                 state.needsNetwork = true
                 return
             }

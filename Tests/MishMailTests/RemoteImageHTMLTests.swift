@@ -179,6 +179,11 @@ final class RemoteImageHTMLTests: XCTestCase {
             "<img src='//a.example/\"onerror=x'><img src=\"//a.example/'>\">",
             "<!-- <img src=//a.example/c> --><img src=\" \n//a.example/n\">",
             "<img src=//a.example/x <img src=//a.example/y>",
+            "<svg><![CDATA[<img src=//a.example/cd>]]><image href=\"//a.example/i\"/></svg><img src=//a.example/z>",
+            "<p>x</p><img src=\"//a.example/open",
+            "<img src=//a.example/ok><!-- <img src=//a.example/c",
+            "<img src=//a.example/ok><style>.a{background:url(//a.example/s)",
+            "<img src=//a.example/ok><div style=\"background:url(//a.example/v",
         ]
         for html in hostile {
             let upgraded = RemoteImageHTML.upgradingInsecureImageURLs(in: html)
@@ -355,6 +360,7 @@ final class RemoteImageHTMLTests: XCTestCase {
     func testPositionsNotRewrittenStillNeedTheNetwork() {
         let cases = [
             "<picture><source srcset=\"\(a)\"><img src=\"data:image/png;base64,AA\"></picture>",
+            "<picture><source srcset=\"//img.example.com/w.webp\"><img src=\"data:image/png;base64,AA\"></picture>",
             "<video poster=\"\(a)\"></video>",
             "<input type=image src=\"\(a)\">",
             "<svg><image href=\"\(a)\"/></svg>",

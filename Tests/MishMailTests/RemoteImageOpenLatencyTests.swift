@@ -285,6 +285,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
                   altInLink: hasAlt && !!alt.closest('a'),
                   altClass: hasAlt ? alt.className : '',
                   altColor: hasAlt ? getComputedStyle(alt).color : '',
+                  altBackground: hasAlt ? getComputedStyle(alt).backgroundColor : '',
                   complete: img.complete
                 };
               }
@@ -315,7 +316,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
 
     private func load(_ html: String, cspMeta: String = "",
                       immediate: [String: (status: Int, mime: String, body: Data)] = [:],
-                      dark: Bool = false) -> Harness {
+                      dark: Bool = false, height: CGFloat = 120) -> Harness {
         let images = ImageHost()
         images.immediate = immediate
         let pane = Pane()
@@ -335,7 +336,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         config.userContentController.add(pane, name: HTMLBodyLayout.heightHandlerName)
         let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 700, height: 900),
                               styleMask: [.borderless], backing: .buffered, defer: false)
-        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 120),
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: height),
                                 configuration: config)
         webView.navigationDelegate = pane
         if dark { webView.appearance = NSAppearance(named: .darkAqua) }
@@ -494,6 +495,8 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertEqual(states.images["logo"]?["altText"] as? String, "Logo: Example Publisher")
         XCTAssertEqual(states.images["logo"]?["altInLink"] as? Bool, true, "still the link")
         XCTAssertEqual(states.images["hero"]?["altText"] as? String, "Hero image", "whitespace folded")
+        XCTAssertEqual(states.images["hero"]?["altBackground"] as? String, "rgba(0, 0, 0, 0)",
+                       "the image's own background is not copied")
         XCTAssertEqual(states.images["markup"]?["altText"] as? String, "<b>bold</b>", "text, not markup")
         XCTAssertEqual(states.images["markup"]?["altElements"] as? Int, 0)
         // The body measures to the text, not to 1200 px of boxes.
@@ -667,10 +670,14 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         <img name="querySelectorAll" src="cid:none2@x">\
         <img name="querySelector" src="cid:none3@x">\
         <img name="createElement" src="cid:none4@x">\
-        <form><input name="classList"><input name="parentNode">\
-        <img id="blocked" src="https://images.example/hero.png" alt="x" width="300" height="100"></form>
+        <img name="body" src="cid:none5@x"><img name="body" src="cid:none6@x">\
+        <form><input name="classList"><input name="parentNode"><input name="style">\
+        <input name="getBoundingClientRect"><input name="tagName">\
+        <img id="blocked" src="https://images.example/hero.png" alt="x" width="300" height="100"></form>\
+        <div style="height:600px">tall</div>
         """
-        let h = load(html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: false))
+        // Tall enough (>= 200 px) for the viewport-height walk to run.
+        let h = load(html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: false), height: 400)
         defer { h.close() }
         try await wait { h.pane.domReady }
         _ = await h.measure()
@@ -704,6 +711,9 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertEqual(state["failed"] as? Bool, true, "\(state)")
         XCTAssertEqual(state["altShown"] as? Bool, false, "blocked keeps its placeholder: \(state)")
         XCTAssertNotEqual(state["display"] as? String, "none")
+        let measured = await h.measure()
+        let height = try XCTUnwrap(measured, "the install still reports a height")
+        XCTAssertGreaterThan(height, 600, "measured past the 600 px block: \(height)")
 
         let census: Any? = await withCheckedContinuation { done in
             h.webView.evaluateJavaScript(HTMLBodyLayout.imageCensusJS) { value, _ in
@@ -713,7 +723,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         let parsed = try XCTUnwrap(RemoteImageCensus(scriptResult: census), "the census still runs")
         XCTAssertFalse(parsed.allowed)
         XCTAssertEqual(parsed.blocked, 1, "\(parsed.text)")
-        XCTAssertEqual(parsed.failed, 4, "the missing cid: parts: \(parsed.text)")
+        XCTAssertEqual(parsed.failed, 6, "the missing cid: parts: \(parsed.text)")
     }
 
     /// With images blocked (Ask each time, Spam), a blocked image keeps the
