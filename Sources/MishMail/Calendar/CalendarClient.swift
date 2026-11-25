@@ -10,9 +10,6 @@ enum CalendarError: LocalizedError, Equatable {
     case notGranted(CalendarCapability?)
     /// The Calendar consent was given for another Google account.
     case wrongAccount
-    /// The sync token is no longer valid (410): drop the stored events of
-    /// that calendar and sync again from scratch.
-    case syncTokenExpired
     /// Quota or rate limit (429, or 403 with a rate-limit reason).
     case rateLimited(retryAfter: TimeInterval?)
     /// The user is not among the event's attendees, so has no answer to set.
@@ -29,7 +26,6 @@ enum CalendarError: LocalizedError, Equatable {
         case .notGranted: return "Google Calendar is not connected for this account."
         case .wrongAccount:
             return "Calendar access was given for a different Google account. Try again and pick the same account."
-        case .syncTokenExpired: return "Calendar sync restarted."
         case .rateLimited: return "Google Calendar asked MishMail to slow down. Try again shortly."
         case .notAnAttendee: return "You are not a guest of this event."
         case .keychainUnavailable(let status):
@@ -44,14 +40,12 @@ enum CalendarError: LocalizedError, Equatable {
     static func classify(status: Int, body: Data, retryAfterHeader: String?) -> CalendarError {
         let reason = Self.reason(in: body)
         switch status {
-        case 410:
-            return .syncTokenExpired
         case 429:
-            return .rateLimited(retryAfter: retryAfterHeader.flatMap { TimeInterval($0) })
+            return .rateLimited(retryAfter: retryAfter(retryAfterHeader))
         case 403:
             if let reason, reason.lowercased().contains("ratelimitexceeded")
                 || reason == "quotaExceeded" {
-                return .rateLimited(retryAfter: retryAfterHeader.flatMap { TimeInterval($0) })
+                return .rateLimited(retryAfter: retryAfter(retryAfterHeader))
             }
             if let reason, ["insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
                             "PERMISSION_DENIED"].contains(reason) {
@@ -61,6 +55,19 @@ enum CalendarError: LocalizedError, Equatable {
         default:
             return .http(status, reason: reason)
         }
+    }
+
+    /// `Retry-After` in seconds, or as an HTTP date (RFC 9110), as a delay
+    /// from `now`. Nil when absent or unreadable.
+    static func retryAfter(_ header: String?, now: Date = Date()) -> TimeInterval? {
+        guard let raw = header?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        if let seconds = TimeInterval(raw), seconds >= 0 { return seconds }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "GMT")
+        f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = f.date(from: raw) else { return nil }
+        return max(0, date.timeIntervalSince(now))
     }
 
     /// Google's reason token (`errors[].reason`, `details[].reason` or
@@ -90,7 +97,8 @@ struct CalendarTransport: Sendable {
     }
 
     /// Google's shared ephemeral session: no disk cache, no cookies.
-    static let session = CalendarTransport { try await GoogleHTTP.session.data(for: $0) }
+    /// Private: the only way to it is `live`, behind the switch.
+    private static let session = CalendarTransport { try await GoogleHTTP.session.data(for: $0) }
 
     /// What the app uses: the session behind the build's switch.
     static let live = gated(enabled: CalendarFeatures.isEnabled, session)
@@ -166,8 +174,6 @@ struct GCalendarListEntry: Decodable, Equatable, Sendable {
     let primary: Bool?
     /// "freeBusyReader" | "reader" | "writer" | "owner".
     let accessRole: String?
-    /// Shown in Google Calendar's own list.
-    let selected: Bool?
 }
 
 struct GCalendarList: Decodable, Sendable {
@@ -224,15 +230,13 @@ struct GCalendarEvent: Decodable, Equatable, Sendable {
     /// "opaque" (default, busy) | "transparent" (free).
     let transparency: String?
     let attendees: [GEventAttendee]?
-    let updated: String?
     /// As Google has it, not as the invitation's ICS claims.
     let organizer: GEventOrganizer?
 
     init(id: String, status: String? = "confirmed", summary: String? = nil,
          iCalUID: String? = nil, recurringEventId: String? = nil,
          start: GEventDateTime?, end: GEventDateTime?, transparency: String? = nil,
-         attendees: [GEventAttendee]? = nil, updated: String? = nil,
-         organizer: GEventOrganizer? = nil) {
+         attendees: [GEventAttendee]? = nil, organizer: GEventOrganizer? = nil) {
         self.id = id
         self.status = status
         self.summary = summary
@@ -242,7 +246,6 @@ struct GCalendarEvent: Decodable, Equatable, Sendable {
         self.end = end
         self.transparency = transparency
         self.attendees = attendees
-        self.updated = updated
         self.organizer = organizer
     }
 
@@ -255,7 +258,6 @@ struct GCalendarEvent: Decodable, Equatable, Sendable {
 struct GEventList: Decodable, Sendable {
     let items: [GCalendarEvent]?
     let nextPageToken: String?
-    let nextSyncToken: String?
     /// The calendar's time zone: what an all-day date means.
     let timeZone: String?
 }
@@ -270,10 +272,9 @@ struct GFreeBusyResponse: Decodable, Sendable {
     let calendars: [String: Calendar]?
 }
 
-/// One page set of events, and where the next incremental sync starts.
-struct CalendarSyncResult: Sendable {
+/// The events of one calendar in a window, all pages read.
+struct CalendarEventPage: Sendable {
     var events: [GCalendarEvent]
-    var nextSyncToken: String?
     var calendarTimeZone: String?
 }
 
@@ -290,11 +291,6 @@ enum CalendarResponse: String, Sendable {
     case accepted, declined, tentative
 }
 
-/// Who Google e-mails about a change made through the API (`sendUpdates`).
-enum CalendarSendUpdates: String, Sendable {
-    case all, externalOnly, none
-}
-
 // MARK: - Client
 
 /// Thin client over the Calendar API v3 for one account. Every call checks
@@ -305,8 +301,13 @@ actor CalendarClient {
     /// Google's page size limit for events.list is 2500; 250 keeps pages
     /// small and is also calendarList's maximum.
     static let pageSize = 250
-    /// A pathological server cannot keep a sync paging forever.
+    /// A pathological server cannot keep a listing paging forever.
     static let maxPages = 200
+    /// freebusy.query takes at most 50 calendars per request.
+    static let freeBusyBatch = 50
+    /// Longest invitation UID sent to Google, as `CalendarInvite` caps the
+    /// lines it echoes. A longer one is not looked up.
+    static let maxUIDBytes = CalendarInvite.Limits.maxEchoBytes
 
     private let grant: CalendarGrant
     private let transport: CalendarTransport
@@ -340,7 +341,7 @@ actor CalendarClient {
 
     /// Events overlapping `interval`, recurring ones expanded into
     /// instances by Google (`singleEvents`).
-    func events(calendarId: String, in interval: DateInterval) async throws -> CalendarSyncResult {
+    func events(calendarId: String, in interval: DateInterval) async throws -> CalendarEventPage {
         try require(.events)
         return try await pagedEvents(calendarId: calendarId, query: [
             "singleEvents": "true",
@@ -349,23 +350,8 @@ actor CalendarClient {
         ])
     }
 
-    /// Incremental sync. Without `syncToken` it is the first, full sync,
-    /// from `start` on; with one it returns only what changed, cancelled
-    /// events included. A 410 throws `syncTokenExpired`.
-    func sync(calendarId: String, syncToken: String?, from start: Date) async throws -> CalendarSyncResult {
-        try require(.events)
-        var query = ["singleEvents": "true"]
-        if let syncToken {
-            // timeMin/timeMax cannot be combined with a sync token.
-            query["syncToken"] = syncToken
-        } else {
-            query["timeMin"] = Self.rfc3339(start)
-        }
-        return try await pagedEvents(calendarId: calendarId, query: query)
-    }
-
-    private func pagedEvents(calendarId: String, query base: [String: String]) async throws -> CalendarSyncResult {
-        var result = CalendarSyncResult(events: [])
+    private func pagedEvents(calendarId: String, query base: [String: String]) async throws -> CalendarEventPage {
+        var result = CalendarEventPage(events: [])
         var pageToken: String?
         for _ in 0..<Self.maxPages {
             var query = base
@@ -375,32 +361,30 @@ actor CalendarClient {
                 "/calendars/\(Self.pathSegment(calendarId))/events", query: query)
             result.events += page.items ?? []
             result.calendarTimeZone = result.calendarTimeZone ?? page.timeZone
-            if let next = page.nextPageToken, !next.isEmpty {
-                pageToken = next
-                continue
-            }
-            result.nextSyncToken = page.nextSyncToken
-            return result
+            guard let next = page.nextPageToken, !next.isEmpty else { return result }
+            pageToken = next
         }
         throw CalendarError.badResponse
     }
 
     /// The events of one calendar with this iCalendar UID: the invitation's
     /// own event when Google put it on the calendar. Cancelled ones are
-    /// left out.
+    /// left out. An empty or over-long UID is not sent.
     func events(calendarId: String, iCalUID: String) async throws -> [GCalendarEvent] {
         try require(.events)
+        guard !iCalUID.isEmpty, iCalUID.utf8.count <= Self.maxUIDBytes else { return [] }
         let result = try await pagedEvents(calendarId: calendarId, query: ["iCalUID": iCalUID])
         return result.events.filter { $0.status != "cancelled" }
     }
 
     /// "Add to calendar" for an invitation Google did not put on the
     /// calendar: `events.import` keeps the invitation's UID, so the organizer's
-    /// later updates match it. The body is `CalendarInvitePlan.importBody`.
-    func importEvent(calendarId: String, facts: CalendarInviteFacts,
+    /// later updates match it, and lists the user as a guest so the answer
+    /// can be written on it. The body is `CalendarInvitePlan.importBody`.
+    func importEvent(calendarId: String, facts: CalendarInviteFacts, attendeeEmail: String,
                      zone: TimeZone) async throws -> GCalendarEvent {
         try require(.writeEvents)
-        guard let body = CalendarInvitePlan.importBody(facts, zone: zone) else {
+        guard let body = CalendarInvitePlan.importBody(facts, attendeeEmail: attendeeEmail, zone: zone) else {
             throw CalendarError.badResponse
         }
         let data = try await send("POST", "/calendars/\(Self.pathSegment(calendarId))/events/import",
@@ -410,8 +394,21 @@ actor CalendarClient {
 
     // MARK: Free/busy
 
+    /// Busy periods per calendar, in requests of at most `freeBusyBatch`
+    /// calendars.
     func freeBusy(calendarIds: [String], in interval: DateInterval) async throws -> [CalendarFreeBusy] {
         try require(.availability)
+        var all: [CalendarFreeBusy] = []
+        var start = 0
+        while start < calendarIds.count {
+            let batch = Array(calendarIds[start..<min(start + Self.freeBusyBatch, calendarIds.count)])
+            all += try await queryFreeBusy(batch, in: interval)
+            start += Self.freeBusyBatch
+        }
+        return all
+    }
+
+    private func queryFreeBusy(_ calendarIds: [String], in interval: DateInterval) async throws -> [CalendarFreeBusy] {
         let body: [String: Any] = [
             "timeMin": Self.rfc3339(interval.start),
             "timeMax": Self.rfc3339(interval.end),
@@ -433,17 +430,18 @@ actor CalendarClient {
 
     // MARK: Answering an invitation
 
-    /// Sets the user's own answer on an event in their calendar. The
-    /// attendees array is read and written back whole (Calendar replaces
-    /// arrays on patch), changing only the user's `responseStatus`; every
-    /// other field of every attendee is kept as Google sent it.
-    func respond(calendarId: String, eventId: String, response: CalendarResponse,
-                 sendUpdates: CalendarSendUpdates) async throws {
+    /// Sets the user's own answer on an event in their calendar, asking
+    /// Google to e-mail nobody (`sendUpdates=none`): the iTIP e-mail is the
+    /// one answer the organizer gets. The attendees array is read and
+    /// written back whole (Calendar replaces arrays on patch), changing only
+    /// the user's `responseStatus`; every other field of every attendee is
+    /// kept as Google sent it.
+    func respond(calendarId: String, eventId: String, response: CalendarResponse) async throws {
         try require(.writeEvents)
         let path = "/calendars/\(Self.pathSegment(calendarId))/events/\(Self.pathSegment(eventId))"
         let current = try await send("GET", path, query: ["fields": "attendees"])
         let attendees = try Self.attendees(settingSelfResponse: response, in: current)
-        _ = try await send("PATCH", path, query: ["sendUpdates": sendUpdates.rawValue],
+        _ = try await send("PATCH", path, query: ["sendUpdates": "none"],
                            jsonBody: ["attendees": attendees])
     }
 
@@ -515,7 +513,7 @@ actor CalendarClient {
         if !query.isEmpty {
             comps.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
             // `+` is a space for Google's form decoding; RFC 3339 offsets
-            // and sync tokens can contain one.
+            // and page tokens can contain one.
             comps.percentEncodedQuery = comps.percentEncodedQuery?
                 .replacingOccurrences(of: "+", with: "%2B")
         }

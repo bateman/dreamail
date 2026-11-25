@@ -26,9 +26,6 @@ struct CalendarSourceRecord: Codable, FetchableRecord, PersistableRecord, Equata
     /// "freeBusyReader" | "reader" | "writer" | "owner": decides whether
     /// its events can be read or only its busy periods.
     var accessRole: String?
-    /// Unused in this release (no agenda): where an incremental sync
-    /// would resume, kept so a later agenda needs no schema change.
-    var syncToken: String?
 
     init(accountId: String, entry: GCalendarListEntry) {
         self.accountId = accountId
@@ -37,7 +34,6 @@ struct CalendarSourceRecord: Codable, FetchableRecord, PersistableRecord, Equata
         self.timeZone = entry.timeZone
         self.isPrimary = entry.primary ?? false
         self.accessRole = entry.accessRole
-        self.syncToken = nil
     }
 
     /// Event details (and so the invitation's own UID) are readable; a
@@ -46,8 +42,11 @@ struct CalendarSourceRecord: Codable, FetchableRecord, PersistableRecord, Equata
 }
 
 /// Where the event of one invitation message is in the user's Google
-/// Calendar, and the user's answer there. One row per message; it goes
-/// with the message (and so with its thread and account).
+/// Calendar, with the organizer and the time Google has for it, so an answer
+/// is written there only when the invitation describes that same event
+/// (`CalendarRSVPRoute`). One row per message; it goes with the message (and
+/// so with its thread and account). The answer the user gave is kept once,
+/// in #51's `calendarRSVP`, not here.
 struct CalendarInviteEventRecord: Codable, FetchableRecord, PersistableRecord, Equatable {
     static let databaseTableName = "calendarInviteEvent"
     var messageId: String
@@ -55,43 +54,42 @@ struct CalendarInviteEventRecord: Codable, FetchableRecord, PersistableRecord, E
     var calendarId: String
     var eventId: String
     var iCalUID: String
-    /// "needsAction" | "accepted" | "declined" | "tentative", as Google has it.
-    var selfResponse: String?
     /// The organizer as Google Calendar has it.
     var organizerEmail: String?
-    /// Google Calendar itself created the event (its iCalUID is one Google
-    /// issues, `…@google.com`): the organizer keeps it in Google Calendar.
-    /// Read from Google, never from the invitation's ICS, which the sender
-    /// writes.
-    var hostedByGoogle: Bool
+    /// The event's time as Google Calendar has it; nil when unreadable.
+    var startAt: Date?
+    var endAt: Date?
+    var isAllDay: Bool
     var checkedAt: Date
 
     init(messageId: String, accountId: String, calendarId: String, eventId: String,
-         iCalUID: String, selfResponse: String?, organizerEmail: String? = nil,
-         hostedByGoogle: Bool = false, checkedAt: Date) {
+         iCalUID: String, organizerEmail: String?, span: CalendarSpan?, checkedAt: Date) {
         self.messageId = messageId
         self.accountId = accountId
         self.calendarId = calendarId
         self.eventId = eventId
         self.iCalUID = iCalUID
-        self.selfResponse = selfResponse
         self.organizerEmail = organizerEmail
-        self.hostedByGoogle = hostedByGoogle
+        self.startAt = span?.start
+        self.endAt = span?.end
+        self.isAllDay = span?.isAllDay ?? false
         self.checkedAt = checkedAt
     }
 
+    /// From Google's event. Its time is read in the event's (or the
+    /// calendar's) zone, never from the invitation.
     init(messageId: String, accountId: String, calendarId: String, event: GCalendarEvent,
-         iCalUID: String, checkedAt: Date) {
+         iCalUID: String, calendarTimeZone: String?, fallback: TimeZone, checkedAt: Date) {
         self.init(messageId: messageId, accountId: accountId, calendarId: calendarId,
-                  eventId: event.id, iCalUID: iCalUID, selfResponse: event.selfResponse,
-                  organizerEmail: event.organizer?.email,
-                  hostedByGoogle: Self.isGoogleIssuedUID(event.iCalUID ?? ""),
+                  eventId: event.id, iCalUID: iCalUID, organizerEmail: event.organizer?.email,
+                  span: CalendarSpan.from(start: event.start, end: event.end,
+                                          calendarTimeZone: calendarTimeZone, fallback: fallback),
                   checkedAt: checkedAt)
     }
 
-    static func isGoogleIssuedUID(_ uid: String) -> Bool {
-        let lower = uid.lowercased()
-        return lower.hasSuffix("@google.com") && lower.count > "@google.com".count
+    var span: CalendarSpan? {
+        guard let startAt, let endAt else { return nil }
+        return CalendarSpan(start: startAt, end: endAt, isAllDay: isAllDay)
     }
 }
 
@@ -118,7 +116,6 @@ enum CalendarStore {
             t.column("timeZone", .text)
             t.column("isPrimary", .boolean).notNull().defaults(to: false)
             t.column("accessRole", .text)
-            t.column("syncToken", .text)
             t.primaryKey(["accountId", "calendarId"])
         }
         try db.create(table: CalendarInviteEventRecord.databaseTableName) { t in
@@ -129,9 +126,10 @@ enum CalendarStore {
             t.column("calendarId", .text).notNull()
             t.column("eventId", .text).notNull()
             t.column("iCalUID", .text).notNull()
-            t.column("selfResponse", .text)
             t.column("organizerEmail", .text)
-            t.column("hostedByGoogle", .boolean).notNull().defaults(to: false)
+            t.column("startAt", .datetime)
+            t.column("endAt", .datetime)
+            t.column("isAllDay", .boolean).notNull().defaults(to: false)
             t.column("checkedAt", .datetime).notNull()
         }
     }
@@ -169,7 +167,7 @@ enum CalendarStore {
         let primary = list.filter { $0.primary == true }
         return primary.isEmpty
             ? [GCalendarListEntry(id: "primary", summary: nil, timeZone: nil, primary: true,
-                                  accessRole: "owner", selected: true)]
+                                  accessRole: "owner")]
             : primary
     }
 
@@ -205,6 +203,20 @@ enum CalendarStore {
                 try chosen.delete(db)
             }
         }
+    }
+
+    /// Rows whose account (or message) is gone, for the launch sweep
+    /// (`AccountLifecycle.purgeOrphanRows`): the cascades cover a normal
+    /// delete, this covers rows written while a removal was under way.
+    static func purgeOrphans(_ db: Database) throws {
+        for table in [CalendarGrantRecord.databaseTableName, CalendarSourceRecord.databaseTableName] {
+            try db.execute(sql: "DELETE FROM \(table) WHERE accountId NOT IN (SELECT id FROM account)")
+        }
+        try db.execute(sql: """
+            DELETE FROM calendarInviteEvent
+            WHERE messageId NOT IN (SELECT id FROM message)
+               OR accountId NOT IN (SELECT id FROM account)
+            """)
     }
 
     // MARK: Invitation events

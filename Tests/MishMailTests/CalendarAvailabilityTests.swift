@@ -116,12 +116,41 @@ final class CalendarAvailabilityTests: XCTestCase {
             timed("needsAction", "2026-01-05T10:00:00Z", "2026-01-05T11:00:00Z", me: "needsAction"),
             timed("itself", "2026-01-05T10:00:00Z", "2026-01-05T11:00:00Z", uid: "invite-uid@y.com"),
         ]
+        let invite = CalendarInviteIdentity(uid: "invite-uid@y.com",
+                                            span: self.invite("2026-01-05T10:00:00Z", "2026-01-05T11:00:00Z"))
         let busy = CalendarAvailability.busy(events: events, calendarId: "primary",
-                                             calendarTimeZone: "UTC", excludingUID: "invite-uid@y.com")
+                                             calendarTimeZone: "UTC", excluding: invite)
         XCTAssertEqual(ids(busy), ["busy", "tentative", "needsAction"])
+        var empty = invite
+        empty.uid = ""
         let withoutUID = CalendarAvailability.busy(events: events, calendarId: "primary",
-                                                   calendarTimeZone: "UTC", excludingUID: "")
+                                                   calendarTimeZone: "UTC", excluding: empty)
         XCTAssertTrue(ids(withoutUID).contains("itself"), "an empty UID excludes nothing")
+    }
+
+    /// S3: a forged invitation that reuses a real event's UID, at another
+    /// time, must not hide that event from the conflicts.
+    func testAReusedUIDAtAnotherTimeDoesNotHideARealEvent() {
+        let real = timed("real", "2026-01-05T10:00:00Z", "2026-01-05T11:00:00Z", uid: "real-uid@google.com")
+        let forged = CalendarInviteIdentity(uid: "real-uid@google.com",
+                                            span: invite("2026-01-05T10:30:00Z", "2026-01-05T11:30:00Z"))
+        let busy = CalendarAvailability.busy(events: [real], calendarId: "primary",
+                                             calendarTimeZone: "UTC", excluding: forged)
+        XCTAssertEqual(ids(busy), ["real"])
+        XCTAssertEqual(ids(CalendarAvailability.check(invite: forged.span, against: busy).conflicts), ["real"])
+    }
+
+    /// R6: free/busy cannot tell the invitation's own event from another;
+    /// a period at exactly its time is left out.
+    func testFreeBusyPeriodAtTheInvitationsOwnTimeIsLeftOut() {
+        let own = invite("2026-01-05T10:00:00Z", "2026-01-05T11:00:00Z")
+        let fb = [CalendarFreeBusy(calendarId: "primary",
+                                   busy: [DateInterval(start: own.start, end: own.end),
+                                          DateInterval(start: at("2026-01-05T10:30:00Z"), duration: 3600)],
+                                   failed: false)]
+        let busy = CalendarAvailability.busy(freeBusy: fb, invite: own)
+        XCTAssertEqual(busy.map(\.span.start), [at("2026-01-05T10:30:00Z")])
+        XCTAssertEqual(CalendarAvailability.busy(freeBusy: fb).count, 2, "without an invite, all count")
     }
 
     // MARK: - The check
@@ -132,7 +161,7 @@ final class CalendarAvailabilityTests: XCTestCase {
             timed("weekly_202601\(day)", "2026-01-\(day)T10:00:00+01:00", "2026-01-\(day)T11:00:00+01:00")
         }
         let busy = CalendarAvailability.busy(events: instances, calendarId: "primary",
-                                             calendarTimeZone: "Europe/Rome", excludingUID: nil)
+                                             calendarTimeZone: "Europe/Rome", excluding: nil)
         let result = CalendarAvailability.check(invite: invite("2026-01-12T09:30:00Z", "2026-01-12T10:30:00Z"),
                                                 against: busy)
         XCTAssertEqual(ids(result.conflicts), ["weekly_20260112"])
@@ -143,7 +172,7 @@ final class CalendarAvailabilityTests: XCTestCase {
         // 10:00 in New York is 16:00 in Rome.
         let busy = CalendarAvailability.busy(
             events: [timed("rome", "2026-01-05T16:00:00+01:00", "2026-01-05T17:00:00+01:00")],
-            calendarId: "primary", calendarTimeZone: "Europe/Rome", excludingUID: nil)
+            calendarId: "primary", calendarTimeZone: "Europe/Rome", excluding: nil)
         let clash = CalendarAvailability.check(
             invite: invite("2026-01-05T10:00:00-05:00", "2026-01-05T10:30:00-05:00"), against: busy)
         XCTAssertEqual(ids(clash.conflicts), ["rome"])
@@ -160,7 +189,7 @@ final class CalendarAvailabilityTests: XCTestCase {
             timed("standup", "2026-01-05T09:00:00+01:00", "2026-01-05T09:15:00+01:00"),
         ]
         let busy = CalendarAvailability.busy(events: events, calendarId: "primary",
-                                             calendarTimeZone: "Europe/Rome", excludingUID: nil)
+                                             calendarTimeZone: "Europe/Rome", excluding: nil)
         let result = CalendarAvailability.check(
             invite: invite("2026-01-05T08:00:00Z", "2026-01-05T09:00:00Z"), against: busy)
         XCTAssertEqual(ids(result.conflicts), ["standup"])
@@ -174,7 +203,7 @@ final class CalendarAvailabilityTests: XCTestCase {
         let busy = CalendarAvailability.busy(
             events: [timed("late", "2026-01-05T23:30:00+01:00", "2026-01-06T00:30:00+01:00"),
                      timed("nextDay", "2026-01-06T00:00:00+01:00", "2026-01-06T01:00:00+01:00")],
-            calendarId: "primary", calendarTimeZone: "Europe/Rome", excludingUID: nil)
+            calendarId: "primary", calendarTimeZone: "Europe/Rome", excluding: nil)
         XCTAssertEqual(ids(CalendarAvailability.check(invite: invite, against: busy).conflicts), ["late"])
     }
 
@@ -193,7 +222,7 @@ final class CalendarAvailabilityTests: XCTestCase {
         let busy = CalendarAvailability.busy(
             events: [timed("b", "2026-01-05T10:30:00Z", "2026-01-05T11:30:00Z"),
                      timed("a", "2026-01-05T09:30:00Z", "2026-01-05T10:30:00Z")],
-            calendarId: "primary", calendarTimeZone: "UTC", excludingUID: nil)
+            calendarId: "primary", calendarTimeZone: "UTC", excluding: nil)
         let result = CalendarAvailability.check(invite: invite("2026-01-05T10:00:00Z", "2026-01-05T11:00:00Z"),
                                                 against: busy)
         XCTAssertEqual(ids(result.conflicts), ["a", "b"])

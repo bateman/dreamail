@@ -100,6 +100,26 @@ final class CalendarFeaturesTests: XCTestCase {
         }
     }
 
+    /// I1: the switch is a default argument of the gated types; nothing
+    /// outside the Calendar folder may pass its own value, and the raw
+    /// session is private.
+    func testNoCallerOutsideCalendarOverridesTheSwitch() throws {
+        let sources = ForkIdentityTests.repoRoot.appendingPathComponent("Sources/MishMail")
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []
+        for url in files where !url.path.contains("/Sources/MishMail/Calendar/") {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for line in text.split(separator: "\n") where line.contains("Calendar") {
+                XCTAssertFalse(line.contains("enabled:"), "\(url.lastPathComponent): \(line)")
+                XCTAssertFalse(line.contains("CalendarAuthorization.request"), "\(url.lastPathComponent)")
+                XCTAssertFalse(line.contains(".gated("), "\(url.lastPathComponent)")
+            }
+        }
+        let client = try ForkIdentityTests.repoFile("Sources/MishMail/Calendar/CalendarClient.swift")
+        XCTAssertTrue(client.contains("    private static let session = CalendarTransport"))
+        XCTAssertTrue(client.contains("    static let live = gated(enabled: CalendarFeatures.isEnabled, session)"))
+    }
+
     // MARK: - Zero requests with the switch off
 
     func testGatedTransportSendsNothingWhenOff() async {
@@ -127,11 +147,10 @@ final class CalendarFeaturesTests: XCTestCase {
         let window = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 3600)
         await assertSwitchedOff { _ = try await client.calendars() }
         await assertSwitchedOff { _ = try await client.events(calendarId: "primary", in: window) }
-        await assertSwitchedOff { _ = try await client.sync(calendarId: "primary", syncToken: nil, from: window.start) }
+        await assertSwitchedOff { _ = try await client.events(calendarId: "primary", iCalUID: "u@x") }
         await assertSwitchedOff { _ = try await client.freeBusy(calendarIds: ["primary"], in: window) }
         await assertSwitchedOff {
-            try await client.respond(calendarId: "primary", eventId: "e1", response: .accepted,
-                                     sendUpdates: .none)
+            try await client.respond(calendarId: "primary", eventId: "e1", response: .accepted)
         }
         XCTAssertEqual(net.requests.count, 0)
         XCTAssertEqual(keychain.reads, [])

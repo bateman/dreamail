@@ -6,6 +6,10 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Label colors on Gmail.** In the label organizer you can change a label's
+  color on Gmail (from Gmail's own palette, so the web and the phone show it
+  too) or remove it, separately from the Mac-only color, which still wins on
+  this Mac.
 - **Safer calendar invites.** A hostile or malformed invite can no longer slow
   the app down, and a reply goes only to the single organizer, who is always
   shown together with the identity you answer from. The reply is rebuilt from

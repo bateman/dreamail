@@ -150,14 +150,22 @@ With it on, Calendar is a **separate consent**, asked for only when the user
 connects Calendar for an account: desktop apps cannot extend an existing
 grant, so it has its own refresh token in the Keychain
 (`calendarRefreshToken.<account>`). The token is kept only when Google says
-it belongs to that same account. Only the calendars the user chose (the
-primary one by default) and, for each invitation, where its event is in
-Google Calendar are stored, in the encrypted database; no agenda is kept and
-availability is computed in memory. They are deleted with the account, the
-invitation's message or thread, or when Calendar is disconnected, under the
-rules below. An answer to an invitation is written on the calendar with
-Google asked to notify nobody (`sendUpdates=none`); the e-mail reply is
-still sent unless the invitation came from Google Calendar.
+it belongs to that same account.
+
+- **Stored:** only the calendars the user chose (the primary one by default)
+  and, for each invitation, where its event is in Google Calendar with
+  Google's organizer and time. Encrypted, deleted with the account, the
+  invitation's message or thread, or when Calendar is disconnected, under
+  the rules below. No agenda is kept; availability is computed in memory.
+- **Answers:** the iTIP e-mail is always sent. The answer is also written on
+  the user's calendar (with Google asked to notify nobody) only when Google's
+  event has the invitation's UID, organizer *and* time, so a forged
+  invitation that copies a real event's UID cannot change that event.
+- **No revocation at Google.** Disconnecting Calendar, removing an account or
+  refusing a consent given for another account deletes the token and the
+  grant here, but does not revoke them at Google: revoking a token can also
+  revoke the Gmail access of the same OAuth client. The user removes the
+  grant in their Google account (Security → Third-party access).
 
 ## What deleting means
 

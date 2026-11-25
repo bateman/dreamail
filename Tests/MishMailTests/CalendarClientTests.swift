@@ -60,12 +60,11 @@ final class CalendarClientTests: XCTestCase {
         net.respond = { _, index in
             index == 0
                 ? (200, #"{"timeZone":"Europe/Rome","items":[{"id":"e1_20260101","recurringEventId":"e1","start":{"dateTime":"2026-01-01T10:00:00+01:00"},"end":{"dateTime":"2026-01-01T11:00:00+01:00"}}],"nextPageToken":"n"}"#, [:])
-                : (200, #"{"items":[{"id":"e2","start":{"date":"2026-01-01"},"end":{"date":"2026-01-02"}}],"nextSyncToken":"s1"}"#, [:])
+                : (200, #"{"items":[{"id":"e2","start":{"date":"2026-01-01"},"end":{"date":"2026-01-02"}}]}"#, [:])
         }
         let result = try await client(net).events(calendarId: "primary", in: window)
         XCTAssertEqual(result.events.map(\.id), ["e1_20260101", "e2"])
         XCTAssertEqual(result.calendarTimeZone, "Europe/Rome")
-        XCTAssertEqual(result.nextSyncToken, "s1")
         let first = query(net.requests[0])
         XCTAssertEqual(first["singleEvents"], "true")
         XCTAssertEqual(first["timeMin"], "2026-01-01T00:00:00Z")
@@ -74,29 +73,32 @@ final class CalendarClientTests: XCTestCase {
         XCTAssertEqual(query(net.requests[1])["pageToken"], "n")
     }
 
-    func testIncrementalSyncSendsOnlyTheTokenAndExpiredTokenIs410() async throws {
+    func testUIDLookupIsCappedAndCancelledEventsAreDropped() async throws {
         let net = CalendarStubTransport()
-        net.respond = { _, _ in (200, #"{"items":[{"id":"e1","status":"cancelled"}],"nextSyncToken":"s2"}"#, [:]) }
+        net.respond = { _, _ in (200, #"{"items":[{"id":"e1","status":"cancelled"},{"id":"e2"}]}"#, [:]) }
         let c = client(net)
-        let result = try await c.sync(calendarId: "primary", syncToken: "s1", from: window.start)
-        XCTAssertEqual(result.nextSyncToken, "s2")
-        XCTAssertEqual(result.events.first?.status, "cancelled")
-        let q = query(net.requests[0])
-        XCTAssertEqual(q["syncToken"], "s1")
-        XCTAssertNil(q["timeMin"], "timeMin cannot be combined with a sync token")
-        XCTAssertNil(q["timeMax"])
+        let found = try await c.events(calendarId: "primary", iCalUID: "uid@x")
+        XCTAssertEqual(found.map(\.id), ["e2"])
+        XCTAssertEqual(query(net.requests[0])["iCalUID"], "uid@x")
+        let long = String(repeating: "u", count: CalendarClient.maxUIDBytes + 1)
+        let none = try await c.events(calendarId: "primary", iCalUID: long)
+        let empty = try await c.events(calendarId: "primary", iCalUID: "")
+        XCTAssertEqual(none, [])
+        XCTAssertEqual(empty, [])
+        XCTAssertEqual(net.requests.count, 1, "an over-long or empty UID is never sent")
+    }
 
-        _ = try await c.sync(calendarId: "primary", syncToken: nil, from: window.start)
-        XCTAssertEqual(query(net.requests[1])["timeMin"], "2026-01-01T00:00:00Z")
-        XCTAssertNil(query(net.requests[1])["syncToken"])
-
-        net.respond = { _, _ in (410, #"{"error":{"errors":[{"reason":"fullSyncRequired"}]}}"#, [:]) }
-        do {
-            _ = try await c.sync(calendarId: "primary", syncToken: "s2", from: window.start)
-            XCTFail("410 must surface")
-        } catch {
-            XCTAssertEqual(error as? CalendarError, .syncTokenExpired)
+    func testFreeBusyGoesInBatchesOfFifty() async throws {
+        let net = CalendarStubTransport()
+        net.respond = { _, _ in (200, #"{"calendars":{}}"#, [:]) }
+        let ids = (0..<120).map { "c\($0)@x.com" }
+        let result = try await client(net).freeBusy(calendarIds: ids, in: window)
+        XCTAssertEqual(result.map(\.calendarId), ids)
+        let sizes = try net.requests.map { request -> Int in
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])
+            return (body["items"] as? [[String: String]])?.count ?? -1
         }
+        XCTAssertEqual(sizes, [50, 50, 20])
     }
 
     // MARK: - Free/busy
@@ -133,8 +135,7 @@ final class CalendarClientTests: XCTestCase {
                 ? (200, #"{"attendees":[{"email":"org@y.com","organizer":true,"responseStatus":"accepted"},{"email":"a@x.com","self":true,"responseStatus":"needsAction","comment":"keep","additionalGuests":1}]}"#, [:])
                 : (200, "{}", [:])
         }
-        try await client(net).respond(calendarId: "primary", eventId: "ev/1", response: .accepted,
-                                      sendUpdates: .none)
+        try await client(net).respond(calendarId: "primary", eventId: "ev/1", response: .accepted)
         XCTAssertEqual(net.requests.map(\.httpMethod), ["GET", "PATCH"])
         XCTAssertEqual(query(net.requests[0])["fields"], "attendees")
         let patch = net.requests[1]
@@ -155,8 +156,7 @@ final class CalendarClientTests: XCTestCase {
         let net = CalendarStubTransport()
         net.respond = { _, _ in (200, #"{"attendees":[{"email":"org@y.com"}]}"#, [:]) }
         do {
-            try await client(net).respond(calendarId: "primary", eventId: "e", response: .declined,
-                                          sendUpdates: .all)
+            try await client(net).respond(calendarId: "primary", eventId: "e", response: .declined)
             XCTFail("not a guest")
         } catch {
             XCTAssertEqual(error as? CalendarError, .notAnAttendee)
@@ -173,7 +173,7 @@ final class CalendarClientTests: XCTestCase {
         await assertError(.notGranted(.calendarList)) { _ = try await c.calendars() }
         await assertError(.notGranted(.events)) { _ = try await c.events(calendarId: "p", in: self.window) }
         await assertError(.notGranted(.writeEvents)) {
-            try await c.respond(calendarId: "p", eventId: "e", response: .accepted, sendUpdates: .none)
+            try await c.respond(calendarId: "p", eventId: "e", response: .accepted)
         }
         XCTAssertEqual(net.requests.count, 0)
         XCTAssertEqual(keychain.reads, [])
@@ -278,7 +278,8 @@ final class CalendarClientTests: XCTestCase {
                        .rateLimited(retryAfter: nil))
         XCTAssertEqual(CalendarError.classify(status: 403, body: body("forbiddenForNonOrganizer"), retryAfterHeader: nil),
                        .http(403, reason: "forbiddenForNonOrganizer"))
-        XCTAssertEqual(CalendarError.classify(status: 410, body: Data(), retryAfterHeader: nil), .syncTokenExpired)
+        XCTAssertEqual(CalendarError.classify(status: 410, body: Data(), retryAfterHeader: nil),
+                       .http(410, reason: nil))
         let server = CalendarError.classify(status: 503, body: body("backendError"), retryAfterHeader: nil)
         XCTAssertEqual(server, .http(503, reason: "backendError"))
         let text = server.errorDescription ?? ""
@@ -286,6 +287,38 @@ final class CalendarClientTests: XCTestCase {
         XCTAssertFalse(text.contains("alice"), text)
         XCTAssertEqual(CalendarError.classify(status: 400, body: Data("not json".utf8), retryAfterHeader: nil),
                        .http(400, reason: nil))
+    }
+
+    func testRetryAfterReadsSecondsAndHTTPDates() {
+        let now = Date(timeIntervalSince1970: 1_767_225_600) // Thu, 01 Jan 2026 00:00:00 GMT
+        XCTAssertEqual(CalendarError.retryAfter("7", now: now), 7)
+        XCTAssertEqual(CalendarError.retryAfter("Thu, 01 Jan 2026 00:00:30 GMT", now: now), 30)
+        XCTAssertEqual(CalendarError.retryAfter("Wed, 31 Dec 2025 23:00:00 GMT", now: now), 0, "past: no wait")
+        XCTAssertNil(CalendarError.retryAfter("soon", now: now))
+        XCTAssertNil(CalendarError.retryAfter(nil, now: now))
+        XCTAssertNil(CalendarError.retryAfter("-3", now: now))
+    }
+
+    func testUserInfoNeedsA200WithAnAddress() throws {
+        func response(_ code: Int) -> URLResponse {
+            HTTPURLResponse(url: URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!,
+                            statusCode: code, httpVersion: nil, headerFields: nil)!
+        }
+        XCTAssertEqual(try CalendarAuthorization.email(fromUserInfo: Data(#"{"email":"a@x.com"}"#.utf8),
+                                                       response: response(200)), "a@x.com")
+        let cases: [(Int, String, CalendarError)] = [
+            (401, "{}", .notGranted(nil)),
+            (500, #"{"error":{"status":"INTERNAL"}}"#, .http(500, reason: "INTERNAL")),
+            (200, "{}", .badResponse),
+            (200, #"{"email":""}"#, .badResponse),
+            (200, "<html>", .badResponse),
+        ]
+        for (code, body, expected) in cases {
+            XCTAssertThrowsError(try CalendarAuthorization.email(fromUserInfo: Data(body.utf8),
+                                                                 response: response(code))) {
+                XCTAssertEqual($0 as? CalendarError, expected, "\(code) \(body)")
+            }
+        }
     }
 
     func testUnreadableResponseIsBadResponse() async {
