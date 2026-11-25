@@ -44,14 +44,15 @@ final class SidebarLabelTreeUITests: XCTestCase {
     }
 
     /// One launch for the four checks, in an order where each finds the
-    /// state it starts from: More and every parent label closed after the
-    /// first two, the inbox still listed for the label view, and the
-    /// Categories check (which leaves More open) last.
+    /// state it starts from: the parent label first, on the sidebar as
+    /// launched; More and every parent label closed again after the first
+    /// two; the inbox still listed for the label view; and the Categories
+    /// check (which leaves More open) last.
     func testSidebarTree() {
         let app = launch()
         let steps: [(String, (XCUIApplication) -> Void)] = [
-            ("System views and the More row", stepSystemViewsAndMoreRow),
             ("A parent label collapses its sublabels", stepParentLabelCollapsesItsSublabels),
+            ("System views and the More row", stepSystemViewsAndMoreRow),
             ("A label row opens its view", stepLabelRowOpensItsView),
             ("Closed Categories hides the open category", stepClosedCategoriesHidesTheOpenCategory),
         ]

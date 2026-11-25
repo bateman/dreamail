@@ -262,7 +262,8 @@ ui-test-ci:
 # takes focus, and injects keyboard/mouse events into the live desktop, so a
 # local run hijacks the machine for its duration. GitHub Actions runs unit
 # tests + build on every pull_request and push to main. The UI suite takes
-# about eleven minutes, so it runs only for a release: `make release` starts it
+# about twelve minutes of tests (two parallel CI jobs of about six minutes
+# plus a build each), so it runs only for a release: `make release` starts it
 # on GitHub and waits (`make ui-test-ci`), and it runs again when the release
 # is published. Locally the gate is `make test`. To run the UI suite here
 # anyway (and surrender the desktop while it runs):
@@ -273,7 +274,8 @@ ui-test-ci:
 # every other class, so a new or renamed class lands in the second half and
 # never falls out of both. No UI_SHARD: the whole suite.
 UI_SHARD_1 = ThreadListSectionSpacingUITests ThreadMessageRowsUITests \
-	AccentColorUITests SidebarIconTintUITests DreaMailSmokeTests
+	AccentColorUITests SidebarIconTintUITests DreaMailSmokeTests \
+	ThreadRowHoverActionsUITests SingleMessageReadingPaneUITests
 UI_SHARD_FLAGS = $(if $(filter 1,$(UI_SHARD)),$(UI_SHARD_1:%=-only-testing:DreaMailUITests/%)) \
 	$(if $(filter 2,$(UI_SHARD)),$(UI_SHARD_1:%=-skip-testing:DreaMailUITests/%))
 ui-test: gen
