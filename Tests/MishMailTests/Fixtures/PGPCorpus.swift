@@ -51,15 +51,16 @@ enum PGPCorpus {
 
     /// The signed part's exact bytes, in canonical form: from after the
     /// first delimiter line to before the line break preceding the second.
-    static let signedPartCanonical = Data((
-        "Content-Type: text/plain; charset=utf-8\r\n" +
-        "Content-Transfer-Encoding: quoted-printable\r\n" +
-        "\r\n" +
-        "Hello Bob,\r\n" +
-        "this text is signed.=20\r\n" +
-        "\r\n" +
-        "-- \r\n" +
-        "Alice").utf8)
+    static let signedPartCanonical: Data = Data([String]([
+        "Content-Type: text/plain; charset=utf-8\r\n",
+        "Content-Transfer-Encoding: quoted-printable\r\n",
+        "\r\n",
+        "Hello Bob,\r\n",
+        "this text is signed.=20\r\n",
+        "\r\n",
+        "-- \r\n",
+        "Alice",
+    ]).joined().utf8)
 
     /// `delimiterSuffix` goes after `--sig-boundary` on the delimiter line
     /// before the signature part (RFC 2046 transport padding).
@@ -128,21 +129,22 @@ enum PGPCorpus {
         --outer--
         """
 
-    static let signedNestedPartCanonical = Data((
-        "Content-Type: multipart/mixed; boundary=\"inner\"\r\n" +
-        "\r\n" +
-        "--inner\r\n" +
-        "Content-Type: text/plain; charset=us-ascii\r\n" +
-        "\r\n" +
-        "See attached.\r\n" +
-        "--outerX is not a delimiter, nor is --outer-- inside a word: x--outer\r\n" +
-        "--inner\r\n" +
-        "Content-Type: application/octet-stream; name=\"notes.txt\"\r\n" +
-        "Content-Transfer-Encoding: base64\r\n" +
-        "Content-Disposition: attachment; filename=\"notes.txt\"\r\n" +
-        "\r\n" +
-        "VEVTVCBPTkxZ\r\n" +
-        "--inner--").utf8)
+    static let signedNestedPartCanonical: Data = Data([String]([
+        "Content-Type: multipart/mixed; boundary=\"inner\"\r\n",
+        "\r\n",
+        "--inner\r\n",
+        "Content-Type: text/plain; charset=us-ascii\r\n",
+        "\r\n",
+        "See attached.\r\n",
+        "--outerX is not a delimiter, nor is --outer-- inside a word: x--outer\r\n",
+        "--inner\r\n",
+        "Content-Type: application/octet-stream; name=\"notes.txt\"\r\n",
+        "Content-Transfer-Encoding: base64\r\n",
+        "Content-Disposition: attachment; filename=\"notes.txt\"\r\n",
+        "\r\n",
+        "VEVTVCBPTkxZ\r\n",
+        "--inner--",
+    ]).joined().utf8)
 
     /// A mailing list appended a footer by wrapping the signed message in
     /// multipart/mixed: the signature covers only the first part.

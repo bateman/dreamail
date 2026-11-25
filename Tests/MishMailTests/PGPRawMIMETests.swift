@@ -150,7 +150,7 @@ final class PGPRawMIMETests: XCTestCase {
         }
         XCTAssertEqual(depth, RawMIME.maxDepth)
 
-        let many = "Content-Type: multipart/mixed; boundary=m\n\n"
+        let many: String = "Content-Type: multipart/mixed; boundary=m\n\n"
             + String(repeating: "--m\n\nx\n", count: RawMIME.maxParts * 2) + "--m--"
         let wide = RawMIME.parse(Data(many.utf8))
         XCTAssertLessThan(wide.children.count, RawMIME.maxParts)
