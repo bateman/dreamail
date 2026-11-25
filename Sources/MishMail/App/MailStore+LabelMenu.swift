@@ -1,11 +1,14 @@
 import Foundation
+import GRDB
 
 /// What the sidebar's label menu has open: the Edit dialog, the Remove
-/// confirmation, or a failure with a retry.
+/// confirmation, or a failure with a retry; and the labels with an edit in
+/// flight, which take no second one until it is over.
 struct LabelMenuState {
     var editing: LabelRow?
     var removing: LabelRow?
     var failure: LabelEditFailure?
+    var inFlight: Set<String> = []
 }
 
 /// A label edit that did not fully land, said in an alert with a retry.
@@ -15,9 +18,9 @@ struct LabelEditFailure: Identifiable {
     let message: String
     var retry: (@MainActor () -> Void)?
 
-    /// Up to five names, then how many more.
+    /// Up to five names, made safe to show, then how many more.
     static func list(_ names: [String]) -> String {
-        let shown = names.prefix(5).map { "“\($0)”" }.joined(separator: ", ")
+        let shown = names.prefix(5).map(LabelText.quoted).joined(separator: ", ")
         return names.count > 5 ? "\(shown) and \(names.count - 5) more" : shown
     }
 }
@@ -35,12 +38,34 @@ extension MailStore {
         return LabelFamily.members(of: current, in: rows)
     }
 
+    /// The saved views that go with `label` and its sublabels.
+    func savedViewsRemoved(with label: LabelRow) -> [SavedView] {
+        LabelRemoval.viewsUsing(labelFamily(label), views: savedViews,
+                                allLabels: labelsByAccount.values.flatMap { $0 })
+    }
+
     /// Gmail, or nothing at all in the demo mailbox.
     private func labelRemote(for accountId: String) -> LabelRemote {
         demoMode ? DemoLabelRemote() : client(for: accountId)
     }
 
     private static let offlineMessage = "You're offline. Nothing was changed on Gmail."
+    private static let busyMessage = "That label is still being saved to Gmail. Try again in a moment."
+
+    /// Claims `ids` for one edit; false (and says so) when one of them is
+    /// already being edited.
+    private func beginLabelEdit(_ ids: [String]) -> Bool {
+        guard labelMenu.inFlight.isDisjoint(with: ids) else {
+            lastError = Self.busyMessage
+            return false
+        }
+        labelMenu.inFlight.formUnion(ids)
+        return true
+    }
+
+    private func endLabelEdit(_ ids: [String]) {
+        labelMenu.inFlight.subtract(ids)
+    }
 
     // MARK: In label list / In message list
 
@@ -53,12 +78,14 @@ extension MailStore {
     }
 
     /// Shown at once, put back if Gmail refuses. Never queued: offline, it
-    /// says so and changes nothing.
+    /// says so and changes nothing. One edit per label at a time, so a
+    /// rollback never restores another edit's optimistic value.
     private func patchVisibility(_ label: LabelRow, _ patch: GmailLabelPatch) {
         guard !isOffline || demoMode else {
             lastError = Self.offlineMessage
             return
         }
+        guard beginLabelEdit([label.id]) else { return }
         let remote = labelRemote(for: label.accountId)
         let pool = db
         let accountId = label.accountId
@@ -67,9 +94,12 @@ extension MailStore {
                 try await LabelVisibilityEdit.apply(patch, rowId: label.id, db: pool,
                                                     didStore: { self?.reloadAccounts() },
                                                     remote: remote)
-                self?.reloadAccounts()
+                guard let self else { return }
+                self.endLabelEdit([label.id])
+                self.reloadAccounts()
             } catch {
                 guard let self else { return }
+                self.endLabelEdit([label.id])
                 self.reloadAccounts()
                 self.reportLabelEditError(error, accountId: accountId,
                                           prefix: "Couldn't change where the label is shown")
@@ -96,9 +126,27 @@ extension MailStore {
     }
 
     private func runRenames(_ changes: [LabelRename.Change], accountId: String) async -> String? {
+        let ids = changes.map(\.rowId)
+        guard beginLabelEdit(ids) else { return Self.busyMessage }
+        defer { endLabelEdit(ids) }
         let (outcome, names) = await LabelRename.execute(changes, remote: labelRemote(for: accountId))
         let pool = db
-        try? await pool.write { db in try LabelRename.store(db, names: names) }
+        var localFailure: String?
+        do {
+            try await pool.write { db in try LabelRename.store(db, names: names) }
+        } catch {
+            localFailure = "The names couldn't be saved on this Mac (\(error.localizedDescription)). "
+                + "They appear after the next sync."
+        }
+        if case .renamed = outcome {
+            reloadAccounts()
+            followRename(names, accountId: accountId)
+            if let localFailure { lastError = localFailure }
+            return nil
+        }
+        // A call that timed out may have landed on Gmail all the same: read
+        // the names back before saying anything about them.
+        await sync(accountId: accountId)
         reloadAccounts()
         followRename(names, accountId: accountId)
         switch outcome {
@@ -106,18 +154,20 @@ extension MailStore {
             return nil
         case .rolledBack(let cause):
             if OfflinePolicy.shouldDefer(cause) { isOffline = true }
-            return "Couldn't rename the label: \(describe(cause)). Nothing was changed."
+            return "Couldn't rename the label: \(describe(cause)). The renames that went through were "
+                + "undone; the names shown are Gmail's as of now."
         case .partial(let renamed, let notRenamed, let cause):
             if OfflinePolicy.shouldDefer(cause) { isOffline = true }
             labelMenu.failure = LabelEditFailure(
                 title: "The label was only partly renamed",
                 message: "\(describe(cause)).\n\nRenamed: \(LabelEditFailure.list(renamed.map(\.to)))."
-                    + "\nStill with the old name: \(LabelEditFailure.list(notRenamed.map(\.from))).",
+                    + "\nStill with the old name: \(LabelEditFailure.list(notRenamed.map(\.from)))."
+                    + "\n\nThe sidebar shows Gmail's names as of now.",
                 retry: { [weak self] in
                     Task { @MainActor in
                         guard let self else { return }
                         if await self.runRenames(notRenamed, accountId: accountId) != nil {
-                            self.lastError = "Some labels still have their old name: "
+                            self.lastError = "Some labels may still have their old name: "
                                 + LabelEditFailure.list(notRenamed.map(\.from)) + "."
                         }
                     }
@@ -129,7 +179,8 @@ extension MailStore {
     /// The open label view keeps its selection under the new name.
     private func followRename(_ names: [String: String], accountId: String) {
         guard case .label(let account, let labelId, let old) = selectedView, account == accountId,
-              let name = names["\(accountId):\(labelId)"], name != old else { return }
+              let name = labelsById[accountId]?[labelId]?.name ?? names["\(accountId):\(labelId)"],
+              name != old else { return }
         goTo(.label(account: account, labelId: labelId, name: name))
     }
 
@@ -138,44 +189,85 @@ extension MailStore {
     /// Gmail web's "Remove label": the label and its sublabels go on Gmail
     /// and here, conversations stay. No undo (Gmail has none); the
     /// confirmation is the safeguard. Offline, nothing is sent or queued.
-    func removeLabel(_ label: LabelRow) {
+    ///
+    /// `snapshot` is the row the confirmation named. It is looked up again
+    /// first: if a sync renamed or removed it meanwhile, nothing is done.
+    func removeLabel(_ snapshot: LabelRow) {
         guard !isOffline || demoMode else {
             lastError = "You're offline. The label was not removed."
             return
         }
-        let rows = LabelRemoval.order(label, rows: userLabels(forAccount: label.accountId))
+        let current = (try? db.read { db in
+            try LabelRow.filter(Column("accountId") == snapshot.accountId && Column("type") == "user")
+                .fetchAll(db)
+        }) ?? userLabels(forAccount: snapshot.accountId)
+        guard let label = LabelRemoval.resolve(snapshot, current: current) else {
+            lastError = "The label \(LabelText.quoted(snapshot.name)) changed on Gmail meanwhile. "
+                + "Nothing was removed."
+            reloadAccounts()
+            return
+        }
+        let rows = LabelRemoval.order(label, rows: current)
+        let ids = rows.map(\.id)
+        guard beginLabelEdit(ids) else { return }
         let remote = labelRemote(for: label.accountId)
         let pool = db
         let accountId = label.accountId
         Task { @MainActor [weak self] in
             let report = await LabelRemoval.execute(rows, under: label, remote: remote)
-            try? await pool.write { db in try LabelRemoval.forget(db, rows: report.deleted) }
             guard let self else { return }
-            for row in report.deleted {
-                SidebarDisclosure.forget(row.gmailLabelId, accountId: row.accountId)
+            let views = LabelRemoval.viewsUsing(report.deleted, views: self.savedViews,
+                                                allLabels: self.labelsByAccount.values.flatMap { $0 })
+            do {
+                try await pool.write { db in try LabelRemoval.forget(db, rows: report.deleted, views: views) }
+            } catch {
+                self.lastError = "The labels were removed on Gmail but couldn't be cleared on this Mac "
+                    + "(\(error.localizedDescription)). They go at the next sync."
             }
+            LabelRemoval.forgetDefaults(report.deleted)
+            self.endLabelEdit(ids)
             self.reloadAccounts()
-            if case .label(let account, let labelId, _) = self.selectedView, account == accountId,
-               report.deleted.contains(where: { $0.gmailLabelId == labelId }) {
+            self.reloadSavedViews()
+            if self.removedSelection(report.deleted, views: views, accountId: accountId) {
                 self.goTo(.inbox)
             }
             guard let cause = report.cause else { return }
             if OfflinePolicy.shouldDefer(cause) { self.isOffline = true }
+            let removedFirst = report.deleted.isEmpty ? ""
+                : "\n\nAlready removed: " + LabelEditFailure.list(report.deleted.map(\.name)) + "."
             if case GmailError.http(403, let body) = cause, !MessageFetchFailureKind.isRateLimitBody(body) {
+                // Say what is already gone before asking to sign in again.
+                if !report.deleted.isEmpty {
+                    self.labelMenu.failure = LabelEditFailure(
+                        title: "Some labels were not removed",
+                        message: "Google refused the sign-in." + removedFirst + "\nNot removed: "
+                            + LabelEditFailure.list(report.notDeleted.map(\.name)) + ".")
+                }
                 self.requireReauthorization(for: accountId, interactive: true)
                 return
             }
-            let offline = OfflinePolicy.shouldDefer(cause)
             self.labelMenu.failure = LabelEditFailure(
                 title: report.deleted.isEmpty ? "The label was not removed" : "Some labels were not removed",
-                message: (offline ? "You're offline" : self.describe(cause)) + ".\n\nNot removed: "
+                message: self.describe(cause) + "." + removedFirst + "\n\nNot removed: "
                     + LabelEditFailure.list(report.notDeleted.map(\.name)) + ".",
                 retry: { [weak self] in
                     guard let self,
-                          let current = self.userLabels(forAccount: accountId).first(where: { $0.id == label.id })
+                          let again = self.userLabels(forAccount: accountId).first(where: { $0.id == label.id })
                     else { return }
-                    self.removeLabel(current)
+                    self.removeLabel(again)
                 })
+        }
+    }
+
+    /// Whether the open view was a removed label or a removed saved view.
+    private func removedSelection(_ rows: [LabelRow], views: [SavedView], accountId: String) -> Bool {
+        switch selectedView {
+        case .label(let account, let labelId, _):
+            return account == accountId && rows.contains { $0.gmailLabelId == labelId }
+        case .saved(let id, _):
+            return views.contains { $0.id == id }
+        default:
+            return false
         }
     }
 

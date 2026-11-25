@@ -35,6 +35,13 @@ final class LabelMenuEditsTests: XCTestCase {
             lock.withLock { deleteCalls.append(id) }
             if let error = failDelete(id) { throw error }
         }
+
+        /// What `labels.get` answers: the name Gmail has.
+        var serverNames: [String: String] = [:]
+
+        func label(id: String) async throws -> GLabel {
+            GLabel(id: id, name: serverNames[id] ?? "", type: "user", color: nil)
+        }
     }
 
     private struct Refused: Error {}
@@ -321,7 +328,138 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertEqual(names[id("L2")], "Bandi/PRIN")
     }
 
+    /// Gmail answers "name exists" for a sublabel that already has the
+    /// target name (its parent's rename carried it along): that is success,
+    /// not a reason to roll the whole rename back.
+    func testNameConflictOnALabelThatAlreadyHasTheNameIsSuccess() async throws {
+        let remote = FakeRemote()
+        remote.serverNames = ["L2": "Calls/PRIN", "L3": "Bandi/PRIN/2025"]
+        // Only the forward renames conflict; putting names back works.
+        remote.failPatch = { id, patch, _ in
+            (id == "L2" || id == "L3") && patch.name?.hasPrefix("Calls") == true
+                ? GmailError.http(409, "Label name exists or conflicts") : nil
+        }
+        let changes = try LabelRename.plan(label: rows[0], name: "Calls", parent: nil, rows: rows).get()
+        let (outcome, _) = await LabelRename.execute(changes, remote: remote)
+        // L2 already has its new name; L3 does not, so the rename is undone.
+        guard case .rolledBack(let cause) = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertTrue(LabelRename.isNameConflict(cause))
+        let undone = Set(remote.patches.filter { $0.1.name?.hasPrefix("Bandi") == true }.map(\.0))
+        XCTAssertTrue(undone.contains("L2"), "L2 counted as renamed, so it is put back too")
+
+        let again = FakeRemote()
+        again.serverNames = ["L2": "Calls/PRIN", "L3": "Calls/PRIN/2025"]
+        again.failPatch = { id, _, _ in
+            id == "L2" || id == "L3" ? GmailError.http(409, "Label name exists or conflicts") : nil
+        }
+        let (second, names) = await LabelRename.execute(changes, remote: again)
+        guard case .renamed = second else { return XCTFail("\(second)") }
+        XCTAssertEqual(names[id("L3")], "Calls/PRIN/2025")
+    }
+
+    func testLabelWritesRetryARateLimitOnce() {
+        XCTAssertEqual(GmailClient.rateLimitAttempts(method: "PATCH", path: "/labels/Label_1"), 2)
+        XCTAssertEqual(GmailClient.rateLimitAttempts(method: "DELETE", path: "/labels/Label_1"), 2)
+        XCTAssertEqual(GmailClient.rateLimitAttempts(method: "GET", path: "/labels"),
+                       GmailClient.requestRetryAttempts)
+        XCTAssertEqual(GmailClient.rateLimitAttempts(method: "POST", path: "/messages/send"), 0)
+        XCTAssertEqual(GmailClient.rateLimitAttempts(method: "POST", path: "/labels"), 0)
+    }
+
     // MARK: Remove
+
+    /// The confirmation named one label; a sync renamed it meanwhile (or
+    /// removed it): Remove does nothing rather than delete what now has
+    /// that id.
+    func testRemovalActsOnlyOnTheLabelTheConfirmationNamed() {
+        let snapshot = rows[0]
+        XCTAssertEqual(LabelRemoval.resolve(snapshot, current: rows)?.id, snapshot.id)
+        var renamed = rows
+        renamed[0].name = "B"
+        renamed.append(row("L9", "Bandi"))
+        XCTAssertNil(LabelRemoval.resolve(snapshot, current: renamed), "renamed elsewhere: nothing")
+        XCTAssertNil(LabelRemoval.resolve(snapshot, current: Array(rows.dropFirst())), "gone: nothing")
+    }
+
+    private func view(_ id: Int64, account: String?, labelId: String?, chipsLabel: String? = nil) -> SavedView {
+        var v = SavedView.empty()
+        v.id = id
+        v.name = "v\(id)"
+        v.accountId = account
+        v.labelId = labelId
+        if let chipsLabel {
+            var chips = FilterChips()
+            chips.labelId = chipsLabel
+            v.chipsJSON = try? JSONEncoder().encode(chips)
+        }
+        return v
+    }
+
+    func testSavedViewsOnARemovedLabelGoWithIt() throws {
+        let removed = LabelRemoval.order(rows[0], rows: rows)
+        let views = [
+            view(1, account: a, labelId: "L2"),                     // a sublabel: goes
+            view(2, account: a, labelId: nil, chipsLabel: "L4"),    // in its chips: goes
+            view(3, account: a, labelId: "L5"),                     // look-alike: stays
+            view(4, account: b, labelId: "L2"),                     // other account: stays
+            view(5, account: nil, labelId: "L1"),                   // all accounts, b has L1: stays
+            view(6, account: nil, labelId: "L3"),                   // all accounts, only a: goes
+            view(7, account: a, labelId: nil),                      // no label: stays
+        ]
+        let gone = LabelRemoval.viewsUsing(removed, views: views, allLabels: rows).compactMap(\.id)
+        XCTAssertEqual(gone, [1, 2, 6])
+    }
+
+    func testRemovalForgetsSavedViewsAndUserDefaults() throws {
+        let q = try makeDB()
+        let saved = try q.write { db -> [SavedView] in
+            var kept = self.view(0, account: self.a, labelId: "L7")
+            kept.id = nil
+            try kept.insert(db)
+            var gone = self.view(0, account: self.a, labelId: "L2")
+            gone.id = nil
+            try gone.insert(db)
+            return [kept, gone]
+        }
+        let removed = LabelRemoval.order(rows[0], rows: rows)
+        let views = LabelRemoval.viewsUsing(removed, views: saved, allLabels: rows)
+        XCTAssertEqual(views.map(\.labelId), ["L2"])
+        try q.write { db in try LabelRemoval.forget(db, rows: removed, views: views) }
+        let left = try q.read { try SavedView.fetchAll($0).map(\.labelId) }
+        XCTAssertEqual(left, ["L7"])
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "LabelMenuEditsTests.\(UUID())"))
+        let key = "categoryFilter.label.\(a).L2"
+        let other = "categoryFilter.label.\(b).L2"
+        defaults.set(Data([1]), forKey: key)
+        defaults.set(Data([1]), forKey: other)
+        SidebarDisclosure.setLabel("L2", accountId: a, expanded: true, defaults)
+        LabelRemoval.forgetDefaults(removed, defaults)
+        XCTAssertNil(defaults.object(forKey: key))
+        XCTAssertNotNil(defaults.object(forKey: other), "the other account's label keeps its filter")
+        XCTAssertTrue(SidebarDisclosure.expandedLabels(accountId: a, defaults).isEmpty)
+    }
+
+    func testLabelNamesAreShownSafely() {
+        XCTAssertEqual(LabelText.safe("Work"), "Work")
+        XCTAssertEqual(LabelText.safe("a\u{202E}b"), "a\u{27E8}U+202E\u{27E9}b")
+        XCTAssertEqual(LabelText.safe("a\u{2067}b\u{2069}"), "a\u{27E8}U+2067\u{27E9}b\u{27E8}U+2069\u{27E9}")
+        XCTAssertEqual(LabelText.safe("a\nb"), "a\u{27E8}U+000A\u{27E9}b")
+        XCTAssertEqual(LabelText.safe("a\u{2028}b"), "a\u{27E8}U+2028\u{27E9}b")
+        // Markdown stays literal text (shown with Text(verbatim:)).
+        XCTAssertEqual(LabelText.safe("[Inbox](x) *a*"), "[Inbox](x) *a*")
+        XCTAssertEqual(LabelText.quoted("é/ü"), "“é/ü”")
+    }
+
+    func testRemoveConfirmationNamesTheAccountWithSeveralAccounts() {
+        let label = row("L1", "Work\u{202E}")
+        XCTAssertEqual(LabelRemovalText.title(label: label, multipleAccounts: false),
+                       "Remove label “Work\u{27E8}U+202E\u{27E9}”?")
+        XCTAssertEqual(LabelRemovalText.title(label: label, multipleAccounts: true),
+                       "Remove label “Work\u{27E8}U+202E\u{27E9}” from a@x.com?")
+        XCTAssertTrue(LabelRemovalText.message(label: label, sublabels: 0, savedViews: 2)
+            .contains("The 2 saved views that use it are removed too."))
+    }
 
     func testRemovalDeletesSublabelsDeepestFirst() {
         let order = LabelRemoval.order(rows[0], rows: rows).map(\.name)

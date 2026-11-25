@@ -90,7 +90,7 @@ struct LabelMenuButton: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Options")
-        .accessibilityLabel("Options for label \(node.displayName)")
+        .accessibilityLabel(Text(verbatim: "Options for label " + LabelText.safe(node.displayName)))
         .accessibilityIdentifier("sidebar.label.menu.\(node.accountId).\(node.gmailLabelId)")
     }
 }
@@ -107,7 +107,9 @@ struct LabelMenuPresentation: ViewModifier {
             .sheet(item: $store.labelMenu.editing) { label in
                 EditLabelSheet(label: label)
             }
-            .alert(removing.map { "Remove label “\($0.name)”?" } ?? "",
+            .alert(Text(verbatim: removing.map {
+                       LabelRemovalText.title(label: $0, multipleAccounts: store.accounts.count > 1)
+                   } ?? ""),
                    isPresented: Binding(get: { store.labelMenu.removing != nil },
                                         set: { if !$0 { store.labelMenu.removing = nil } }),
                    presenting: removing) { label in
@@ -121,10 +123,13 @@ struct LabelMenuPresentation: ViewModifier {
                 }
                 .accessibilityIdentifier("labelRemove.confirm")
             } message: { label in
-                Text(LabelRemovalText.message(label: label, sublabels:
-                    LabelFamily.descendants(of: label, in: store.userLabels(forAccount: label.accountId)).count))
+                Text(verbatim: LabelRemovalText.message(
+                    label: label,
+                    sublabels: LabelFamily.descendants(
+                        of: label, in: store.userLabels(forAccount: label.accountId)).count,
+                    savedViews: store.savedViewsRemoved(with: label).count))
             }
-            .alert(store.labelMenu.failure?.title ?? "",
+            .alert(Text(verbatim: store.labelMenu.failure?.title ?? ""),
                    isPresented: Binding(get: { store.labelMenu.failure != nil },
                                         set: { if !$0 { store.labelMenu.failure = nil } }),
                    presenting: store.labelMenu.failure) { failure in
@@ -137,7 +142,7 @@ struct LabelMenuPresentation: ViewModifier {
                 }
                 Button("OK", role: .cancel) { store.labelMenu.failure = nil }
             } message: { failure in
-                Text(failure.message)
+                Text(verbatim: failure.message)
             }
     }
 }
@@ -171,16 +176,16 @@ struct EditLabelSheet: View {
                 .disabled(parents.isEmpty)
                 .accessibilityIdentifier("editLabel.nest")
             Picker("", selection: $parent) {
-                ForEach(parents, id: \.self) { Text($0).tag($0) }
+                ForEach(parents, id: \.self) { Text(verbatim: LabelText.safe($0)).tag($0) }
             }
             .labelsHidden()
             .disabled(!nest || parents.isEmpty)
             .accessibilityIdentifier("editLabel.parent")
             if let problem {
-                Text(problem).font(.caption).foregroundStyle(.red)
+                Text(verbatim: problem).font(.caption).foregroundStyle(.red)
             }
             if let failure {
-                Text(failure)
+                Text(verbatim: failure)
                     .font(.caption).foregroundStyle(.red)
                     .accessibilityIdentifier("editLabel.error")
             }

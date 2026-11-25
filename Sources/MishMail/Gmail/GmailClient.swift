@@ -414,7 +414,8 @@ actor GmailClient {
                 }
                 DiagnosticLog.gmailHTTP(account: accountEmail, method: method, path: path,
                                         code: code, body: logged)
-                if method == "GET",
+                let rateLimitAttempts = Self.rateLimitAttempts(method: method, path: path)
+                if rateLimitAttempts > 0,
                    MessageFetchFailureKind.classify(GmailError.http(code, body)) == .rateLimited {
                     guard retryRateLimit else {
                         // The caller owns retries; still record the penalty.
@@ -433,7 +434,7 @@ actor GmailClient {
                         attempt: rateAttempt, kind: .rateLimited,
                         retryAfter: retryAfter, jitter: GmailRetryBackoff.jitter())
                     quota.block(until: Self.quotaNow().addingTimeInterval(delay))
-                    guard rateAttempt + 1 < Self.requestRetryAttempts else {
+                    guard rateAttempt + 1 < rateLimitAttempts else {
                         throw GmailError.http(code, body)
                     }
                     rateAttempt += 1
@@ -474,6 +475,11 @@ actor GmailClient {
     /// visibilities). The answer is the label as Gmail now has it.
     func patchLabel(id: String, _ patch: GmailLabelPatch) async throws -> GLabel {
         try await request("PATCH", "/labels/\(Self.pathSegment(id))", jsonBody: patch.body)
+    }
+
+    /// `labels.get`: one label as Gmail has it now.
+    func label(id: String) async throws -> GLabel {
+        try await request("GET", "/labels/\(Self.pathSegment(id))")
     }
 
     /// `labels.delete`: the label goes, its conversations stay (they only
@@ -685,6 +691,17 @@ actor GmailClient {
     /// Max attempts for a single get on retryable errors (429/5xx/network).
     nonisolated static let getRetryAttempts = 3
     nonisolated static let requestRetryAttempts = 3
+
+    /// How many times a rate-limited call is tried: GETs up to
+    /// `requestRetryAttempts`; a label write (`labels.patch`, `labels.delete`,
+    /// from the sidebar's label menu and its cascades) twice, one retry after
+    /// the backoff, so a large cascade does not fall straight into rollback;
+    /// any other write once (0: no retry here, the caller owns it).
+    nonisolated static func rateLimitAttempts(method: String, path: String) -> Int {
+        if method == "GET" { return requestRetryAttempts }
+        if path.hasPrefix("/labels/"), method == "PATCH" || method == "DELETE" { return 2 }
+        return 0
+    }
 
     nonisolated static func quotaCost(method: String, path: String, format: String = "full") -> Int {
         if path == "/history" { return 2 }

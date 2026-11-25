@@ -35,6 +35,8 @@ struct GmailLabelPatch: Equatable, Sendable {
 protocol LabelRemote: Sendable {
     func patchLabel(id: String, _ patch: GmailLabelPatch) async throws -> GLabel
     func deleteLabel(id: String) async throws
+    /// The label as Gmail has it now (`labels.get`).
+    func label(id: String) async throws -> GLabel
 }
 
 extension GmailClient: LabelRemote {}
@@ -49,6 +51,37 @@ struct DemoLabelRemote: LabelRemote {
     }
 
     func deleteLabel(id: String) async throws {}
+
+    func label(id: String) async throws -> GLabel {
+        GLabel(id: id, name: "", type: "user", color: nil)
+    }
+}
+
+/// A label name as text that cannot mislead in a title, an alert or a
+/// VoiceOver label: control and line-separator characters (a newline that
+/// fakes a second line) and bidirectional formatting characters (which
+/// reorder what is shown) are written as visible `U+XXXX` escapes. Show it
+/// with `Text(verbatim:)`, so `*a*` or `[x](y)` is not read as Markdown.
+enum LabelText {
+    static func safe(_ name: String) -> String {
+        var out = ""
+        for scalar in name.unicodeScalars {
+            let v = scalar.value
+            let bidi = (0x202A...0x202E).contains(v) || (0x2066...0x2069).contains(v)
+                || [0x200E, 0x200F, 0x061C].contains(v)
+            let category = scalar.properties.generalCategory
+            if category == .control || category == .lineSeparator || category == .paragraphSeparator
+                || bidi {
+                out += String(format: "\u{27E8}U+%04X\u{27E9}", v)
+            } else {
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out
+    }
+
+    /// `“name”`, made safe.
+    static func quoted(_ name: String) -> String { "“\(safe(name))”" }
 }
 
 /// A label and the labels nested under it. Gmail labels are flat names:
@@ -206,8 +239,23 @@ enum LabelRename {
     private static func send(_ changes: [Change], forward: Bool,
                              remote: LabelRemote) async -> [Int: Error] {
         await LabelBatch.run(changes) { c in
-            _ = try await remote.patchLabel(id: c.gmailLabelId, GmailLabelPatch(name: forward ? c.to : c.from))
+            let target = forward ? c.to : c.from
+            do {
+                _ = try await remote.patchLabel(id: c.gmailLabelId, GmailLabelPatch(name: target))
+            } catch {
+                // "Name exists": not a failure when the label itself already
+                // has that name on Gmail (a parent's rename carried it along,
+                // or an earlier attempt landed after its answer was lost).
+                guard isNameConflict(error),
+                      let current = try? await remote.label(id: c.gmailLabelId),
+                      current.name == target else { throw error }
+            }
         }
+    }
+
+    static func isNameConflict(_ error: Error) -> Bool {
+        if case GmailError.http(409, _) = error { return true }
+        return false
     }
 
     /// Stores the names Gmail has, in one transaction.
@@ -263,11 +311,38 @@ enum LabelRemoval {
         return result
     }
 
-    /// "Deleted means gone" (DEC-019): the rows and the conversations'
-    /// memberships go. The label's color only on this Mac and its order
-    /// are columns of the row; its disclosure state is in UserDefaults
-    /// (`SidebarDisclosure.forget`).
-    static func forget(_ db: Database, rows: [LabelRow]) throws {
+    /// The label to remove, as it is now: nil when it is gone or has
+    /// another name than when the confirmation was asked (a sync landed a
+    /// rename made elsewhere meanwhile). Never act on the snapshot: its id
+    /// could now be another label than the one the dialog named.
+    static func resolve(_ snapshot: LabelRow, current rows: [LabelRow]) -> LabelRow? {
+        guard let row = rows.first(where: { $0.id == snapshot.id }),
+              row.name == snapshot.name, row.accountId == snapshot.accountId else { return nil }
+        return row
+    }
+
+    /// Saved views that show (or exclude) one of the removed labels: they go
+    /// with them (DEC-019). A view of every account goes only when no other
+    /// account still has a label with that id (ids are per account).
+    static func viewsUsing(_ removed: [LabelRow], views: [SavedView],
+                           allLabels: [LabelRow]) -> [SavedView] {
+        guard let account = removed.first?.accountId else { return [] }
+        let ids = Set(removed.map(\.gmailLabelId))
+        let elsewhere = Set(allLabels.filter { $0.accountId != account }.map(\.gmailLabelId))
+        return views.filter { view in
+            let chipLabel = view.chipsJSON.flatMap { try? JSONDecoder().decode(FilterChips.self, from: $0) }?.labelId
+            let used = [view.labelId, chipLabel].compactMap { $0 }.filter(ids.contains)
+            guard !used.isEmpty else { return false }
+            if view.accountId == account { return true }
+            return view.accountId == nil && used.allSatisfy { !elsewhere.contains($0) }
+        }
+    }
+
+    /// "Deleted means gone" (DEC-019): the rows, the conversations'
+    /// memberships and the saved views on them go. The label's color only
+    /// on this Mac and its order are columns of the row; what UserDefaults
+    /// keeps per label goes with `forgetDefaults`.
+    static func forget(_ db: Database, rows: [LabelRow], views: [SavedView] = []) throws {
         for row in rows {
             try db.execute(sql: """
                 DELETE FROM thread_label
@@ -275,18 +350,44 @@ enum LabelRemoval {
                 """, arguments: [row.gmailLabelId, row.accountId])
             try db.execute(sql: "DELETE FROM label WHERE id = ?", arguments: [row.id])
         }
+        for view in views {
+            if let id = view.id { _ = try SavedView.deleteOne(db, key: id) }
+        }
+    }
+
+    /// The per-label keys in UserDefaults: the disclosure state and the
+    /// label view's saved category filter.
+    static func forgetDefaults(_ rows: [LabelRow], _ defaults: UserDefaults = .standard) {
+        for row in rows {
+            SidebarDisclosure.forget(row.gmailLabelId, accountId: row.accountId, defaults)
+            let view = MailboxView.label(account: row.accountId, labelId: row.gmailLabelId, name: row.name)
+            if let key = view.prefsKey { defaults.removeObject(forKey: "categoryFilter.\(key)") }
+        }
     }
 }
 
 /// What the Remove confirmation says, as Gmail web does: the label and its
 /// sublabels go, the conversations stay.
 enum LabelRemovalText {
-    static func message(label: LabelRow, sublabels: Int) -> String {
+    /// The title; names the account when there is more than one (two
+    /// accounts can both have "Work").
+    static func title(label: LabelRow, multipleAccounts: Bool) -> String {
+        multipleAccounts
+            ? "Remove label \(LabelText.quoted(label.name)) from \(LabelText.safe(label.accountId))?"
+            : "Remove label \(LabelText.quoted(label.name))?"
+    }
+
+    static func message(label: LabelRow, sublabels: Int, savedViews: Int = 0) -> String {
         var parts: [String] = []
         switch sublabels {
         case 0: break
         case 1: parts.append("Its sublabel is removed too.")
         default: parts.append("Its \(sublabels) sublabels are removed too.")
+        }
+        switch savedViews {
+        case 0: break
+        case 1: parts.append("The saved view that uses it is removed too.")
+        default: parts.append("The \(savedViews) saved views that use it are removed too.")
         }
         parts.append("Conversations are not deleted: they only lose the label.")
         parts.append("This can't be undone.")
