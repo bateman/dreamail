@@ -119,6 +119,22 @@ final class SecureDeleteTests: XCTestCase {
         XCTAssertTrue(stored)
     }
 
+    /// A message with one cached remote image (`RemoteImageCache`).
+    private func insertRemoteImage(_ db: Database, account: String, gmailId: String,
+                                   image: Data, daysAgo: Double = 1) throws {
+        try insertMessage(db, account: account, gmailId: gmailId,
+                          subject: "Remote \(gmailId)", body: "remote body", daysAgo: daysAgo)
+        let id = "\(account):\(gmailId)"
+        let url = "https://img.example.com/\(gmailId).png"
+        try db.execute(sql: "UPDATE message_body SET bodyHTML = ? WHERE messageId = ?",
+                       arguments: ["<img src=\"\(url)\">", id])
+        let written = try RemoteImageCache.store(db, .init(
+            messageId: id, accountId: account,
+            images: [.init(urlKey: RemoteImageHTML.urlKey(url), mimeType: "image/png", data: image)]),
+            now: Date())
+        XCTAssertEqual(written, 1)
+    }
+
     /// Image bytes large enough to spill over several overflow pages, with
     /// the marker on each of them.
     private func imageBytes(_ marker: String) -> Data {
@@ -271,6 +287,101 @@ final class SecureDeleteTests: XCTestCase {
             XCTAssertFalse(try onDisk(text), "\(text) still on disk")
         }
         XCTAssertTrue(try onDisk(kept), "the image still cached stays")
+        try pool.close()
+    }
+
+    // MARK: Cached remote images
+
+    /// A deleted message's cached remote images, an evicted message's, a
+    /// pruned message's, a deleted thread's and an orphan's: zeroed in the
+    /// file and gone from the log, like the mail they belong to.
+    func testCachedRemoteImagesLeaveNeitherTheFileNorTheLog() throws {
+        let pool = try openUnkeyedPool()
+        let deleted = marker("rimgdeleted")
+        let evicted = marker("rimgevicted")
+        let pruned = marker("rimgpruned")
+        let threadGone = marker("rimgthread")
+        let orphan = marker("rimgorphan")
+        let kept = marker("rimgkept")
+        try pool.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertFiller(db, account: "me@example.com", range: 0..<30)
+            try insertRemoteImage(db, account: "me@example.com", gmailId: "deleted",
+                                  image: imageBytes(deleted))
+            try insertRemoteImage(db, account: "me@example.com", gmailId: "evicted",
+                                  image: imageBytes(evicted))
+            try insertRemoteImage(db, account: "me@example.com", gmailId: "pruned",
+                                  image: imageBytes(pruned), daysAgo: 200)
+            try insertRemoteImage(db, account: "me@example.com", gmailId: "thread",
+                                  image: imageBytes(threadGone))
+            try insertRemoteImage(db, account: "me@example.com", gmailId: "orphan",
+                                  image: imageBytes(orphan))
+            try insertRemoteImage(db, account: "me@example.com", gmailId: "kept",
+                                  image: imageBytes(kept))
+            // Everything but "evicted" used later: it is the one eviction takes.
+            try RemoteImageCache.touch(
+                db, messageIds: ["deleted", "pruned", "thread", "orphan", "kept"]
+                    .map { "me@example.com:\($0)" },
+                now: Date().addingTimeInterval(2 * 86_400))
+            try insertFiller(db, account: "me@example.com", range: 30..<60)
+        }
+        for text in [deleted, evicted, pruned, threadGone, orphan, kept] {
+            XCTAssertTrue(try onDisk(text), "the scan must see \(text) while it is live")
+        }
+
+        try pool.write { db in
+            _ = try Message.deleteOne(db, key: "me@example.com:deleted")
+            let total = try RemoteImageCache.totalBytes(db)
+            let one = imageBytes(kept).count
+            XCTAssertEqual(try RemoteImageCache.evict(db, budget: total - one),
+                           ["me@example.com:evicted"])
+            try SyncEngine.pruneMessages(db, accountId: "me@example.com",
+                                         olderThan: Date().addingTimeInterval(-90 * 86_400))
+            XCTAssertEqual(try SyncEngine.deleteLocalMessage(
+                db, messageId: "me@example.com:thread", threadId: "me@example.com:t-thread",
+                accountId: "me@example.com"), .threadDeleted)
+        }
+        try pool.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA foreign_keys = OFF")
+            try db.execute(sql: "DELETE FROM message WHERE id = 'me@example.com:orphan'")
+            try db.execute(sql: "PRAGMA foreign_keys = ON")
+        }
+        try pool.write { db in
+            XCTAssertEqual(try Int.fetchOne(db, sql: """
+                SELECT count(*) FROM remoteImage WHERE messageId = 'me@example.com:orphan'
+                """), 1, "fixture: the orphaned row is still there")
+            try AccountLifecycle.purgeOrphanRows(db)
+        }
+        XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: AppDatabase.freePagesPerCheckpoint))
+        XCTAssertEqual(walSize(), 0, "the log is truncated")
+        for text in [deleted, evicted, pruned, threadGone, orphan] {
+            XCTAssertFalse(try onDisk(text), "\(text) still on disk")
+        }
+        XCTAssertTrue(try onDisk(kept), "the image still cached stays")
+        try pool.close()
+        for text in [deleted, evicted, pruned, threadGone, orphan] {
+            XCTAssertFalse(try onDisk(text), "\(text) on disk after close")
+        }
+    }
+
+    /// Account removal: that account's remote images leave the file and log.
+    func testRemovedAccountsRemoteImagesLeaveNeitherTheFileNorTheLog() throws {
+        let pool = try openUnkeyedPool()
+        let gone = marker("rimggone")
+        let kept = marker("rimgother")
+        try pool.write { db in
+            try insertAccount(db, "me@example.com")
+            try insertAccount(db, "other@example.com")
+            try insertFiller(db, account: "other@example.com", range: 0..<30)
+            try insertRemoteImage(db, account: "me@example.com", gmailId: "a", image: imageBytes(gone))
+            try insertRemoteImage(db, account: "other@example.com", gmailId: "a", image: imageBytes(kept))
+            try insertFiller(db, account: "other@example.com", range: 30..<60)
+        }
+        XCTAssertTrue(try onDisk(gone))
+        try pool.write { db in try AccountLifecycle.purgeAccount(db, id: "me@example.com") }
+        XCTAssertTrue(try foldAndTruncate(pool, freePageLimit: AppDatabase.freePagesPerCheckpoint))
+        XCTAssertFalse(try onDisk(gone), "removed account's image still on disk")
+        XCTAssertTrue(try onDisk(kept), "the other account's stays")
         try pool.close()
     }
 

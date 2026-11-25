@@ -88,6 +88,7 @@ extension MailStore {
         accounts.removeAll { $0.id == id }
         forgetAccountPhoto(id)
         leaveScope(ofRemovedAccount: id)
+        PendingLabelColorEdits.shared.forgetAccount(id)
         Task { @MainActor [weak self] in
             await engine?.cancelSync()
             // The database purge comes first because it is the step that can

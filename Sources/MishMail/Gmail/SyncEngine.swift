@@ -262,9 +262,16 @@ actor SyncEngine {
     /// An empty list deletes nothing: every mailbox has system labels, so
     /// an empty answer is a bad response, not "all labels deleted".
     /// Exercised directly by the test suite.
-    static func applyLabels(_ db: Database, accountId: String, labels: [GLabel]) throws {
+    ///
+    /// A Gmail color the app has just written (`PendingLabelColorEdits`)
+    /// is kept over an older answer, so it does not bounce back.
+    static func applyLabels(_ db: Database, accountId: String, labels: [GLabel],
+                            pendingColors: PendingLabelColorEdits = .shared,
+                            now: Date = Date()) throws {
         for l in labels {
             let id = "\(accountId):\(l.id)"
+            let fetched = GmailLabelColorEdit.colors(of: l)
+            let gmailColors = pendingColors.held(id, fetched: fetched, now: now) ?? fetched
             // A local color pick and order are local customizations — a
             // resync must never wipe them. Gmail's own colors are mirrored
             // as they are now, so a color changed in Gmail shows here too.
@@ -273,8 +280,8 @@ actor SyncEngine {
                                gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
                                color: existing?.color,
                                sortOrder: existing?.sortOrder ?? LabelRow.unsorted,
-                               gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
-                               gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor))
+                               gmailBackgroundColor: gmailColors.background,
+                               gmailTextColor: gmailColors.text)
             // Runs every pass, and labels almost never change between
             // passes — write only rows that differ from the stored one.
             if row != existing { try row.save(db) }

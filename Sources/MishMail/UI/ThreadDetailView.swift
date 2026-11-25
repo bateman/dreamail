@@ -113,6 +113,21 @@ struct ThreadDetailView: View {
     @State private var cidPrepByMessageId: [String: MessageHTMLPrep] = [:]
     /// Avoid re-fetching the same message for Content-ID recovery every expand.
     @State private var cidResolveAttempted: Set<String> = []
+    /// `cid:` resolves still running: a remote-image resolve for the same
+    /// message waits for it, so it works on the final base once.
+    @State private var cidResolveInFlight: Set<String> = []
+    /// Bodies with every cacheable remote image from the cache
+    /// (`RemoteInlinedBody`), seeded from the payload when the conversation
+    /// opens (a warmed payload, or one an earlier open filled); never
+    /// changed while it is open.
+    @State private var remoteBodyById: [String: RemoteInlinedBody] = [:]
+    /// "id|cid" / "id|raw": remote resolves started, per base.
+    /// Remote-image decisions for this conversation (cache checks, fetches
+    /// for the next open, cancellation): `RemoteImagePaneState`.
+    @State private var remotePane = RemoteImagePaneState()
+    /// The running check, rebuild or fetch per message, cancelled when its
+    /// images stop being allowed or its body leaves, and on thread change.
+    @State private var remoteResolveTasks: [String: Task<Void, Never>] = [:]
     /// Avoid re-fetching the same message for missing-attachment recovery every expand.
     @State private var attachmentRecoverAttempted: Set<String> = []
     /// Open message cards (live HTML body renderers). The reading pane keeps
@@ -348,6 +363,11 @@ struct ThreadDetailView: View {
                 cidInlinedHTMLById = [:]
                 cidPrepByMessageId = [:]
                 cidResolveAttempted = []
+                cidResolveInFlight = []
+                remoteBodyById = [:]
+                for task in remoteResolveTasks.values { task.cancel() }
+                remoteResolveTasks = [:]
+                remotePane = RemoteImagePaneState()
                 loadRemoteImagesForThread = false
                 // Keep the open set `init` seeded for this conversation; the
                 // payload re-seeds below. Clearing it here collapsed the card
@@ -591,6 +611,8 @@ struct ThreadDetailView: View {
                     bodyPrep: bodyPrepByMessageId[message.id],
                     cidInlinedHTML: cidInlinedHTMLById[message.id],
                     cidPrep: cidPrepByMessageId[message.id],
+                    remoteBody: remoteBodyById[message.id],
+                    remoteCheck: remotePane.checks[message.id],
                     expandPolicy: messageExpandPolicy,
                     expandedMessageIds: $expandedMessageIds,
                     isCollapsible: MessageExpandPolicy.isCollapsible(
@@ -608,6 +630,10 @@ struct ThreadDetailView: View {
                         blockTarget = BlockTarget(email: email, thread: nil)
                     },
                     onNeedBody: { loadBodyIfNeeded(id: message.id) },
+                    onRemoteImagesDecision: { allowed, mounted in
+                        remoteImagesDecisionChanged(id: message.id, allowed: allowed,
+                                                    bodyMounted: mounted)
+                    },
                     onBodySettled: { armNeighborPrerenderIfNeeded() },
                     onUnsubscribe: { unsubscribeTarget = message },
                     onNeedUnsubscribeHeaders: {
@@ -943,6 +969,7 @@ struct ThreadDetailView: View {
               CIDImageInliner.containsCIDReferences(html)
         else { return }
         cidResolveAttempted.insert(id)
+        cidResolveInFlight.insert(id)
         let atts = attachmentsByMessageId[id] ?? []
         // Pre-inline size gates the oversized-HTML placeholder (see
         // `MessageHTMLPrepBuilder.cidInlinedPrep`).
@@ -954,7 +981,10 @@ struct ThreadDetailView: View {
         Task {
             guard let result = await store.inlineCIDImages(
                 message: msg, attachments: atts, html: html)
-            else { return }
+            else {
+                await MainActor.run { cidResolveDidFinish(id: id) }
+                return
+            }
             // The inlined body embeds base64 image bytes (often MBs). Scan
             // its quote trail and assemble its documents off the main actor,
             // once, so `MessageCard.init` / body only do lookups.
@@ -998,6 +1028,130 @@ struct ThreadDetailView: View {
                         CIDInlinedBody(html: result.html, prep: cidPrep),
                         messageId: id, threadId: thread.id, revision: revision)
                 }
+                cidResolveDidFinish(id: id)
+            }
+        }
+    }
+
+    /// A `cid:` resolve ended: a remote-image resolve that waited for it
+    /// runs now, on the final base.
+    private func cidResolveDidFinish(id: String) {
+        cidResolveInFlight.remove(id)
+        if remotePane.cidFinished(id) {
+            // Only a mounted body with images allowed waits for this.
+            remoteImagesDecisionChanged(id: id, allowed: true, bodyMounted: true)
+        }
+    }
+
+    /// The card's remote-image decision changed (or its base did, or its
+    /// body mounted), through the one gate (`RemoteImagePaneState.step`).
+    /// While images are allowed: one cache check before the first paint
+    /// (bounded), so a fully cached message, prefetched or not, opens with
+    /// no request; otherwise the live body, exactly as without the cache,
+    /// and one background fetch for the next open, started only from the
+    /// mounted body. A blocked card cancels and fetches nothing.
+    private func remoteImagesDecisionChanged(id: String, allowed: Bool, bodyMounted: Bool) {
+        let cidInlined = cidInlinedHTMLById[id] != nil
+        let prep = cidInlined ? cidPrepByMessageId[id] : bodyPrepByMessageId[id]
+        let step = remotePane.step(
+            id: id, allowRemoteImages: allowed, bodyMounted: bodyMounted,
+            candidateCount: prep?.remoteImageCount ?? 0,
+            cidResolveInFlight: cidResolveInFlight.contains(id),
+            cidInlined: cidInlined, remoteBody: remoteBodyById[id])
+        switch step {
+        case .cancel:
+            remoteResolveTasks.removeValue(forKey: id)?.cancel()
+        case .nothing:
+            break
+        case .markCachedUsed:
+            store.noteCachedRemoteImagesShown(messageIds: [id])
+        case .checkCache(let baseIsCID):
+            startCacheRead(id: id, baseIsCID: baseIsCID, isCheck: true)
+        case .rebuildFromCache(let baseIsCID):
+            startCacheRead(id: id, baseIsCID: baseIsCID, isCheck: false)
+        case .fetchForNextOpen(let baseIsCID):
+            startFetchForNextOpen(id: id, baseIsCID: baseIsCID)
+        }
+    }
+
+    private struct RemoteWork {
+        let base: String
+        let preInlineBytes: Int
+        let accountId: String
+    }
+
+    private func remoteWork(id: String, baseIsCID: Bool) -> RemoteWork? {
+        guard let msg = messages.first(where: { $0.id == id }),
+              let rawHTML = msg.bodyHTML, !rawHTML.isEmpty else { return nil }
+        let base = (baseIsCID ? cidInlinedHTMLById[id] : nil) ?? rawHTML
+        let prep = baseIsCID ? cidPrepByMessageId[id] : bodyPrepByMessageId[id]
+        return RemoteWork(base: base, preInlineBytes: prep?.htmlBytes ?? rawHTML.utf8.count,
+                          accountId: msg.accountId)
+    }
+
+    /// The cache check before the first paint (`isCheck`), bounded by
+    /// `RemoteImagePaneState.checkDeadline`, or a rebuild of a complete
+    /// cache for a newer base. Records the result; starts nothing else.
+    private func startCacheRead(id: String, baseIsCID: Bool, isCheck: Bool) {
+        guard let work = remoteWork(id: id, baseIsCID: baseIsCID) else {
+            if isCheck { _ = remotePane.checkFinished(id, complete: false) }
+            return
+        }
+        let scale = fontScale
+        let revision = store.contentRevision(of: thread.id)
+        let threadId = thread.id
+        let imageStore = store.remoteImageStore
+        remoteResolveTasks[id]?.cancel()
+        if isCheck {
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(RemoteImagePaneState.checkDeadline * 1e9))
+                await MainActor.run {
+                    guard thread.id == threadId else { return }
+                    remotePane.checkTimedOut(id)
+                }
+            }
+        }
+        remoteResolveTasks[id] = Task {
+            let body = await RemoteImageResolver.cachedBody(
+                messageId: id, accountId: work.accountId, baseHTML: work.base,
+                preInlineBytes: work.preInlineBytes, baseIsCIDInlined: baseIsCID,
+                fontScale: scale, store: imageStore)
+            await MainActor.run {
+                guard !Task.isCancelled, thread.id == threadId else { return }
+                remoteResolveTasks.removeValue(forKey: id)
+                let showNow = isCheck ? remotePane.checkFinished(id, complete: body != nil) : true
+                guard let body else { return }
+                if showNow { remoteBodyById[id] = body }
+                // Past the deadline: kept for the next open only.
+                store.rememberRemoteInline(body, messageId: id, threadId: threadId,
+                                           revision: revision)
+            }
+        }
+    }
+
+    /// The live body is on screen: fetch the cacheable images for the next
+    /// open. The open is never changed; the next open's body is kept with
+    /// the payload.
+    private func startFetchForNextOpen(id: String, baseIsCID: Bool) {
+        guard let work = remoteWork(id: id, baseIsCID: baseIsCID) else { return }
+        let scale = fontScale
+        let revision = store.contentRevision(of: thread.id)
+        let threadId = thread.id
+        let imageStore = store.remoteImageStore
+        let transport = store.remoteImageTransport
+        remoteResolveTasks[id]?.cancel()
+        remoteResolveTasks[id] = Task {
+            let next = await RemoteImageResolver.fetchForNextOpen(
+                messageId: id, accountId: work.accountId, baseHTML: work.base,
+                preInlineBytes: work.preInlineBytes, baseIsCIDInlined: baseIsCID,
+                fontScale: scale, store: imageStore, transport: transport)
+            await MainActor.run {
+                // A cancelled task's slot may already hold a newer one.
+                guard !Task.isCancelled else { return }
+                remoteResolveTasks.removeValue(forKey: id)
+                guard let next else { return }
+                store.rememberRemoteInline(next, messageId: id, threadId: threadId,
+                                           revision: revision)
             }
         }
     }
@@ -1022,6 +1176,16 @@ struct ThreadDetailView: View {
             cidPrepByMessageId = cidSeed.prepById
             cidResolveAttempted.formUnion(cidSeed.resolvedIds)
         }
+        // Remote images already in the encrypted cache (the prefetch built
+        // these from the cache only): the card shows them in its first frame
+        // when its own decision allows remote images, and only on the base it
+        // was built from.
+        let warmRemote = payload.remoteInlineByMessageId.filter { id, body in
+            body.baseIsCIDInlined == (cidSeed.htmlById[id] != nil)
+                && RemoteInlineCachePolicy.shouldRemember(body, fontScale: fontScale)
+        }
+        // What this session already resolved stays.
+        remoteBodyById.merge(warmRemote) { current, _ in current }
         threadAttachments = ThreadRefresh.threadAttachments(in: payload)
         // Anchor on newest sent when multi-message; draft-only falls back to
         // the last row so a pure-draft pane still positions.
@@ -1636,6 +1800,15 @@ struct MessageCard: View {
     /// Off-main prep for `cidInlinedHTML` (trail, pre-inline byte gate,
     /// documents). Set together with `cidInlinedHTML` by the parent.
     let cidPrep: MessageHTMLPrep?
+    /// The body with every cacheable remote image from the encrypted cache.
+    /// Used only while this card's own decision allows remote images
+    /// (`RemoteImageRendering.choice`).
+    let remoteBody: RemoteInlinedBody?
+    /// The pane's cache check for this message (`RemoteImagePaneState`):
+    /// until it settles (at most `checkDeadline`) a card whose images are
+    /// allowed and that has cacheable images does not paint its body, so it
+    /// never loads live first and then again from the cache.
+    let remoteCheck: RemoteImagePaneState.Check?
     /// Single-active reading pane vs multi-open side-by-side compose.
     let expandPolicy: MessageExpandPolicy
     @Binding var expandedMessageIds: Set<String>
@@ -1654,6 +1827,11 @@ struct MessageCard: View {
     let onBlockSender: (String) -> Void
     /// Parent loads the body when a collapsed header-only card expands.
     let onNeedBody: () -> Void
+    /// The card's remote-image decision, each time it or the base changes
+    /// and false when the body leaves: the parent resolves (cache, then the
+    /// app's fetch) only while it is true, and cancels otherwise.
+    /// (allowed, the HTML body view is mounted).
+    let onRemoteImagesDecision: (Bool, Bool) -> Void
     /// Parent arms neighbor HTML pre-render after this card's body settles.
     let onBodySettled: () -> Void
     /// Parent shows the Gmail-style unsubscribe confirm for this message.
@@ -1745,6 +1923,8 @@ struct MessageCard: View {
          bodyPrep: MessageHTMLPrep? = nil,
          cidInlinedHTML: String? = nil,
          cidPrep: MessageHTMLPrep? = nil,
+         remoteBody: RemoteInlinedBody? = nil,
+         remoteCheck: RemoteImagePaneState.Check? = .incomplete,
          expandPolicy: MessageExpandPolicy = .single,
          expandedMessageIds: Binding<Set<String>>,
          isCollapsible: Bool = true,
@@ -1754,6 +1934,7 @@ struct MessageCard: View {
          onReply: @escaping () -> Void,
          onBlockSender: @escaping (String) -> Void = { _ in },
          onNeedBody: @escaping () -> Void = {},
+         onRemoteImagesDecision: @escaping (Bool, Bool) -> Void = { _, _ in },
          onBodySettled: @escaping () -> Void = {},
          onUnsubscribe: @escaping () -> Void = {},
          onNeedUnsubscribeHeaders: @escaping () -> Void = {}) {
@@ -1763,6 +1944,8 @@ struct MessageCard: View {
         self.bodyPrep = bodyPrep
         self.cidInlinedHTML = cidInlinedHTML
         self.cidPrep = cidPrep
+        self.remoteBody = remoteBody
+        self.remoteCheck = remoteCheck
         self.expandPolicy = expandPolicy
         self._expandedMessageIds = expandedMessageIds
         self.isCollapsible = isCollapsible
@@ -1772,6 +1955,7 @@ struct MessageCard: View {
         self.onReply = onReply
         self.onBlockSender = onBlockSender
         self.onNeedBody = onNeedBody
+        self.onRemoteImagesDecision = onRemoteImagesDecision
         self.onBodySettled = onBodySettled
         self.onUnsubscribe = onUnsubscribe
         self.onNeedUnsubscribeHeaders = onNeedUnsubscribeHeaders
@@ -1892,6 +2076,20 @@ struct MessageCard: View {
             vipEmails: store.vipEmails,
             messageOptIn: loadRemoteImages,
             threadOptIn: loadImagesForThread)
+    }
+
+    /// Which body this card paints for remote images
+    /// (`RemoteImageRendering.choice`): the body from the cache only while
+    /// images are allowed, else the body exactly as without the cache.
+    private var remoteChoice: RemoteImageRendering.Choice {
+        let cidInlined = cidInlinedHTML.map { !$0.isEmpty } ?? false
+        let prep = cidInlined ? cidPrep : bodyPrep
+        return RemoteImageRendering.choice(
+            allowRemoteImages: allowRemoteImages,
+            remoteBody: remoteBody,
+            awaitingCacheCheck: RemoteImagePaneState.awaitsCacheCheck(
+                check: remoteCheck, allowRemoteImages: allowRemoteImages,
+                candidateCount: prep?.remoteImageCount ?? 0, hasRemoteBody: remoteBody != nil))
     }
 
     private var metrics: ThreadMessageRowMetrics {
@@ -2171,14 +2369,44 @@ struct MessageCard: View {
         } else if showPlainText, !message.bodyText.isEmpty {
             // Manual plain-text escape hatch (see header control).
             PlainTextBody(text: message.bodyText, fontScale: fontScale)
-        } else if let html = (cidInlinedHTML ?? message.bodyHTML), !html.isEmpty {
+        } else if case .awaitingCacheCheck = remoteChoice,
+                  !(cidInlinedHTML ?? message.bodyHTML ?? "").isEmpty {
+            // The pane is checking the cache (a few milliseconds): the body
+            // waits in its reserved space instead of loading live first.
+            Color.clear
+                .frame(maxWidth: .infinity, minHeight: fillsPaneHeight.map { max(0, $0 - bodyTopInCard) } ?? 0)
+                .task(id: "\(allowRemoteImages)|\(cidInlinedHTML != nil)") {
+                    // Starts the check only; never a fetch (not mounted).
+                    onRemoteImagesDecision(allowRemoteImages, false)
+                }
+        } else if let baseHTML = (cidInlinedHTML ?? message.bodyHTML), !baseHTML.isEmpty {
+            // Remote images: a body with them inlined replaces the base
+            // (with its own prep: head, sizes, documents) only while this
+            // card allows them; the load's CSP follows the choice.
+            let choice = remoteChoice
+            let remote: RemoteInlinedBody? = {
+                if case .remote(let body) = choice { return body }
+                return nil
+            }()
+            let loadAllowsRemoteImages: Bool = {
+                switch choice {
+                case .base(let allow): return allow
+                case .remote(let body): return body.loadAllowsRemoteImages
+                case .awaitingCacheCheck: return false
+                }
+            }()
+            let html = remote?.html ?? baseHTML
+            let bodyHead = remote.map { $0.prep.htmlHead } ?? htmlHead
+            let bodyHeadBytes = remote?.prep.htmlHeadBytes ?? htmlHeadBytes
+            let bodyBytes = remote?.prep.htmlBytes ?? htmlBytes
+            let bodyDocuments = remote.map { $0.prep.documents } ?? htmlDocuments
             // Structured quotes are removed before WebKit sees the
             // document. Besides avoiding repeated history parsing,
             // this gives head/full loads distinct constant-time ids.
             let useAuthoredHTML = textHead == nil && !showQuoted
-                && htmlHead != nil
-            let renderedHTML = useAuthoredHTML ? (htmlHead ?? html) : html
-            let renderedBytes = useAuthoredHTML ? htmlHeadBytes : htmlBytes
+                && bodyHead != nil
+            let renderedHTML = useAuthoredHTML ? (bodyHead ?? html) : html
+            let renderedBytes = useAuthoredHTML ? bodyHeadBytes : bodyBytes
             if HTMLBodyRenderPolicy.requiresExplicitLoad(
                 byteCount: renderedBytes,
                 userApproved: approvedOversizedHTML) {
@@ -2189,7 +2417,7 @@ struct MessageCard: View {
                 // Font-scale mismatch → no docs; HTMLBodyView then
                 // assembles off-main from `html`.
                 let docsForScale: MessageHTMLDocuments? = {
-                    guard let docs = htmlDocuments,
+                    guard let docs = bodyDocuments,
                           abs(docs.fontScale - fontScale) < 0.001
                     else { return nil }
                     return docs
@@ -2199,10 +2427,12 @@ struct MessageCard: View {
                 // view (which also fills the shared memo).
                 let preassembled = docsForScale?.readyDocument(
                     authored: useAuthoredHTML,
-                    allowRemoteImages: allowRemoteImages)
-                let bodyContentID = message.id
-                    + (useAuthoredHTML ? ":authored" : ":full")
-                    + (cidInlinedHTML != nil ? ":cid" : "")
+                    allowRemoteImages: loadAllowsRemoteImages)
+                // `:cid` follows the body on screen (R1): a cached body built
+                // before the `cid:` resolve keeps its id until rebuilt.
+                let bodyContentID = RemoteImageRendering.contentID(
+                    messageId: message.id, authored: useAuthoredHTML,
+                    cidInlined: cidInlinedHTML != nil, remoteBody: remote)
                 // Read in body, not onAppear: a known height (re-open,
                 // or a pre-rendered neighbor) must size the very first
                 // frame. Without one, the open card reserves the pane
@@ -2237,7 +2467,7 @@ struct MessageCard: View {
                     preassembledDocument: preassembled,
                     documents: docsForScale,
                     documentIsAuthored: useAuthoredHTML,
-                    allowRemoteImages: allowRemoteImages,
+                    allowRemoteImages: loadAllowsRemoteImages,
                     fontScale: fontScale,
                     height: Binding(
                         get: { bodyHeight },
@@ -2258,6 +2488,14 @@ struct MessageCard: View {
                     }
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("messageBody")
+                    // The card's decision (policy, click, conversation
+                    // opt-in, Spam): the parent resolves only while it
+                    // allows, and stops when it no longer does or the body
+                    // leaves.
+                    .task(id: "\(allowRemoteImages)|\(cidInlinedHTML != nil)") {
+                        onRemoteImagesDecision(allowRemoteImages, true)
+                    }
+                    .onDisappear { onRemoteImagesDecision(false, true) }
             }
         } else if !message.bodyText.isEmpty {
             // Collapsed plain-text heads are handled above; this branch
