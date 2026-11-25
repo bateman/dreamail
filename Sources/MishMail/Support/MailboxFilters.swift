@@ -6,6 +6,8 @@ enum MailboxView: Hashable {
     case social
     case starred
     case snoozed
+    case important      // Gmail's IMPORTANT system label
+    case spam
     case labels         // all labeled mail, one section per label
     case reminders
     case drafts
@@ -25,6 +27,8 @@ enum MailboxView: Hashable {
         case .social: return "Social"
         case .starred: return "Starred"
         case .snoozed: return "Snoozed"
+        case .important: return "Important"
+        case .spam: return "Spam"
         case .labels: return "Labels"
         case .reminders: return "Reminders"
         case .drafts: return "Drafts"
@@ -49,6 +53,8 @@ enum MailboxView: Hashable {
         case .social: return "social"
         case .starred: return "starred"
         case .snoozed: return "snoozed"
+        case .important: return "important"
+        case .spam: return "spam"
         case .labels: return "labels"
         case .reminders: return "reminders"
         case .drafts: return "drafts"

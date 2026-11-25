@@ -100,6 +100,10 @@ final class MailStore {
     /// labels change; `labelsByAccount`'s `didSet` is what republishes them.
     private(set) var labelsById: [String: [String: LabelRow]] = [:]
     private(set) var labelsByName: [String: [String: LabelRow]] = [:]
+    /// `accountId → label tree` for the sidebar (`SidebarLabelTree`). Built
+    /// with the indexes above, once per label change, so the sidebar never
+    /// sorts and nests hundreds of labels on a body pass.
+    private(set) var labelTrees: [String: [SidebarLabelNode]] = [:]
 
     var threads: [MailThread] = []
     var savedViews: [SavedView] = []
@@ -1550,6 +1554,10 @@ struct ComposeRequest: Identifiable {
 
     func setActiveAccount(_ id: String?) {
         activeAccountId = id
+        // A label belongs to one account: switching to another leaves it
+        // for that account's Inbox, as Gmail does.
+        let next = SidebarScope.view(selectedView, afterSwitchingTo: id)
+        if next != selectedView { selectedView = next }
         clearSelection()
         clearCheckedThreads()
         readStateKeepIds.removeAll()
@@ -3321,6 +3329,10 @@ struct ComposeRequest: Identifiable {
                          && Column("inTrash") == false)
         case .snoozed:
             q = ThreadListQuery.snoozed(now: now)
+        case .important:
+            q = ThreadListQuery.important()
+        case .spam:
+            q = ThreadListQuery.spam()
         case .labels:
             // Any user label via junction (Label_*); system labels never match.
             q = q.filter(sql: """
@@ -4051,11 +4063,7 @@ struct ComposeRequest: Identifiable {
                 let l = try await client.createLabel(name: name)
                 await MainActor.run {
                     try? self.db.write { db in
-                        try LabelRow(id: "\(accountId):\(l.id)", accountId: accountId,
-                                     gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
-                                     color: nil,
-                                     gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
-                                     gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor)).save(db)
+                        try LabelRow.created(l, accountId: accountId).save(db)
                     }
                     self.reloadAccounts()
                     self.labelPicker.query = ""
@@ -4116,6 +4124,7 @@ struct ComposeRequest: Identifiable {
         }
         labelsById = byId
         labelsByName = byName
+        labelTrees = labelsByAccount.mapValues(SidebarLabelTree.build)
     }
 
     func labelName(_ labelId: String, account accountId: String) -> String? {

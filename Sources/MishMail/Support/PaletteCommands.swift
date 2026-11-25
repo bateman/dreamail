@@ -5,7 +5,10 @@ import Foundation
 /// unit tests can build; the app maps a case to its `MailboxView`.
 enum BuiltinMailbox: String, CaseIterable {
     case inbox, promotions, social, starred, snoozed, reminders
-    case drafts, sent, allMail, trash
+    case important, drafts, sent, allMail, spam, trash
+    /// Every labelled conversation in one list, grouped by label. No longer
+    /// a sidebar row (the sidebar lists the labels themselves).
+    case labels
 
     var title: String {
         switch self {
@@ -15,6 +18,9 @@ enum BuiltinMailbox: String, CaseIterable {
         case .starred: return "Starred"
         case .snoozed: return "Snoozed"
         case .reminders: return "Reminders"
+        case .important: return "Important"
+        case .spam: return "Spam"
+        case .labels: return "Labels"
         case .drafts: return "Drafts"
         case .sent: return "Sent"
         case .allMail: return "All Mail"

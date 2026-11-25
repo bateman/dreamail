@@ -154,10 +154,12 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         // Every demo label holds one conversation, so no two rows share a
         // section there: take the row spacing from the inbox first.
         let inbox = assertCompactSectionBreaks(app)
-        // Sidebar starts collapsed; → reveals it (see SidebarNavUITests).
-        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        let labels = app.descendants(matching: .any)
-            .matching(identifier: "sidebar.labels").firstMatch
+        // The all-labels view left the sidebar (it lists the labels
+        // themselves now); it stays on Go ▸ Labels and `g l`.
+        let go = app.menuBars.menuBarItems["Go"]
+        XCTAssertTrue(go.waitForExistence(timeout: 5))
+        go.click()
+        let labels = app.menuBars.menuItems["Labels"]
         XCTAssertTrue(labels.waitForExistence(timeout: 5))
         labels.click()
         // A header that is not one of the inbox's date sections.

@@ -234,12 +234,17 @@ struct MishMailApp: App {
             CommandMenu("Go") {
                 Button("Inbox") { store.goTo(.inbox) }
                 Button("Starred") { store.goTo(.starred) }
+                Button("Important") { store.goTo(.important) }
                 Button("Sent") { store.goTo(.sent) }
                 Button("Drafts") { store.goTo(.drafts) }
                 Button("All Mail") { store.goTo(.allMail) }
+                Button("Spam") { store.goTo(.spam) }
                 Button("Trash") { store.goTo(.trash) }
                 Button("Snoozed") { store.goTo(.snoozed) }
                 Button("Reminders") { store.goTo(.reminders) }
+                // All labelled mail in one list (`g l`); the sidebar now
+                // lists the labels themselves.
+                Button("Labels") { store.goTo(.labels) }
                 ForEach(store.savedViews) { view in
                     Button(view.name) {
                         store.goTo(.saved(view.id ?? -1, view.name))
