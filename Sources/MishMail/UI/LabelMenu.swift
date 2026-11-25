@@ -142,22 +142,6 @@ struct LabelMenuPresentation: ViewModifier {
     }
 }
 
-/// What the Remove confirmation says, as Gmail web does: the label and its
-/// sublabels go, the conversations stay.
-enum LabelRemovalText {
-    static func message(label: LabelRow, sublabels: Int) -> String {
-        var parts: [String] = []
-        switch sublabels {
-        case 0: break
-        case 1: parts.append("Its sublabel is removed too.")
-        default: parts.append("Its \(sublabels) sublabels are removed too.")
-        }
-        parts.append("Conversations are not deleted: they only lose the label.")
-        parts.append("This can't be undone.")
-        return parts.joined(separator: " ")
-    }
-}
-
 /// Gmail's "Edit label" dialog: the name, and "Nest label under" to move
 /// it. Its sublabels move with it.
 struct EditLabelSheet: View {

@@ -273,7 +273,7 @@ final class LabelMenuEditsTests: XCTestCase {
         let (outcome, names) = await LabelRename.execute(changes, remote: remote)
         guard case .renamed = outcome else { return XCTFail("\(outcome)") }
         XCTAssertEqual(Set(remote.patches.map(\.0)), ["L1", "L2", "L3", "L4"])
-        try q.write { db in try LabelRename.store(db, names: names) }
+        try await q.write { db in try LabelRename.store(db, names: names) }
         let after = try stored(q)
         XCTAssertEqual(after[id("L4")]?.name, "Calls/PRIN/2025/Esiti")
         XCTAssertEqual(after[id("L5")]?.name, "Bandi2")
@@ -330,7 +330,7 @@ final class LabelMenuEditsTests: XCTestCase {
 
     func testRemovalDeletesTheFamilyAndForgetsIt() async throws {
         let q = try makeDB()
-        try q.write { db in
+        try await q.write { db in
             for (t, label, account) in [("t1", "L2", self.a), ("t2", "L5", self.a), ("t3", "L1", self.b)] {
                 try MailThread(
                     id: "\(account):\(t)", accountId: account, gmailThreadId: t,
@@ -349,16 +349,16 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertNil(report.cause)
         XCTAssertEqual(remote.deletes.last, "L1", "the label itself goes last")
         XCTAssertEqual(Set(remote.deletes), ["L1", "L2", "L3", "L4"])
-        try q.write { db in try LabelRemoval.forget(db, rows: report.deleted) }
+        try await q.write { db in try LabelRemoval.forget(db, rows: report.deleted) }
         let after = try stored(q)
         for gmailId in ["L1", "L2", "L3", "L4"] { XCTAssertNil(after[id(gmailId)], gmailId) }
         XCTAssertNotNil(after[id("L5")])
         XCTAssertNotNil(after[id("L1", b)], "same Gmail id on another account stays")
-        let memberships = try q.read { db in
+        let memberships = try await q.read { db in
             try ThreadLabel.fetchAll(db).map { "\($0.threadId) \($0.labelId)" }.sorted()
         }
         XCTAssertEqual(memberships, ["a@x.com:t2 L5", "b@x.com:t3 L1"])
-        let threads = try q.read { try MailThread.fetchCount($0) }
+        let threads = try await q.read { try MailThread.fetchCount($0) }
         XCTAssertEqual(threads, 3, "conversations are kept")
     }
 
