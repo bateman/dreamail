@@ -620,8 +620,8 @@ private struct ThreadListSections: View, Equatable {
                 }
             } header: {
                 // Compact so the pinned (sticky) header stays a thin
-                // line while scrolling. Secondary gray adapts to the
-                // theme and sets headers clearly apart from thread text.
+                // line while scrolling. Primary label colour: at least as dark
+                // as the sender and subject of any row, in both appearances.
                 // The whole break between sections is this header: a small
                 // gap, then the title at its own height. No footer: on macOS
                 // a footer is a row of its own (minimum height, no row
@@ -632,7 +632,7 @@ private struct ThreadListSections: View, Equatable {
                     } else {
                         HStack(spacing: 4) {
                             if title == Self.prioritySection {
-                                // Inherits the header's secondary colour: the
+                                // Inherits the header's primary colour: the
                                 // word "Priority" says what the section is.
                                 Image(systemName: "star.fill")
                                     .font(.system(size: 9 * fontScale))
@@ -641,7 +641,7 @@ private struct ThreadListSections: View, Equatable {
                             Text(title)
                         }
                         .font(.system(size: 12 * fontScale, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary)
                     }
                 }
                 .accessibilityIdentifier("threadSectionHeader.\(title)")
