@@ -152,6 +152,12 @@ grant, so it has its own refresh token in the Keychain
 (`calendarRefreshToken.<account>`). The token is kept only when Google says
 it belongs to that same account.
 
+- **Scope (owner's decision, DEC-048):** `calendar.events` (read and change
+  events on every calendar the user can access, shared ones included, so a
+  conflict on a shared calendar can show its title), plus
+  `calendar.events.freebusy` and `calendar.calendarlist.readonly`. MishMail
+  changes an event only to write the user's own answer or to add an
+  invitation the user chose to add.
 - **Stored:** only the calendars the user chose (the primary one by default)
   and, for each invitation, where its event is in Google Calendar with
   Google's organizer and time. Encrypted, deleted with the account, the
