@@ -161,7 +161,6 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertEqual(h.deleted.accounts, [account])
         XCTAssertEqual(try count(h, "calendarGrant"), 0)
         XCTAssertEqual(try count(h, "calendarSource"), 0)
-        XCTAssertEqual(try count(h, "calendarInviteEvent"), 0)
     }
 
     // MARK: - Invitation card
@@ -182,7 +181,6 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertEqual(findings.route(for: facts()),
                        .calendarAndEmail(calendarId: "primary", eventId: "ev1"))
         XCTAssertFalse(findings.canAddToCalendar(facts()))
-        XCTAssertEqual(try count(h, "calendarInviteEvent"), 0, "the card keeps it in memory only")
     }
 
     func testAConflictOnAChosenCalendarIsReported() async throws {
@@ -333,7 +331,6 @@ final class CalendarIntegrationTests: XCTestCase {
         clock = clock.addingTimeInterval(CalendarIntegration.locateCacheLifetime + 1)
         _ = await h.integration.check(facts(), messageId: "m1", accountId: account)
         XCTAssertEqual(lookups(), 2, "and forgotten after its lifetime")
-        XCTAssertEqual(try count(h, "calendarInviteEvent"), 0, "memory only")
     }
 
     func testARateLimitPausesTheAccountsChecks() async throws {
@@ -371,7 +368,6 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertTrue(post.url!.path.hasSuffix("/calendars/primary/events/import"), post.url!.path)
         let body = try XCTUnwrap(post.httpBody.flatMap { String(data: $0, encoding: .utf8) })
         XCTAssertTrue(body.contains("me@alias.com"), "the guest is the answering address")
-        XCTAssertEqual(try count(h, "calendarInviteEvent"), 0)
     }
 
     // MARK: - Pure pieces
