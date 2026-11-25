@@ -1,5 +1,4 @@
 import XCTest
-@testable import MishMail
 
 final class ThreadRowActionsTests: XCTestCase {
     func testHoverActionsAreTheFourGmailOnesInOrder() {
