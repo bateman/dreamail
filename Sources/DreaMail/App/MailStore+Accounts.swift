@@ -98,7 +98,7 @@ extension MailStore {
     /// other syncs. Mail appears in the list page by page as it is stored.
     private func startFirstSync(accountId: String) {
         guard !isShuttingDown else { return }
-        let previous = firstSyncTasks[accountId]
+        let previous = firstSyncTasks[accountId]?.task
         let id = UUID()
         let task = Task { @MainActor [weak self] in
             // A reauthorization of an account whose first sync still runs:
