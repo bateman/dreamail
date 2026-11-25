@@ -438,10 +438,13 @@ final class HTMLBodyLayoutTests: XCTestCase {
         XCTAssertTrue(js.contains("fitViewport"))
         XCTAssertTrue(js.contains("reflowPlaceholders"))
         // Prefer window/documentElement over body clientWidth (fixed email body).
+        // The root and body are read through `SAFE` (named elements cannot
+        // shadow them).
         XCTAssertTrue(js.contains("window.innerWidth"))
-        XCTAssertTrue(js.contains("documentElement.clientWidth"))
+        XCTAssertTrue(js.contains("SAFE.root().clientWidth"))
         // Body is fallback only — not Math.max'd with viewport.
         XCTAssertFalse(js.contains("Math.max(w, document.body.clientWidth"))
+        XCTAssertFalse(js.contains("Math.max(w, SAFE.body().clientWidth"))
         // Continuous measure: ResizeObserver + message handler + image events.
         XCTAssertTrue(js.contains("ResizeObserver"))
         XCTAssertTrue(js.contains(HTMLBodyLayout.heightHandlerName))
@@ -463,6 +466,8 @@ final class HTMLBodyLayoutTests: XCTestCase {
                       "zero-height kids must not open a dead gap via scrollHeight")
         // Never re-introduce documentElement.scrollHeight (viewport floor → grow).
         XCTAssertFalse(js.contains("documentElement.scrollHeight"),
+                       "documentElement.scrollHeight floors at viewport")
+        XCTAssertFalse(js.contains("SAFE.root().scrollHeight"),
                        "documentElement.scrollHeight floors at viewport")
         // Infinite-scroll breakers.
         XCTAssertTrue(js.contains("neutralizeViewportHeights"))
