@@ -2914,13 +2914,20 @@ final class AppDatabase: @unchecked Sendable {
                 WHERE isUnread = 1 AND inSpam = 1
                 """)
         }
-        // v66 (after v65; registered last): Gmail's per-label message list
+        // v66 (after v65, before v67): Gmail's per-label message list
         // visibility, written from the sidebar's label menu and mirrored on
         // every label sync. No value reads as Gmail's default, `show`.
         m.registerMigration("v66") { db in
             try db.alter(table: "label") { t in
                 t.add(column: "messageListVisibility", .text)
             }
+        }
+        // v67 (registered last): signatures
+        // follow Gmail by themselves. Each copy keeps the address it came
+        // from and whether it was edited here; Gmail's last version of each
+        // address's signature is kept beside it. Both go with the account.
+        m.registerMigration("v67") { db in
+            try SignatureStore.addGmailSync(db)
         }
         return m
     }

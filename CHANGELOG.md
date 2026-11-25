@@ -69,7 +69,16 @@ minor versions may still change behavior.
   avatar per account with its unread count, "All accounts" when there are
   several, "+" to add an account, and Settings at the bottom. It replaces the
   account switcher and the Settings row in the sidebar; ⌘1…⌘9 work as before.
-  A window narrower than 1144 pt now uses the compact layout.
+  A window narrower than 1170 pt now uses the compact layout. The rail is
+  90 pt wide, so the window's close, minimise and zoom buttons sit fully on
+  it; "All accounts" has a thin grey ring while it is not selected; and
+  Settings → Appearance can hide the "+" (accounts can always be added in
+  Settings → Accounts).
+
+- **Label picker like Gmail.** Enter applies the highlighted label and
+  closes the picker; Space ticks or unticks a label and keeps the picker
+  open, like a click; Esc closes it. "Create new" at the bottom creates a
+  label without leaving the picker.
 
 - **A remote image that fails to load is hidden.** With remote images allowed,
   a failed image without alternative text now shows nothing, as in Gmail,

@@ -65,7 +65,7 @@ enum ComposeToolbarItem: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .attach: return "paperclip"
         case .link: return "link"
-        case .signature: return "signature"
+        case .signature: return "pencil"
         case .snippets: return "text.badge.plus"
         case .ai: return "sparkles"
         case .bold: return "bold"

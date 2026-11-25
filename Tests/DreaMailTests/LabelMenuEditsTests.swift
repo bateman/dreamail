@@ -795,8 +795,8 @@ final class LabelMenuEditsTests: XCTestCase {
     }
 }
 
-/// v66 registers last, after v65; a database that already ran every other
-/// migration must still get it.
+/// v66 registers after v65 and before v67; a database that already ran
+/// every other migration must still get it.
 final class LabelMessageListMigrationOrderTests: XCTestCase {
     func testV66RunsOnADatabaseThatAlreadyHasTheOthers() throws {
         let q = try DatabaseQueue()
@@ -818,8 +818,12 @@ final class LabelMessageListMigrationOrderTests: XCTestCase {
         }
     }
 
-    func testV66IsRegisteredLast() {
-        XCTAssertEqual(AppDatabase.migrator.migrations.last, "v66")
+    func testV66RegistersAfterV65AndBeforeV67() throws {
+        let ids = AppDatabase.migrator.migrations
+        let v65 = try XCTUnwrap(ids.firstIndex(of: "v65"))
+        let v66 = try XCTUnwrap(ids.firstIndex(of: "v66"))
+        XCTAssertGreaterThan(v66, v65, "v66 registers after v65")
+        if let v67 = ids.firstIndex(of: "v67") { XCTAssertLessThan(v66, v67, "and before v67") }
     }
 }
 

@@ -554,7 +554,7 @@ extension MailStore {
         let bodyHTML = htmlAlternative(body: body,
                                        forwardOf: forward ? message : nil,
                                        replyTo: forward ? nil : message,
-                                       draft: draft)
+                                       draft: draft, accountId: accountId)
         let raw = MIMEBuilder.build(
             from: fromHeader(accountId: apiAccountId, fromEmail: identityEmail),
             to: to, cc: cc, bcc: bcc, subject: subject,
@@ -628,38 +628,15 @@ extension MailStore {
     /// `ForwardComposer.matchHTMLUpgrade` (all-package first — see that
     /// method; drafts are excluded from Forward-all). Replies use
     /// `ReplyComposer` so nested history isn't re-markdown'd as `>` lines.
+    ///
+    /// Then a Gmail signature the body carries unchanged gets Gmail's look
+    /// (`ComposeSignature.withRichSignature`).
     private func htmlAlternative(body: String, forwardOf original: Message?,
                                  replyTo replyParent: Message? = nil,
-                                 draft: Message?) -> String? {
-        if let orig = original {
-            let threadMsgs = messages(inThread: orig.threadId)
-            if let match = ForwardComposer.matchHTMLUpgrade(
-                body: body, original: orig, threadMessages: threadMsgs) {
-                return ForwardComposer.htmlBody(userText: match.userText, parts: match.parts)
-            }
-            // Content drift (new mail in thread since compose) or an edited
-            // quote: neither package matches → fall through to plain/markdown.
-        }
-        if let parent = replyParent,
-           let match = ReplyComposer.matchHTMLUpgrade(body: body, original: parent) {
-            return ReplyComposer.htmlBody(userText: match.userText, original: match.original)
-        }
-        if let draft, let html = draft.bodyHTML, !html.isEmpty, body == draft.bodyText {
-            return html
-        }
-        // A signature with no quote after it (new mail, or a quote the user
-        // removed): authored text plus Gmail's signature block.
-        if ComposeSignature.split(body) != nil, ComposeQuote.quoteStart(in: body) == nil {
-            return ComposeQuote.authoredHeadHTML(body)
-        }
-        // Markdown-authored body. Reply quotes that failed the upgrade above
-        // still match `^>\s` here — best-effort, not Gmail-shaped.
-        if Markdown.looksLikeMarkdown(body) {
-            return Markdown.toHTML(body)
-        }
-        // Plain prose: still emit HTML when there are links to click.
-        let fragment = ComposeLinks.htmlFragment(from: body)
-        return fragment.isEmpty ? nil : fragment
+                                 draft: Message?, accountId: String) -> String? {
+        OutgoingHTML.build(body: body, forwardOf: original, replyTo: replyParent, draft: draft,
+                           threadMessages: original.map { messages(inThread: $0.threadId) } ?? [],
+                           signatures: signatureBook.signatures(for: accountId))
     }
 
     /// Saves compose state as a real Gmail draft (shows up in Gmail too).
@@ -705,7 +682,7 @@ extension MailStore {
             bodyHTML: htmlAlternative(body: body,
                                       forwardOf: forward ? message : nil,
                                       replyTo: forward ? nil : message,
-                                      draft: draft),
+                                      draft: draft, accountId: accountId),
             inReplyTo: threadParent?.messageIdHeader,
             references: threadParent?.referencesHeader ?? draft?.referencesHeader,
             attachments: attachments

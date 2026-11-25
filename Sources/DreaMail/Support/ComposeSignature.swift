@@ -110,6 +110,36 @@ enum ComposeSignature {
         "<div class=\"gmail_signature\" data-smartmail=\"gmail_signature\">-- <br>\(innerHTML)</div>"
     }
 
+    /// The outgoing HTML with Gmail's look for the signature: when the text
+    /// after the last delimiter of `head` is, word for word, a signature
+    /// that kept Gmail's HTML, its rendered block is swapped for that HTML
+    /// (rebuilt again by `SignatureHTML`). A signature edited in compose, or
+    /// made in DreaMail, goes out as rendered text.
+    static func withRichSignature(_ html: String, head: String,
+                                  signatures: [SignatureRecord]) -> String {
+        guard let parts = split(head),
+              let match = richSignature(in: head, signatures: signatures),
+              let rich = match.html.flatMap({ SignatureHTML.cachedSanitize($0) }) else { return html }
+        let text = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
+        let plain = ComposeQuote.signatureBlockHTML(text)
+        // Only in the authored head, which every builder writes first: a
+        // quoted message may carry the same block (one DreaMail sent).
+        // Gmail web writes `class="gmail_quote gmail_quote_container"`.
+        let quote = html.range(of: "<div class=\"gmail_quote")?.lowerBound ?? html.endIndex
+        guard let range = html.range(of: plain, range: html.startIndex..<quote) else { return html }
+        return html.replacingCharacters(in: range, with: htmlBlock(innerHTML: rich.html))
+    }
+
+    /// The Gmail copy whose look a body sends: the signature after the last
+    /// delimiter of `head`, word for word, that kept Gmail's HTML. Nil when
+    /// the user changed it (it then goes out as typed) or it is not one.
+    static func richSignature(in head: String, signatures: [SignatureRecord]) -> SignatureRecord? {
+        guard let parts = split(head) else { return nil }
+        let text = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return signatures.first { $0.html != nil && normalizedBody($0.body) == text }
+    }
+
     /// Where `block` sits in `head`, intact: found, with nothing but
     /// whitespace after it (text typed below the delimiter is part of the
     /// signature by convention, so the block counts as edited).
@@ -301,6 +331,30 @@ struct ComposeSignatureState: Equatable {
     /// The user answered `.needsDecision` with Keep.
     mutating func resolveKeeping(accountId newAccount: String) {
         accountId = newAccount
+    }
+}
+
+/// The compose signature menu, as in Gmail: "Manage signatures", a
+/// separator, "No signature", then each signature of the sending account
+/// by name. The check mark follows the body (`ComposeSignatureState.selection`):
+/// none on a signature the user typed or edited.
+enum ComposeSignatureMenu {
+    enum Row: Equatable {
+        case manage
+        case divider
+        case none(checked: Bool)
+        case signature(id: Int64, name: String, checked: Bool)
+    }
+
+    static func rows(signatures: [SignatureRecord],
+                     selection: ComposeSignatureState.Selection) -> [Row] {
+        var rows: [Row] = [.manage, .divider, .none(checked: selection == .none)]
+        for signature in signatures {
+            guard let id = signature.id else { continue }
+            rows.append(.signature(id: id, name: signature.name,
+                                   checked: selection == .signature(id)))
+        }
+        return rows
     }
 }
 
