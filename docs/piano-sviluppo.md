@@ -221,16 +221,71 @@ Seguiti annotati:
 
 ## Cancello — prova su Mac del proprietario
 
-☐ Build locale, test e uso della demo.
-☐ Verifiche che la CI non copre, emerse dall'ondata 1: pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub; nuovo accesso a Google con il listener limitato (Safari e Chrome); avvio con un vecchio database in chiaro e una seconda copia aperta (striscia di sola lettura, schermata "Finish encrypting your mail"); eliminazione del vecchio file di log all'avvio.
-☐ Verifiche emerse dall'ondata 2 e dalla pulizia: `make install` e il controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto); nessuna interfaccia AI visibile (impostazioni, palette, barra di composizione, vista del thread); impostazioni, onboarding e palette senza le voci Notion; finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche); interruttore "Show sender and subject in notifications" e testo delle notifiche; avviso con un errore reale di Gmail.
-☐ Verifiche emerse dalle PR #17 e #18: shortcut su tastiera italiana (`]`, `[`, `#`, `*`), cursore nei campi Cc e Bcc e scelta del mittente in composizione, pannello di lettura su finestra stretta e su schermo da 13 pollici, lettura anticipata scorrendo con `j` e `k`; tempo della ricostruzione dell'indice di ricerca al primo avvio; ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio; nessun `Cache.db` che cresce nella cartella Caches.
-☐ Verifiche emerse dalle PR #20–#26: aspetto delle icone monocromatiche e della voce selezionata; email singola espansa (anche in "center peek" e vista compatta, e restringimento per email HTML corte); correttore con English e Italian scelti (menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta); riapertura di email con loghi senza sfarfallio, velocità della prima apertura e di `j`/`k`; colori delle label in lista, pannello di lettura e menu, riga selezionata con colore d'accento non blu e a finestra in secondo piano; intestazioni di sezione su macOS 14 e 15, intestazione fissa durante lo scorrimento, vista Labels.
-☐ Verifiche emerse dalle PR #31–#34: editor del colore della label (pannello colori di sistema, chiusura all'uscita, riga disattivata quando la pillola non si vede), testo nero sulle pillole predefinite blu, viola e rosa; foto profilo con un account reale (download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione, VoiceOver nel menu degli account); icone in modalità scura, con accento giallo o grafite, con dimensione della barra laterale piccola e grande, su macOS 14 e 15.
-☐ Verifiche emerse dalle PR #36–#41: aspetto dell'anello sulle superfici reali (barra laterale, popover, impostazioni), centratura del testo dell'intestazione e altezza delle righe del popover, lettura di VoiceOver; forma delle label (testo centrato, troncamento al limite); righe dei messaggi in modalità scura con posta HTML, pannelli stretti con testo grande, pannello di 400–450 pt con un mittente dal nome lungo; immagini incorporate dopo un riavvio con posta reale e velocità percepita; piè di pagina delle impostazioni sulle immagini remote, messaggio in Spam con "Load images", comportamento reale di rete all'apertura, tasto freccia tenuto premuto; prova di `preconnect` e `dns-prefetch` a immagini bloccate.
-☐ Verifiche emerse dalla PR #43: accento personalizzato in modalità scura, pannello colori reale (anche colori P3), barra laterale delle impostazioni e contatori sulla riga selezionata, eventuali lampi di un fotogramma dell'evidenziazione di sistema mentre la selezione si sposta, raggio della capsula, comportamento su macOS 14 e 15.
-☐ Verifiche emerse dalla PR #45: il badge compare sull'icona nel Dock; in caso contrario, riga "Shown by macOS" in Settings ▸ Dock badge, `lsappinfo info -only StatusLabel "MishMail"` e interruttore "Badge sull'icona dell'app" in Impostazioni di Sistema ▸ Notifiche; il pulsante apre il pannello Notifiche; il numero cambia subito dopo lettura, archiviazione e cancellazione.
-☐ Solo dopo, collegamento di un account Gmail reale.
+Controlli che la CI non può fare. Il proprietario usa l'app come client quotidiano e li segna come risolti man mano, citando il numero (per esempio "C-12 risolto"). Il cancello non blocca più l'ondata 3 (DEC-040). I controlli delle PR dell'ondata 3 si aggiungono qui quando vengono unite.
+
+Aggiornato il 25 novembre 2026.
+
+### Avvio, build, aggiornamenti
+
+☑ **C-01** Build locale e avvio (`make run DEMO=0` o `make install`).
+☑ **C-02** Account Gmail reale collegato e in uso.
+☐ **C-03** Pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub.
+☐ **C-04** `make install`: controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto).
+☐ **C-05** Nessuna interfaccia AI visibile: impostazioni, palette, barra di composizione, vista del thread.
+☐ **C-06** Impostazioni, onboarding e palette senza le voci Notion.
+☐ **C-07** Eliminazione del vecchio file di log all'avvio.
+
+### Accesso e account
+
+☐ **C-08** Nuovo accesso a Google con il listener limitato, da Safari e da Chrome.
+☐ **C-09** Avvio con un vecchio database in chiaro e una seconda copia aperta: striscia di sola lettura, schermata "Finish encrypting your mail".
+☐ **C-10** Finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche).
+☐ **C-11** Foto profilo con un account reale: download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione.
+☐ **C-12** Avviso con un errore reale di Gmail.
+
+### Notifiche e badge
+
+☑ **C-13** Il badge delle non lette compare sull'icona nel Dock. Causa del badge assente: notifiche disattivate per l'app in macOS; la riga "Shown by macOS" lo segnala (25 novembre 2026).
+☐ **C-14** Il numero del badge cambia subito dopo lettura, archiviazione e cancellazione.
+☐ **C-15** Il pulsante "Open Notification Settings…" apre il pannello Notifiche.
+☐ **C-16** Interruttore "Show sender and subject in notifications" e testo delle notifiche.
+☐ **C-17** Ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio.
+
+### Tastiera e composizione
+
+☐ **C-18** Shortcut su tastiera italiana: `]`, `[`, `#`, `*`.
+☐ **C-19** Cursore nei campi Cc e Bcc e scelta del mittente in composizione.
+☐ **C-20** Lettura anticipata scorrendo con `j` e `k`; tasto freccia tenuto premuto apre solo la conversazione su cui ci si ferma.
+☐ **C-21** Correttore con English e Italian scelti: menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta.
+
+### Lista e barra laterale
+
+☐ **C-22** Icone monocromatiche e voce selezionata; modalità scura; dimensione della barra laterale piccola e grande.
+☐ **C-23** Colori e forma delle label in lista, pannello di lettura e menu: testo centrato, troncamento al limite.
+☐ **C-24** Intestazioni di sezione, intestazione fissa durante lo scorrimento, vista Labels.
+☐ **C-25** Anello dell'account su barra laterale, popover e impostazioni; centratura del testo dell'intestazione; altezza delle righe del popover.
+☐ **C-26** Editor del colore della label dell'account: pannello colori di sistema, chiusura all'uscita.
+☐ **C-27** Colore d'accento personalizzato: modalità scura, pannello colori reale (anche colori P3), barra laterale delle impostazioni, contatori sulla riga selezionata, lampi dell'evidenziazione di sistema mentre la selezione si sposta, raggio della capsula.
+
+### Pannello di lettura e immagini
+
+☐ **C-28** Pannello di lettura su finestra stretta e su schermo da 13 pollici.
+☐ **C-29** Email singola espansa, anche in "center peek" e vista compatta; restringimento per email HTML corte.
+☐ **C-30** Righe dei messaggi di una conversazione: modalità scura con posta HTML, pannelli stretti con testo grande, pannello di 400–450 pt con un mittente dal nome lungo.
+☐ **C-31** Riapertura di email con loghi senza sfarfallio; velocità della prima apertura e di `j`/`k`.
+☐ **C-32** Immagini incorporate dopo un riavvio con posta reale.
+☐ **C-33** Immagini remote: piè di pagina delle impostazioni, messaggio in Spam con "Load images", comportamento reale di rete all'apertura.
+☐ **C-34** Prova di `preconnect` e `dns-prefetch` a immagini bloccate (ricetta nel corpo della PR #40).
+
+### Dati e cancellazione
+
+☐ **C-35** Tempo della ricostruzione dell'indice di ricerca al primo avvio.
+☐ **C-36** Nessun `Cache.db` che cresce nella cartella Caches.
+
+### Accessibilità e altre versioni di macOS
+
+☐ **C-37** VoiceOver: menu degli account, righe dei messaggi, anello dell'account.
+☐ **C-38** macOS 14 e 15: intestazioni di sezione, icone, selezione con accento personalizzato (lì resta quella di sistema).
 
 ## Ondata 3 — parità Gmail
 
