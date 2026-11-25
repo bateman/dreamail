@@ -8,7 +8,8 @@ extension LabelRow {
                  color: nil,
                  gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
                  gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor),
-                 listVisibility: l.labelListVisibility)
+                 listVisibility: l.labelListVisibility,
+                 messageListVisibility: l.messageListVisibility)
     }
 }
 
@@ -30,13 +31,20 @@ extension MailStore {
         case .duplicate: return "A label with this name already exists."
         case .unknownParent: return "Choose a label of this account to nest it under."
         }
+        // The owner's rule: a sublabel starts with its parent's colors, both
+        // the one on Gmail and the one only on this Mac (Gmail itself gives
+        // a new sublabel no color).
+        let parentRow = parent.flatMap { p in rows.first { $0.name == p } }
         let created: GLabel
         do {
-            created = try await client(for: accountId).createLabel(name: full)
+            created = try await client(for: accountId).createLabel(
+                name: full, color: parentRow.flatMap(Self.gmailColor(of:)))
         } catch {
             return error.localizedDescription
         }
-        let row = LabelRow.created(created, accountId: accountId)
+        var fresh = LabelRow.created(created, accountId: accountId)
+        fresh.color = parentRow?.color
+        let row = fresh
         do {
             try await db.write { db in try row.save(db) }
         } catch {
@@ -49,5 +57,10 @@ extension MailStore {
         }
         reloadAccounts()
         return nil
+    }
+
+    /// A label's Gmail color as one the API accepts, or nil.
+    nonisolated static func gmailColor(of row: LabelRow) -> GmailLabelColor? {
+        GmailLabelColor(background: row.gmailBackgroundColor, text: row.gmailTextColor)
     }
 }
