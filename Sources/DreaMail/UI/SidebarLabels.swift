@@ -140,6 +140,7 @@ struct SidebarLabelRow: View {
     @Environment(\.mailAccent) private var accent
     let node: SidebarLabelNode
     let onNewLabel: (NewLabelRequest) -> Void
+    @State private var hovering = false
 
     var body: some View {
         let view = MailboxView.label(account: node.accountId, labelId: node.gmailLabelId,
@@ -150,29 +151,57 @@ struct SidebarLabelRow: View {
         let unread = store.unreadCounts[SidebarCounts.labelKey(
             accountId: node.accountId, labelId: node.gmailLabelId)] ?? 0
         Label {
-            Text(node.displayName)
-                .fontWeight(selected || unread > 0 ? .semibold : .regular)
-                .lineLimit(1)
-                .mailRowTitleStyle()
+            // "⋮" sits in the title, at its end: the row stays the plain
+            // sidebar Label (no frame or overlay around it, which made the
+            // sidebar's rows taller and its outline rows unfindable).
+            HStack(spacing: 4) {
+                Text(node.displayName)
+                    .fontWeight(selected || unread > 0 ? .semibold : .regular)
+                    .lineLimit(1)
+                    .mailRowTitleStyle()
+                if showsMenuButton(selected) {
+                    Spacer(minLength: 4)
+                    LabelMenuButton(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
+                }
+            }
         } icon: {
             SidebarLabelTag(colors: node.colors)
         }
         .listItemTint(.monochrome)
-        .modifier(SidebarCount(count: unread, painted: accent.paintsSelection))
+        // Gmail's "⋮" takes the count's place on hover; on the open label it
+        // is drawn beside the count, which stays.
+        .modifier(SidebarCount(count: hidesCount ? 0 : unread,
+                               painted: accent.paintsSelection))
         .help(node.fullName)
+        // A container, so the "⋮" in the title stays its own element (for
+        // VoiceOver and the UI tests) instead of merging into the label.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sidebar.label.\(node.accountId).\(node.gmailLabelId)")
-        .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
-        .contextMenu {
-            Button("Add Sublabel…") {
-                onNewLabel(NewLabelRequest(accountId: node.accountId, parent: node.fullName))
-            }
-            Button("Organize Labels…") { store.showLabelOrganizer = true }
-        }
+        // The row's tap opens the label. "⋮" is a menu button: its click
+        // opens the menu (AppKit takes the mouse down) and the UI test
+        // checks it does not also reopen the label.
         .simultaneousGesture(
             TapGesture().onEnded { store.goTo(view) },
             including: reselect ? .gesture : .subviews)
+        .onHover { hovering = $0 }
+        .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
+        .contextMenu {
+            LabelMenuItems(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
+        }
         .tag(view)
     }
+}
+
+extension SidebarLabelRow {
+    fileprivate func showsMenuButton(_ selected: Bool) -> Bool { hovering || selected }
+
+    /// "Choose color…": the Organize sheet's palette, in one sheet hosted
+    /// by `LabelMenuPresentation` (not a popover on every row).
+    fileprivate func pickColor() {
+        if let row = store.labelRow(node) { store.labelMenu.coloring = row }
+    }
+    /// The count gives way to "⋮" only while the pointer is on the row.
+    fileprivate var hidesCount: Bool { hovering }
 }
 
 /// Gmail's label glyph: a tag filled with the label's color (the Mac-only

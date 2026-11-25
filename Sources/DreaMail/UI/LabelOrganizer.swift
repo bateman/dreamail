@@ -31,7 +31,7 @@ struct LabelOrganizer: View {
             }
             .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 10)
 
-            Text("Drag to reorder (only on this Mac). Click a swatch to change the color on Gmail, or set a color only on this Mac.")
+            Text("Drag to reorder (only on this Mac). Click a swatch to change the color on Gmail, or set a color only on this Mac. A label's color also goes to its sublabels.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 16).padding(.bottom, 8)
 
@@ -110,7 +110,8 @@ private struct LabelOrganizerRow: View {
 /// The label color popover, in two parts that stay apart: the color on
 /// Gmail (Gmail's own palette, synced) and the color only on this Mac
 /// (local, never sent, shown instead of the Gmail color while set).
-private struct LabelColorPalette: View {
+/// Also opened from the sidebar's label menu ("Label color").
+struct LabelColorPalette: View {
     @Environment(MailStore.self) var store
     let label: LabelRow
     let onPick: () -> Void
@@ -142,6 +143,9 @@ private struct LabelColorPalette: View {
                     }
                     .buttonStyle(.plain)
                     .help(swatch.background)
+                    .accessibilityLabel("Color on Gmail \(swatch.background)")
+                    .accessibilityIdentifier("labelColor.gmail.\(swatch.background)")
+                    .accessibilityAddTraits(label.gmailBackgroundColor == swatch.background ? .isSelected : [])
                 }
             }
             .disabled(saving)
@@ -184,6 +188,10 @@ private struct LabelColorPalette: View {
                     }
                     .buttonStyle(.plain)
                     .help(swatch.name)
+                    .accessibilityLabel("Color only on this Mac: \(swatch.name)")
+                    .accessibilityIdentifier("labelColor.mac.\(swatch.hex)")
+                    .accessibilityAddTraits(label.color?.caseInsensitiveCompare(swatch.hex) == .orderedSame
+                                            ? .isSelected : [])
                 }
             }
             Button {
