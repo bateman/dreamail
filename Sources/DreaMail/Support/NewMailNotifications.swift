@@ -46,7 +46,12 @@ struct NewMailNotifications {
         backlogBefore[accountId] = min(backlogBefore[accountId] ?? date, date)
     }
 
-    /// Account removal: its backlog date leaves memory (DEC-019).
+    func hasBacklog(accountId: String) -> Bool {
+        backlogBefore[accountId] != nil
+    }
+
+    /// The backlog is downloaded (or the account removed, DEC-019): later
+    /// first-seen threads notify as before, e.g. a snoozed thread waking.
     mutating func forgetBacklog(accountId: String) {
         backlogBefore[accountId] = nil
     }

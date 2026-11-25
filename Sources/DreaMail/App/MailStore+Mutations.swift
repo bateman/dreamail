@@ -43,7 +43,9 @@ extension MailStore {
 
         // A backfill still running must derive this thread with the edit
         // applied, or a later page would put the old labels back.
-        LocalThreadEdits.shared.record(threadIds: [thread.id], change: remote)
+        if isKnownAccount(thread.accountId) {
+            LocalThreadEdits.shared.record(threadIds: [thread.id], change: remote)
+        }
         let persistence = enqueueThreadPersistence(from: thread, to: updated)
         let client = client(for: thread.accountId)
         let gmailThreadId = thread.gmailThreadId
@@ -113,9 +115,6 @@ extension MailStore {
                 await queueThreadChange(change, accountId: accountId, gmailThreadId: gmailThreadId)
             case .revert:
                 lastError = RemoteThreadSend.refusalMessage(for: change, error: error)
-                // Gmail does not hold the edit: a backfill must not lay it
-                // over the messages again.
-                LocalThreadEdits.shared.forget(threadId: "\(accountId):\(gmailThreadId)")
                 await rederiveThreadFromMessages(
                     accountId: accountId, gmailThreadId: gmailThreadId)
                 await sync(accountId: accountId)
@@ -151,6 +150,10 @@ extension MailStore {
 
     private func rederiveThreadFromMessages(accountId: String, gmailThreadId: String) async {
         let threadId = "\(accountId):\(gmailThreadId)"
+        // Back to Gmail's last known state: a running backfill must not lay
+        // the refused or dropped edit over the messages again. Every revert
+        // path (direct refusal, dropped queued edit) comes through here.
+        LocalThreadEdits.shared.forget(threadId: threadId)
         _ = try? await db.write { db in
             try OptimisticThreadWrite.rederiveOrDelete(db, threadId: threadId, accountId: accountId)
         }
@@ -388,7 +391,8 @@ extension MailStore {
         applyAccountUnreadDelta(accountDelta)
         scheduleThreadMutationReconciliation()
 
-        LocalThreadEdits.shared.record(threadIds: targets.map(\.id), change: remote)
+        LocalThreadEdits.shared.record(
+            threadIds: targets.filter { isKnownAccount($0.accountId) }.map(\.id), change: remote)
         let persistence = enqueueBulkThreadPersistence(edits)
         let isDemo = demoMode
         var accountIds: [String] = []

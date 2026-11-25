@@ -42,7 +42,19 @@ extension MailStore {
                         // A successful connection replaces the fictional
                         // mailbox. Exit only after OAuth succeeds, so
                         // cancelling sign-in leaves the demo session intact.
+                        // An account whose removal has not finished must not
+                        // come back with a fresh token.
+                        guard !AccountLifecycle.pendingRemovals().contains(info.email) else {
+                            throw AccountSignIn.Failure.removalPending
+                        }
                         guard !self.demoMode || self.exitDemoMode() else { return false }
+                        // Read before the token is stored: on a failed write,
+                        // a new account's token goes again; a reauthorized
+                        // account keeps its row and the new token, and stays
+                        // flagged for reauthorization until a sync succeeds.
+                        let isNew = try await pool.read { db in
+                            try Account.fetchOne(db, key: info.email) == nil
+                        }
                         try Keychain.set(refresh, forKey: "refreshToken.\(info.email)")
                         // The shared client may hold an access token from the
                         // old sign-in (other scopes, or a different grant).
@@ -59,13 +71,7 @@ extension MailStore {
                                 }
                             }
                         } catch {
-                            // No row for a new account: its token must not
-                            // stay behind in the Keychain. A reauthorized
-                            // account keeps its row, and the new token.
-                            let hasRow = (try? await pool.read { db in
-                                try Account.fetchOne(db, key: info.email) != nil
-                            }) ?? true
-                            if !hasRow { Keychain.delete("refreshToken.\(info.email)") }
+                            if isNew { Keychain.delete("refreshToken.\(info.email)") }
                             throw error
                         }
                         return true
@@ -131,6 +137,12 @@ extension MailStore {
         // Read-only cache (F-02): refuse before anything changes, so the
         // removal cannot fail halfway on a cache that refuses every write.
         guard cacheAcceptsWrites() else { return }
+        // A sign-in still running could store this account again after the
+        // purge (a reauthorization of it): finish or cancel it first.
+        guard !connectingAccount else {
+            lastError = AccountLifecycle.removalWhileConnectingMessage
+            return
+        }
         let pool = db
         // Stop the account's sync first: a pass still running would write
         // rows for an account that is being deleted. Drop the account from
@@ -141,14 +153,16 @@ extension MailStore {
         // awaited below with the engine's pass.
         let firstSync = firstSyncTasks.removeValue(forKey: id)?.task
         firstSync?.cancel()
-        // DEC-019: its edits recorded for a running backfill leave memory.
-        LocalThreadEdits.shared.forget(accountId: id)
-        newMailNotifications.forgetBacklog(accountId: id)
         // Taken now: the snooze release runs after the purge, with the
         // sign-in still in the Keychain until `removeOutsideDatabase`.
         let gmail = client(for: id)
         let reachable = !isOffline
         accounts.removeAll { $0.id == id }
+        // DEC-019: its edits recorded for a running backfill leave memory
+        // (after the account left `accounts`: no new edit is recorded for
+        // it; again after the purge, below), and its backlog date.
+        LocalThreadEdits.shared.forget(accountId: id)
+        newMailNotifications.forgetBacklog(accountId: id)
         forgetAccountPhoto(id)
         forgetSignatureSettingsAccount(id)
         signatureSync[id] = nil
@@ -200,6 +214,7 @@ extension MailStore {
             // a check that reloaded them between the first forget and the
             // purge leaves nothing behind.
             self?.forgetCalendar(accountId: id)
+            LocalThreadEdits.shared.forget(accountId: id)
             // The purge zeroed the account's rows in their pages
             // (secure_delete); fold those pages out of the WAL and truncate it
             // now rather than in a few seconds. A reader holding the log makes

@@ -2781,6 +2781,17 @@ struct ComposeRequest: Identifiable {
     private var threadReloadTask: Task<Void, Never>?
     @ObservationIgnored
     private var threadReloadGeneration = 0
+    /// Newest generation whose reload task has ended (applied, superseded
+    /// or failed).
+    @ObservationIgnored
+    private var threadReloadFinishedGeneration = 0
+    /// A list reload or a "load older" is running. A sync batch skips its
+    /// reload then instead of cancelling it: on a slow list, back-to-back
+    /// batch reloads would otherwise never let one finish. The pass's own
+    /// final reload always runs.
+    var listLoadInFlight: Bool {
+        threadReloadFinishedGeneration < threadReloadGeneration || loadMoreTask != nil
+    }
 
     func reloadThreadsDebounced() {
         guard !isShuttingDown else { return }
@@ -2866,6 +2877,13 @@ struct ComposeRequest: Identifiable {
 
         threadReloadTask?.cancel()
         threadReloadTask = Task { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.threadReloadFinishedGeneration = max(
+                        self.threadReloadFinishedGeneration, generation)
+                }
+            }
             struct ReloadPayload {
                 var threads: [MailThread]
                 var vipHits: Set<String>

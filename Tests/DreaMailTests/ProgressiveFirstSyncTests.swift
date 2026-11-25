@@ -19,22 +19,26 @@ final class LocalThreadEditsTests: XCTestCase {
         let second = edits.beginPass()
         edits.record(threadIds: ["a:t2"], change: .modify(add: ["STARRED"]))
 
-        XCTAssertEqual(edits.changes(since: first, threadIds: ["a:t1", "a:t2", "a:t3"]),
-                       ["a:t1": archive, "a:t2": .modify(add: ["STARRED"])])
-        XCTAssertEqual(edits.changes(since: second, threadIds: ["a:t1", "a:t2"]),
-                       ["a:t2": .modify(add: ["STARRED"])])
+        XCTAssertEqual(edits.changes(since: first, threadIds: ["a:t1", "a:t2", "a:t3"])
+                        .mapValues { $0.map(\.change) },
+                       ["a:t1": [archive], "a:t2": [.modify(add: ["STARRED"])]])
+        XCTAssertEqual(edits.changes(since: second, threadIds: ["a:t1", "a:t2"])
+                        .mapValues { $0.map(\.change) },
+                       ["a:t2": [.modify(add: ["STARRED"])]])
         edits.endPass(first)
         edits.endPass(second)
         XCTAssertTrue(edits.isEmpty, "nothing outlives the passes that could need it")
     }
 
-    func testEditsFoldInOrderAndAnUndoCancelsOut() {
+    func testEditsApplyInOrderAndAnUndoCancelsOut() throws {
         let edits = LocalThreadEdits()
         let mark = edits.beginPass()
-        edits.record(threadIds: ["a:t1"], change: .modify(remove: ["INBOX"]))
-        edits.record(threadIds: ["a:t1"], change: .modify(add: ["INBOX"]))
-        edits.record(threadIds: ["a:t2"], change: .trash)
-        XCTAssertEqual(edits.changes(since: mark, threadIds: ["a:t1", "a:t2"]), ["a:t2": .trash])
+        let at = Date()
+        edits.record(threadIds: ["a:t1"], change: .modify(remove: ["INBOX"]), at: at)
+        edits.record(threadIds: ["a:t1"], change: .modify(add: ["INBOX"]), at: at)
+        let list = try XCTUnwrap(edits.changes(since: mark, threadIds: ["a:t1"])["a:t1"])
+        let message = BackfillDeriveWithLocalEditsTests.message(labels: "INBOX", date: at)
+        XCTAssertEqual(SyncEngine.applyingLocalEdits(list, to: [message]).map(\.labelIds), ["INBOX"])
         edits.endPass(mark)
     }
 
@@ -101,7 +105,7 @@ final class BackfillDeriveWithLocalEditsTests: XCTestCase {
             try self.insert(db, "m1", daysAgo: 1, labels: "INBOX UNREAD", unread: true)
             try SyncEngine.deriveThreads(
                 db, for: [self.key], accountId: self.account,
-                localEdits: [self.key: ThreadUndo.remote(.archive)])
+                localEdits: [self.key: [.init(change: ThreadUndo.remote(.archive), at: Date())]])
         }
         let t = try thread(q)
         XCTAssertFalse(t.inInbox, "the archive stays")
@@ -132,12 +136,66 @@ final class BackfillDeriveWithLocalEditsTests: XCTestCase {
         XCTAssertTrue(try thread(q).inInbox, "the case LocalThreadEdits exists for")
     }
 
-    func testStarTrashAndReadApplyToEveryMessage() throws {
-        let m = Message(
-            id: "a:m", accountId: "a", gmailId: "m", threadId: "a:t", fromHeader: "",
-            toHeader: "", ccHeader: "", bccHeader: "", subject: "", date: Date(),
+    static func message(id: String = "m", labels: String, date: Date,
+                        unread: Bool = false) -> Message {
+        Message(
+            id: "a:\(id)", accountId: "a", gmailId: id, threadId: "a:t", fromHeader: "",
+            toHeader: "", ccHeader: "", bccHeader: "", subject: "", date: date,
             snippet: "", bodyText: "", bodyHTML: nil, messageIdHeader: "", referencesHeader: "",
-            labelIds: "INBOX UNREAD", isUnread: true, hasAttachment: false)
+            labelIds: labels, isUnread: unread, hasAttachment: false)
+    }
+
+    /// Mail that arrived after an archive or mark-read is new mail: the
+    /// edit does not reach it.
+    func testAnEditDoesNotReachMailThatArrivedAfterIt() {
+        let edit = Date(timeIntervalSince1970: 10_000)
+        let before = Self.message(id: "old", labels: "INBOX UNREAD",
+                                  date: edit.addingTimeInterval(-60), unread: true)
+        let after = Self.message(id: "new", labels: "INBOX UNREAD",
+                                 date: edit.addingTimeInterval(60), unread: true)
+        let result = SyncEngine.applyingLocalEdits(
+            [.init(change: ThreadUndo.remote(.archive), at: edit)], to: [after, before])
+        XCTAssertEqual(result.map(\.labelIds), ["INBOX UNREAD", ""])
+        XCTAssertEqual(result.map(\.isUnread), [true, false])
+    }
+
+    /// Messages and their thread rows commit together: a pass stopped after
+    /// any chunk leaves no stored message with a missing or stale thread.
+    func testAChunkCommitsItsThreadRowsWithIt() throws {
+        let q = try makeDB()
+        func upsert(_ gmailId: String, daysAgo: Double, unread: Bool) throws {
+            let m = Message(
+                id: "\(account):\(gmailId)", accountId: account, gmailId: gmailId,
+                threadId: key, fromHeader: "a@b.com", toHeader: account,
+                ccHeader: "", bccHeader: "", subject: "s",
+                date: Date(timeIntervalSinceNow: -daysAgo * 86_400),
+                snippet: "snippet-\(gmailId)", bodyText: "", bodyHTML: nil, messageIdHeader: "",
+                referencesHeader: "", labelIds: unread ? "INBOX UNREAD" : "INBOX",
+                isUnread: unread, hasAttachment: false)
+            try q.write { db in
+                try SyncEngine.upsertDerivingThreads(
+                    db, items: [.init(message: m, attachments: [])], accountId: self.account)
+            }
+        }
+        try upsert("m1", daysAgo: 1, unread: false)
+        XCTAssertEqual(try thread(q).messageCount, 1, "the first chunk has its thread row")
+        try upsert("m2", daysAgo: 0, unread: true)
+        let t = try thread(q)
+        XCTAssertEqual(t.messageCount, 2)
+        XCTAssertTrue(t.isUnread, "a later chunk brings the thread up to date in the same commit")
+        XCTAssertEqual(t.snippet, "snippet-m2")
+    }
+
+    func testTheFirstSyncHistoryIdGoesWithTheAccount() {
+        let key = SyncEngine.firstSyncHistoryKey(accountId: "a@x.com")
+        XCTAssertEqual(key, "backfill.startHistory.a@x.com")
+        XCTAssertTrue(AccountLifecycle.accountDefaultsKeys(
+            accountId: "a@x.com", in: UserDefaults(suiteName: "first-sync-\(UUID())")!)
+            .contains(key))
+    }
+
+    func testStarTrashAndReadApplyToEveryMessage() throws {
+        let m = Self.message(labels: "INBOX UNREAD", date: Date(), unread: true)
         let starred = SyncEngine.applyingLocalEdit(.modify(add: ["STARRED"]), to: m)
         XCTAssertEqual(starred.labelIds, "INBOX STARRED UNREAD")
         XCTAssertTrue(starred.isUnread, "a star does not touch the read state")
@@ -242,6 +300,19 @@ final class FirstSyncBacklogNotificationTests: XCTestCase {
         XCTAssertEqual(fresh(&state, [duringFirstAttempt, otherAccount]),
                        ["new@x.com:t1", "old@x.com:t9"])
         XCTAssertEqual(NewMailNotifications.accountId(ofThread: "a@x.com:t1"), "a@x.com")
+    }
+
+    /// Once the backlog is stored the cutoff goes: a first-seen thread with
+    /// older inbound mail (a snoozed thread waking) notifies again.
+    func testTheCutoffEndsWhenTheBacklogIsStored() {
+        var state = NewMailNotifications()
+        state.seed([])
+        state.quietBacklog(accountId: "new@x.com", before: added)
+        XCTAssertTrue(state.hasBacklog(accountId: "new@x.com"))
+        state.forgetBacklog(accountId: "new@x.com")
+        XCTAssertFalse(state.hasBacklog(accountId: "new@x.com"))
+        let woke = candidate("new@x.com:t1", inbound: added.addingTimeInterval(-86_400))
+        XCTAssertEqual(fresh(&state, [woke]), ["new@x.com:t1"])
     }
 }
 

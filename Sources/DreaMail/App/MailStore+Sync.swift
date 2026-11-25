@@ -291,6 +291,7 @@ extension MailStore {
         reloadThreads()  // once for all accounts, not once per account
         await applyBlocklist()
         await notifyNewMail()
+        await settleNewMailBacklog(syncIds, alreadyNotified: true)
         rebuildContacts()
         await autoClassifyNewMail()
         await AppDatabase.shared.checkpointIfNeededOffMain()
@@ -327,12 +328,22 @@ extension MailStore {
             await refreshSendIdentitiesIfStale(accountId: accountId)
             reloadAccounts()
             reloadThreads()
+            await settleNewMailBacklog([accountId], alreadyNotified: false)
         } catch {
             batches.close()
             endSyncStatus(progress)
             // Removed while this pass ran: ignore its failure (the refresh
             // token is gone and the pass was cancelled on purpose).
             guard isKnownAccount(accountId) else { return }
+            if case GmailError.partialFetch = error {} else {
+                // The pages stored before the failure, including those the
+                // closed batch sink had not shown yet.
+                let stored = await engine.drainContentChange()
+                if stored != .none {
+                    applyThreadContentChange(stored)
+                    reloadThreads()
+                }
+            }
             if AccountLifecycle.isReauthRequired(error) {
                 requireReauthorization(for: accountId)
             } else if case GmailError.partialFetch = error {
@@ -460,7 +471,9 @@ extension MailStore {
         SyncBatchSink { [weak self] keys in
             guard let self, !self.isShuttingDown else { return }
             self.applyThreadContentChange(.threads(keys))
-            self.reloadThreads()
+            // A reload already running shows these rows or the next batch
+            // will; the pass's final reload shows the rest.
+            if !self.listLoadInFlight { self.reloadThreads() }
         }
     }
 
@@ -468,9 +481,35 @@ extension MailStore {
     /// added; none of it is new mail (Gmail notifies only for what arrives).
     /// Mail that arrives during and after the pass still notifies.
     func quietBacklogOfFirstSyncs(_ ids: [String]) {
-        for id in ids where accounts.first(where: { $0.id == id })?.historyId == nil {
+        for id in ids {
+            // An account removed meanwhile is not a first sync: nothing of
+            // it may be written back (DEC-019).
+            guard let account = accounts.first(where: { $0.id == id }),
+                  account.historyId == nil else { continue }
             quietNewMailBacklog(accountId: id)
         }
+    }
+
+    /// Once an account's window is listed to its last page (and its first
+    /// sync committed), the backlog is stored: record it without notifying
+    /// and drop the cutoff, so later first-seen threads notify as before.
+    private func settleNewMailBacklog(_ ids: [String], alreadyNotified: Bool) async {
+        let waiting = ids.filter { newMailNotifications.hasBacklog(accountId: $0) }
+        guard !waiting.isEmpty else { return }
+        let pool = db
+        let synced = Set((try? await pool.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT id FROM account WHERE historyId IS NOT NULL
+                """)
+        }) ?? [])
+        let done = waiting.filter { id in
+            synced.contains(id)
+                && UserDefaults.standard.object(forKey: WindowBackfill.listedKey(accountId: id))
+                    as? Int == SyncEngine.syncWindowDays(for: id)
+        }
+        guard !done.isEmpty else { return }
+        if !alreadyNotified { await notifyNewMail() }
+        for id in done { newMailNotifications.forgetBacklog(accountId: id) }
     }
 
     /// The same for older mail a wider "Keep mail from" downloads.

@@ -423,6 +423,7 @@ struct AccountsSettings: View {
                                 Button("Remove Account", role: .destructive) {
                                     accountToRemove = account
                                 }
+                                .disabled(store.connectingAccount)
                             }
                         }
                         SyncWindowPicker(accountId: account.id)

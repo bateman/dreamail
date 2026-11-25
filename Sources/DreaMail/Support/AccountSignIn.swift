@@ -8,6 +8,14 @@ import Foundation
 /// back, storing the token and the account row runs as one unit that a
 /// cancel does not cut in half: either nothing is stored, or both are.
 enum AccountSignIn {
+    enum Failure: LocalizedError {
+        case removalPending
+
+        var errorDescription: String? {
+            "This account is still being removed. Try again in a moment."
+        }
+    }
+
     struct Profile: Equatable, Sendable {
         var email: String
         var name: String?

@@ -20,9 +20,17 @@ import Foundation
 final class LocalThreadEdits: @unchecked Sendable {
     static let shared = LocalThreadEdits()
 
+    /// One edit as Gmail will apply it: to the messages the thread held
+    /// when it was made. Mail that arrives later is not part of it (Gmail
+    /// re-inboxes a thread for a new message).
+    struct Edit: Equatable, Sendable {
+        let change: RemoteThreadChange
+        let at: Date
+    }
+
     private struct Entry {
         let sequence: UInt64
-        let change: RemoteThreadChange
+        let edit: Edit
     }
 
     private let lock = NSLock()
@@ -52,36 +60,39 @@ final class LocalThreadEdits: @unchecked Sendable {
 
     /// Records one edit per thread. Ignored while no pass runs: nothing
     /// could re-derive the threads from stale messages.
-    func record(threadIds: [String], change: RemoteThreadChange) {
+    func record(threadIds: [String], change: RemoteThreadChange, at date: Date = Date()) {
         guard !change.isEmpty, !threadIds.isEmpty else { return }
         lock.withLock {
             guard !activePasses.isEmpty else { return }
             sequence += 1
+            let entry = Entry(sequence: sequence, edit: Edit(change: change, at: date))
             for id in threadIds {
-                edits[id, default: []].append(Entry(sequence: sequence, change: change))
+                edits[id, default: []].append(entry)
             }
         }
     }
 
-    /// Gmail refused the edit and the thread was reverted to its messages:
-    /// a later derive must not apply it again.
+    /// The thread was reverted to its messages (Gmail refused an edit, or a
+    /// queued edit was dropped): a later derive must not apply its edits.
+    ///
+    /// All of them, also the ones Gmail accepted: the revert itself puts the
+    /// thread back to its message rows, without those accepted edits too.
+    /// History replays them from the pass's start id (`SyncEngine`'s kept
+    /// first-sync history id), so the overlay and the row stay in step.
     func forget(threadId: String) {
         lock.withLock { _ = edits.removeValue(forKey: threadId) }
     }
 
-    /// The edits made after `mark` to each of `threadIds`, folded in order
-    /// into one change per thread. Threads without one are absent.
-    func changes(since mark: UInt64, threadIds: Set<String>) -> [String: RemoteThreadChange] {
+    /// The edits made after `mark` to each of `threadIds`, oldest first.
+    /// Threads without one are absent.
+    func changes(since mark: UInt64, threadIds: Set<String>) -> [String: [Edit]] {
         lock.withLock {
             guard !edits.isEmpty else { return [:] }
-            var result: [String: RemoteThreadChange] = [:]
+            var result: [String: [Edit]] = [:]
             for id in threadIds {
                 guard let entries = edits[id] else { continue }
-                var folded: RemoteThreadChange?
-                for entry in entries where entry.sequence > mark {
-                    folded = folded.map { $0.merged(with: entry.change) } ?? entry.change
-                }
-                if let folded, !folded.isEmpty { result[id] = folded }
+                let later = entries.filter { $0.sequence > mark }.map(\.edit)
+                if !later.isEmpty { result[id] = later }
             }
             return result
         }
