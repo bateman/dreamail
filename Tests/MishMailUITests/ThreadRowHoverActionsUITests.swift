@@ -73,10 +73,14 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
     /// row only: the reading pane keeps the open conversation.
     func testActionsOnAnUnselectedRowLeaveTheReadingPaneAlone() {
         let app = launch()
-        let read = row(app, "t3")      // read, not the pre-selected top row
+        let read = row(app, "t3")      // read, and not the open conversation
         let other = row(app, "t4")     // read too
         XCTAssertTrue(read.waitForExistence(timeout: 10), "demo inbox should load")
         XCTAssertTrue(other.waitForExistence(timeout: 5))
+        // Nothing is open at launch: open the top conversation, t1.
+        let top = row(app, "t1")
+        XCTAssertTrue(top.waitForExistence(timeout: 5))
+        top.click()
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
         XCTAssertTrue(subject.waitForExistence(timeout: 10), "the reading pane shows a conversation")
         let open = subject.label
