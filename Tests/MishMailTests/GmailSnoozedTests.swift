@@ -266,3 +266,31 @@ final class GmailSnoozedTests: XCTestCase {
         XCTAssertEqual(ids, ["\(account):awake"])
     }
 }
+
+/// v60 (this branch) registers before v61 (Google Calendar, merged first).
+/// A database that already ran v61 from `main` must still get v60.
+final class GmailSnoozedMigrationOrderTests: XCTestCase {
+    func testV60RunsOnADatabaseThatAlreadyHasV61() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        // Make it the database of a build without v60: v61 applied, v60 not.
+        try q.write { db in
+            try db.execute(sql: "DROP INDEX thread_gmail_snoozed")
+            try db.execute(sql: "ALTER TABLE thread DROP COLUMN gmailSnoozed")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'v60'")
+        }
+        try q.read { db in
+            let applied = try AppDatabase.migrator.appliedIdentifiers(db)
+            XCTAssertTrue(applied.contains("v61"))
+            XCTAssertFalse(applied.contains("v60"))
+            XCTAssertFalse(try db.columns(in: "thread").contains { $0.name == "gmailSnoozed" })
+        }
+        try AppDatabase.migrator.migrate(q)
+        try q.read { db in
+            XCTAssertTrue(try AppDatabase.migrator.appliedIdentifiers(db).contains("v60"))
+            XCTAssertTrue(try db.columns(in: "thread").contains { $0.name == "gmailSnoozed" })
+            XCTAssertTrue(try db.indexes(on: "thread").contains { $0.name == "thread_gmail_snoozed" })
+            XCTAssertTrue(try AppDatabase.migrator.hasCompletedMigrations(db))
+        }
+    }
+}
