@@ -1,5 +1,4 @@
 import XCTest
-@testable import MishMail
 
 final class AccountRailPaletteTests: XCTestCase {
     private let sidebarLight = LabelRGB(hex: 0xF7F7F5)
