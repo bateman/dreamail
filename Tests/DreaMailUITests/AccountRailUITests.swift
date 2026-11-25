@@ -59,15 +59,34 @@ final class AccountRailUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(element(app, "accountRail.account.you@example.com").frame.minY, band.frame.maxY,
                                     "avatars start below the band")
 
-        // Sidebar shown: the band runs over the sidebar's top, and the
-        // sidebar's content starts below it.
+        // Sidebar shown: the band runs over the sidebar's top, up to its
+        // right edge, and the sidebar's content starts below it.
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         let compose = element(app, "composeButton")
         XCTAssertTrue(compose.waitForExistence(timeout: 5), "the sidebar is shown")
-        XCTAssertTrue(waitUntil { band.frame.maxX > compose.frame.maxX },
-                      "the band reaches the sidebar's right edge (\(band.frame), \(band.label), compose \(compose.frame))")
-        XCTAssertGreaterThanOrEqual(compose.frame.minY, band.frame.maxY, "sidebar content starts below the band")
-        assertButtonsInBand("sidebar shown")
+        func assertBandOverSidebar(_ when: String) {
+            XCTAssertTrue(waitUntil { band.frame.maxX > compose.frame.maxX },
+                          "\(when): the band reaches the sidebar's right edge (\(band.frame), compose \(compose.frame))")
+            XCTAssertLessThan(band.frame.maxX - compose.frame.maxX, 40,
+                              "\(when): the band ends at the sidebar's right edge (\(band.frame), compose \(compose.frame))")
+            XCTAssertGreaterThanOrEqual(compose.frame.minY, band.frame.maxY,
+                                        "\(when): sidebar content starts below the band")
+            assertButtonsInBand(when)
+        }
+        assertBandOverSidebar("sidebar shown")
+
+        // The layout is rebuilt when a conversation opens: the band follows.
+        let row = element(app, "threadRow.you@example.com:t3")
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.click()
+        XCTAssertTrue(compose.waitForExistence(timeout: 5))
+        assertBandOverSidebar("conversation open")
+
+        // Hidden again: back to the minimum.
+        app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitUntil { abs(band.frame.width - 90) < 1 },
+                      "sidebar hidden: the band is 90 pt wide (\(band.frame))")
+        assertButtonsInBand("sidebar hidden again")
     }
 
     func testAppearanceToggleHidesAndShowsTheAddEntry() {

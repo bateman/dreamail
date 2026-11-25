@@ -67,17 +67,12 @@ final class AccountRailPaletteTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(AccountRailMetrics.windowButtonsMargin, 8)
     }
 
-    func testBandGeometry() {
-        XCTAssertEqual(AccountRailMetrics.bandHeight(safeAreaTop: 52), 52)
-        XCTAssertEqual(AccountRailMetrics.bandHeight(safeAreaTop: 38), 38)
-        XCTAssertEqual(AccountRailMetrics.bandHeight(safeAreaTop: 0),
-                       AccountRailMetrics.bandFallbackHeight)
-        // Sidebar visible: the band ends at its right edge.
-        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 304, sidebarVisible: true), 304)
-        // Hidden or not measured: still covers the three window buttons.
-        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 304, sidebarVisible: false), 90)
-        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: nil, sidebarVisible: true), 90)
-        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 40, sidebarVisible: true), 90)
+    func testBandWidth() {
+        // Sidebar on screen: rail plus sidebar.
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarWidth: 240, sidebarVisible: true), 304)
+        // Hidden: still covers the three window buttons.
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarWidth: 240, sidebarVisible: false), 90)
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarWidth: 0, sidebarVisible: true), 90)
     }
 
     func testAddAccountEntryIsShownByDefault() {

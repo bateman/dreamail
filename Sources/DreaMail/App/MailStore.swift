@@ -458,9 +458,9 @@ final class MailStore {
     }
     var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
 
-    /// Right edge of the sidebar in window coordinates, while it is on screen
-    /// (the account rail's top band ends there).
-    var sidebarTrailingEdge: CGFloat?
+    /// Last measured width of the sidebar (the account rail's top band runs
+    /// over it). Meaningful only while the sidebar is on screen.
+    var sidebarWidth: CGFloat = 0
 
     /// Ask AI side panel visibility.
     var showAskAI = false

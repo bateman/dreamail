@@ -25,7 +25,7 @@ enum AccountRailMetrics {
     /// Right edge of the zoom (green) window button, measured from the
     /// window's left edge. Measured on macOS 26 in CI (the UI test reports
     /// the frame): 80 pt; it was ~61 pt before macOS 26. The rail must cover
-    /// the three buttons entirely.
+    /// the three buttons entirely (the top band covers them).
     static let windowButtonsExtent: CGFloat = 80
     /// Visible margin right of the window buttons.
     static let windowButtonsMargin: CGFloat = 10
@@ -38,20 +38,11 @@ enum AccountRailMetrics {
     /// The top band must reach at least this far from the window's left edge,
     /// so it covers the three window buttons even when the sidebar is hidden.
     static let bandMinimumWidth: CGFloat = windowButtonsExtent + windowButtonsMargin
-    /// Band height when the window reports no top safe area (title-bar row).
-    static let bandFallbackHeight: CGFloat = 52
-
-    /// Band height: the title-bar row, which is the window's top safe area.
-    static func bandHeight(safeAreaTop: CGFloat) -> CGFloat {
-        safeAreaTop > 0 ? safeAreaTop : bandFallbackHeight
-    }
-
-    /// Band width: from the window's left edge to the sidebar's right edge
-    /// (window coordinates), never less than `bandMinimumWidth`. A hidden
-    /// sidebar, or none measured yet, leaves the minimum.
-    static func bandWidth(sidebarTrailing: CGFloat?, sidebarVisible: Bool) -> CGFloat {
-        guard sidebarVisible, let sidebarTrailing else { return bandMinimumWidth }
-        return max(bandMinimumWidth, sidebarTrailing)
+    /// Band width: the rail plus the sidebar's width while the sidebar is on
+    /// screen; otherwise just `bandMinimumWidth`.
+    static func bandWidth(sidebarWidth: CGFloat, sidebarVisible: Bool) -> CGFloat {
+        guard sidebarVisible else { return bandMinimumWidth }
+        return max(bandMinimumWidth, width + sidebarWidth)
     }
     /// Settings → Appearance: show the "+" (add account) entry. App-wide.
     static let showAddAccountKey = "showAddAccountInRail"
