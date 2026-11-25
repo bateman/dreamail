@@ -51,6 +51,36 @@ enum HTMLBodyLayout {
     /// `WKScriptMessageHandler` name for continuous height reports.
     static let heightHandlerName = "mmHeight"
 
+    /// Posted on `heightHandlerName` by `domReadyJS` once the document is
+    /// parsed (DOMContentLoaded), before its images have loaded.
+    static let domReadyMessage = "mm-dom-ready"
+
+    /// App-injected user script at document end: tells the host the DOM is
+    /// ready, so the height measure need not wait for window load (which
+    /// waits for every remote image: a slow or dead image host held the body
+    /// at its placeholder height for the network timeout). A view without
+    /// the handler (pre-render, free slot) ignores it.
+    static let domReadyJS = """
+    (function(){
+      try { window.webkit.messageHandlers.\(heightHandlerName).postMessage('\(domReadyMessage)'); } catch (e) {}
+    })();
+    """
+
+    /// How long after DOM ready the measure still waits for window load. A
+    /// page whose images all arrive in this time measures and reveals as
+    /// before (images in); a slower one is measured now and grows as its
+    /// images arrive (`installLayoutAndMeasureJS` handles pending images).
+    static let domReadyGrace: TimeInterval = 0.25
+
+    /// How long after DOM ready a page still loading counts as loaded: the
+    /// background image fetch starts and heights may be cached. Bounds what
+    /// one image that never completes can hold back.
+    static let loadBound: TimeInterval = 5
+
+    static func isDOMReadyMessage(_ body: Any) -> Bool {
+        (body as? String) == domReadyMessage
+    }
+
     /// Max preserved width (px) for blocked-image layout boxes.
     static let maxPreservedWidth = 1200
     /// Max preserved height (px) for blocked-image layout boxes.
@@ -394,8 +424,11 @@ enum HTMLBodyLayout {
     /// infinite-scroll the pane. False freezes recover when the viewport is
     /// stable and measured height clearly exceeds the freeze floor (budgeted).
     ///
-    /// Safe to re-run: disconnects any prior observer and rebinds listeners.
-    /// Idempotent class/style updates.
+    /// Safe to re-run: disconnects any prior observer, replaces the previous
+    /// install's image listeners (`window.__mmOnImg`) and, on the same
+    /// document, keeps the freeze state. Idempotent class/style updates.
+    /// Images still loading keep their authored box but are marked failed
+    /// only once their load ends without an image.
     ///
     /// Image load/error events and ResizeObserver callbacks never do layout
     /// work inline. They mark what the next pass needs (neutralize re-walk,
@@ -545,13 +578,19 @@ enum HTMLBodyLayout {
             var attrW = img.getAttribute('width');
             var attrH = img.getAttribute('height');
             var capped = fitViewport(capPair(attrW, attrH));
+            /* Failed or blocked only once the load has ended without an
+               image (complete, no natural size). An image still loading
+               keeps its size reservation but is not painted as failed: the
+               measure now runs at DOM ready, before images arrive. */
+            var failed = !!img.complete;
             if (!capped) {
-              img.classList.add(FAILED);
+              if (failed) img.classList.add(FAILED); else img.classList.remove(FAILED);
               return;
             }
             if (!img.__mmLayoutSnap) img.__mmLayoutSnap = {};
             var snap = img.__mmLayoutSnap;
-            img.classList.add(LAYOUT, FAILED);
+            img.classList.add(LAYOUT);
+            if (failed) img.classList.add(FAILED); else img.classList.remove(FAILED);
             if (capped.w != null) {
               snapshotProp(img, snap, 'width');
               img.style.setProperty('width', capped.w + 'px', 'important');
@@ -919,16 +958,24 @@ enum HTMLBodyLayout {
             schedulePass(true, false);
           }
 
-          /* Fresh install: clear freeze from a previous document on this view. */
-          window.__mmLastH = 0;
-          window.__mmLastVH = 0;
-          window.__mmFrozenH = 0;
-          window.__mmLastNeutralVH = 0;
-          window.__mmFeedbackHits = 0;
-          window.__mmFeedbackBase = 0;
-          window.__mmFeedbackBaseVH = 0;
-          window.__mmFreezeStableVH = 0;
-          window.__mmFreezeAdoptions = 0;
+          /* Fresh install on a new document: clear freeze from a previous
+             document on this view. A second install on the same document
+             (DOM ready, then window load; a claimed pre-render) keeps the
+             freeze and feedback state, so a mail already frozen against the
+             measure/frame loop does not start it again. */
+          var reinstall = false;
+          try { reinstall = document.__mmInstalled === true; document.__mmInstalled = true; } catch (e) {}
+          if (!reinstall) {
+            window.__mmLastH = 0;
+            window.__mmLastVH = 0;
+            window.__mmFrozenH = 0;
+            window.__mmLastNeutralVH = 0;
+            window.__mmFeedbackHits = 0;
+            window.__mmFeedbackBase = 0;
+            window.__mmFeedbackBaseVH = 0;
+            window.__mmFreezeStableVH = 0;
+            window.__mmFreezeAdoptions = 0;
+          }
           window.__mmLastPostedH = -1;
           window.__mmPostRepeats = 0;
           /* Orphan any pass a previous install scheduled on this view. */
@@ -939,12 +986,19 @@ enum HTMLBodyLayout {
           pinViewportUnits();
           neutralizeViewportHeights();
 
+          /* One image handler per document: each install builds a new
+             `onImgEvent`, so the previous install's is kept on the window
+             and removed here before the new one is bound. */
+          var previousOnImg = window.__mmOnImg;
+          window.__mmOnImg = onImgEvent;
           var imgs = document.querySelectorAll('img');
           for (var i = 0; i < imgs.length; i++) {
             var img = imgs[i];
             applyImage(img);
-            img.removeEventListener('load', onImgEvent);
-            img.removeEventListener('error', onImgEvent);
+            if (previousOnImg) {
+              img.removeEventListener('load', previousOnImg);
+              img.removeEventListener('error', previousOnImg);
+            }
             img.addEventListener('load', onImgEvent);
             img.addEventListener('error', onImgEvent);
           }

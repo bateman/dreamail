@@ -81,6 +81,13 @@ enum HTMLWebViewPool {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true)
         config.userContentController.addUserScript(contrast)
+        // After the contrast pass: the host may measure from here on,
+        // without waiting for remote images (`HTMLDOMReadyGate`).
+        let domReady = WKUserScript(
+            source: HTMLBodyLayout.domReadyJS,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true)
+        config.userContentController.addUserScript(domReady)
         return config
     }
 
