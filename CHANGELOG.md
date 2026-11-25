@@ -86,6 +86,16 @@ minor versions may still change behavior.
   a failed image without alternative text now shows nothing, as in Gmail,
   instead of a blue "?" icon. Images with alternative text are unchanged.
 
+- **Mail appears while the first sync runs.** After adding an account (or
+  widening "Keep mail from") conversations show up as they are downloaded,
+  the Inbox and the newest first, and can be opened, archived, starred,
+  labelled or deleted at once; before, the list stayed empty until the whole
+  period had been downloaded, and anything done during the download was
+  undone. A sync cut short (quit, no network) resumes where it stopped and
+  keeps what you did meanwhile. Old mail downloaded this way does not post
+  notifications. "Connecting…" now ends as soon as the account is saved, and
+  while DreaMail waits for the browser there is a Cancel.
+
 - **Labels like Gmail: the label menu.** Each label in the sidebar has
   Gmail's menu, on "⋮" (shown on hover and on the open label) and on
   right-click: label colour, show in label list (show, show if unread, hide),
