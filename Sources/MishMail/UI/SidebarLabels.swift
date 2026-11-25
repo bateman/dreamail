@@ -99,7 +99,8 @@ struct SidebarLabelTreeView: View {
         guard case .label(let account, let labelId, _) = store.selectedView,
               account == accountId,
               SidebarLabelTree.find(labelId, in: parts.listed) == nil else { return nil }
-        return SidebarLabelTree.find(labelId, in: parts.more)
+        // A closed parent hides its sublabels, the open one included.
+        return SidebarLabelTree.find(labelId, in: parts.more, isOpen: disclosure.isExpanded)
     }
 
     private func unread(for node: SidebarLabelNode) -> Int {
