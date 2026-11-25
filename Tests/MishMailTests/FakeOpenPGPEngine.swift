@@ -8,13 +8,14 @@ final class FakeOpenPGPEngine: OpenPGPEngine, @unchecked Sendable {
         case verifyDetached(signedData: Data, signature: Data)
         case verifyCleartext(Data)
         case decrypt(Data)
-        case sign(Data, PGPKeyReference, detached: Bool)
-        case encrypt(Data, [PGPKeyReference], PGPKeyReference?)
         case importKeys(Data)
+        case keys
+        case deleteKey(PGPKeyReference)
     }
 
     private let lock = NSLock()
     private var recorded: [Call] = []
+    private var stored: [PGPKeySummary] = []
 
     /// Answer for `verifyDetached`, keyed by the exact signed bytes. Any
     /// other bytes verify as `.bad`, as a real engine would answer for data
@@ -22,16 +23,19 @@ final class FakeOpenPGPEngine: OpenPGPEngine, @unchecked Sendable {
     var detachedResults: [Data: [PGPSignatureResult]] = [:]
     var decryption: Result<PGPDecryptionResult, PGPEngineError> = .failure(.noSecretKey)
     var cleartext: Result<PGPCleartextResult, PGPEngineError> = .failure(.malformed)
-    var imported: [PGPKeySummary] = []
+    /// What `importKeys` reads out of any data.
+    var importable: [PGPKeySummary] = []
 
-    var calls: [Call] {
-        lock.lock(); defer { lock.unlock() }
-        return recorded
-    }
+    var calls: [Call] { locked { recorded } }
 
     private func record(_ call: Call) {
+        locked { recorded.append(call) }
+    }
+
+    /// Synchronous, so it can be called from the async methods.
+    private func locked<T>(_ body: () -> T) -> T {
         lock.lock(); defer { lock.unlock() }
-        recorded.append(call)
+        return body()
     }
 
     func verifyDetached(signedData: Data, signature: Data) async throws -> [PGPSignatureResult] {
@@ -49,20 +53,22 @@ final class FakeOpenPGPEngine: OpenPGPEngine, @unchecked Sendable {
         return try decryption.get()
     }
 
-    func sign(_ data: Data, as signer: PGPKeyReference, detached: Bool) async throws -> Data {
-        record(.sign(data, signer, detached: detached))
-        return Data(PGPCorpus.fakeSignature.utf8)
-    }
-
-    func encrypt(_ data: Data, to recipients: [PGPKeyReference],
-                 signedBy signer: PGPKeyReference?) async throws -> Data {
-        record(.encrypt(data, recipients, signer))
-        return Data(PGPCorpus.fakeMessage.utf8)
-    }
-
     func importKeys(_ data: Data) async throws -> [PGPKeySummary] {
         record(.importKeys(data))
-        return imported
+        return locked {
+            stored += importable.filter { key in !stored.contains { $0.key == key.key } }
+            return importable
+        }
+    }
+
+    func keys() async throws -> [PGPKeySummary] {
+        record(.keys)
+        return locked { stored }
+    }
+
+    func deleteKey(_ key: PGPKeyReference) async throws {
+        record(.deleteKey(key))
+        locked { stored.removeAll { $0.key == key } }
     }
 
     // MARK: - Test keys (summaries only; no key material exists)

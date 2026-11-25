@@ -8,6 +8,10 @@ final class PGPStructureTests: XCTestCase {
         PGPInspection.findings(inRaw: PGPCorpus.crlf(message), enabled: true)
     }
 
+    private func textFindings(_ text: String) -> [PGPLocatedFinding] {
+        PGPStructure.findings(in: MIMEOutline(contentType: .defaultText, text: text), enabled: true)
+    }
+
     func testPGPMIMEAtTheRootCoversTheWholeMessage() {
         let signed = findings(PGPCorpus.signedSimple())
         XCTAssertEqual(signed, [PGPLocatedFinding(.mimeSigned, path: [])])
@@ -18,10 +22,14 @@ final class PGPStructureTests: XCTestCase {
         XCTAssertTrue(encrypted[0].coversWholeMessage)
     }
 
-    func testASignedPartInsideAWrapperCoversOnlyPartOfTheMessage() {
-        let found = findings(PGPCorpus.listWrapped)
-        XCTAssertEqual(found, [PGPLocatedFinding(.mimeSigned, path: [0])])
-        XCTAssertFalse(found[0].coversWholeMessage)
+    func testASignedOrEncryptedPartInsideAWrapperCoversOnlyPartOfTheMessage() {
+        let signed = findings(PGPCorpus.listWrapped)
+        XCTAssertEqual(signed, [PGPLocatedFinding(.mimeSigned, path: [0])])
+        XCTAssertFalse(signed[0].coversWholeMessage)
+
+        let encrypted = findings(PGPCorpus.partlyEncrypted)
+        XCTAssertEqual(encrypted, [PGPLocatedFinding(.mimeEncrypted, path: [1])])
+        XCTAssertFalse(encrypted[0].coversWholeMessage)
     }
 
     func testAttachmentsInsideASignedPartAreStillReported() {
@@ -40,6 +48,23 @@ final class PGPStructureTests: XCTestCase {
         XCTAssertEqual(findings(PGPCorpus.plainLookingSigned), [], "words and headers are not a signature")
     }
 
+    /// Structures other parsers may read differently are malformed: a second
+    /// Content-Type, a repeated boundary, an RFC 2231 boundary.
+    func testAmbiguousSignedStructuresAreMalformed() {
+        for variant in ["two-content-types", "two-boundaries", "rfc2231-boundary"] {
+            XCTAssertEqual(findings(PGPCorpus.signedAmbiguous(variant)),
+                           [PGPLocatedFinding(.malformedMIME, path: [])], variant)
+        }
+    }
+
+    /// A signed part the parser could not read to the end is malformed.
+    func testTruncatedSignedStructureIsMalformed() {
+        XCTAssertEqual(findings(PGPCorpus.signedTooDeep(depth: 3)),
+                       [PGPLocatedFinding(.mimeSigned, path: [])])
+        XCTAssertEqual(findings(PGPCorpus.signedTooDeep(depth: RawMIME.maxDepth + 2)),
+                       [PGPLocatedFinding(.malformedMIME, path: [])])
+    }
+
     func testInlineArmor() {
         let signed = findings(PGPCorpus.inlineSigned)
         XCTAssertEqual(signed, [PGPLocatedFinding(.inlineSigned, path: [])])
@@ -54,15 +79,32 @@ final class PGPStructureTests: XCTestCase {
         XCTAssertEqual(findings(PGPCorpus.truncatedArmor), [], "a begin line alone is not a block")
     }
 
+    /// Each of two blocks covers only part of the message.
+    func testTwoBlocksNeitherCoversTheWholeMessage() {
+        let two = findings(PGPCorpus.twoInlineBlocks)
+        XCTAssertEqual(two.count, 2)
+        XCTAssertTrue(two.allSatisfy { $0.finding == .inlineEncrypted && !$0.coversWholeMessage })
+    }
+
     func testArmorBlocksInCRLFAndLFText() {
         for text in [PGPCorpus.fakeMessage, PGPCorpus.fakeMessage.replacingOccurrences(of: "\n", with: "\r\n"),
                      PGPCorpus.fakeMessage.replacingOccurrences(of: "-----\n", with: "-----  \t\n")] {
-            let blocks = PGPArmor.blocks(in: text)
-            XCTAssertEqual(blocks.map(\.kind), [.message], text)
-            XCTAssertEqual(blocks.first?.hasTextOutside, false)
+            XCTAssertEqual(textFindings(text), [PGPLocatedFinding(.inlineEncrypted, path: [])], text)
         }
-        XCTAssertEqual(PGPArmor.blocks(in: PGPCorpus.fakePublicKey).map(\.kind), [.publicKey])
-        XCTAssertEqual(PGPArmor.blocks(in: " " + PGPCorpus.fakeMessage), [], "indented is not armor")
+        XCTAssertEqual(textFindings(PGPCorpus.fakePublicKey), [PGPLocatedFinding(.inlinePublicKey, path: [])])
+        XCTAssertEqual(textFindings(" " + PGPCorpus.fakeMessage), [], "indented is not armor")
+        // An unterminated block does not hide a complete one after it.
+        XCTAssertEqual(textFindings("-----BEGIN PGP MESSAGE-----\n" + PGPCorpus.fakePublicKey),
+                       [PGPLocatedFinding(.inlinePublicKey, path: [], hasTextOutsideArmor: true)])
+    }
+
+    /// One pass over the text however many unterminated begin lines it has
+    /// (the old scan searched to the end once per begin line).
+    func testUnterminatedBeginLinesCostOnePass() {
+        let begins = String(repeating: "-----BEGIN PGP MESSAGE-----\n", count: 200_000)
+        let start = Date()
+        XCTAssertEqual(textFindings(begins + "-----END PGP SIGNATURE-----\n"), [])
+        XCTAssertLessThan(Date().timeIntervalSince(start), 10, "quadratic scan")
     }
 
     // MARK: - Gmail format=full
@@ -93,6 +135,13 @@ final class PGPStructureTests: XCTestCase {
                        [PGPLocatedFinding(.inlineSigned, path: [])])
         XCTAssertEqual(PGPInspection.findings(inGmail: inline, enabled: false), [])
         XCTAssertEqual(PGPInspection.findings(inGmail: nil, enabled: true), [])
+
+        let twoTypes = try JSONDecoder().decode(GMessage.Part.self, from: Data(json.replacingOccurrences(
+            of: #""headers": [{"name": "Content-Type","#,
+            with: #""headers": [{"name": "Content-Type", "value": "text/plain"}, {"name": "Content-Type","#)
+            .utf8))
+        XCTAssertNotEqual(PGPInspection.findings(inGmail: twoTypes, enabled: true),
+                          [PGPLocatedFinding(.mimeSigned, path: [])], "duplicate Content-Type")
     }
 
     private func base64URL(_ s: String) -> String {

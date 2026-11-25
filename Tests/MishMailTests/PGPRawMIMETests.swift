@@ -2,50 +2,62 @@ import XCTest
 
 /// The structure-only MIME reader under OpenPGP/MIME (step 4B), and above
 /// all the exact signed bytes of a `multipart/signed` (RFC 3156 §5), which
-/// is the part implementations usually get wrong.
+/// is the part implementations usually get wrong. The bytes are observed
+/// where they matter: what reaches the engine, and `signedContent`.
 final class PGPRawMIMETests: XCTestCase {
+    private struct NoVerification: Error {}
+
+    /// The signed bytes and the signature as the engine receives them.
+    private func engineInput(_ raw: Data) async throws -> (signed: Data, signature: Data, content: Data?) {
+        let engine = FakeOpenPGPEngine()
+        let security = await PGPInspection.security(ofRaw: raw, engine: engine, enabled: true)
+        guard case .verifyDetached(let signed, let signature)? = engine.calls.first else {
+            XCTFail("the engine was not asked to verify")
+            throw NoVerification()
+        }
+        return (signed, signature, security?.signedContent)
+    }
 
     // MARK: - Signed bytes
 
-    func testSignedBytesAreTheFirstPartExactlyInCRLFForm() throws {
+    func testSignedBytesAreTheFirstPartExactlyInCRLFForm() async throws {
         for raw in [PGPCorpus.crlf(PGPCorpus.signedSimple()), PGPCorpus.lf(PGPCorpus.signedSimple())] {
-            let payload = try XCTUnwrap(PGPInspection.payload(at: [], inRaw: raw))
-            XCTAssertEqual(payload.signedData, PGPCorpus.signedPartCanonical,
-                           String(decoding: payload.signedData, as: UTF8.self))
-            XCTAssertEqual(payload.micalg, "pgp-sha256")
-            XCTAssertEqual(String(decoding: payload.pgpData, as: UTF8.self)
+            let input = try await engineInput(raw)
+            XCTAssertEqual(input.signed, PGPCorpus.signedPartCanonical,
+                           String(decoding: input.signed, as: UTF8.self))
+            XCTAssertEqual(input.content, PGPCorpus.signedPartCanonical, "what may be shown as signed")
+            XCTAssertEqual(String(decoding: input.signature, as: UTF8.self)
                 .replacingOccurrences(of: "\r\n", with: "\n"), PGPCorpus.fakeSignature)
         }
     }
 
     /// The CRLF before the next delimiter belongs to the delimiter: the
     /// signed bytes end at "Alice", not "Alice\r\n".
-    func testTheLineBreakBeforeTheDelimiterIsNotSigned() throws {
-        let payload = try XCTUnwrap(PGPInspection.payload(
-            at: [], inRaw: PGPCorpus.crlf(PGPCorpus.signedSimple())))
-        XCTAssertTrue(String(decoding: payload.signedData, as: UTF8.self).hasSuffix("\r\nAlice"))
-        XCTAssertFalse(payload.signedData.starts(with: Data("\r\n".utf8)))
+    func testTheLineBreakBeforeTheDelimiterIsNotSigned() async throws {
+        let input = try await engineInput(PGPCorpus.crlf(PGPCorpus.signedSimple()))
+        XCTAssertTrue(String(decoding: input.signed, as: UTF8.self).hasSuffix("\r\nAlice"))
+        XCTAssertFalse(input.signed.starts(with: Data("\r\n".utf8)))
     }
 
-    func testTransportPaddingAfterADelimiterIsAccepted() throws {
-        let raw = PGPCorpus.crlf(PGPCorpus.signedSimple(delimiterSuffix: " \t "))
-        let payload = try XCTUnwrap(PGPInspection.payload(at: [], inRaw: raw))
-        XCTAssertEqual(payload.signedData, PGPCorpus.signedPartCanonical)
+    func testTransportPaddingAfterADelimiterIsAccepted() async throws {
+        let input = try await engineInput(PGPCorpus.crlf(PGPCorpus.signedSimple(delimiterSuffix: " \t ")))
+        XCTAssertEqual(input.signed, PGPCorpus.signedPartCanonical)
     }
 
     /// A line that only starts like the boundary is content, and the nested
     /// multipart is signed whole, inner boundaries included.
-    func testNestedSignedPartAndBoundaryLookAlikes() throws {
+    func testNestedSignedPartAndBoundaryLookAlikes() async throws {
         for raw in [PGPCorpus.crlf(PGPCorpus.signedNested), PGPCorpus.lf(PGPCorpus.signedNested)] {
-            let payload = try XCTUnwrap(PGPInspection.payload(at: [], inRaw: raw))
-            XCTAssertEqual(payload.signedData, PGPCorpus.signedNestedPartCanonical,
-                           String(decoding: payload.signedData, as: UTF8.self))
-            XCTAssertEqual(payload.micalg, "pgp-sha512")
+            let input = try await engineInput(raw)
+            XCTAssertEqual(input.signed, PGPCorpus.signedNestedPartCanonical,
+                           String(decoding: input.signed, as: UTF8.self))
         }
         let root = RawMIME.parse(PGPCorpus.crlf(PGPCorpus.signedNested))
         XCTAssertEqual(root.children.count, 2)
         XCTAssertEqual(root.children[0].children.count, 2)
         XCTAssertEqual(root.children[0].children[1].filename, "notes.txt")
+        XCTAssertFalse(root.truncated)
+        XCTAssertFalse(root.isAmbiguous)
     }
 
     /// Signed bytes are cut from the source unchanged: a part with mixed
@@ -54,23 +66,18 @@ final class PGPRawMIMETests: XCTestCase {
     func testCanonicalFormOnlyAddsCRBeforeBareLF() {
         XCTAssertEqual(RawMIME.canonicalCRLF(Data("a\r\nb\nc\rd\n\n".utf8)),
                        Data("a\r\nb\r\nc\rd\r\n\r\n".utf8))
+        XCTAssertEqual(RawMIME.canonicalCRLF(Data("\nx".utf8)), Data("\r\nx".utf8))
         XCTAssertEqual(RawMIME.canonicalCRLF(Data()), Data())
+        XCTAssertEqual(RawMIME.canonicalCRLF(Data("no breaks".utf8)), Data("no breaks".utf8))
         XCTAssertEqual(RawMIME.canonicalCRLF(Data("trailing  \n".utf8)),
                        Data("trailing  \r\n".utf8), "no whitespace stripping")
     }
 
-    func testEncryptedPayloadIsTheOctetStreamBody() throws {
-        let payload = try XCTUnwrap(PGPInspection.payload(
-            at: [], inRaw: PGPCorpus.lf(PGPCorpus.encrypted)))
-        XCTAssertEqual(payload.signedData, Data())
-        XCTAssertEqual(String(decoding: payload.pgpData, as: UTF8.self),
-                       PGPCorpus.fakeMessage + "\n")
-    }
-
-    func testMalformedOrForeignEntitiesGiveNoPayload() {
-        XCTAssertNil(PGPInspection.payload(at: [], inRaw: PGPCorpus.lf(PGPCorpus.malformedSigned)))
-        XCTAssertNil(PGPInspection.payload(at: [], inRaw: PGPCorpus.lf(PGPCorpus.plain)))
-        XCTAssertNil(PGPInspection.payload(at: [5], inRaw: PGPCorpus.lf(PGPCorpus.signedNested)))
+    func testEncryptedPayloadIsTheOctetStreamBody() async {
+        let engine = FakeOpenPGPEngine()
+        _ = await PGPInspection.security(ofRaw: PGPCorpus.lf(PGPCorpus.encrypted), engine: engine,
+                                         enabled: true)
+        XCTAssertEqual(engine.calls, [.decrypt(Data((PGPCorpus.fakeMessage + "\n").utf8))])
     }
 
     // MARK: - Headers and parameters
@@ -90,13 +97,28 @@ final class PGPRawMIMETests: XCTestCase {
         XCTAssertEqual(quoted.mimeType, "multipart/mixed")
         XCTAssertEqual(quoted.parameters["boundary"], #"a;b"c"#)
         XCTAssertEqual(quoted.parameters["x"], "1")
+        XCTAssertFalse(quoted.hasDuplicateParameters)
+        XCTAssertFalse(quoted.hasExtendedParameters)
 
         let duplicate = MIMEContentType(headerValue: "multipart/mixed; boundary=first; boundary=second")
         XCTAssertEqual(duplicate.parameters["boundary"], "first", "a later duplicate must not win")
+        XCTAssertTrue(duplicate.hasDuplicateParameters)
+
+        let extended = MIMEContentType(headerValue: "multipart/mixed; boundary*0=\"a\"; boundary*1=\"b\"")
+        XCTAssertTrue(extended.hasExtendedParameters)
+        XCTAssertNil(extended.parameters["boundary"], "RFC 2231 is not decoded")
 
         for bad in [nil, "", "text", "/plain", "text/", "te xt/plain"] {
             XCTAssertEqual(MIMEContentType(headerValue: bad), .defaultText, String(describing: bad))
         }
+    }
+
+    func testAmbiguityIsRecorded() {
+        for variant in ["two-content-types", "two-boundaries", "rfc2231-boundary"] {
+            let root = RawMIME.parse(PGPCorpus.lf(PGPCorpus.signedAmbiguous(variant)))
+            XCTAssertTrue(root.isAmbiguous, variant)
+        }
+        XCTAssertFalse(RawMIME.parse(PGPCorpus.lf(PGPCorpus.signedAmbiguous("two-froms"))).isAmbiguous)
     }
 
     func testPartWithoutHeadersAndMessageWithoutBody() {
@@ -137,7 +159,7 @@ final class PGPRawMIMETests: XCTestCase {
 
     // MARK: - Limits
 
-    func testNestingAndPartCountAreBounded() {
+    func testNestingAndPartCountAreBoundedAndMarked() {
         var message = "Content-Type: text/plain\n\nleaf"
         for depth in 0..<(RawMIME.maxDepth + 8) {
             message = "Content-Type: multipart/mixed; boundary=b\(depth)\n\n--b\(depth)\n\(message)\n--b\(depth)--"
@@ -145,15 +167,18 @@ final class PGPRawMIMETests: XCTestCase {
         var node = RawMIME.parse(Data(message.utf8))
         var depth = 0
         while let child = node.children.first {
+            XCTAssertFalse(node.truncated)
             node = child
             depth += 1
         }
         XCTAssertEqual(depth, RawMIME.maxDepth)
+        XCTAssertTrue(node.truncated, "the level not read is marked")
 
         let many: String = "Content-Type: multipart/mixed; boundary=m\n\n"
             + String(repeating: "--m\n\nx\n", count: RawMIME.maxParts * 2) + "--m--"
         let wide = RawMIME.parse(Data(many.utf8))
         XCTAssertLessThan(wide.children.count, RawMIME.maxParts)
+        XCTAssertTrue(wide.truncated)
     }
 
     // MARK: - Transfer encodings

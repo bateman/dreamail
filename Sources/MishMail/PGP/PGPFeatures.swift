@@ -11,9 +11,12 @@ import Foundation
 /// In this step nothing in the app reads it: the code under `PGP/` is the
 /// structure-only groundwork (MIME recognition, signed-bytes extraction, the
 /// engine protocol and the display rules), with no crypto library, no user
-/// interface and no network request. Every entry point takes the state as a
-/// parameter, so the tests exercise both; with it off they return before
-/// looking at the message or calling an engine.
+/// interface and no network request. The entry points that read a message
+/// (`PGPInspection`, `PGPStructure.findings`) take the state as a parameter,
+/// so the tests exercise both, and with it off return before parsing or
+/// calling an engine. The pure helpers under them (`RawMIME`, the display
+/// rules) take no switch; a test keeps every `PGP/` type unused outside
+/// `PGP/` until the step that wires it in.
 enum PGPFeatures {
     /// Info.plist key the build setting expands into.
     static let infoKey = "MishMailPGP"
