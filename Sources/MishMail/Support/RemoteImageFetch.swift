@@ -279,6 +279,8 @@ enum RemoteImageFetchError: Error, Equatable {
     case privateAddress
     /// DNS gave no answer (offline, slow resolver): transient.
     case unresolved
+    /// 5xx, 408 or 429: the server may answer later; transient.
+    case serverUnavailable
     case badStatus
     case redirected
     case notAnImage
@@ -469,6 +471,9 @@ enum RemoteImageFetcher {
             RemoteImageFetchPolicy.request(for: url), RemoteImageFetchPolicy.maxImageBytes)
         guard let http = response as? HTTPURLResponse else { throw RemoteImageFetchError.badStatus }
         if (300..<400).contains(http.statusCode) { throw RemoteImageFetchError.redirected }
+        if http.statusCode >= 500 || http.statusCode == 408 || http.statusCode == 429 {
+            throw RemoteImageFetchError.serverUnavailable
+        }
         guard http.statusCode == 200 else { throw RemoteImageFetchError.badStatus }
         // Where the bytes came from must pass the rules too (a redirect the
         // guard let through was re-checked; this is belt and braces).
@@ -495,6 +500,10 @@ enum RemoteImageFetcher {
         /// unusable: not asked again this run. Transient failures (offline,
         /// timeout, DNS, cancellation) and URLs never started are absent.
         var refused: Set<String> = []
+        /// URLs whose request was started.
+        var attempted: Set<String> = []
+        /// Some URLs were never started because `byteBudget` was reached.
+        var stoppedByBudget = false
     }
 
     /// Fetches `urls` with at most `RemoteImageFetchPolicy.concurrency` in
@@ -510,6 +519,7 @@ enum RemoteImageFetcher {
             while next < urls.count, next < RemoteImageFetchPolicy.concurrency {
                 let url = urls[next]
                 next += 1
+                batch.attempted.insert(url)
                 group.addTask { await attempt(url, transport: transport) }
             }
             while let item = await group.next() {
@@ -523,9 +533,11 @@ enum RemoteImageFetcher {
                 if next < urls.count, received < byteBudget, !Task.isCancelled {
                     let url = urls[next]
                     next += 1
+                    batch.attempted.insert(url)
                     group.addTask { await attempt(url, transport: transport) }
                 }
             }
+            batch.stoppedByBudget = next < urls.count && received >= byteBudget
             return batch
         }
     }
@@ -541,7 +553,9 @@ enum RemoteImageFetcher {
 
     /// A refusal is a rule or a server answer, never the network failing.
     static func isRefusal(_ error: Error) -> Bool {
-        if let refusal = error as? RemoteImageFetchError { return refusal != .unresolved }
+        if let refusal = error as? RemoteImageFetchError {
+            return refusal != .unresolved && refusal != .serverUnavailable
+        }
         return false
     }
 }

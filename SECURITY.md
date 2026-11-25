@@ -32,19 +32,33 @@ Appearance → Load remote images: Always; Ask each time and VIP senders are
 stricter). Mail in Spam and conversations that were not opened (including
 neighbour pre-render) never load them without a click.
 
-**Cached once per message.** The first time a message is opened with its
-remote images allowed, it shows them exactly as before (WebKit loads them
-live), and MishMail's own client downloads each ordinary image of that
-message in the background and keeps it in the encrypted database with the
-message (see "What deleting means"). Later opens, after a relaunch too, show
-the message from there with no request, once all its cacheable images are
-stored. So on the first open the sender can see two fetches of an image (one
-from WebKit, one from the app's client, which is distinguishable from
-WebKit); afterwards none for those images. This reduces repeat requests; it
-is not a defence against tracking: a sender can make an image uncacheable
-(an empty or 204 answer, SVG, an oversized or slow image, `<picture>`,
-`image-set()`, CSS escapes, a 41st image), and that image then loads from
-WebKit on every open. Nothing is downloaded for mail that is not open, nor for a message whose
+**Cached per message.** The first time a message is opened with its remote
+images allowed, it shows them exactly as before (WebKit loads them live),
+and MishMail's own client downloads each cacheable image of that message in
+the background and keeps it in the encrypted database with the message (see
+"What deleting means"). On that first open the sender therefore sees two
+requests per image: one from WebKit, one from the app's client, which is
+distinguishable from WebKit (WebKit downloads in its own process and the
+app cannot read those bytes). What later opens do depends on whether every
+cacheable image of the message is settled, that is stored, or refused and
+remembered as refused:
+
+- **All settled:** later opens, after a relaunch too, show the message from
+  the cache with no request for the stored images. Images the app refused
+  (an empty or 204 answer, SVG, an oversized image, an image past the
+  message's 2.5 MiB, a server error other than a temporary one) are
+  remembered with the message as refused (their URL digest only) and load
+  live from WebKit on every open, as do images in positions the app does not
+  rewrite (`<picture>`, `image-set()`, CSS escapes, a 41st image).
+- **Not all settled** (an image failed for a network reason: offline, a
+  timeout, DNS, a 5xx, 408 or 429 answer): the message opens entirely live
+  again, so WebKit asks the sender for every image again, and the app's
+  client tries the missing ones again, on every open until they settle.
+
+This reduces repeat requests for ordinary images; it is not a defence
+against tracking: a sender can keep an image uncacheable, or keep a message
+from settling, and is then asked on every open.
+Nothing is downloaded for mail that is not open, nor for a message whose
 images the policy blocks (Ask each time without a click, non-VIP senders,
 Spam): the cache never overrides the decision, and the neighbour pre-render
 and prefetch only read what is already cached. The app's client:
@@ -74,10 +88,10 @@ otherwise `src`), `background` attributes, and CSS `url()` images in `style`
 attributes and `<style>` blocks. What still loads live from WebKit when
 allowed, exactly as before: `<picture>` sources, `<video poster>`,
 `<input type=image>`, SVG `<image>`, `image-set()`, CSS written with
-escapes, images beyond the caps, anything the client refuses (asked again
-on the next launch, not in the same run) and anything it could not fetch
-for a network reason (asked again on the next open). A URL is stored only
-as its SHA-256.
+escapes, images beyond the caps, anything the client refuses (remembered
+with the message, never asked again by the app) and anything it could not
+fetch for a network reason (asked again on the next open). A URL is stored
+only as its SHA-256, for images and refusals alike.
 
 With images allowed, these risks remain:
 
@@ -153,7 +167,8 @@ happens to it:
   "Remote images") are kept in the encrypted database, one copy per message
   (the same image in two messages is stored twice, so nothing is shared
   across messages or accounts), keyed by the SHA-256 of the URL, never the
-  URL itself. They go with their message (deletion, local prune, thread
+  URL itself; so are the refusal markers (the digest of an image the app
+  will not fetch again for that message). They go with their message (deletion, local prune, thread
   deletion, through the cascading deletes) and with their account (removal
   also deletes them by name), under the same overwrite and log truncation.
   This cache holds at most 200 MiB of its own (apart from the inline images'

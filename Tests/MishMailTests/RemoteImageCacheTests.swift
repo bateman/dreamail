@@ -97,32 +97,38 @@ final class RemoteImageCacheTests: XCTestCase {
         return Server { [self] url in png(seeds[url] ?? 9) }
     }
 
-    /// The pane's open through its real gate (`RemoteImageRendering.paneStep`
-    /// with the card's decision): the cache check before the body paints,
-    /// then, when the cache is incomplete, the background fetch. Returns the
-    /// body shown now (`.cache`) or kept for the next open (`.fetched`).
+    /// The pane's open, driven through its state (`RemoteImagePaneState`) as
+    /// the view drives it: the placeholder asks (not mounted) → cache check
+    /// → result recorded → the mounted body asks → mark used, or fetch for
+    /// the next open. Returns the body shown now (`.cache`) or kept for the
+    /// next open (`.fetched`).
     private enum Opened { case cache(RemoteInlinedBody), fetched(RemoteInlinedBody?), blocked }
 
     private func openThroughPane(_ message: Message, store: RemoteImageStore?, server: Server,
                                  allowed: Bool = true) async -> Opened {
+        var pane = RemoteImagePaneState()
         let html = message.bodyHTML ?? ""
         let count = RemoteImageHTML.candidates(in: html).count
-        let first = RemoteImageRendering.paneStep(
-            allowRemoteImages: allowed, remoteCandidateCount: count, cacheChecked: false,
-            cidResolveInFlight: false, cidInlined: false, remoteBody: nil)
-        guard case .checkCache(let baseIsCID) = first else { return .blocked }
-        if let body = await RemoteImageResolver.cachedBody(
+        func step(mounted: Bool, body: RemoteInlinedBody?) -> RemoteImagePaneState.Step {
+            pane.step(id: message.id, allowRemoteImages: allowed, bodyMounted: mounted,
+                      candidateCount: count, cidResolveInFlight: false, cidInlined: false,
+                      remoteBody: body)
+        }
+        guard case .checkCache(let baseIsCID) = step(mounted: false, body: nil) else {
+            return .blocked
+        }
+        let cached = await RemoteImageResolver.cachedBody(
             messageId: message.id, accountId: message.accountId, baseHTML: html,
             preInlineBytes: html.utf8.count, baseIsCIDInlined: baseIsCID, fontScale: 1.0,
-            store: store) {
-            XCTAssertEqual(RemoteImageRendering.paneStep(
-                allowRemoteImages: allowed, remoteCandidateCount: count, cacheChecked: true,
-                cidResolveInFlight: false, cidInlined: false, remoteBody: body), .markCachedUsed)
-            return .cache(body)
+            store: store)
+        XCTAssertTrue(pane.checkFinished(message.id, complete: cached != nil))
+        if let cached {
+            XCTAssertEqual(step(mounted: true, body: cached), .markCachedUsed)
+            return .cache(cached)
         }
-        guard case .fetchForNextOpen(let base) = RemoteImageRendering.paneStep(
-            allowRemoteImages: allowed, remoteCandidateCount: count, cacheChecked: true,
-            cidResolveInFlight: false, cidInlined: false, remoteBody: nil) else { return .blocked }
+        guard case .fetchForNextOpen(let base) = step(mounted: true, body: nil) else {
+            return .blocked
+        }
         return .fetched(await RemoteImageResolver.fetchForNextOpen(
             messageId: message.id, accountId: message.accountId, baseHTML: html,
             preInlineBytes: html.utf8.count, baseIsCIDInlined: base,
@@ -218,8 +224,7 @@ final class RemoteImageCacheTests: XCTestCase {
             messageId: inbox.id, accountId: me, baseHTML: inbox.bodyHTML!, preInlineBytes: 0,
             baseIsCIDInlined: false, fontScale: 1, store: store)
         let cached = try XCTUnwrap(cachedResult)
-        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: ask, remoteBody: cached,
-                                                   cidInlined: false),
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: ask, remoteBody: cached),
                        .base(allowRemoteImages: false), "the cache never overrides the decision")
 
         // Spam under Always: the same.
@@ -251,7 +256,10 @@ final class RemoteImageCacheTests: XCTestCase {
         try close(pool)
     }
 
-    func testFailedImagesStayLiveAndAreNotRetriedInTheSameRun() async throws {
+    /// S1: a refusal (here a 404) is stored as a marker, so the message is
+    /// complete: reopened, after a relaunch too, from the cache with no
+    /// request; the refused image loads live from WebKit (allowed CSP).
+    func testRefusedImagesAreRememberedAcrossRelaunchesAndTheMessageCompletes() async throws {
         let pool = try openPool()
         let message = try await pool.write { db in
             try self.addMessage(db, account: self.me, gmailId: "m1", body: self.html([self.a, self.b]))
@@ -266,8 +274,71 @@ final class RemoteImageCacheTests: XCTestCase {
         XCTAssertTrue(first.loadAllowsRemoteImages, "so it loads live, as before")
         let againResult = await open(message, store: store, server: sender)
         let again = try XCTUnwrap(againResult)
-        XCTAssertEqual(sender.requests.sorted(), [a, b], "the failure is not asked again this run")
+        XCTAssertEqual(sender.requests.sorted(), [a, b], "the refusal is not asked again")
         XCTAssertEqual(again.html, first.html)
+        await store.flush()
+        await store.shutDown()
+        try close(pool)
+
+        let relaunched = try openPool()
+        let fresh = RemoteImageStore(db: relaunched)
+        let opened = await openThroughPane(message, store: fresh, server: sender)
+        guard case .cache(let body) = opened else { return XCTFail("complete: from the cache") }
+        XCTAssertEqual(sender.requests.count, 2, "no request from the app after a relaunch")
+        XCTAssertTrue(body.loadAllowsRemoteImages, "the refused image loads live")
+        let refused = await fresh.refusedKeys(messageId: message.id, accountId: me)
+        XCTAssertEqual(refused, [RemoteImageHTML.urlKey(b)])
+        // No URL in the marker row, and it goes with the message.
+        try await relaunched.write { db in _ = try Message.deleteOne(db, key: message.id) }
+        let left = try await relaunched.read { db in
+            try Int.fetchOne(db, sql: "SELECT count(*) FROM remoteImage") ?? 0
+        }
+        XCTAssertEqual(left, 0)
+        await fresh.shutDown()
+        try close(relaunched)
+    }
+
+    /// S1: URLs never started because the message's byte cap was reached
+    /// are refused too, so the message completes.
+    func testImagesPastTheByteCapAreRefusedSoTheMessageCompletes() async throws {
+        let pool = try openPool()
+        let urls = (0..<4).map { "https://img.example.com/big\($0).png" }
+        let message = try await pool.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "m1", body: self.html(urls))
+        }
+        // Each just under the per-image cap: two fill the message's cap.
+        let big = RemoteImageFetchTests.image(width: 8, height: 8)
+            + Data(repeating: 7, count: RemoteImageFetchPolicy.maxImageBytes - 4_096)
+        let sender = Server { _ in big }
+        let store = RemoteImageStore(db: pool, flushDelayNanoseconds: 1_000_000)
+        _ = await open(message, store: store, server: sender)
+        await store.flush()
+        let keys = await store.storedKeys(messageId: message.id, accountId: me)
+        XCTAssertEqual(keys.count, urls.count, "every candidate settled: stored or refused")
+        let before = sender.requests.count
+        let opened = await openThroughPane(message, store: store, server: sender)
+        guard case .cache = opened else { return XCTFail("complete after the cap") }
+        XCTAssertEqual(sender.requests.count, before)
+        await store.shutDown()
+        try close(pool)
+    }
+
+    func testServerErrorsAreNotRefusals() async throws {
+        let pool = try openPool()
+        let message = try await pool.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "m1", body: self.html([self.a]))
+        }
+        let transport = RemoteImageTransport(fetch: { request, _ in
+            (Data(), HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil,
+                                     headerFields: [:])!)
+        }, resolve: { _ in [[93, 184, 216, 34]] })
+        let store = RemoteImageStore(db: pool, flushDelayNanoseconds: 1_000_000)
+        _ = await RemoteImageResolver.fetchForNextOpen(
+            messageId: message.id, accountId: me, baseHTML: message.bodyHTML!, preInlineBytes: 0,
+            baseIsCIDInlined: false, fontScale: 1, store: store, transport: transport)
+        await store.flush()
+        let refused = await store.refusedKeys(messageId: message.id, accountId: me)
+        XCTAssertTrue(refused.isEmpty, "503 is retried on the next open")
         await store.shutDown()
         try close(pool)
     }
@@ -290,8 +361,7 @@ final class RemoteImageCacheTests: XCTestCase {
             messageId: one.id, accountId: me, baseHTML: both.bodyHTML!, preInlineBytes: 0,
             baseIsCIDInlined: false, fontScale: 1, store: store)
         XCTAssertNil(incomplete, "no partly cached body is ever shown")
-        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: incomplete,
-                                                   cidInlined: false),
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: incomplete),
                        .base(allowRemoteImages: true), "first open: as without the cache")
         let nextResult = await open(both, store: store, server: sender)
         let next = try XCTUnwrap(nextResult, "the next open's body")
@@ -342,11 +412,9 @@ final class RemoteImageCacheTests: XCTestCase {
         let incomplete = await repository.warmCachedRemoteBodies(
             threadId: "\(me):t1", revision: revision, fontScale: 1, allowedMessageIds: [message.id])
         XCTAssertTrue(incomplete.isEmpty)
-        XCTAssertNil(RemoteImageRendering.prerender(opensWithRemoteImages: true, remoteBody: nil,
-                                                    cidInlined: false),
+        XCTAssertNil(RemoteImageRendering.prerender(opensWithRemoteImages: true, remoteBody: nil),
                      "an open that loads live images cannot claim a blocked paint")
-        XCTAssertEqual(RemoteImageRendering.prerender(opensWithRemoteImages: false, remoteBody: nil,
-                                                      cidInlined: false),
+        XCTAssertEqual(RemoteImageRendering.prerender(opensWithRemoteImages: false, remoteBody: nil),
                        .base(allowRemoteImages: false))
         XCTAssertEqual(sender.requests.count, before, "no request from the prefetch")
 
@@ -365,20 +433,15 @@ final class RemoteImageCacheTests: XCTestCase {
         XCTAssertEqual(sender.requests.count, before + 1, "the warm made no request")
 
         // Pre-render and open: the same document under the blocked CSP.
-        XCTAssertEqual(RemoteImageRendering.prerender(opensWithRemoteImages: true, remoteBody: body,
-                                                      cidInlined: false), .remote(body))
-        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: body,
-                                                   cidInlined: false), .remote(body))
-        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: body,
-                                                   cidInlined: true),
-                       .base(allowRemoteImages: true), "a body built on another base is not used")
-        let candidate = HTMLBodyPrerenderSelection.candidate(
-            messageId: message.id, remoteBody: body, cidInlined: false)
+        XCTAssertEqual(RemoteImageRendering.prerender(opensWithRemoteImages: true, remoteBody: body),
+                       .remote(body))
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: body),
+                       .remote(body))
+        let candidate = HTMLBodyPrerenderSelection.candidate(messageId: message.id, remoteBody: body)
         XCTAssertEqual(candidate?.contentID, message.id + ":full:rimg")
         var live = body
         live.needsNetwork = true
-        XCTAssertNil(RemoteImageRendering.prerender(opensWithRemoteImages: true, remoteBody: live,
-                                                    cidInlined: false))
+        XCTAssertNil(RemoteImageRendering.prerender(opensWithRemoteImages: true, remoteBody: live))
         await store.shutDown()
         try close(pool)
     }
@@ -619,37 +682,115 @@ final class RemoteImageCacheTests: XCTestCase {
 
     // MARK: The pane's gate
 
+    private func body(cid: Bool, needsNetwork: Bool = false) -> RemoteInlinedBody {
+        RemoteInlinedBody(html: "x", prep: .empty, needsNetwork: needsNetwork, baseIsCIDInlined: cid)
+    }
+
+    private func step(_ pane: inout RemoteImagePaneState, _ allowed: Bool = true,
+                      mounted: Bool = true, count: Int = 2, cidInFlight: Bool = false,
+                      cid: Bool = false, body: RemoteInlinedBody? = nil) -> RemoteImagePaneState.Step {
+        pane.step(id: "m", allowRemoteImages: allowed, bodyMounted: mounted, candidateCount: count,
+                  cidResolveInFlight: cidInFlight, cidInlined: cid, remoteBody: body)
+    }
+
     func testPaneStepFollowsTheCardsDecision() {
-        let local = RemoteInlinedBody(html: "x", prep: .empty, needsNetwork: false,
-                                      inlinedCount: 1, baseIsCIDInlined: false)
-        func step(_ allowed: Bool = true, count: Int = 2, checked: Bool = false, cid: Bool = false,
-                  cidInFlight: Bool = false,
-                  body: RemoteInlinedBody? = nil) -> RemoteImageRendering.PaneStep {
-            RemoteImageRendering.paneStep(allowRemoteImages: allowed, remoteCandidateCount: count,
-                                          cacheChecked: checked, cidResolveInFlight: cidInFlight,
-                                          cidInlined: cid, remoteBody: body)
-        }
-        XCTAssertEqual(step(false, body: local), .cancel,
-                       "blocked: nothing read, nothing fetched, any fetch cancelled")
-        XCTAssertEqual(step(count: 0), .nothing)
-        XCTAssertEqual(step(), .checkCache(baseIsCIDInlined: false), "the cache before the body paints")
-        XCTAssertEqual(step(cidInFlight: true), .checkCache(baseIsCIDInlined: false),
-                       "the check never waits for a Gmail download")
-        XCTAssertEqual(step(checked: true, cidInFlight: true), .waitForCID)
-        XCTAssertEqual(step(body: local), .markCachedUsed)
-        XCTAssertEqual(step(checked: true), .fetchForNextOpen(baseIsCIDInlined: false))
-        XCTAssertEqual(step(checked: true, cid: true, body: local),
-                       .fetchForNextOpen(baseIsCIDInlined: true), "a body built on another base is redone")
-        // The card meanwhile: nothing painted, or the other base's body.
+        var pane = RemoteImagePaneState()
+        XCTAssertEqual(step(&pane, false), .cancel, "blocked: nothing read, nothing fetched")
+        XCTAssertEqual(step(&pane, count: 0), .nothing)
+        XCTAssertEqual(step(&pane, mounted: false), .checkCache(baseIsCIDInlined: false),
+                       "the placeholder starts the check")
+        XCTAssertEqual(step(&pane), .nothing, "one check at a time")
+        XCTAssertTrue(pane.checkFinished("m", complete: false))
+        XCTAssertEqual(step(&pane, mounted: false), .nothing, "never a fetch from the placeholder")
+        XCTAssertEqual(step(&pane), .fetchForNextOpen(baseIsCIDInlined: false))
+        XCTAssertEqual(step(&pane), .nothing, "one fetch per base")
+
+        var warm = RemoteImagePaneState()
+        XCTAssertEqual(step(&warm, body: body(cid: false)), .markCachedUsed)
+        XCTAssertEqual(step(&warm, body: body(cid: false)), .nothing, "marked once")
+        // The card's choice: the body on screen, or a bounded wait, or live.
         XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: nil,
-                                                   cidInlined: false, awaitingCacheCheck: true),
-                       .awaitingCacheCheck)
-        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: local,
-                                                   cidInlined: true, awaitingCacheCheck: true),
-                       .remote(local))
-        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: false, remoteBody: nil,
-                                                   cidInlined: false, awaitingCacheCheck: true),
-                       .base(allowRemoteImages: false), "a blocked card never waits")
+                                                   awaitingCacheCheck: true), .awaitingCacheCheck)
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: false, remoteBody: body(cid: false),
+                                                   awaitingCacheCheck: true),
+                       .base(allowRemoteImages: false), "a blocked card never waits nor uses the cache")
+        XCTAssertFalse(RemoteImagePaneState.awaitsCacheCheck(
+            check: nil, allowRemoteImages: false, candidateCount: 2, hasRemoteBody: false))
+        XCTAssertTrue(RemoteImagePaneState.awaitsCacheCheck(
+            check: .running, allowRemoteImages: true, candidateCount: 2, hasRemoteBody: false))
+        XCTAssertFalse(RemoteImagePaneState.awaitsCacheCheck(
+            check: .incomplete, allowRemoteImages: true, candidateCount: 2, hasRemoteBody: false))
+    }
+
+    /// R1: a cached body built before the `cid:` resolve keeps its content id
+    /// (no reload); the rebuild for the `cid:` base gets a new one.
+    func testCIDLandingAfterACachedOpenRebuildsUnderANewContentID() {
+        var pane = RemoteImagePaneState()
+        XCTAssertEqual(step(&pane, mounted: false), .checkCache(baseIsCIDInlined: false))
+        XCTAssertTrue(pane.checkFinished("m", complete: true))
+        let raw = body(cid: false)
+        XCTAssertEqual(step(&pane, body: raw), .markCachedUsed)
+        let shown = RemoteImageRendering.contentID(messageId: "m", authored: false,
+                                                   cidInlined: false, remoteBody: raw)
+        XCTAssertEqual(shown, "m:full:rimg")
+        // The cid: resolve lands: the raw body stays, under the same id.
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: raw), .remote(raw))
+        XCTAssertEqual(RemoteImageRendering.contentID(messageId: "m", authored: false,
+                                                      cidInlined: true, remoteBody: raw), shown)
+        XCTAssertEqual(step(&pane, cid: true, body: raw), .rebuildFromCache(baseIsCIDInlined: true))
+        XCTAssertEqual(step(&pane, cid: true, body: raw), .nothing, "one rebuild")
+        let rebuilt = body(cid: true)
+        XCTAssertEqual(RemoteImageRendering.contentID(messageId: "m", authored: false,
+                                                      cidInlined: true, remoteBody: rebuilt),
+                       "m:full:cid:rimg", "the rebuilt body loads")
+        XCTAssertEqual(step(&pane, cid: true, body: rebuilt), .nothing, "already marked used")
+        XCTAssertEqual(RemoteImageRendering.contentID(messageId: "m", authored: true,
+                                                      cidInlined: true, remoteBody: nil),
+                       "m:authored:cid", "without the cache: as before")
+    }
+
+    /// R2: the check's end starts nothing; only a mounted body fetches.
+    func testTheCheckNeverStartsAFetchByItself() {
+        // Oversized body behind its approval placeholder, collapsed card,
+        // closed pane: no mounted body ever asks.
+        var pane = RemoteImagePaneState()
+        XCTAssertEqual(step(&pane, mounted: false), .checkCache(baseIsCIDInlined: false))
+        XCTAssertTrue(pane.checkFinished("m", complete: false))
+        XCTAssertEqual(step(&pane, mounted: false), .nothing)
+        // Policy to Ask or Spam during the check: cancelled; the late result
+        // is not taken.
+        var flipped = RemoteImagePaneState()
+        XCTAssertEqual(step(&flipped, mounted: false), .checkCache(baseIsCIDInlined: false))
+        XCTAssertEqual(step(&flipped, false), .cancel)
+        XCTAssertFalse(flipped.checkFinished("m", complete: true), "a cancelled check shows nothing")
+        XCTAssertNil(flipped.checks["m"])
+        // Past the deadline: paint as without the cache; the result only
+        // waits for the next open.
+        var slow = RemoteImagePaneState()
+        XCTAssertEqual(step(&slow, mounted: false), .checkCache(baseIsCIDInlined: false))
+        slow.checkTimedOut("m")
+        XCTAssertFalse(RemoteImagePaneState.awaitsCacheCheck(
+            check: slow.checks["m"], allowRemoteImages: true, candidateCount: 2, hasRemoteBody: false))
+        XCTAssertFalse(slow.checkFinished("m", complete: true))
+    }
+
+    /// R3: the check only holds the first paint; a `cid:` resolve landing
+    /// later never unmounts the live body, and the fetch waits for it.
+    func testCIDLandingAfterAnIncompleteCheckKeepsTheLiveBody() {
+        var pane = RemoteImagePaneState()
+        XCTAssertEqual(step(&pane, mounted: false), .checkCache(baseIsCIDInlined: false))
+        XCTAssertTrue(pane.checkFinished("m", complete: false))
+        XCTAssertEqual(step(&pane, cidInFlight: true), .nothing, "waits for the cid: base")
+        // The cid: resolve lands: no new check, no wait, then the fetch.
+        XCTAssertFalse(RemoteImagePaneState.awaitsCacheCheck(
+            check: pane.checks["m"], allowRemoteImages: true, candidateCount: 2, hasRemoteBody: false),
+                       "the body is never replaced by the placeholder")
+        XCTAssertTrue(pane.cidFinished("m"))
+        XCTAssertEqual(step(&pane, cid: true), .fetchForNextOpen(baseIsCIDInlined: true))
+        XCTAssertFalse(pane.cidFinished("m"))
+        // The body leaves: everything for the message is reset.
+        XCTAssertEqual(step(&pane, false), .cancel)
+        XCTAssertNil(pane.checks["m"])
     }
 
     /// After a relaunch, a conversation the prefetch never warmed is opened
@@ -677,14 +818,18 @@ final class RemoteImageCacheTests: XCTestCase {
         guard case .cache(let body) = direct else { return XCTFail("expected the cached body") }
         XCTAssertEqual(sender.requests.count, 2, "zero requests on the direct open")
         XCTAssertFalse(body.loadAllowsRemoteImages, "blocked CSP: nothing needs the network")
-        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: body,
-                                                   cidInlined: false), .remote(body))
+        XCTAssertEqual(RemoteImageRendering.choice(allowRemoteImages: true, remoteBody: body),
+                       .remote(body))
         await store.shutDown()
         try close(relaunched)
     }
 
     func testAnIncompleteCacheIsDecidedOnKeysWithoutReadingImages() async throws {
-        let pool = try openPool()
+        let log = SQLLog()
+        var config = Configuration()
+        config.prepareDatabase { db in db.trace { event in log.add("\(event)") } }
+        let pool = try DatabasePool(path: path, configuration: config)
+        try AppDatabase.migrator.migrate(pool)
         let message = try await pool.write { db in
             try self.addMessage(db, account: self.me, gmailId: "m1", body: self.html([self.a, self.b]))
         }
@@ -696,10 +841,14 @@ final class RemoteImageCacheTests: XCTestCase {
         }
         let keys = await store.storedKeys(messageId: message.id, accountId: me)
         XCTAssertEqual(keys, [RemoteImageHTML.urlKey(a)])
+        log.reset()
         let body = await RemoteImageResolver.cachedBody(
             messageId: message.id, accountId: me, baseHTML: message.bodyHTML!, preInlineBytes: 0,
             baseIsCIDInlined: false, fontScale: 1, store: store)
         XCTAssertNil(body)
+        let reads = log.lines.filter { $0.contains("FROM remoteImage") }
+        XCTAssertFalse(reads.isEmpty, "the keys were read")
+        XCTAssertFalse(reads.contains { $0.contains("data") }, "no image bytes read: \(reads)")
         await store.shutDown()
         try close(pool)
     }
@@ -736,8 +885,7 @@ final class RemoteImageCacheTests: XCTestCase {
         _ = await RemoteImageResolver.fetchForNextOpen(
             messageId: message.id, accountId: me, baseHTML: message.bodyHTML!, preInlineBytes: 0,
             baseIsCIDInlined: false, fontScale: 1, store: store, transport: transport)
-        let failed = await store.failedKeys(messageId: message.id,
-                                            among: [RemoteImageHTML.urlKey(a), RemoteImageHTML.urlKey(b)])
+        let failed = await store.refusedKeys(messageId: message.id, accountId: me)
         XCTAssertEqual(failed, [RemoteImageHTML.urlKey(b)], "offline is not a refusal; not-an-image is")
         await store.shutDown()
         try close(pool)
@@ -769,4 +917,12 @@ final class RemoteImageCacheTests: XCTestCase {
             XCTAssertEqual(try String.fetchAll(db, sql: "SELECT id FROM account"), ["a@x.com"])
         }
     }
+}
+
+final class SQLLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var log: [String] = []
+    var lines: [String] { lock.withLock { log } }
+    func add(_ line: String) { lock.withLock { log.append(line) } }
+    func reset() { lock.withLock { log = [] } }
 }

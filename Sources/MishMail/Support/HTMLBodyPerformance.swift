@@ -251,18 +251,22 @@ enum HTMLBodyPrerenderSelection {
     /// The candidate for a body with remote images inlined, decided as the
     /// card decides it: from its prep (authored head when there is one),
     /// gated on the pre-inline sizes, with no rescan of the inlined body.
-    static func candidate(messageId: String, remoteBody body: RemoteInlinedBody,
-                          cidInlined: Bool) -> Candidate? {
-        let suffix = (cidInlined ? ":cid" : "") + body.contentSuffix
+    static func candidate(messageId: String, remoteBody body: RemoteInlinedBody) -> Candidate? {
         if let head = body.prep.htmlHead {
             guard !HTMLBodyRenderPolicy.requiresExplicitLoad(
                 byteCount: body.prep.htmlHeadBytes, userApproved: false) else { return nil }
-            return Candidate(contentID: messageId + ":authored" + suffix, html: head,
+            return Candidate(contentID: RemoteImageRendering.contentID(
+                                 messageId: messageId, authored: true,
+                                 cidInlined: body.baseIsCIDInlined, remoteBody: body),
+                             html: head,
                              byteCount: body.prep.htmlHeadBytes)
         }
         guard !HTMLBodyRenderPolicy.requiresExplicitLoad(
             byteCount: body.prep.htmlBytes, userApproved: false) else { return nil }
-        return Candidate(contentID: messageId + ":full" + suffix, html: body.html,
+        return Candidate(contentID: RemoteImageRendering.contentID(
+                             messageId: messageId, authored: false,
+                             cidInlined: body.baseIsCIDInlined, remoteBody: body),
+                         html: body.html,
                          byteCount: body.prep.htmlBytes)
     }
 

@@ -49,12 +49,22 @@ enum RemoteImageCache {
         var data: Data
     }
 
-    /// One message's newly fetched images, waiting to be written.
+    /// One message's newly fetched images and refusals, waiting to be
+    /// written.
     struct Pending: Equatable, Sendable {
         var messageId: String
         var accountId: String
         var images: [Image]
+        /// URL digests the app will not fetch again for this message (a rule
+        /// refused them, the server answered with something unusable, or
+        /// they fall past the message's byte cap). Stored as marker rows
+        /// (empty `mimeType` and `data`, no URL), so the message can be
+        /// complete and reopen from the cache; they go with the message.
+        var refused: [String] = []
     }
+
+    /// `mimeType` of a refusal marker row.
+    static let refusedMarker = ""
 
     // MARK: Schema
 
@@ -95,7 +105,8 @@ enum RemoteImageCache {
                 db,
                 sql: """
                     SELECT urlKey, mimeType, data FROM remoteImage
-                    WHERE messageId = ? AND accountId = ? AND urlKey IN (\(marks(chunk.count)))
+                    WHERE messageId = ? AND accountId = ? AND mimeType != ''
+                      AND urlKey IN (\(marks(chunk.count)))
                     """,
                 arguments: StatementArguments([messageId, accountId]) + StatementArguments(chunk))
             for row in rows {
@@ -109,12 +120,19 @@ enum RemoteImageCache {
         return out
     }
 
-    /// URL digests stored for one message: an index-only read (the primary
-    /// key), no image bytes.
+    /// URL digests settled for one message (an image or a refusal marker):
+    /// an index-only read (the primary key), no image bytes.
     static func storedKeys(_ db: Database, messageId: String, accountId: String) throws -> Set<String> {
         Set(try String.fetchAll(db, sql: """
             SELECT urlKey FROM remoteImage WHERE messageId = ? AND accountId = ?
             """, arguments: [messageId, accountId]))
+    }
+
+    /// URL digests with a refusal marker for one message.
+    static func refusedKeys(_ db: Database, messageId: String, accountId: String) throws -> Set<String> {
+        Set(try String.fetchAll(db, sql: """
+            SELECT urlKey FROM remoteImage WHERE messageId = ? AND accountId = ? AND mimeType = ?
+            """, arguments: [messageId, accountId, refusedMarker]))
     }
 
     static func totalBytes(_ db: Database) throws -> Int {
@@ -152,7 +170,7 @@ enum RemoteImageCache {
     /// how many rows were written.
     @discardableResult
     static func store(_ db: Database, _ pending: Pending, now: Date) throws -> Int {
-        guard !pending.images.isEmpty,
+        guard !pending.images.isEmpty || !pending.refused.isEmpty,
               try Bool.fetchOne(db, sql: """
                   SELECT 1 FROM message WHERE id = ? AND accountId = ?
                   """, arguments: [pending.messageId, pending.accountId]) == true
@@ -177,6 +195,14 @@ enum RemoteImageCache {
                                  image.mimeType, image.data.count, stamp, image.data])
             used += image.data.count
             written += 1
+        }
+        for key in pending.refused {
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO remoteImage (messageId, accountId, urlKey, mimeType,
+                    byteCount, lastUsedAt, data)
+                VALUES (?, ?, ?, ?, 0, ?, ?)
+                """, arguments: [pending.messageId, pending.accountId, key, refusedMarker,
+                                 stamp, Data()])
         }
         if written > 0 {
             // The message's other images count as used now too.
@@ -260,10 +286,9 @@ enum RemoteImageCache {
 /// eviction; `shutDown` (the app's termination path, before the pool
 /// closes) drops what is queued and cancels and awaits a running write.
 ///
-/// Also remembers, for this run only, the URLs the fetcher refused or
-/// failed on (by message and URL digest), so reopening a message does not
-/// ask the sender again from the app; those images load live in the web
-/// view as before.
+/// Refusals are stored too (`Pending.refused`), so a reopened message is
+/// not asked for them again by the app; those images load live in the web
+/// view as before. Network failures are not stored: they are retried.
 actor RemoteImageStore {
     private let db: any DatabaseWriter
     private let budget: Int
@@ -274,9 +299,6 @@ actor RemoteImageStore {
     private var timerTask: Task<Void, Never>?
     private var writeTask: Task<Void, Never>?
     private var isClosed = false
-    /// "messageId|urlKey" of fetches that failed this run. Bounded.
-    private var failed: Set<String> = []
-    static let failedCapacity = 10_000
 
     private(set) var writeTransactionCount = 0
     private(set) var batchesStarted = 0
@@ -323,6 +345,7 @@ actor RemoteImageStore {
         var out: Set<String> = []
         if let queued = pendingStores[messageId], queued.accountId == accountId {
             out.formUnion(queued.images.map(\.urlKey))
+            out.formUnion(queued.refused)
         }
         let db = db
         let stored = (try? await db.read { db in
@@ -331,13 +354,25 @@ actor RemoteImageStore {
         return out.union(stored)
     }
 
+    /// Refused URL digests of one message (queued or stored).
+    func refusedKeys(messageId: String, accountId: String) async -> Set<String> {
+        var out = Set(pendingStores[messageId].map { $0.accountId == accountId ? $0.refused : [] } ?? [])
+        let db = db
+        out.formUnion((try? await db.read { db in
+            try RemoteImageCache.refusedKeys(db, messageId: messageId, accountId: accountId)
+        }) ?? [])
+        return out
+    }
+
     func remember(_ pending: RemoteImageCache.Pending) {
-        guard !isClosed, !pending.images.isEmpty else { return }
+        guard !isClosed, !pending.images.isEmpty || !pending.refused.isEmpty else { return }
         var merged = pendingStores[pending.messageId] ?? RemoteImageCache.Pending(
             messageId: pending.messageId, accountId: pending.accountId, images: [])
         guard merged.accountId == pending.accountId else { return }
         let known = Set(merged.images.map(\.urlKey))
         merged.images += pending.images.filter { !known.contains($0.urlKey) }
+        let knownRefused = Set(merged.refused)
+        merged.refused += pending.refused.filter { !knownRefused.contains($0) && !known.contains($0) }
         pendingStores[pending.messageId] = merged
         scheduleFlush()
     }
@@ -348,12 +383,6 @@ actor RemoteImageStore {
         guard !isClosed, !messageIds.isEmpty else { return }
         pendingTouches.formUnion(messageIds)
         scheduleFlush()
-    }
-
-    func noteFailed(messageId: String, urlKeys: [String]) {
-        guard !isClosed else { return }
-        if failed.count + urlKeys.count > Self.failedCapacity { failed.removeAll() }
-        for key in urlKeys { failed.insert(messageId + "|" + key) }
     }
 
     /// "messageId|url" being fetched now.
@@ -369,15 +398,10 @@ actor RemoteImageStore {
         for url in urls { inFlight.remove(messageId + "|" + url) }
     }
 
-    func failedKeys(messageId: String, among urlKeys: [String]) -> Set<String> {
-        Set(urlKeys.filter { failed.contains(messageId + "|" + $0) })
-    }
-
-    /// Deletes every cached remote image and forgets this run's failures.
+    /// Deletes every cached remote image and refusal.
     func clearAll() async {
         pendingStores = [:]
         pendingTouches = []
-        failed = []
         timerTask?.cancel()
         timerTask = nil
         while let running = writeTask {
@@ -398,7 +422,6 @@ actor RemoteImageStore {
         isClosed = true
         pendingStores = [:]
         pendingTouches = []
-        failed = []
         let timer = timerTask
         timer?.cancel()
         await timer?.value

@@ -101,13 +101,12 @@ enum HTMLBodyNeighborPrerender {
                 // images live is skipped, as before.
                 guard let plan = RemoteImageRendering.prerender(
                     opensWithRemoteImages: opensWithRemoteImages(threadId, message),
-                    remoteBody: payload.remoteInlineByMessageId[message.id],
-                    cidInlined: inlined != nil) else { continue }
+                    remoteBody: payload.remoteInlineByMessageId[message.id]) else { continue }
                 let selected: HTMLBodyPrerenderSelection.Candidate?
                 if case .remote(let body) = plan {
                     // Gated on the pre-inline sizes in its prep, as the card.
                     selected = HTMLBodyPrerenderSelection.candidate(
-                        messageId: message.id, remoteBody: body, cidInlined: inlined != nil)
+                        messageId: message.id, remoteBody: body)
                 } else {
                     selected = HTMLBodyPrerenderSelection.candidate(
                         messageId: message.id,
