@@ -349,6 +349,19 @@ final class DockBadgeTests: XCTestCase {
         XCTAssertEqual(try perAccount(q), [a: 2])
     }
 
+    /// Gmail-snoozed unread mail is out of the avatar badge exactly as it is
+    /// out of the Dock badge (one shared predicate).
+    func testGmailSnoozedMailIsExcludedLikeTheDockBadge() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.insert(db, "a1", account: self.a)
+            try self.insert(db, "a2", account: self.a) { $0.gmailSnoozed = true }
+            try self.insert(db, "b1", account: self.b) { $0.gmailSnoozed = true }
+        }
+        XCTAssertEqual(try perAccount(q), [a: 1])
+        XCTAssertEqual(try perAccount(q).values.reduce(0, +), try badge(q))
+    }
+
     /// Mark read / unread moves only the thread's own account, and the
     /// optimistic result equals the recount.
     func testOptimisticDeltaOnMarkReadAndUnread() throws {
