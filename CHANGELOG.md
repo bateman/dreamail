@@ -84,6 +84,19 @@ minor versions may still change behavior.
   a failed image without alternative text now shows nothing, as in Gmail,
   instead of a blue "?" icon. Images with alternative text are unchanged.
 
+- **Signatures follow Gmail by themselves, with their look.** The signature
+  set in Gmail for each sending address is copied in automatically (at
+  launch, when an account is added, and when a compose window opens, at most
+  every five minutes); "Import from Gmail" is gone. A Gmail signature becomes
+  the default for new messages only when none is set; the default for
+  replies stays yours to choose in Settings → Signatures. A signature you
+  wrote here is never overwritten or deleted by Gmail; one removed on Gmail
+  stays, marked "No longer on Gmail". The compose window has Gmail's pen menu
+  to pick a signature or none. The message is sent with the signature's
+  formatting from Gmail (fonts, colours, links, tables; images are dropped)
+  as long as you did not edit the signature; a "Signature as sent" preview
+  in the compose window shows that look, since the editor shows plain text.
+
 - **Signatures per account.** DreaMail → Settings (⌘,) → Signatures: several
   signatures per account, a default for new messages and one for replies per
   sending address, and import of the signatures already set in Gmail. The

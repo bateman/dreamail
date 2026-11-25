@@ -47,6 +47,10 @@ struct ComposeView: View {
     @State private var signatureState = ComposeSignatureState()
     /// From moved to another account over a signature DreaMail cannot swap.
     @State private var signatureConflict: SignatureConflict?
+    /// Where the signature menu pops up.
+    @State private var signatureMenuAnchor = SignatureMenuAnchor()
+    /// "Signature as sent" under the body, open or folded (kept).
+    @AppStorage("composeSignaturePreviewExpanded") private var signaturePreviewExpanded = true
     @State private var attachmentURLs: [URL] = []
     /// Attachments carried back from an undone send, or pulled off the
     /// original message on a forward (data already loaded).
@@ -681,6 +685,9 @@ struct ComposeView: View {
         }
         .padding(isMinimized ? EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 8)
                              : EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18))
+        // A container element: without it the identifier below would also
+        // replace those of the SwiftUI controls inside (compose.signature).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(isSplit ? "composeSplit"
                                  : isInline ? "composeInline" : "composeCard")
         .confirmationDialog(
@@ -1155,6 +1162,7 @@ struct ComposeView: View {
                               formatTarget: formatTarget, fontSize: 14 * fontScale,
                               onFilesDropped: { ingestDroppedFiles($0) },
                               onTextHeightChange: { bodyTextHeight = $0 })
+                .accessibilityIdentifier("compose.body")
                 .padding(.top, 10)
                 .padding(.bottom, 6)
                 // Grow with authored content while the quote is collapsed so
@@ -1349,6 +1357,7 @@ struct ComposeView: View {
             }
 
             signatureConflictNotice
+            signatureAsSentPreview
 
             // Priority split: right cluster (draft status + trash + Send) is
             // fixedSize so it never clips under the card's topLeading frame;
@@ -1919,6 +1928,8 @@ struct ComposeView: View {
     /// After prefill: the sender's default for a new message, reply or
     /// forward; for a body opened again, recognise the signature it ends with.
     private func startSignature() {
+        // Signatures changed in Gmail arrive for the next window (throttled).
+        if !fromAccountId.isEmpty { store.refreshGmailSignaturesIfDue(accountId: fromAccountId) }
         if signatureFollowsSender {
             signatureState.accountId = fromAccountId.isEmpty ? nil : fromAccountId
             applyDefaultSignature()
@@ -2007,25 +2018,16 @@ struct ComposeView: View {
         signatureState.selection(in: signatureHead)
     }
 
-    private func signatureToggle(_ title: String, _ signature: SignatureRecord?) -> some View {
-        let selected = signature.map { signatureSelection == .signature($0.id ?? -1) }
-            ?? (signatureSelection == ComposeSignatureState.Selection.none)
-        return Toggle(title, isOn: Binding(get: { selected },
-                                           set: { _ in chooseSignature(signature) }))
-    }
-
+    /// Gmail's signature menu (`ComposeSignatureMenu`): a checked row is the
+    /// signature in the body now; choosing one swaps it in at once (⌘Z
+    /// undoes), "No signature" takes it out. Text the user typed stays.
+    /// A pen button that pops up a native menu: a SwiftUI `Menu` gives no
+    /// event when it opens and does not carry its accessibility identifier.
+    /// Opening it also refreshes the account's signatures from Gmail
+    /// (throttled; the result shows the next time).
     private var signatureMenu: some View {
-        Menu {
-            signatureToggle("No signature", nil)
-            if !senderSignatures.isEmpty { Divider() }
-            ForEach(senderSignatures) { signature in
-                signatureToggle(signature.name, signature)
-            }
-            Divider()
-            Button("Manage signatures") {
-                SignatureSettings.open(accountId: fromAccountId)
-                openSettings()
-            }
+        Button {
+            showSignatureMenu()
         } label: {
             Image(systemName: ComposeToolbarItem.signature.systemImage)
                 .font(.system(size: 12, weight: .medium))
@@ -2033,12 +2035,77 @@ struct ComposeView: View {
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .background(SignatureMenuAnchorView(anchor: signatureMenuAnchor))
         .fixedSize()
         .help(ComposeToolbarItem.signature.help)
         .accessibilityLabel(ComposeToolbarItem.signature.help)
         .accessibilityIdentifier("compose.signature")
+    }
+
+    private func showSignatureMenu() {
+        if !fromAccountId.isEmpty { store.refreshGmailSignaturesIfDue(accountId: fromAccountId) }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for row in ComposeSignatureMenu.rows(signatures: senderSignatures,
+                                             selection: signatureSelection) {
+            switch row {
+            case .manage:
+                menu.addItem(ClosureMenuItem(title: "Manage signatures", checked: false) {
+                    SignatureSettings.open(accountId: fromAccountId)
+                    openSettings()
+                })
+            case .divider:
+                menu.addItem(.separator())
+            case .none(let checked):
+                menu.addItem(ClosureMenuItem(title: "No signature", checked: checked) {
+                    chooseSignature(nil)
+                })
+            case .signature(let id, let name, let checked):
+                let signatures = senderSignatures
+                menu.addItem(ClosureMenuItem(title: name, checked: checked) {
+                    chooseSignature(signatures.first { $0.id == id })
+                })
+            }
+        }
+        if let view = signatureMenuAnchor.view {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -2), in: view)
+        } else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        }
+    }
+
+    /// The editor shows a Gmail signature as text; the recipient gets
+    /// Gmail's look. While the body carries it unchanged, this shows that
+    /// look (sandboxed, like Settings). Edited, it goes out as typed, and
+    /// this goes away.
+    @ViewBuilder
+    private var signatureAsSentPreview: some View {
+        if let rich = ComposeSignature.richSignature(in: signatureHead, signatures: senderSignatures),
+           let html = rich.html.flatMap({ SignatureHTML.cachedSanitize($0) })?.html {
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    signaturePreviewExpanded.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: signaturePreviewExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Signature as sent")
+                            .font(.system(size: 11))
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("The recipient sees “\(rich.name)” with Gmail's layout and colours; the editor shows its text")
+                .accessibilityLabel(signaturePreviewExpanded ? "Hide signature as sent" : "Show signature as sent")
+                if signaturePreviewExpanded {
+                    SignaturePreviewBox(html: ComposeSignature.htmlBlock(innerHTML: html))
+                }
+            }
+            .padding(.bottom, 6)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("compose.signaturePreview")
+        }
     }
 
     /// Shown when From moved to another account and the body still ends
@@ -3133,4 +3200,42 @@ final class SubjectTextFieldCell: NSTextFieldCell {
     override func fieldEditor(for controlView: NSView) -> NSTextView? {
         subjectEditor
     }
+}
+
+/// The view the compose signature menu pops up from.
+final class SignatureMenuAnchor {
+    weak var view: NSView?
+}
+
+private struct SignatureMenuAnchorView: NSViewRepresentable {
+    let anchor: SignatureMenuAnchor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        anchor.view = view
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        anchor.view = view
+    }
+}
+
+/// A menu item that runs a closure; a check mark when `checked`.
+@MainActor
+private final class ClosureMenuItem: NSMenuItem {
+    private let handler: @MainActor () -> Void
+
+    init(title: String, checked: Bool, handler: @escaping @MainActor () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+        state = checked ? .on : .off
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("not used")
+    }
+
+    @objc private func fire() { handler() }
 }

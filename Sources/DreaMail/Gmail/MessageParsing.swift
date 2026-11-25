@@ -894,8 +894,14 @@ enum ComposeQuote {
         let text = parts.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let signature = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
         var out = text.isEmpty ? "" : authoredTextHTML(text) + "<div><br></div>"
-        out += ComposeSignature.htmlBlock(innerHTML: authoredTextHTML(signature))
+        out += signatureBlockHTML(signature)
         return out
+    }
+
+    /// The signature block `authoredHeadHTML` writes for a signature text
+    /// (trimmed): what `ComposeSignature.withRichSignature` looks for.
+    static func signatureBlockHTML(_ signatureText: String) -> String {
+        ComposeSignature.htmlBlock(innerHTML: authoredTextHTML(signatureText))
     }
 
     /// Where a quoted original starts in a compose body: a forwarded block
