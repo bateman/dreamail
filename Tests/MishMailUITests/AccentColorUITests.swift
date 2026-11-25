@@ -216,10 +216,11 @@ final class AccentColorUITests: XCTestCase {
     }
 
     /// The leading part of a thread row: unread dot and sender (no label
-    /// chips, no star; clear of the centred About panel).
+    /// chips, no star; clear of the centred About panel, which the account
+    /// rail's width moves the list towards: hence 44 pt, not 100).
     private static func threadStrip(row: XCUIElement, window: XCUIElement) -> CGRect {
         let r = row.frame
-        return CGRect(x: r.minX, y: r.minY + 2, width: min(100, r.width), height: max(1, r.height - 4))
+        return CGRect(x: r.minX, y: r.minY + 2, width: min(44, r.width), height: max(1, r.height - 4))
     }
 
     // MARK: - Pixels

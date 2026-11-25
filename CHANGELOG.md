@@ -6,6 +6,10 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **A remote image that fails to load is hidden.** With remote images allowed,
+  a failed image without alternative text now shows nothing, as in Gmail,
+  instead of a blue "?" icon. Images with alternative text are unchanged.
+
 - **Signatures per account.** MishMail → Settings (⌘,) → Signatures: several
   signatures per account, a default for new messages and one for replies per
   sending address, and import of the signatures already set in Gmail. The
