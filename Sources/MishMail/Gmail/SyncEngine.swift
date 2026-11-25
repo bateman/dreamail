@@ -190,8 +190,38 @@ actor SyncEngine {
             }
         }
 
+        await refreshGmailSnoozedIfDue()
+
         try await commitAccountState(lastSyncAt: Date())
         return drainContentChange()
+    }
+
+    // MARK: - Snoozed in Gmail
+
+    /// When the next `in:snoozed` listing may run. In memory: a relaunch
+    /// lists once, and nothing is left behind when the account goes.
+    private var nextGmailSnoozedCheck = Date.distantPast
+
+    /// Marks the conversations snoozed in Gmail (`GmailSnoozed`). Fails
+    /// safe: any error leaves the flags as they are, says nothing and backs
+    /// off, so the app behaves as if Gmail's snooze were unknown.
+    private func refreshGmailSnoozedIfDue() async {
+        let now = Date()
+        guard now >= nextGmailSnoozedCheck else { return }
+        do {
+            let listing = try await GmailSnoozed.listThreadIds { [client] pageToken in
+                try await client.listMessages(
+                    query: GmailSnoozed.query, pageToken: pageToken,
+                    maxResults: GmailClient.maxListPageSize)
+            }
+            try await db.write { [accountId] db in
+                try GmailSnoozed.apply(db, accountId: accountId,
+                                       threadIds: listing.threadIds, complete: listing.complete)
+            }
+            nextGmailSnoozedCheck = GmailSnoozed.nextCheck(after: now, failure: nil)
+        } catch {
+            nextGmailSnoozedCheck = GmailSnoozed.nextCheck(after: now, failure: error)
+        }
     }
 
     /// Records whether the window listing reached its last page. A listing
@@ -1536,7 +1566,12 @@ actor SyncEngine {
             allFromEmails: ThreadLabels.allFromEmails(from: messages),
             // Inbox-only sort / remind-if-no-reply. Nil when pure outbound so
             // own follow-ups never look like "they replied."
-            lastInboundDate: lastInboundDate(messages: messages, accountId: accountId)
+            lastInboundDate: lastInboundDate(messages: messages, accountId: accountId),
+            // Gmail's own snooze ends when INBOX is back (Gmail woke it, or
+            // the user moved it) or the thread left for trash or spam.
+            gmailSnoozed: existing?.gmailSnoozed == true
+                && !allLabels.contains("INBOX") && !trashDraft.inTrash
+                && !allLabels.contains("SPAM")
         )
     }
 
@@ -1584,6 +1619,12 @@ actor SyncEngine {
     /// - **Ghost heal**: pre-fix rows kept `snoozeUntil` after a reply
     ///   re-added INBOX (`inInbox == true` while still "sleeping"). MishMail
     ///   snooze always strips INBOX, so that combo means already woken.
+    /// - **Trash / spam on Gmail**: the wake sweep would otherwise put INBOX
+    ///   back on a conversation the user threw away.
+    /// - **INBOX back on Gmail**: Gmail had confirmed the snooze's archive
+    ///   (`existing.labelIds` without INBOX) and now reports INBOX again —
+    ///   moved to Inbox in Gmail Web, on the phone or on another Mac. Before
+    ///   that confirmation INBOX is just the not-yet-synced snooze, so keep.
     /// Does not clear on draft saves, pure SENT, or prune→backfill count churn.
     /// Pure — unit-tested.
     static func preservedSnoozeUntil(
@@ -1592,6 +1633,12 @@ actor SyncEngine {
         guard let existing, let until = existing.snoozeUntil else { return nil }
         // Pre-fix ghost: reply restored INBOX but left snoozeUntil set.
         if existing.inInbox { return nil }
+        if trashDraftFlags(messages: messages).inTrash { return nil }
+        if messages.contains(where: { labelIdsContain($0.labelIds, "SPAM") }) { return nil }
+        if !labelIdsContain(existing.labelIds, "INBOX"),
+           messages.contains(where: { labelIdsContain($0.labelIds, "INBOX") }) {
+            return nil
+        }
         let inbound = lastInboundDate(messages: messages, accountId: accountId)
         guard let inbound else { return until }  // still pure outbound
         if let prior = existing.lastInboundDate {

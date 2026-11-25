@@ -60,6 +60,18 @@ struct MailThread: Codable, Identifiable, Hashable, FetchableRecord, Persistable
     /// and the row timestamp keep using `lastDate` (newest any message).
     /// "Remind if no reply" cancels only when this advances past `reminderSetAt`.
     var lastInboundDate: Date? = nil
+    /// Snoozed in Gmail itself (web or phone), read from Gmail's `in:snoozed`
+    /// search. No wake-up time is readable and Gmail wakes it, never
+    /// MishMail. Only set on rows without INBOX, trash or spam
+    /// (`GmailSnoozed`); a derive that sees INBOX again clears it.
+    var gmailSnoozed: Bool = false
+
+    /// A local edit that puts the thread in the Inbox (unsnooze, move to
+    /// Inbox, not spam, undo) ends Gmail's snooze here at once; the next
+    /// sync derive would, but until then the row stayed hidden.
+    mutating func endGmailSnoozeIfInboxed() {
+        if inInbox { gmailSnoozed = false }
+    }
 
     var labels: [String] { labelIds.split(separator: " ").map(String.init) }
 
@@ -2793,7 +2805,6 @@ final class AppDatabase: @unchecked Sendable {
         m.registerMigration("v54") { db in
             try InlineImageCache.createTable(db)
         }
-
         // v55 (after v54, the inline-image cache): the persistent remote-image
         // cache. The bytes of each https image of a message opened with remote
         // images allowed, keyed by account, message and URL digest, so a later
@@ -2802,13 +2813,23 @@ final class AppDatabase: @unchecked Sendable {
         m.registerMigration("v55") { db in
             try RemoteImageCache.createTable(db)
         }
-
         // v59 (v56–v58 are taken by work in parallel): the answers sent to
         // calendar invites, moved out of UserDefaults into the encrypted
         // database. Cascades with the message and the account
         // (`CalendarRSVPStore`).
         m.registerMigration("v59") { db in
             try CalendarRSVPStore.createTable(db)
+        }
+        // v60: conversations snoozed in Gmail itself (`GmailSnoozed`). The
+        // Snoozed list and count read the flagged subset only.
+        m.registerMigration("v60") { db in
+            try db.alter(table: "thread") { t in
+                t.add(column: "gmailSnoozed", .boolean).notNull().defaults(to: false)
+            }
+            try db.execute(sql: """
+                CREATE INDEX thread_gmail_snoozed
+                ON thread(accountId) WHERE gmailSnoozed = 1
+                """)
         }
 
         // v61 (Google Calendar, step 4A; v56–v58 and v60 belong to other

@@ -3283,7 +3283,7 @@ struct ComposeRequest: Identifiable {
             q = q.filter((Column("isStarred") == true || starKeepIds.contains(Column("id")))
                          && Column("inTrash") == false)
         case .snoozed:
-            q = q.filter(Column("snoozeUntil") != nil && Column("snoozeUntil") > now && Column("inTrash") == false)
+            q = ThreadListQuery.snoozed(now: now)
         case .labels:
             // Any user label via junction (Label_*); system labels never match.
             q = q.filter(sql: """
