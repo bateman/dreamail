@@ -1944,7 +1944,7 @@ struct ThreadRow: View, Equatable {
         .onHover { hovering = $0 }
         .pmPointingHandCursor()
         // VoiceOver reads the row as one element with named actions. UI tests
-        // (MISHMAIL_UI_TEST=1 only) also need the buttons in the tree.
+        // (MISHMAIL_UI_ROW_BUTTONS=1 only) also need the buttons in the tree.
         .accessibilityElement(children: Self.exposesButtons ? .contain : .ignore)
         .accessibilityLabel(model.display.accessibilityLabel)
         .accessibilityAction(named: "Archive", onArchive)
@@ -1954,8 +1954,10 @@ struct ThreadRow: View, Equatable {
         .accessibilityAction(named: ThreadRowHoverAction.toggleRead.title(isUnread: thread.isUnread), onToggleRead)
     }
 
+    /// Set only by the hover-actions UI tests. `.contain` changes the row's
+    /// accessibility frame, which the section-spacing tests measure.
     private static let exposesButtons =
-        ProcessInfo.processInfo.environment["MISHMAIL_UI_TEST"] == "1"
+        ProcessInfo.processInfo.environment["MISHMAIL_UI_ROW_BUTTONS"] == "1"
 
     private var participantsDisplay: String {
         thread.participants.isEmpty ? thread.fromDisplay : thread.participants

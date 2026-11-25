@@ -11,6 +11,8 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["MISHMAIL_DEMO"] = "1"
         app.launchEnvironment["MISHMAIL_UI_TEST"] = "1"
+        // Exposes the row's buttons to the accessibility tree (off by default).
+        app.launchEnvironment["MISHMAIL_UI_ROW_BUTTONS"] = "1"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
