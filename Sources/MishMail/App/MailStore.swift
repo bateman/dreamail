@@ -321,6 +321,9 @@ final class MailStore {
         presentedError?.recovery ?? .none
     }
     private(set) var demoMode = DemoSeed.isActive
+    /// Label row ids whose Gmail color is being saved; the organizer
+    /// disables the Gmail swatches for them meanwhile.
+    private(set) var gmailLabelColorSaving: Set<String> = []
     /// Account ids whose saved sign-in Google has rejected (expired/revoked
     /// refresh token); the Accounts settings pane offers a "Reauthorize"
     /// button for these.
@@ -1592,11 +1595,20 @@ struct ComposeRequest: Identifiable {
     let db = AppDatabase.shared.dbPool
     let threadDetailRepository = ThreadDetailRepository(
         db: AppDatabase.shared.dbPool,
-        inlineImages: InlineImageStore(db: AppDatabase.shared.dbPool))
+        inlineImages: InlineImageStore(db: AppDatabase.shared.dbPool),
+        remoteImages: RemoteImageStore(db: AppDatabase.shared.dbPool))
     /// Persistent, encrypted `cid:` image cache (`InlineImageCache`): read
     /// with the payload by the repository, written by `inlineCIDImages`,
     /// shut down before the pool closes.
     var inlineImageStore: InlineImageStore? { threadDetailRepository.inlineImages }
+    /// Persistent, encrypted remote-image cache (`RemoteImageCache`): read by
+    /// the prefetch (cache only), written by `resolveRemoteImages` (an open
+    /// message whose remote images are allowed), shut down before the pool
+    /// closes.
+    var remoteImageStore: RemoteImageStore? { threadDetailRepository.remoteImages }
+    /// The app's own remote-image client (`RemoteImageTransport.live`).
+    @ObservationIgnored
+    var remoteImageTransport: RemoteImageTransport = .live
     @ObservationIgnored
     var syncTimer: Timer?
     @ObservationIgnored
@@ -1938,6 +1950,8 @@ struct ComposeRequest: Identifiable {
         // Purge a pre-redaction log and age out old lines even when no
         // error is logged this session.
         DiagnosticLog.maintainAtLaunch()
+        // Earlier builds kept invite answers in plain-text UserDefaults.
+        CalendarRSVPStore.purgeLegacyDefaults()
         reloadScheduledSends()
         reloadLocalDrafts()
         await reloadPendingThreadOpCount()
@@ -2455,6 +2469,7 @@ struct ComposeRequest: Identifiable {
         // in progress is cancelled (rolled back) and awaited before the
         // pool closes.
         await inlineImageStore?.shutDown()
+        await remoteImageStore?.shutDown()
 
         await DatabaseLifecycle.shutDown(
             tasks: tasks,
@@ -3616,6 +3631,21 @@ struct ComposeRequest: Identifiable {
         }
     }
 
+    /// Remember a body with remote images inlined on both payload copies.
+    func rememberRemoteInline(_ body: RemoteInlinedBody, messageId: String,
+                              threadId: String, revision: ThreadContentRevision) {
+        let scale = Self.readingPaneFontScale()
+        payloadMirror.rememberRemoteInline(
+            body, messageId: messageId, threadId: threadId, revision: revision,
+            fontScale: scale)
+        let repository = threadDetailRepository
+        Task {
+            await repository.rememberRemoteInline(
+                body, messageId: messageId, threadId: threadId,
+                revision: revision, fontScale: scale)
+        }
+    }
+
     /// Off-main body hydration for an expanded reading-pane card, including
     /// precomputed quote-trail + assembled HTML for the current font scale.
     func messageBodyForReadingPane(id: String) async -> MessageBodyLoad? {
@@ -4009,6 +4039,44 @@ struct ComposeRequest: Identifiable {
         reloadAccounts()
     }
 
+    /// Sets (or removes, with nil) a user label's color on Gmail, so it
+    /// shows on the web and the phone too. Shown at once; put back if
+    /// Gmail refuses. A Mac-only color, when set, still wins on display.
+    func setGmailLabelColor(_ label: LabelRow, to color: GmailLabelColor?) {
+        guard !demoMode else {
+            showNotice("Changing label colors on Gmail is disabled in the demo inbox")
+            return
+        }
+        guard label.type == "user", !gmailLabelColorSaving.contains(label.id) else { return }
+        let client = client(for: label.accountId)
+        let pool = db
+        let id = label.id
+        let accountId = label.accountId
+        gmailLabelColorSaving.insert(id)
+        Task { @MainActor [weak self] in
+            var failure: Error?
+            do {
+                try await GmailLabelColorEdit.apply(color, labelRowId: id, db: pool,
+                                                    didStore: { self?.reloadAccounts() }) { labelId, color in
+                    try await client.patchLabelColor(id: labelId, color: color)
+                }
+            } catch {
+                failure = error
+            }
+            guard let self else { return }
+            self.gmailLabelColorSaving.remove(id)
+            self.reloadAccounts()
+            switch GmailLabelColorEdit.outcome(failure, accountKnown: self.isKnownAccount(accountId)) {
+            case .saved, .silent:
+                break
+            case .reauthorize:
+                self.requireReauthorization(for: accountId, interactive: true)
+            case .banner(let message):
+                self.lastError = message
+            }
+        }
+    }
+
     /// Persists a drag-reorder of the account switcher. The unified "all
     /// inboxes" entry isn't part of `accounts` (it's a synthetic nil-account
     /// row rendered separately in ContentView), so it's never touched here.
@@ -4217,6 +4285,27 @@ struct ComposeRequest: Identifiable {
         Task { await store.noteUsed(ids) }
     }
 
+    /// The remote-image counterpart of `noteCachedImagesShown`, called by
+    /// the pane when a card shows a body whose remote images came from the
+    /// cache (a warmed payload). At most one write a day per message.
+    func noteCachedRemoteImagesShown(messageIds: [String]) {
+        guard let store = remoteImageStore, !messageIds.isEmpty else { return }
+        Task { await store.noteUsed(messageIds) }
+    }
+
+    /// Message ids of `payload` whose open would load remote images under
+    /// the current policy, without any click (the prefetch builds cached
+    /// bodies for these only; Spam never qualifies).
+    func remoteImageAutoLoadIds(in payload: ThreadDetailPayload, threadId: String) -> Set<String> {
+        let policy = RemoteImagePolicy.stored()
+        let vips = vipEmails
+        let inSpam = thread(withId: threadId)?.inSpam ?? false
+        return Set(payload.messages.filter {
+            RemoteImagePolicy.autoLoads(message: $0, threadInSpam: inSpam,
+                                        policy: policy, vipEmails: vips)
+        }.map(\.id))
+    }
+
     func clearSelection() {
         selectThread(nil, intent: .explicitOpen)
     }
@@ -4303,6 +4392,18 @@ struct ComposeRequest: Identifiable {
                 where payload.messages.contains(where: { $0.id == id }) {
                     payload.cidInlineByMessageId[id] = body
                 }
+                // Remote images likewise, from the encrypted cache only and
+                // only for messages whose open would load them anyway: no
+                // request to any sender for mail that is not open.
+                let allowed = self.remoteImageAutoLoadIds(in: payload, threadId: target.id)
+                let remote = await repository.warmCachedRemoteBodies(
+                    threadId: target.id, revision: target.revision,
+                    fontScale: fontScale, allowedMessageIds: allowed)
+                guard !Task.isCancelled else { return }
+                for (id, body) in remote
+                where payload.messages.contains(where: { $0.id == id }) {
+                    payload.remoteInlineByMessageId[id] = body
+                }
                 // Mirror onto the main actor. This is what makes the landing
                 // synchronous: without it the warmed payload still costs an
                 // actor round-trip at exactly the moment MainActor is busiest.
@@ -4363,17 +4464,19 @@ struct ComposeRequest: Identifiable {
             showNotice("RSVP is disabled in the demo inbox")
             return
         }
+        // The card offers the buttons only then; checked again here because
+        // the To below comes from the untrusted ICS.
+        guard invite.isActionable else {
+            lastError = "This invite can't be answered."
+            return
+        }
         // Prefer a send-as address listed as ATTENDEE on the invite (the
         // address the organizer's calendar already knows), then fall back to
         // a To/Cc match, then the mailbox primary.
-        let identity = preferredRSVPIdentity(for: message, invite: invite)
+        let identity = rsvpIdentity(for: message, invite: invite)
         let fromEmail = identity.email
         let displayName = identity.displayName
         let organizer = invite.organizerEmail
-        guard !organizer.isEmpty else {
-            lastError = "This invite has no organizer to reply to."
-            return
-        }
         let attachment = invite.replyAttachment(
             status: status, attendeeEmail: fromEmail, attendeeName: displayName)
         let subject = invite.replySubject(status: status)
@@ -4391,38 +4494,70 @@ struct ComposeRequest: Identifiable {
                 replyTo: message,
                 attachments: [attachment]
             )
-            CalendarInvite.storeRSVP(
-                status, accountId: message.accountId, uid: invite.uid,
-                recurrenceIdLine: invite.recurrenceIdLine)
+            // The reply went out; failing to remember it only leaves the
+            // buttons unselected.
+            let accountId = message.accountId, messageId = message.id
+            _ = try? await db.write { db in
+                try CalendarRSVPStore.record(
+                    db, status: status, invite: invite,
+                    accountId: accountId, messageId: messageId)
+            }
             showNotice("\(status.subjectPrefix) — reply sent to \(organizer)")
         } catch {
             lastError = error.localizedDescription
         }
     }
 
-    /// Identity used on the RSVP. Order:
-    /// 1. send-as listed in the invite's ATTENDEE lines (most reliable),
-    /// 2. send-as appearing on the message To/Cc,
+    /// The answers already sent for `invites` (see `CalendarRSVPStore.current`),
+    /// by `CalendarInvite.rsvpDefaultsKey`.
+    func storedRSVPs(for invites: [CalendarInvite],
+                     accountId: String) async -> [String: CalendarInvite.RSVP] {
+        let found = try? await db.read { db in
+            var map: [String: CalendarInvite.RSVP] = [:]
+            for invite in invites {
+                if let status = try CalendarRSVPStore.current(
+                    db, invite: invite, accountId: accountId) {
+                    map[CalendarInvite.rsvpDefaultsKey(
+                        accountId: accountId, uid: invite.uid,
+                        recurrenceIdLine: invite.recurrenceIdLine)] = status
+                }
+            }
+            return map
+        }
+        return found ?? [:]
+    }
+
+    /// Identity used on the RSVP (also shown on the invite card). Order:
+    /// 1. a send-as listed in the invite's ATTENDEE lines *and* on the
+    ///    message's Delivered-To / To / Cc (the ATTENDEE list alone is the
+    ///    ICS author's choice, so it can't pick which alias answers),
+    /// 2. the send-as the message was delivered to, then one on To / Cc,
     /// 3. mailbox primary.
-    private func preferredRSVPIdentity(
+    func rsvpIdentity(
         for message: Message, invite: CalendarInvite
     ) -> (email: String, displayName: String) {
         let candidates = fromIdentities(forMailbox: message.accountId)
         let attendeeSet = Set(invite.attendeeEmails.map { $0.lowercased() })
-        if let match = candidates.first(where: { attendeeSet.contains($0.email.lowercased()) }) {
-            return (match.email, match.displayName)
-        }
-        let headerEmails: Set<String> = {
+        func emails(_ header: String) -> Set<String> {
             var set = Set<String>()
-            for header in [message.toHeader, message.ccHeader] {
-                for addr in MessageParser.splitAddresses(header) {
-                    let e = MessageParser.emailAddress(addr).lowercased()
-                    if !e.isEmpty { set.insert(e) }
-                }
+            for addr in MessageParser.splitAddresses(header) {
+                let e = MessageParser.emailAddress(addr).lowercased()
+                if !e.isEmpty { set.insert(e) }
             }
             return set
-        }()
-        if let match = candidates.first(where: { headerEmails.contains($0.email.lowercased()) }) {
+        }
+        let delivered = emails(message.deliveredTo ?? "")
+        let headerEmails = delivered
+            .union(emails(message.toHeader))
+            .union(emails(message.ccHeader))
+        if let match = candidates.first(where: {
+            let e = $0.email.lowercased()
+            return attendeeSet.contains(e) && headerEmails.contains(e)
+        }) {
+            return (match.email, match.displayName)
+        }
+        if let match = candidates.first(where: { delivered.contains($0.email.lowercased()) })
+            ?? candidates.first(where: { headerEmails.contains($0.email.lowercased()) }) {
             return (match.email, match.displayName)
         }
         if let primary = candidates.first(where: \.isPrimary) ?? candidates.first {

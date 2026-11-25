@@ -26,6 +26,11 @@ Signing defaults to portable ad-hoc; see
 
 `make test` must pass before every commit (the pre-commit hook enforces this
 locally, and CI runs it on every push to `main` and every pull request).
+CI skips the macOS build and tests when a change into `main` touches only
+files that neither the build nor a test reads: `docs/`, `reviews/`,
+`.claude/`, `CHANGELOG.md` and `CLAUDE.md` (`.github/scripts/needs-build.py`).
+So judge a commit on `main` by its own run (`gh run list --commit <sha>`):
+a docs-only commit after a red one has a green run.
 `make ui-test` is a separate CI job for launch, demo navigation, compose, and
 Settings. It takes about eleven minutes, so it runs only for a release:
 `make release` starts it and waits, and `make ui-test-ci` starts it by hand

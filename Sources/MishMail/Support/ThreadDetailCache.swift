@@ -21,6 +21,10 @@ struct MessageHTMLPrep: Equatable, Sendable {
     var htmlHeadBytes: Int
     /// Assembled documents for the fontScale recorded on `documents`.
     var documents: MessageHTMLDocuments?
+    /// Remote image URLs the app could cache for this body
+    /// (`RemoteImageHTML.candidates`). Counted here, off the main actor, so
+    /// a card knows without scanning whether its open has a cache to check.
+    var remoteImageCount: Int = 0
 
     static let empty = MessageHTMLPrep(
         textHead: nil, htmlHead: nil, hasQuotedTrail: false,
@@ -227,7 +231,8 @@ enum MessageHTMLPrepBuilder {
             hasQuotedTrail: hasQuotedTrail,
             htmlBytes: fullHTMLBytes,
             htmlHeadBytes: htmlHeadBytes,
-            documents: documents)
+            documents: documents,
+            remoteImageCount: bodyHTML.map { RemoteImageHTML.candidates(in: $0).count } ?? 0)
     }
 
     /// Prep for a body whose `cid:` images were rewritten to `data:` URIs.
@@ -247,8 +252,11 @@ enum MessageHTMLPrepBuilder {
     /// Documents are assembled only for variants the card will auto-render
     /// (rendered bytes within budget); the explicit-approval path builds its
     /// document off-main in `HTMLBodyView` instead.
+    /// `countRemoteCandidates`: false for a body whose remote images were
+    /// already inlined (nothing reads the count; skips a whole-body scan).
     static func cidInlinedPrep(inlinedHTML: String, preInlineBytes: Int,
-                               fontScale: Double) -> MessageHTMLPrep {
+                               fontScale: Double,
+                               countRemoteCandidates: Bool = true) -> MessageHTMLPrep {
         guard !inlinedHTML.isEmpty else { return .empty }
         let fullBytes = inlinedHTML.utf8.count
         let budget = HTMLBodyRenderPolicy.maximumAutomaticBytes
@@ -296,7 +304,9 @@ enum MessageHTMLPrepBuilder {
             hasQuotedTrail: htmlHead != nil,
             htmlBytes: htmlBytes,
             htmlHeadBytes: htmlHeadBytes,
-            documents: documents)
+            documents: documents,
+            remoteImageCount: countRemoteCandidates
+                ? RemoteImageHTML.candidates(in: inlinedHTML).count : 0)
     }
 
     /// Rebuild only the assembled documents for a new font scale, keeping the
@@ -380,6 +390,13 @@ struct ThreadDetailPayload: Equatable {
     /// every part from Gmail again and loading the body a second time.
     /// This copy lives and dies with this payload's cache entry.
     var cidInlineByMessageId: [String: CIDInlinedBody] = [:]
+    /// Bodies with their cached remote images inlined
+    /// (`RemoteImageResolver.cachedBody`), keyed by message id. Built by the
+    /// prefetch from the encrypted cache only (never the network), and only
+    /// for messages whose open would load remote images; the card still
+    /// uses one only when its own decision allows remote images. Lives and
+    /// dies with this payload's cache entry.
+    var remoteInlineByMessageId: [String: RemoteInlinedBody] = [:]
 
     func suppressingDrafts(_ suppressedIds: Set<String>) -> ThreadDetailPayload {
         guard !suppressedIds.isEmpty else { return self }
@@ -394,6 +411,9 @@ struct ThreadDetailPayload: Equatable {
                 visibleIds.contains($0.key)
             },
             cidInlineByMessageId: cidInlineByMessageId.filter {
+                visibleIds.contains($0.key)
+            },
+            remoteInlineByMessageId: remoteInlineByMessageId.filter {
                 visibleIds.contains($0.key)
             })
     }
@@ -429,6 +449,18 @@ enum CIDInlineCachePolicy {
         guard !CIDImageInliner.containsCIDReferences(body.html),
               body.html.utf8.count <= maximumBytes else { return false }
         if let scale = body.fontScale, abs(scale - fontScale) > 0.001 { return false }
+        return true
+    }
+}
+
+/// Which bodies with remote images inlined are worth keeping in memory:
+/// the same size cap as `cid:` bodies, built at the current font scale.
+enum RemoteInlineCachePolicy {
+    static func shouldRemember(_ body: RemoteInlinedBody, fontScale: Double) -> Bool {
+        guard body.html.utf8.count <= CIDInlineCachePolicy.maximumBytes else { return false }
+        if let scale = body.prep.documents?.fontScale, abs(scale - fontScale) > 0.001 {
+            return false
+        }
         return true
     }
 }
@@ -543,6 +575,8 @@ actor ThreadDetailRepository {
     /// Persistent `cid:` images, read by `warmCachedCIDBodies` (never by
     /// `payload`, which stays text only).
     let inlineImages: InlineImageStore?
+    /// Persistent remote images, read by `warmCachedRemoteBodies` only.
+    let remoteImages: RemoteImageStore?
     private var cache = ThreadDetailLRU<ThreadDetailCacheEntry>(capacity: 10)
     /// Newest revisions `discardStale` has seen. A read that started before
     /// a change (a delete among them) and finishes after it must not put
@@ -551,9 +585,11 @@ actor ThreadDetailRepository {
     private var knownEpoch = 0
     private var knownLocals: [String: Int] = [:]
 
-    init(db: DatabasePool, inlineImages: InlineImageStore? = nil) {
+    init(db: DatabasePool, inlineImages: InlineImageStore? = nil,
+         remoteImages: RemoteImageStore? = nil) {
         self.db = db
         self.inlineImages = inlineImages
+        self.remoteImages = remoteImages
     }
 
     /// The requested `revision` is the sole validity test — there is no
@@ -741,6 +777,73 @@ actor ThreadDetailRepository {
         return added
     }
 
+    /// Remember a body with remote images inlined on the cached payload it
+    /// belongs to, under the same conditions as `rememberCIDInline`.
+    @discardableResult
+    func rememberRemoteInline(_ body: RemoteInlinedBody, messageId: String,
+                              threadId: String, revision: ThreadContentRevision,
+                              fontScale: Double) -> Bool {
+        guard RemoteInlineCachePolicy.shouldRemember(body, fontScale: fontScale),
+              var entry = cache.values[threadId],
+              entry.revision == revision,
+              abs(entry.fontScale - fontScale) < 0.001,
+              entry.payload.messages.contains(where: { $0.id == messageId })
+        else { return false }
+        entry.payload.remoteInlineByMessageId[messageId] = body
+        cache.insert(entry, for: threadId)
+        return true
+    }
+
+    /// Adds the cached remote images of `allowedMessageIds` (messages whose
+    /// open would load remote images, decided by the caller) to a cached
+    /// payload. The local cache only, never the network, built off this
+    /// actor; on top of the `cid:` body when one is remembered (call after
+    /// `warmCachedCIDBodies`). Returns the bodies it added.
+    @discardableResult
+    func warmCachedRemoteBodies(threadId: String, revision: ThreadContentRevision,
+                                fontScale: Double,
+                                allowedMessageIds: Set<String>) async -> [String: RemoteInlinedBody] {
+        guard let store = remoteImages, !allowedMessageIds.isEmpty,
+              let entry = cache.values[threadId], entry.revision == revision,
+              abs(entry.fontScale - fontScale) < 0.001 else { return [:] }
+        let work: [(message: Message, base: String, cid: Bool)] = entry.payload.messages.compactMap {
+            guard allowedMessageIds.contains($0.id),
+                  entry.payload.remoteInlineByMessageId[$0.id] == nil,
+                  let html = $0.bodyHTML, !html.isEmpty else { return nil }
+            if let cid = entry.payload.cidInlineByMessageId[$0.id] {
+                return (message: $0, base: cid.html, cid: true)
+            }
+            return (message: $0, base: html, cid: false)
+        }
+        guard !work.isEmpty else { return [:] }
+        let task = Task.detached(priority: .utility) { () -> [String: RemoteInlinedBody] in
+            var out: [String: RemoteInlinedBody] = [:]
+            for item in work {
+                guard !Task.isCancelled else { break }
+                let rawBytes = item.message.bodyHTML?.utf8.count ?? 0
+                if let body = await RemoteImageResolver.cachedBody(
+                    messageId: item.message.id, accountId: item.message.accountId,
+                    baseHTML: item.base, preInlineBytes: rawBytes,
+                    baseIsCIDInlined: item.cid, fontScale: fontScale, store: store) {
+                    out[item.message.id] = body
+                }
+            }
+            return out
+        }
+        let bodies = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        var added: [String: RemoteInlinedBody] = [:]
+        for (id, body) in bodies
+        where rememberRemoteInline(body, messageId: id, threadId: threadId,
+                                   revision: revision, fontScale: fontScale) {
+            added[id] = body
+        }
+        return added
+    }
+
     /// Thread ids with a payload in memory (test observability).
     func cachedThreadIds() -> Set<String> {
         Set(cache.values.keys)
@@ -869,6 +972,7 @@ actor ThreadDetailRepository {
         var copy = payload
         // CID preps carry the old scale; the pane re-resolves them on open.
         copy.cidInlineByMessageId = [:]
+        copy.remoteInlineByMessageId = [:]
         for message in payload.messages {
             guard var prep = copy.bodyPrepByMessageId[message.id] else { continue }
             prep = MessageHTMLPrepBuilder.reassembleDocuments(
