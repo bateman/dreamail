@@ -6,6 +6,12 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Accent colour setting.** Settings ▸ Appearance ▸ Accent color picks the
+  colour for selected rows (sidebar, Settings, message list; macOS 26 and
+  later), buttons, links, badges and highlights, live in every window; Default
+  keeps MishMail's blue and the system selection colour. Text on the accent
+  turns white or black to stay readable (4.5:1), and accent text on the app's
+  backgrounds is darkened or lightened just enough to stay legible.
 - **Dock badge follows your actions and tells you when macOS hides it.**
   Reading, archiving, deleting or snoozing a conversation updates the unread
   count on the Dock icon immediately, also for accounts not shown in the

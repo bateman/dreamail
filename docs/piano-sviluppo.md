@@ -193,7 +193,7 @@ Seguiti annotati:
 | Immagini remote caricate per impostazione predefinita all'apertura; Spam sempre bloccato; nessun caricamento anticipato | #40 |
 | Anello dell'account a spessore doppio (3 pt). Modifica semplice: sessione Sonnet, nessuna review, unita a CI verde (DEC-036) | #41 |
 | Cache cifrata delle immagini remote, solo dove sono già permesse (migrazione v55) | #42, in lavorazione |
-| Colore d'accento configurabile in Settings → Appearance | #43, in lavorazione |
+| Colore d'accento configurabile in Settings → Appearance | #43 |
 | Badge delle non lette sull'icona nel Dock: aggiornamento immediato dopo le azioni locali, ridisegno al ritorno nell'app, riga "Shown by macOS" nelle impostazioni | #45 |
 
 Il 24 novembre 2026 il proprietario ha sostituito l'orchestratore con una nuova sessione (DEC-037). Le sessioni non toccano più `CHANGELOG.md` né `docs/`: propongono le righe nel corpo della PR e l'orchestratore le raccoglie in una PR di documentazione.
@@ -206,6 +206,7 @@ Esiti da ricordare:
 - PR #39: immagini solo dentro il database cifrato, mai in file; 200 MiB in tutto, 3 MiB per messaggio, esce prima ciò che è usato meno di recente; cancellazione a cascata con allegato, messaggio e account. Nessun confronto di latenza in CI: da giudicare sul Mac.
 - PR #40: un'installazione che non aveva mai scelto segue il nuovo predefinito; una scelta salvata resta; un valore sconosciuto vale "Ask". Con un tasto freccia tenuto premuto si apre solo la conversazione su cui ci si ferma. Nessun avviso nell'app per chi non aveva mai scelto: lo dice solo il changelog. `SECURITY.md` ha una nuova nota "Remote images".
 
+- PR #43: Settings → Appearance → "Accent color" (selettore di sistema, colori rapidi, "Default" = aspetto di prima). Il testo sopra l'accento diventa bianco o nero; l'accento usato come testo o icona viene corretto in luminosità quanto basta; i pulsanti di sistema usano una variante scurita. L'evidenziazione della riga selezionata nel colore scelto vale solo su macOS 26 e successivi: su macOS 14 e 15 resta quella di sistema. Restano al sistema la selezione del testo, i controlli nativi e gli avvisi. Ha toccato 45 file dell'interfaccia.
 - PR #45: il badge esisteva già e usava il supporto di sistema (`dockTile.badgeLabel`); il proprietario ha segnalato che sul suo Mac non compare affatto. Nel codice non è stata trovata una causa certa: la PR toglie i casi in cui un disegno perso non veniva ritentato e mostra nelle impostazioni lo stato riferito da macOS. La causa sul Mac del proprietario resta da accertare. Le skill `ponytail-review` e `security-audit` non erano disponibili nella sessione dell'orchestratore: le due review sono state fatte a mano da agenti.
 
 Seguiti annotati:
@@ -227,6 +228,7 @@ Seguiti annotati:
 ☐ Verifiche emerse dalle PR #20–#26: aspetto delle icone monocromatiche e della voce selezionata; email singola espansa (anche in "center peek" e vista compatta, e restringimento per email HTML corte); correttore con English e Italian scelti (menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta); riapertura di email con loghi senza sfarfallio, velocità della prima apertura e di `j`/`k`; colori delle label in lista, pannello di lettura e menu, riga selezionata con colore d'accento non blu e a finestra in secondo piano; intestazioni di sezione su macOS 14 e 15, intestazione fissa durante lo scorrimento, vista Labels.
 ☐ Verifiche emerse dalle PR #31–#34: editor del colore della label (pannello colori di sistema, chiusura all'uscita, riga disattivata quando la pillola non si vede), testo nero sulle pillole predefinite blu, viola e rosa; foto profilo con un account reale (download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione, VoiceOver nel menu degli account); icone in modalità scura, con accento giallo o grafite, con dimensione della barra laterale piccola e grande, su macOS 14 e 15.
 ☐ Verifiche emerse dalle PR #36–#41: aspetto dell'anello sulle superfici reali (barra laterale, popover, impostazioni), centratura del testo dell'intestazione e altezza delle righe del popover, lettura di VoiceOver; forma delle label (testo centrato, troncamento al limite); righe dei messaggi in modalità scura con posta HTML, pannelli stretti con testo grande, pannello di 400–450 pt con un mittente dal nome lungo; immagini incorporate dopo un riavvio con posta reale e velocità percepita; piè di pagina delle impostazioni sulle immagini remote, messaggio in Spam con "Load images", comportamento reale di rete all'apertura, tasto freccia tenuto premuto; prova di `preconnect` e `dns-prefetch` a immagini bloccate.
+☐ Verifiche emerse dalla PR #43: accento personalizzato in modalità scura, pannello colori reale (anche colori P3), barra laterale delle impostazioni e contatori sulla riga selezionata, eventuali lampi di un fotogramma dell'evidenziazione di sistema mentre la selezione si sposta, raggio della capsula, comportamento su macOS 14 e 15.
 ☐ Verifiche emerse dalla PR #45: il badge compare sull'icona nel Dock; in caso contrario, riga "Shown by macOS" in Settings ▸ Dock badge, `lsappinfo info -only StatusLabel "MishMail"` e interruttore "Badge sull'icona dell'app" in Impostazioni di Sistema ▸ Notifiche; il pulsante apre il pannello Notifiche; il numero cambia subito dopo lettura, archiviazione e cancellazione.
 ☐ Solo dopo, collegamento di un account Gmail reale.
 
@@ -282,7 +284,7 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | — | `ux/remote-images-default-on` | #40 | Unito |
 | — | `ux/account-ring-thicker` | #41 | Unito, modifica semplice senza review |
 | — | `perf/remote-image-cache` | #42 | In lavorazione |
-| — | `ux/custom-accent-color` | #43 | In lavorazione |
+| — | `ux/custom-accent-color` | #43 | Unito |
 | — | `docs/ux-round-4` | #44 | Documentazione del quarto giro |
 | — | `feature/unread-dock-badge` | #45 | Unito |
 | 3 | — | — | Non avviare: in attesa del proprietario |
