@@ -174,6 +174,9 @@ struct LabelColorSheet: View {
             }
             .padding([.bottom, .horizontal], 12)
         }
+        // Escape closes it, whatever holds the focus (a swatch button can
+        // take the key before the Done button's cancel shortcut sees it).
+        .onExitCommand { dismiss() }
     }
 }
 
