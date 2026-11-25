@@ -32,6 +32,11 @@ Appearance → Load remote images: Always; Ask each time and VIP senders are
 stricter). Mail in Spam and conversations that were not opened (including
 neighbour pre-render) never load them without a click.
 
+Opening a message means showing its body: a click on its row, the `n` and
+`p` keys (they open the message they move to) and `;` (expand all). One `;`
+opens every message of the conversation, so under "Always" it loads the
+remote images of all of them at once.
+
 **Cached per message.** The first time a message is opened with its remote
 images allowed, it shows them exactly as before (WebKit loads them live),
 and MishMail's own client downloads each cacheable image of that message in

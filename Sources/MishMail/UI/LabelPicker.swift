@@ -1,7 +1,9 @@
 import SwiftUI
 
 /// Gmail-style "l" label picker for the selected thread: type to filter,
-/// up/down to move, Enter/Space or click to toggle, Esc to close.
+/// up/down to move, Enter/Space or click to toggle, Esc to close. Opened
+/// with `v` it is Gmail's "Move to": the pick adds the label, removes the
+/// conversation (or the checked ones) from the inbox and closes.
 /// (Space only toggles after arrow navigation; while typing it stays a
 /// literal space so multi-word label names remain searchable.)
 ///
@@ -33,7 +35,7 @@ struct LabelPicker: View {
                 .ignoresSafeArea()
                 .onTapGesture { store.mailboxOverlay = nil }
 
-            if let thread = store.selectedThread {
+            if let thread = store.labelPickerThread {
                 let labels = store.labelPickerLabels(for: thread)
                 // The "Create …" row sits after the matches and is reachable
                 // with the same up/down highlight.
@@ -41,7 +43,7 @@ struct LabelPicker: View {
                 let rowCount = labels.count + (createName != nil ? 1 : 0)
                 let highlighted = min(picker.highlight, max(rowCount - 1, 0))
                 VStack(spacing: 0) {
-                    TextField("Label as…", text: $picker.query)
+                    TextField(placeholder, text: $picker.query)
                         .textFieldStyle(.plain)
                         .font(.system(size: 15))
                         .padding(12)
@@ -64,8 +66,10 @@ struct LabelPicker: View {
                                 ForEach(Array(labels.enumerated()), id: \.element.id) { idx, label in
                                     let applied = thread.labels.contains(label.gmailLabelId)
                                     HStack(spacing: 8) {
-                                        Image(systemName: applied ? "checkmark.square.fill" : "square")
-                                            .foregroundStyle(applied ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
+                                        if picker.mode == .label {
+                                            Image(systemName: applied ? "checkmark.square.fill" : "square")
+                                                .foregroundStyle(applied ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
+                                        }
                                         LabelDot(colors: store.labelColors(label.name, account: label.accountId),
                                                  size: 8)
                                         Text(LabelSearch.highlighted(label.name, query: picker.query))
@@ -75,7 +79,7 @@ struct LabelPicker: View {
                                     .padding(.horizontal, 12).padding(.vertical, 6)
                                     .background(.accentFill.opacity(idx == highlighted ? 0.18 : 0))
                                     .contentShape(Rectangle())
-                                    .onTapGesture { store.toggleLabel(thread, labelId: label.gmailLabelId) }
+                                    .onTapGesture { store.labelPickerCommit(label, thread: thread) }
                                     .onHover { if $0 { picker.highlight = idx } }
                                     .id(label.id)
                                 }
@@ -135,7 +139,8 @@ struct LabelPicker: View {
                     Divider()
                     // Spell out the keyboard model: Enter toggles the
                     // highlighted label (or creates, on the Create row).
-                    let enterVerb = highlighted == labels.count && createName != nil ? "create" : "toggle"
+                    let enterVerb = highlighted == labels.count && createName != nil
+                        ? "create" : (picker.mode == .move ? "move" : "toggle")
                     HStack(spacing: 10) {
                         Text("↑↓ select")
                         Text("⏎ \(enterVerb)")
@@ -163,6 +168,13 @@ struct LabelPicker: View {
                 }
             }
         }
+    }
+
+    /// "Move 5 conversations to…" when the move covers several.
+    private var placeholder: String {
+        guard picker.mode == .move else { return "Label as…" }
+        let n = picker.moveTargetIds.count
+        return n > 1 ? "Move \(n) conversations to…" : "Move to…"
     }
 
     /// Scroll the list so the highlighted row (label or Create) is visible.
