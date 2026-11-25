@@ -6,7 +6,7 @@ Riferimento: [Registro delle decisioni](registro-decisioni.md) v0.7 (finding F-x
 Decisioni prese per questo piano:
 
 - Le funzioni AI e il server MCP vengono disattivati per il momento, senza cancellare codice.
-- F-01 viene segnalato in privato all'upstream dal proprietario del fork.
+- F-01: la segnalazione all'upstream, prima a carico del proprietario, è stata annullata dal proprietario il 25 novembre 2026 (DEC-039).
 - L'orchestratore è autorizzato a fare il merge su `main` di `bateman/mishmail` quando CI e review sono a posto.
 
 ## Flusso per ogni step
@@ -239,7 +239,15 @@ Seguiti annotati:
 - Verifica ICS/RSVP su inviti reali e gap analysis rispetto a Postie.
 - Snooze: richiede prima una scelta di progetto (allineamento con Gmail Web e mobile).
 
-L'ondata 3 parte dopo il cancello: è la prima che aggiunge funzionalità, e ogni step va provato su un account reale.
+Avviata dal proprietario il 25 novembre 2026, prima che il cancello fosse completato: ogni step va comunque provato su un account reale, e i passi di prova stanno nel corpo di ciascuna PR.
+
+| Step | Contenuto | Branch | Migrazione riservata |
+|---|---|---|---|
+| 3A | Creazione e modifica dei filtri lato server | `feature/gmail-server-filters` | v56 |
+| 3B | Modifica dei colori delle label su Gmail | `feature/gmail-label-color-editing` | v57 |
+| 3C | Verifica ICS/RSVP e analisi delle lacune | `feature/ics-rsvp-verification` | v59 |
+| 3D | Snooze: prima l'analisi e le opzioni, poi la scelta del proprietario | `feature/snooze-gmail-alignment` | v60 |
+| 3E | Azioni mancanti degli shortcut di Gmail | `feature/gmail-shortcut-actions` | v58 |
 
 ## Ondata 4 — Calendar e PGP
 
@@ -288,4 +296,4 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | — | `docs/ux-round-4` | #44 | Documentazione del quarto giro |
 | — | `feature/unread-dock-badge` | #45 | Unito |
 | — | `docs/process-review-tiers` | #46 | Unito, modifica semplice |
-| 3 | — | — | Non avviare: in attesa del proprietario |
+| 3A–3E | vedi "Ondata 3" | — | In lavorazione dal 25 novembre 2026 |
