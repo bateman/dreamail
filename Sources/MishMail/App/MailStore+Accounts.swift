@@ -89,6 +89,8 @@ extension MailStore {
         forgetAccountPhoto(id)
         // DEC-019: the account's Gmail filters leave memory with it.
         filterCache.forget(account: id)
+        // Same for the Google Calendar integration's memory of it.
+        forgetCalendar(accountId: id)
         leaveScope(ofRemovedAccount: id)
         PendingLabelColorEdits.shared.forgetAccount(id)
         Task { @MainActor [weak self] in

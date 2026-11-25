@@ -4502,18 +4502,20 @@ struct ComposeRequest: Identifiable {
     /// Send an iTIP METHOD:REPLY for a calendar invite attachment and
     /// remember the local RSVP state. Mirrors Gmail's Accept /
     /// Decline / Maybe without requiring a Calendar OAuth scope.
+    /// Returns whether the reply went out (or was queued to go out).
+    @discardableResult
     func rsvpToInvite(_ invite: CalendarInvite,
                       status: CalendarInvite.RSVP,
-                      message: Message) async {
+                      message: Message) async -> Bool {
         guard !demoMode else {
             showNotice("RSVP is disabled in the demo inbox")
-            return
+            return false
         }
         // The card offers the buttons only then; checked again here because
         // the To below comes from the untrusted ICS.
         guard invite.isActionable else {
             lastError = "This invite can't be answered."
-            return
+            return false
         }
         // Prefer a send-as address listed as ATTENDEE on the invite (the
         // address the organizer's calendar already knows), then fall back to
@@ -4548,8 +4550,10 @@ struct ComposeRequest: Identifiable {
                     accountId: accountId, messageId: messageId)
             }
             showNotice("\(status.subjectPrefix) — reply sent to \(organizer)")
+            return true
         } catch {
             lastError = error.localizedDescription
+            return false
         }
     }
 

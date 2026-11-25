@@ -20,7 +20,7 @@ struct CalendarAccountSettings: View {
                 Spacer()
                 buttons(status)
             }
-            if status.isConnected {
+            if status.grant?.canListCalendars == true {
                 HStack(alignment: .firstTextBaseline) {
                     Text(chosenSummary)
                         .font(.caption).foregroundStyle(.secondary)
@@ -55,9 +55,12 @@ struct CalendarAccountSettings: View {
         case .connected:
             Text("Connected").font(.caption).foregroundStyle(.secondary)
         case .needsConsent:
-            Image(systemName: "exclamationmark.triangle.fill")
+            Label("Needs permission again", systemImage: "exclamationmark.triangle.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.caption)
                 .foregroundStyle(.orange)
-                .help("Google no longer accepts this account's Calendar access (revoked, expired, or a permission was unticked). Reconnect to use it again.")
+                .help("Google no longer accepts this account's Calendar access (revoked or expired). Reconnect to use it again.")
+                .accessibilityLabel("Google Calendar needs your permission again")
         }
     }
 
@@ -89,11 +92,16 @@ struct CalendarAccountSettings: View {
 
     private var chosenSummary: String {
         let names = (calendar.chosen[accountId] ?? []).map { source in
-            source.isPrimary ? "Primary" : (source.summary ?? source.calendarId)
+            source.isPrimary ? "Primary" : Self.safeName(source.summary ?? source.calendarId)
         }
         return names.isEmpty
             ? "No calendar counts for availability."
             : "Counts for availability: " + names.joined(separator: ", ")
+    }
+
+    /// Calendar names come from Google, set by whoever shares the calendar.
+    static func safeName(_ name: String) -> String {
+        CalendarInvite.displaySafe(name, limit: 80)
     }
 }
 
@@ -166,8 +174,8 @@ private struct CalendarChoiceSheet: View {
             List(entries, id: \.id) { entry in
                 Toggle(isOn: binding(entry.id)) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(entry.primary == true ? "\(entry.summary ?? entry.id) (primary)"
-                             : entry.summary ?? entry.id)
+                        let name = CalendarAccountSettings.safeName(entry.summary ?? entry.id)
+                        Text(entry.primary == true ? "\(name) (primary)" : name)
                         if entry.accessRole == "freeBusyReader" {
                             Text("Busy times only")
                                 .font(.caption).foregroundStyle(.secondary)

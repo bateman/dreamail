@@ -82,12 +82,19 @@ enum Keychain {
     }
 
     static func delete(_ key: String) {
+        deleteReportingStatus(key)
+    }
+
+    /// Like `delete`, with the result: `errSecSuccess` or
+    /// `errSecItemNotFound` both mean the item is gone.
+    @discardableResult
+    static func deleteReportingStatus(_ key: String) -> OSStatus {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
-        SecItemDelete(query as CFDictionary)
+        return SecItemDelete(query as CFDictionary)
     }
 }
 

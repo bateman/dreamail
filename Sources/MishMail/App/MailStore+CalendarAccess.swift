@@ -16,8 +16,9 @@ extension MailStore {
     func connectCalendar(accountId: String) async {
         guard calendarUIEnabled else { return }
         do {
-            try await CalendarIntegration.shared.connect(accountId: accountId)
-            showNotice("Google Calendar connected for \(accountId)")
+            if try await CalendarIntegration.shared.connect(accountId: accountId) {
+                showNotice("Google Calendar connected for \(accountId)")
+            }
         } catch {
             lastError = Self.calendarErrorMessage(error)
         }
@@ -33,34 +34,39 @@ extension MailStore {
         }
     }
 
-    /// Accept / Decline / Maybe on an invitation card. The e-mail reply
-    /// always goes (#51's path, DEC-049). With Calendar on and checked, the
-    /// answer is first written on the calendar that holds this very event
-    /// (`CalendarRSVPRoute`); a failed calendar write never holds back the
-    /// e-mail. Returns the calendar outcome, nil when Calendar took no part.
+    /// Account removal: the integration's memory of the account goes with
+    /// it (DEC-019). The rows and the Keychain token go with the purge.
+    func forgetCalendar(accountId: String) {
+        guard CalendarFeatures.isEnabled else { return }
+        Task { await CalendarIntegration.shared.forget(accountId: accountId) }
+    }
+
+    /// Accept / Decline / Maybe on an invitation card. The e-mail reply goes
+    /// first and always (#51's path, DEC-049); only then, and only for the
+    /// calendar that holds this very event, is the answer also written in
+    /// Google Calendar. A failed calendar write is only reported. Returns
+    /// what happened, nil when Calendar took no part.
     @discardableResult
     func answerInvite(_ invite: CalendarInvite, status: CalendarInvite.RSVP,
-                      message: Message, check: CalendarInviteCheck?) async -> CalendarRSVPOutcome? {
-        guard calendarUIEnabled, invite.isActionable, let findings = check?.findings,
+                      message: Message, check: CalendarInviteCheck?) async -> CalendarAnswerResult? {
+        guard calendarUIEnabled, invite.isActionable,
               let response = CalendarResponse(rawValue: status.rawValue.lowercased()) else {
             await rsvpToInvite(invite, status: status, message: message)
             return nil
         }
-        let outcome = await CalendarIntegration.shared.respond(
-            response, facts: CalendarInviteFacts(invite), findings: findings,
-            messageId: message.id, accountId: message.accountId)
-        guard outcome.route.sendsEmail else {
-            lastError = "This invite can't be answered."
-            return outcome
+        let result = await CalendarIntegration.shared.answer(
+            response, facts: CalendarInviteFacts(invite), occurrence: invite.recurrenceIdLine,
+            findings: check?.findings, accountId: message.accountId) {
+                await rsvpToInvite(invite, status: status, message: message)
+            }
+        if let failure = result.calendarFailure {
+            lastError = Self.calendarNotUpdatedMessage(failure)
         }
-        let before = presentedError
-        await rsvpToInvite(invite, status: status, message: message)
-        // Only when the e-mail itself raised nothing: its error matters more.
-        if let error = outcome.calendarError, !outcome.eventGone, presentedError == before {
-            lastError = "The reply was e-mailed, but Google Calendar was not updated: "
-                + Self.calendarErrorMessage(error)
-        }
-        return outcome
+        return result
+    }
+
+    static func calendarNotUpdatedMessage(_ failure: String) -> String {
+        "The reply was e-mailed, but Google Calendar was not updated: " + failure
     }
 
     /// "Add to calendar" on the invitation card. Returns the new findings,
@@ -68,13 +74,16 @@ extension MailStore {
     func addInviteToCalendar(_ invite: CalendarInvite, message: Message,
                              findings: CalendarInviteFindings) async -> CalendarInviteFindings? {
         guard calendarUIEnabled else { return nil }
+        let sender = MessageParser.emailAddress(message.fromHeader)
         do {
             // The guest is the address the answer will go from.
             let updated = try await CalendarIntegration.shared.addToCalendar(
-                CalendarInviteFacts(invite), findings: findings,
+                CalendarInviteFacts(invite), occurrence: invite.recurrenceIdLine,
+                findings: findings, organizerIsSender: invite.organizerIsSender(senderEmail: sender),
                 attendeeEmail: rsvpIdentity(for: message, invite: invite).email,
                 messageId: message.id, accountId: message.accountId)
-            showNotice("Added to Google Calendar")
+            // Added, or found already there by the fresh lookup.
+            showNotice("The event is in Google Calendar")
             return updated
         } catch {
             lastError = Self.calendarErrorMessage(error)
@@ -82,16 +91,16 @@ extension MailStore {
         }
     }
 
-    /// An error as the banner shows it: Calendar errors carry no response
-    /// body; anything else gets a fixed sentence.
+    /// An error as the banner shows it: never a server body.
     static func calendarErrorMessage(_ error: Error) -> String {
-        if let calendarError = error as? CalendarError {
-            return calendarError.errorDescription ?? "Google Calendar failed."
+        if let oauth = error as? OAuthError {
+            switch oauth {
+            case .tokenExchangeFailed, .authorizationDenied:
+                return "Google did not complete the Calendar sign-in. Try again."
+            default:
+                return oauth.localizedDescription
+            }
         }
-        if TransientNetworkError.isTransient(error) {
-            return "You're offline — Google Calendar can't be reached."
-        }
-        if error is OAuthError { return error.localizedDescription }
-        return "Google Calendar failed."
+        return CalendarIntegration.message(for: error)
     }
 }
