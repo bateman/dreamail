@@ -115,6 +115,11 @@ struct PGPBodyReplacement: View {
                     .font(.system(size: 13 * fontScale))
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("messagePGPNotice")
+                if let detail = notice.detail {
+                    Text(detail)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
                 if notice == .passphraseRequired {
                     HStack {
                         SecureField("Passphrase", text: $passphrase)

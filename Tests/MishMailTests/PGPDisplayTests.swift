@@ -112,7 +112,7 @@ final class PGPDisplayTests: XCTestCase {
             (.unavailable, .unavailable), (.noSecretKey, .noSecretKey),
             (.passphraseRequired, .passphraseRequired),
             (.notIntegrityProtected, .notIntegrityProtected),
-            (.malformed, .unsupportedFormat), (.unsupported, .unsupportedFormat), (.tooLarge, .cannotDecrypt),
+            (.malformed, .unsupportedFormat), (.unsupported, .unsupportedFormat), (.tooLarge, .tooLarge),
         ]
         for (error, notice) in cases {
             let security = PGPMessageSecurity(encryption: .failed(error), signature: .unsigned,
@@ -120,6 +120,21 @@ final class PGPDisplayTests: XCTestCase {
             XCTAssertEqual(display(security), .notice(notice))
             XCTAssertFalse(notice.text.contains("BEGIN PGP"))
         }
+        // An attacker on the path can cause any of these: none reads as
+        // more harmless than a failed integrity check.
+        let unauthenticated: [PGPBodyNotice] = [.notIntegrityProtected, .unsupportedFormat, .tooLarge]
+        XCTAssertEqual(Set(unauthenticated.map(\.text)), ["This message could not be decrypted."])
+        for notice in unauthenticated {
+            let detail = notice.detail?.lowercased() ?? ""
+            for hint in ["update", "unencrypted", "resend", "harmless", "version"] {
+                XCTAssertFalse(detail.contains(hint), "\(notice): \(hint)")
+            }
+        }
+        let tones = [PGPEngineError.notIntegrityProtected, .malformed, .unsupported, .tooLarge].map {
+            PGPSecurityRules.indicator(for: PGPMessageSecurity(encryption: .failed($0), signature: .unsigned,
+                                                               fromHeader: from)).tone
+        }
+        XCTAssertEqual(Set(tones), [.error], "one colour for every failure")
     }
 
     func testDecryptedWithoutTextSaysSo() {

@@ -15,14 +15,20 @@ enum PGPBodyDisplay: Sendable, Equatable {
 }
 
 enum PGPBodyNotice: Sendable, Equatable {
-    case unavailable, noSecretKey, passphraseRequired, notIntegrityProtected, cannotDecrypt
-    /// A format or algorithm the engine does not read (GnuPG's own OCB
-    /// packet, for one, which the library reports as malformed today):
-    /// not called damaged.
+    case unavailable, noSecretKey, passphraseRequired, notIntegrityProtected
+    /// Above the engine's size limit.
+    case tooLarge
+    /// The engine reported an unsupported or unreadable format (GnuPG's own
+    /// OCB packet comes back as malformed today). Unauthenticated: anyone
+    /// on the path can produce it by editing unprotected octets, so it reads
+    /// exactly like a failed integrity check, apart from the detail line.
     case unsupportedFormat
-    /// Decrypted, but there is no text part to show.
+    /// Decrypted or signed, but there is no text part to show.
     case noReadableText
 
+    /// The headline. Every failure an attacker could cause says the same:
+    /// nothing reads as more harmless than a failed integrity check (no
+    /// "update the app", no "ask for it unencrypted").
     var text: String {
         switch self {
         case .unavailable:
@@ -31,14 +37,21 @@ enum PGPBodyNotice: Sendable, Equatable {
             return "This message is encrypted, and none of your keys can decrypt it."
         case .passphraseRequired:
             return "This message is encrypted. Enter the passphrase of your key to read it."
-        case .notIntegrityProtected:
-            return "This encrypted message failed its integrity check, so it isn’t shown. It may have been changed on the way."
-        case .cannotDecrypt:
-            return "This encrypted message can’t be decrypted."
-        case .unsupportedFormat:
-            return "Can’t decrypt this message: its format isn’t supported by this version of MishMail."
+        case .notIntegrityProtected, .tooLarge, .unsupportedFormat:
+            return "This message could not be decrypted."
         case .noReadableText:
-            return "This encrypted message has no text to show."
+            return "This message has no text to show."
+        }
+    }
+
+    /// The technical reason, shown smaller under the headline.
+    var detail: String? {
+        switch self {
+        case .unavailable, .noSecretKey, .passphraseRequired, .noReadableText: return nil
+        case .notIntegrityProtected:
+            return "Integrity check failed or missing: the encrypted data may have been changed, so nothing of it is shown."
+        case .tooLarge: return "The encrypted data is larger than the decryption limit."
+        case .unsupportedFormat: return "The decryption engine reported an unsupported or damaged format."
         }
     }
 }
@@ -80,8 +93,7 @@ enum PGPDisplay {
         case .keyNotValid: return ("Signed with an expired or revoked key", "exclamationmark.triangle.fill")
         case .unsupported, .notChecked: return ("Can’t verify the signature", "questionmark.circle")
         case .decryptionUnavailable: return ("Encrypted", "lock")
-        case .decryptionFailed: return ("Can’t decrypt this message", "lock.slash")
-        case .notIntegrityProtected: return ("Encrypted message not shown", "lock.slash")
+        case .decryptionFailed, .notIntegrityProtected: return ("This message could not be decrypted", "lock.slash")
         }
     }
 
@@ -96,7 +108,7 @@ enum PGPDisplay {
             case .passphraseRequired: return .notice(.passphraseRequired)
             case .notIntegrityProtected: return .notice(.notIntegrityProtected)
             case .malformed, .unsupported: return .notice(.unsupportedFormat)
-            case .tooLarge: return .notice(.cannotDecrypt)
+            case .tooLarge: return .notice(.tooLarge)
             }
         case .decrypted(let result, let whole):
             guard whole, indicator.render.decryptedContent == .inline else { return .original }
