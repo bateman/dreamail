@@ -14,7 +14,7 @@ Decisioni prese per questo piano:
 1. Una sessione dedicata (Opus 5.5, impegno medio) implementa lo step su un branch descrittivo, senza "claude" nel nome.
 2. La sessione apre subito una PR in bozza verso `bateman/mishmail` (mai verso l'upstream), perché la CI gira solo su PR, push a `main` o avvio manuale.
 3. Lo step termina con una nuova suite di test (unità, mock, integrazione) superata in CI. Ogni test di regressione deve fallire sul codice precedente alla correzione.
-4. A CI verde la sessione avvisa l'orchestratore, che lancia in parallelo `ponytail-review` a livello ultra e `security-audit`. I due report tornano alla sessione per la risoluzione.
+4. A CI verde la sessione avvisa l'orchestratore, che lancia in parallelo `ponytail-review` in modalità `full` e `security-audit`. Dal 25 novembre 2026 valgono i tre livelli di review di `CLAUDE.md` (DEC-038): questo flusso completo è il livello standard. I due report tornano alla sessione per la risoluzione.
 5. A correzioni fatte e CI di nuovo verde la sessione marca la PR come pronta. L'orchestratore controlla il diff delle correzioni e decide: merge oppure rinvio alla sessione. Al massimo due giri; bloccano solo i difetti seri.
 6. Dopo ogni merge i branch ancora aperti si riallineano a `main` e rifanno la CI.
 
@@ -287,4 +287,5 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | — | `ux/custom-accent-color` | #43 | Unito |
 | — | `docs/ux-round-4` | #44 | Documentazione del quarto giro |
 | — | `feature/unread-dock-badge` | #45 | Unito |
+| — | `docs/process-review-tiers` | #46 | Unito, modifica semplice |
 | 3 | — | — | Non avviare: in attesa del proprietario |
