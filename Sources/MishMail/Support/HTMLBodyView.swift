@@ -529,6 +529,18 @@ struct HTMLBodyView: NSViewRepresentable {
             loadEndNotified = true
             let callback = onLoadFinished
             DispatchQueue.main.async { callback?(key) }
+            logImageCensus()
+        }
+
+        /// One diagnostics line when an image of the document on screen
+        /// failed (`RemoteImageCensus`: counts and URL kinds, no URL).
+        private func logImageCensus() {
+            guard let webView = incoming ?? current else { return }
+            webView.evaluateJavaScript(HTMLBodyLayout.imageCensusJS) { result, _ in
+                guard let census = RemoteImageCensus(scriptResult: result),
+                      census.hasFailures else { return }
+                DiagnosticLog.remoteImages(census)
+            }
         }
 
         private func storeHeight(_ height: CGFloat, width: CGFloat) {

@@ -1213,7 +1213,10 @@ struct ThreadDetailView: View {
             let next = await RemoteImageResolver.fetchForNextOpen(
                 messageId: id, accountId: work.accountId, baseHTML: work.base,
                 preInlineBytes: work.preInlineBytes, baseIsCIDInlined: baseIsCID,
-                fontScale: scale, store: imageStore, transport: transport)
+                fontScale: scale, store: imageStore, transport: transport,
+                reportFailures: { failures, attempted in
+                    DiagnosticLog.remoteImageFetch(failures: failures, attempted: attempted)
+                })
             await MainActor.run {
                 // A cancelled task's slot may already hold a newer one.
                 guard !Task.isCancelled else { return }

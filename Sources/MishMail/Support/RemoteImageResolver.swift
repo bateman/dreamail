@@ -28,8 +28,13 @@ struct RemoteInlinedBody: Equatable, Sendable {
 /// prefetch and the pane), and fills the cache for the next open
 /// (`fetchForNextOpen`: only for a message that is open with its remote
 /// images allowed, while WebKit shows them live as without the cache).
-/// Never logs.
+/// Never logs: the reason counts of a fetch with failures go to
+/// `reportFailures` (counts only: no URL, host or message id).
 enum RemoteImageResolver {
+    /// Failed requests of one fetch by reason, and how many were started.
+    typealias FailureReport = @Sendable (_ failures: [RemoteImageFetchFailure: Int],
+                                         _ attempted: Int) -> Void
+
     /// What the cache says about one body.
     struct Lookup: Sendable {
         var dataURLs: [String: String]
@@ -119,7 +124,8 @@ enum RemoteImageResolver {
     static func fetchForNextOpen(messageId: String, accountId: String, baseHTML: String,
                                  preInlineBytes: Int, baseIsCIDInlined: Bool, fontScale: Double,
                                  store: RemoteImageStore?,
-                                 transport: RemoteImageTransport) async -> RemoteInlinedBody? {
+                                 transport: RemoteImageTransport,
+                                 reportFailures: FailureReport? = nil) async -> RemoteInlinedBody? {
         let eligible = eligibleURLs(in: baseHTML)
         guard !eligible.isEmpty else { return nil }
         let found = await lookup(messageId: messageId, accountId: accountId, eligible: eligible,
@@ -142,6 +148,9 @@ enum RemoteImageResolver {
         var batch = RemoteImageFetcher.Batch()
         if room > 0, !mine.isEmpty {
             batch = await RemoteImageFetcher.fetchAll(mine, byteBudget: room, transport: transport)
+        }
+        if !batch.failures.isEmpty {
+            reportFailures?(batch.failures, batch.attempted.count)
         }
         // In document order, within the message's cap.
         var used = found.cachedBytes

@@ -80,16 +80,90 @@ final class RemoteImageHTMLTests: XCTestCase {
                        ["https://img.example.com/a.png?x=1&y=2", b])
     }
 
-    func testDataCidHTTPAndRelativeURLsAreLeftAlone() {
+    func testDataCidAndRelativeURLsAreLeftAlone() {
         let html = """
-            <img src="data:image/png;base64,AAAA"><img src="cid:logo@x">\
-            <img src="http://img.example.com/clear.png"><img src="/rel.png">\
-            <img src="//img.example.com/proto.png"><div style="background:url(data:image/gif;base64,R0)"></div>
+            <img src="data:image/png;base64,AAAA"><img src="cid:logo@x"><img src="/rel.png">\
+            <div style="background:url(data:image/gif;base64,R0)"></div>
             """
         XCTAssertEqual(RemoteImageHTML.candidates(in: html), [])
         let out = rewrite(html, [:])
         XCTAssertEqual(out.html, html)
-        XCTAssertFalse(out.needsNetwork, "http is blocked by the CSP in every variant")
+        XCTAssertFalse(out.needsNetwork)
+        XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: html), html)
+    }
+
+    // MARK: http and protocol-relative images (upgraded to https)
+
+    /// Gmail shows `http:` and `//host/…` images; the app's CSP admits only
+    /// `https:` and its document base is `about:blank`. Both count as the
+    /// https URL they are upgraded to: cached, and needing the network until
+    /// they are.
+    func testHTTPAndProtocolRelativeImagesCountAsTheirHTTPSURL() {
+        let html = """
+            <img src="http://img.example.com/clear.png"><img src="//img.example.com/proto.png">\
+            <img src="HTTP://img.example.com:80/port.png">
+            """
+        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [
+            "https://img.example.com/clear.png", "https://img.example.com/proto.png",
+            "https://img.example.com/port.png",
+        ])
+        XCTAssertTrue(rewrite(html, [:]).needsNetwork, "they load once upgraded")
+        let cached = rewrite(html, [
+            "https://img.example.com/clear.png": dataA, "https://img.example.com/proto.png": dataB,
+            "https://img.example.com/port.png": dataA,
+        ])
+        XCTAssertEqual(cached.html, "<img src=\"\(dataA)\"><img src=\"\(dataB)\"><img src=\"\(dataA)\">")
+        XCTAssertFalse(cached.needsNetwork)
+        XCTAssertEqual(RemoteImageHTML.normalizedHTTPSURL("http://img.example.com:8080/a.png"),
+                       "https://img.example.com:8080/a.png", "another port is kept")
+    }
+
+    /// The upgrade changes the scheme of image URLs only, in every position
+    /// the scanner knows, and nothing else: links, namespaces, text and
+    /// https URLs are untouched.
+    func testUpgradeRewritesTheSchemeOfImageURLsOnly() {
+        let html = """
+            <html xmlns="http://www.w3.org/1999/xhtml"><a href="http://shop.example.com/">\
+            <img src=" http://img.example.com/logo.png" alt="Logo: http://x"></a>\
+            <img src='//img.example.com/a.png'><img src=//img.example.com/b.png>\
+            <img srcset="http://img.example.com/1.png 1x, //img.example.com/2.png 2x" src="\(a)">\
+            <picture><source srcset="//img.example.com/w.webp"><img src="\(b)"></picture>\
+            <table background="http://img.example.com/bg.jpg"><tr>\
+            <td style="background-image:url('//img.example.com/td.png');color:red">x</td>\
+            <td style="background:url(&quot;http://img.example.com/q.png&quot;)">y</td></tr></table>\
+            <style>.h{background:url(http://img.example.com/s.png)} .k{background:url("//img.example.com/k.png")}</style>\
+            <p>see http://example.com and //comment</p>
+            """
+        let out = RemoteImageHTML.upgradingInsecureImageURLs(in: html)
+        let expected = """
+            <html xmlns="http://www.w3.org/1999/xhtml"><a href="http://shop.example.com/">\
+            <img src=" https://img.example.com/logo.png" alt="Logo: http://x"></a>\
+            <img src='https://img.example.com/a.png'><img src=https://img.example.com/b.png>\
+            <img srcset="https://img.example.com/1.png 1x, https://img.example.com/2.png 2x" src="\(a)">\
+            <picture><source srcset="https://img.example.com/w.webp"><img src="\(b)"></picture>\
+            <table background="https://img.example.com/bg.jpg"><tr>\
+            <td style="background-image:url('https://img.example.com/td.png');color:red">x</td>\
+            <td style="background:url(&quot;https://img.example.com/q.png&quot;)">y</td></tr></table>\
+            <style>.h{background:url(https://img.example.com/s.png)} .k{background:url("https://img.example.com/k.png")}</style>\
+            <p>see http://example.com and //comment</p>
+            """
+        XCTAssertEqual(out, expected)
+        XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: out), out, "idempotent")
+        XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: "<img src=\"\(a)\">"),
+                       "<img src=\"\(a)\">")
+    }
+
+    /// Only the allowed variant is upgraded; the blocked one loads no remote
+    /// image and is assembled as before.
+    func testAllowedDocumentIsAssembledWithUpgradedImageURLs() {
+        let html = "<img src=\"http://img.example.com/a.png\"><img src=\"//img.example.com/b.png\">"
+        let allowed = HTMLBodyDocument.assemble(
+            html: html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: true), styleCSS: "")
+        XCTAssertTrue(allowed.contains("<img src=\"https://img.example.com/a.png\"><img src=\"https://img.example.com/b.png\">"),
+                      allowed)
+        let blocked = HTMLBodyDocument.assemble(
+            html: html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: false), styleCSS: "")
+        XCTAssertTrue(blocked.hasSuffix("<body>\(html)</body></html>"))
     }
 
     func testQuotesInsideURLsCannotBreakOutOfTheAttribute() {
@@ -143,8 +217,14 @@ final class RemoteImageHTMLTests: XCTestCase {
         XCTAssertTrue(out.needsNetwork)
     }
 
-    func testMixedSrcsetIsLeftLive() {
+    func testMixedSrcsetIsUsableOnceUpgraded() {
         let html = "<img srcset=\"http://x.example.com/1.png 1x, \(b) 2x\" src=\"\(a)\">"
+        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [b])
+        XCTAssertTrue(rewrite(html, [a: dataA]).needsNetwork)
+    }
+
+    func testSrcsetWithAnUnusableCandidateIsLeftLive() {
+        let html = "<img srcset=\"/rel/1.png 1x, \(b) 2x\" src=\"\(a)\">"
         XCTAssertEqual(RemoteImageHTML.candidates(in: html), [])
         XCTAssertTrue(rewrite(html, [a: dataA]).needsNetwork)
     }

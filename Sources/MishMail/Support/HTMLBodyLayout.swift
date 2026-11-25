@@ -50,6 +50,13 @@ enum HTMLBodyLayout {
     /// of showing WebKit's broken-image icon, as Gmail on the web shows
     /// nothing there. Blocked images keep their placeholder.
     static let imagesAllowedClass = "mm-images-allowed"
+    /// With images allowed, a failed image with alt text is replaced by its
+    /// alt text, as Gmail on the web shows it: a `<span>` of this class with
+    /// the text (as text, never markup) goes before the image, which gets
+    /// `altShownImageClass` and leaves the layout. No broken-image icon, no
+    /// dashed box at the authored size. Blocked images keep their placeholder.
+    static let altTextClass = "mm-img-alt"
+    static let altShownImageClass = "mm-img-alt-shown"
     /// Class stamped on nodes whose viewport-tied height/min-height was neutralized.
     static let heightNeutralizedClass = "mm-h-neutralized"
 
@@ -81,6 +88,54 @@ enum HTMLBodyLayout {
     /// background image fetch starts and heights may be cached. Bounds what
     /// one image that never completes can hold back.
     static let loadBound: TimeInterval = 5
+
+    /// App-injected user script at document start: counts the document's
+    /// image loads the CSP refused (`img-src`, `<img>` and CSS images), for
+    /// `imageCensusJS`. A count only: no URL is kept.
+    static let cspImageViolationsJS = """
+    (function(){
+      try {
+        window.__mmCSPImg = 0;
+        document.addEventListener('securitypolicyviolation', function(e){
+          var d = String((e && (e.effectiveDirective || e.violatedDirective)) || '');
+          if (d.indexOf('img-src') === 0) window.__mmCSPImg = (window.__mmCSPImg || 0) + 1;
+        }, true);
+      } catch (e) {}
+    })();
+    """
+
+    /// Counts of the document's `<img>` elements by outcome, as JSON
+    /// (`RemoteImageCensus`). Failed images are counted by the kind of URL
+    /// they had, never by the URL. Run once the load ended.
+    static let imageCensusJS: String = {
+        """
+        (function(){
+          var out = {loaded:0, failed:0, blocked:0, pending:0, altShown:0,
+                     remote:0, insecure:0, inline:0, unresolvable:0,
+                     csp: (window.__mmCSPImg || 0)};
+          var allowed = false;
+          try { allowed = document.documentElement.classList.contains('\(imagesAllowedClass)'); } catch (e) {}
+          out.allowed = allowed;
+          var imgs = document.querySelectorAll('img');
+          for (var i = 0; i < imgs.length; i++) {
+            var img = imgs[i];
+            var src = String(img.currentSrc || img.getAttribute('src') || '').trim().toLowerCase();
+            if (!src && !img.getAttribute('srcset')) continue;
+            if (!img.complete) { out.pending++; continue; }
+            if (img.naturalWidth > 0) { out.loaded++; continue; }
+            var inline = src.indexOf('data:') === 0 || src.indexOf('cid:') === 0;
+            if (!allowed && !inline) { out.blocked++; continue; }
+            out.failed++;
+            if (img.classList.contains('\(altShownImageClass)')) out.altShown++;
+            if (src.indexOf('https:') === 0) out.remote++;
+            else if (src.indexOf('http:') === 0) out.insecure++;
+            else if (inline) out.inline++;
+            else out.unresolvable++;
+          }
+          return JSON.stringify(out);
+        })()
+        """
+    }()
 
     static func isDOMReadyMessage(_ body: Any) -> Bool {
         (body as? String) == domReadyMessage
@@ -349,6 +404,8 @@ enum HTMLBodyLayout {
         let layout = layoutImageClass
         let failed = failedImageClass
         let allowed = imagesAllowedClass
+        let altText = altTextClass
+        let altShown = altShownImageClass
         return """
         img.\(layout) {
           max-width: 100%;
@@ -363,6 +420,20 @@ enum HTMLBodyLayout {
         html.\(allowed) img.\(failed):not([alt]),
         html.\(allowed) img.\(failed)[alt=""] {
           visibility: hidden;
+        }
+        html.\(allowed) img.\(altShown) {
+          display: none !important;
+        }
+        span.\(altText) {
+          display: inline;
+          font-size: 12px;
+          line-height: 1.4;
+          font-weight: normal;
+          font-style: normal;
+          letter-spacing: normal;
+          text-transform: none;
+          white-space: normal;
+          overflow-wrap: anywhere;
         }
         """
     }
@@ -456,6 +527,8 @@ enum HTMLBodyLayout {
         let layout = layoutImageClass
         let failed = failedImageClass
         let allowedClass = imagesAllowedClass
+        let altText = altTextClass
+        let altShown = altShownImageClass
         let neutral = heightNeutralizedClass
         let maxW = maxPreservedWidth
         let maxH = maxPreservedHeight
@@ -474,6 +547,8 @@ enum HTMLBodyLayout {
           var LAYOUT='\(layout)';
           var FAILED='\(failed)';
           var ALLOWED='\(allowedClass)';
+          var ALT_TEXT='\(altText)';
+          var ALT_SHOWN='\(altShown)';
           var NEUTRAL='\(neutral)';
           var MAX_W=\(maxW);
           var MAX_H=\(maxH);
@@ -582,11 +657,55 @@ enum HTMLBodyLayout {
             try { delete img.__mmLayoutSnap; } catch (e) { img.__mmLayoutSnap = null; }
           }
 
+          /* Gmail-like failed image with alt text (images allowed): the alt
+             text alone, small, in place of the image, as text (textContent:
+             never parsed as markup). Inside a link it stays the link. An
+             inline background colour the author gave the image is kept. */
+          function imagesAllowed(){
+            try { return document.documentElement.classList.contains(ALLOWED); } catch (e) { return false; }
+          }
+          function altOf(img){
+            var a = img.getAttribute('alt');
+            return a == null ? '' : String(a).replace(/\s+/g, ' ').trim();
+          }
+          function showAlt(img, text){
+            var span = img.__mmAlt;
+            if (!span || span.parentNode !== img.parentNode) {
+              span = document.createElement('span');
+              span.className = ALT_TEXT;
+              var bg = img.style.getPropertyValue('background-color');
+              if (bg) span.style.setProperty('background-color', bg);
+              if (img.parentNode) img.parentNode.insertBefore(span, img);
+              img.__mmAlt = span;
+            }
+            if (span.textContent !== text) span.textContent = text;
+            img.classList.add(ALT_SHOWN);
+          }
+          function hideAlt(img){
+            var span = img.__mmAlt;
+            if (span) {
+              if (span.parentNode) span.parentNode.removeChild(span);
+              img.__mmAlt = null;
+            }
+            img.classList.remove(ALT_SHOWN);
+          }
+
           function applyImage(img){
             if (img.complete && img.naturalWidth > 0) {
+              hideAlt(img);
               clearLayout(img);
               return;
             }
+            if (img.complete && imagesAllowed()) {
+              var alt = altOf(img);
+              if (alt) {
+                clearLayout(img);
+                img.classList.add(FAILED);
+                showAlt(img, alt);
+                return;
+              }
+            }
+            hideAlt(img);
             var attrW = img.getAttribute('width');
             var attrH = img.getAttribute('height');
             var capped = fitViewport(capPair(attrW, attrH));

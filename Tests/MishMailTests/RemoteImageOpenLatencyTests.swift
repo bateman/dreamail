@@ -272,11 +272,17 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
               var imgs = document.querySelectorAll('img');
               for (var i = 0; i < imgs.length; i++) {
                 var img = imgs[i], cs = getComputedStyle(img);
+                var alt = img.previousElementSibling;
+                var hasAlt = !!alt && alt.classList.contains('\(HTMLBodyLayout.altTextClass)');
                 out[img.id] = {
                   failed: img.classList.contains('\(HTMLBodyLayout.failedImageClass)'),
                   visibility: cs.visibility,
                   display: cs.display,
-                  width: Math.round(img.getBoundingClientRect().width)
+                  width: Math.round(img.getBoundingClientRect().width),
+                  altText: hasAlt ? alt.textContent : '',
+                  altElements: hasAlt ? alt.children.length : 0,
+                  altHeight: hasAlt ? Math.round(alt.getBoundingClientRect().height) : 0,
+                  altInLink: hasAlt && !!alt.closest('a')
                 };
               }
               return JSON.stringify({
@@ -394,11 +400,11 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
     }
 
     /// With images allowed, a failed image without alt text (404, a body
-    /// that is not an image, an `http:` URL the CSP blocks, a `cid:` part
-    /// that is missing) is hidden with its box kept, so WebKit draws no
-    /// broken-image icon; an image with alt text keeps WebKit's drawing, as
-    /// in Gmail on the web; an image still loading from a dead host is left
-    /// alone.
+    /// that is not an image, an `http:` URL whose https form fails, a `cid:`
+    /// part that is missing) is hidden with its box kept, so WebKit draws no
+    /// broken-image icon; an image with alt text is replaced by its alt text
+    /// (`testFailedImageWithAltShowsOnlyItsTextAndCollapses`); an image still
+    /// loading from a dead host is left alone.
     func testFailedImagesWithoutAltAreHiddenWithTheirBoxKept() async throws {
         let html = """
         <p>Grazie per il tuo acquisto!</p>
@@ -430,10 +436,119 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertEqual(states.images["http"]?["width"] as? Int, 120, "the authored width is kept")
         let withAlt = try XCTUnwrap(states.images["withalt"])
         XCTAssertEqual(withAlt["failed"] as? Bool, true)
-        XCTAssertEqual(withAlt["visibility"] as? String, "visible", "alt text: WebKit draws it")
+        XCTAssertEqual(withAlt["display"] as? String, "none", "alt text instead of the image")
+        XCTAssertEqual(withAlt["altText"] as? String, "SumUp")
         let dead = try XCTUnwrap(states.images["dead"])
         XCTAssertEqual(dead["failed"] as? Bool, false, "still loading: not failed")
         XCTAssertEqual(dead["visibility"] as? String, "visible")
+    }
+
+    /// Defect seen on a newsletter whose images failed: big dashed boxes at
+    /// the authored size with WebKit's "?" icon and the alt text in a
+    /// corner. As in Gmail on the web: the alt text only, small, the box
+    /// collapsed to it (a link stays a link), as text (never markup), and
+    /// the body re-measured shorter.
+    func testFailedImageWithAltShowsOnlyItsTextAndCollapses() async throws {
+        let html = """
+        <table width="600"><tr><td style="font-size:0">\
+        <a href="https://www.example.com/"><img id="logo" src="mmimg://images.example/logo.png" \
+        alt="Logo: Example Publisher" width="600" height="400"></a></td></tr>\
+        <tr><td><img id="hero" src="mmimg://images.example/hero.png" alt="  Hero\n image  " \
+        width="600" height="500" style="background-color:#123456"></td></tr>\
+        <tr><td><img id="markup" src="mmimg://images.example/m.png" alt="<b>bold</b>" width="300" height="300"></td></tr>\
+        </table><p>Congratulations</p>
+        """
+        let h = load(html, cspMeta: allowedCSPWithTestScheme, immediate: [
+            "/logo.png": (404, "text/plain", Data()),
+            "/hero.png": (403, "text/plain", Data()),
+            "/m.png": (200, "text/html", Data("<html></html>".utf8)),
+        ])
+        defer { h.close() }
+        try await wait { h.pane.domReady }
+        _ = await h.measure()
+        let states = try await waitForFailures(h, ids: ["logo", "hero", "markup"])
+        for id in ["logo", "hero", "markup"] {
+            let image = try XCTUnwrap(states.images[id], id)
+            XCTAssertEqual(image["display"] as? String, "none", "\(id): no box, no icon: \(image)")
+            let altHeight = try XCTUnwrap(image["altHeight"] as? Int)
+            XCTAssertGreaterThan(altHeight, 0, "\(id): the alt text shows")
+            XCTAssertLessThan(altHeight, 40, "\(id): small, not the authored height")
+        }
+        XCTAssertEqual(states.images["logo"]?["altText"] as? String, "Logo: Example Publisher")
+        XCTAssertEqual(states.images["logo"]?["altInLink"] as? Bool, true, "still the link")
+        XCTAssertEqual(states.images["hero"]?["altText"] as? String, "Hero image", "whitespace folded")
+        XCTAssertEqual(states.images["markup"]?["altText"] as? String, "<b>bold</b>", "text, not markup")
+        XCTAssertEqual(states.images["markup"]?["altElements"] as? Int, 0)
+        // The body measures to the text, not to 1200 px of boxes.
+        var height: CGFloat = 0
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            height = await h.measure() ?? 0
+            if height > 0, height < 300 { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        } while Date() < deadline
+        XCTAssertLessThan(height, 300, "collapsed boxes re-measure the body")
+
+        // The census the diagnostics line is made of: counts only.
+        let result: Any? = await withCheckedContinuation { done in
+            h.webView.evaluateJavaScript(HTMLBodyLayout.imageCensusJS) { value, _ in
+                done.resume(returning: value)
+            }
+        }
+        let census = try XCTUnwrap(RemoteImageCensus(scriptResult: result))
+        XCTAssertTrue(census.allowed)
+        XCTAssertEqual(census.failed, 3)
+        XCTAssertEqual(census.altShown, 3)
+        XCTAssertEqual(census.unresolvable, 3, "the test scheme is neither https nor http")
+        XCTAssertTrue(census.hasFailures)
+        XCTAssertFalse(census.text.contains("example"), census.text)
+    }
+
+    /// `http:` and `//host/…` images, as Gmail shows them: upgraded to
+    /// https, never loaded over http. The scanner rewrites what it sees in
+    /// the allowed document (`//` has no base to resolve against);
+    /// `upgrade-insecure-requests` in the allowed CSP upgrades the rest (here
+    /// a scheme the scanner cannot read, behind an entity). Each listener
+    /// accepting a connection proves an https request: plain http to it is
+    /// refused by the CSP before any connection. The blocked variant asks
+    /// neither.
+    func testInsecureImagesAreRequestedOverHTTPS() async throws {
+        let scanned = try SilentTLSHost()
+        let upgraded = try SilentTLSHost()
+        let blocked = try SilentTLSHost()
+        let scannedPort = try await scanned.start()
+        let upgradedPort = try await upgraded.start()
+        let blockedPort = try await blocked.start()
+        defer { scanned.stop(); upgraded.stop(); blocked.stop() }
+
+        let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 700, height: 900),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        func open(_ html: String, allow: Bool) -> WKWebView {
+            let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 400),
+                                    configuration: HTMLWebViewPool.makeConfiguration())
+            window.contentView?.addSubview(webView)
+            let document = HTMLBodyDocument.assemble(
+                html: html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: allow),
+                styleCSS: HTMLBodyDarkMode.injectedCSS(fontScale: 1))
+            webView.loadHTMLString(document, baseURL: nil)
+            return webView
+        }
+        let allowedView = open("""
+            <img src="//127.0.0.1:\(scannedPort)/a.png" width="10" height="10">\
+            <img src="&#104;ttp://127.0.0.1:\(upgradedPort)/b.png" width="10" height="10">
+            """, allow: true)
+        let blockedView = open(
+            "<img src=\"http://127.0.0.1:\(blockedPort)/c.png\" width=\"10\" height=\"10\">",
+            allow: false)
+        defer {
+            allowedView.removeFromSuperview()
+            blockedView.removeFromSuperview()
+        }
+
+        try await wait(seconds: 8) { scanned.accepted > 0 && upgraded.accepted > 0 }
+        XCTAssertGreaterThan(scanned.accepted, 0, "protocol-relative image requested over https")
+        XCTAssertGreaterThan(upgraded.accepted, 0, "http image upgraded by the CSP")
+        XCTAssertEqual(blocked.accepted, 0, "images blocked: nothing is asked")
     }
 
     /// With images blocked (Ask each time, Spam), a blocked image keeps the

@@ -363,6 +363,53 @@ final class RemoteImageFetchTests: XCTestCase {
         XCTAssertEqual(after, 2, "the third ran only after a release")
     }
 
+    /// What the diagnostics line records for a failed fetch: a reason
+    /// category per request, never the URL.
+    func testFailuresAreCountedByReasonCategory() async {
+        let missing = "https://img.example.com/missing.png"
+        let down = "https://img.example.com/down.png"
+        let page = "https://img.example.com/page.png"
+        RemoteStubProtocol.state.reset([
+            missing: .init(status: 404, headers: ["Content-Type": "text/html"], body: Data()),
+            down: .init(status: 503, headers: [:], body: Data()),
+            page: .init(status: 200, headers: ["Content-Type": "text/html"], body: Data("<p>".utf8)),
+            url: .init(status: 200, headers: ["Content-Type": "image/png"], body: Self.image()),
+        ])
+        let session = makeSession()
+        defer { session.finishTasksAndInvalidate() }
+        let batch = await RemoteImageFetcher.fetchAll(
+            [missing, down, page, url, "https://nxdomain.example.com/a.png"],
+            transport: .streaming(session: session, resolve: Self.publicResolver))
+        XCTAssertEqual(batch.failures, [.http4xx: 1, .httpUnavailable: 1, .notAnImage: 1, .dns: 1])
+        XCTAssertNotNil(batch.images[url])
+        XCTAssertTrue(batch.refused.contains(missing), "a 4xx is still a refusal")
+
+        XCTAssertEqual(RemoteImageFetchFailure(URLError(.timedOut)), .timeout)
+        XCTAssertEqual(RemoteImageFetchFailure(URLError(.serverCertificateUntrusted)), .tls)
+        XCTAssertEqual(RemoteImageFetchFailure(URLError(.notConnectedToInternet)), .network)
+        XCTAssertNil(RemoteImageFetchFailure(URLError(.cancelled)))
+        XCTAssertNil(RemoteImageFetchFailure(CancellationError()))
+        XCTAssertEqual(RemoteImageFetchFailure(RemoteImageFetchError.redirected), .redirect)
+        for failure in RemoteImageFetchFailure.allCases {
+            XCTAssertNotNil(DiagnosticLog.token(failure.rawValue), failure.rawValue)
+        }
+    }
+
+    func testCensusParsesCountsOnly() throws {
+        let json = #"{"allowed":true,"loaded":2,"failed":1,"blocked":0,"pending":0,"altShown":1,"#
+            + #""remote":1,"insecure":0,"inline":0,"unresolvable":0,"csp":0,"url":"https://x.example/"}"#
+        let census = try XCTUnwrap(RemoteImageCensus(scriptResult: json))
+        XCTAssertEqual(census.loaded, 2)
+        XCTAssertEqual(census.failed, 1)
+        XCTAssertTrue(census.hasFailures)
+        XCTAssertEqual(census.text, "allowed=1 loaded=2 failed=1 blocked=0 pending=0 alt=1 csp=0"
+                       + " fail-https=1 fail-http=0 fail-inline=0 fail-unresolvable=0")
+        XCTAssertNil(RemoteImageCensus(scriptResult: "not json"))
+        XCTAssertNil(RemoteImageCensus(scriptResult: nil))
+        let blocked = try XCTUnwrap(RemoteImageCensus(scriptResult: #"{"allowed":false,"blocked":4,"csp":4}"#))
+        XCTAssertFalse(blocked.hasFailures, "images off: blocked on purpose, no line")
+    }
+
     func testOfflineAndUnresolvedAreNotRefusals() {
         XCTAssertFalse(RemoteImageFetcher.isRefusal(URLError(.notConnectedToInternet)))
         XCTAssertFalse(RemoteImageFetcher.isRefusal(URLError(.timedOut)))
