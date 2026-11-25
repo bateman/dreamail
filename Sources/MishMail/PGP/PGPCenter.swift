@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GRDB
 import Observation
@@ -10,17 +11,39 @@ import Observation
 /// What it keeps is in memory only and per session: a message's raw form
 /// and decrypted text are never written anywhere (not the database, the
 /// search index, a log or a notification) and go when the app quits, the
-/// account goes, or the keys change.
+/// account goes, the keys change, or the screen locks or the Mac sleeps.
 @MainActor
 @Observable
 final class PGPCenter {
-    struct Reading: Equatable {
-        let security: PGPMessageSecurity
+    /// What the view needs of a checked message, and nothing more: the
+    /// plaintext, raw signed bytes and the rest of `PGPMessageSecurity` are
+    /// dropped once this is built.
+    struct Reading: Equatable, Sendable {
         let indicator: PGPIndicator
         let body: PGPBodyDisplay
         /// The text of an encrypted part decrypted on request.
         let separatePart: String?
+        let signatures: [PGPSignatureLine]
+
+        /// Built off the main actor: the plaintext can be tens of MiB.
+        /// `displayedFrom` is the From the message card shows: the signed
+        /// mark is given only when it names the address the signature
+        /// vouches for.
+        static func build(_ security: PGPMessageSecurity, displayedFrom: String) -> Reading {
+            let indicator = PGPDisplay.bound(PGPSecurityRules.indicator(for: security),
+                                             displayedFrom: displayedFrom)
+            return Reading(indicator: indicator,
+                           body: PGPDisplay.body(for: security, indicator: indicator),
+                           separatePart: PGPDisplay.separatePart(for: security),
+                           signatures: PGPDisplay.signatureLines(security))
+        }
     }
+
+    /// Settings → OpenPGP keys remembers the account it shows here.
+    nonisolated static let settingsAccountKey = "settings.openPGP.account"
+    /// A key file above this is refused before it is read in full.
+    nonisolated static let maxKeyFileBytes = 1024 * 1024
+    nonisolated static let maxKeysPerFile = 50
 
     /// By message id (`Message.id`).
     private(set) var readings: [String: Reading] = [:]
@@ -38,6 +61,8 @@ final class PGPCenter {
     private let database: any DatabaseWriter
     let enabled: Bool
     private let makeEngine: (any PGPKeyStore) -> any OpenPGPEngine
+    private let defaults: UserDefaults
+    private let observers = ObserverTokens()
 
     /// At most this many readings are kept; the oldest go first.
     private static let maxReadings = 64
@@ -47,11 +72,37 @@ final class PGPCenter {
     /// and this build's engine.
     init(database: any DatabaseWriter, enabled: Bool = PGPFeatures.isEnabled,
          secrets: any PGPSecretKeyStorage = KeychainPGPSecretKeys(),
+         defaults: UserDefaults = .standard,
          makeEngine: @escaping (any PGPKeyStore) -> any OpenPGPEngine = PGPEngines.engine(store:)) {
         self.database = database
         self.enabled = enabled
         self.secrets = secrets
+        self.defaults = defaults
         self.makeEngine = makeEngine
+        if enabled { forgetOnLockAndSleep() }
+    }
+
+    /// Passphrases and decrypted text leave memory when the screen locks or
+    /// the Mac sleeps.
+    private func forgetOnLockAndSleep() {
+        let forget: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.lockedOrAsleep() }
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification,
+                     NSWorkspace.sessionDidResignActiveNotification] {
+            observers.add(workspace, workspace.addObserver(forName: name, object: nil, queue: .main, using: forget))
+        }
+        let distributed = DistributedNotificationCenter.default()
+        observers.add(distributed, distributed.addObserver(
+            forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main, using: forget))
+    }
+
+    func lockedOrAsleep() {
+        passphrases.forgetAll()
+        wrongPassphrase = []
+        readings = [:]
+        order = []
     }
 
     func engine(accountId: String) -> any OpenPGPEngine {
@@ -83,11 +134,12 @@ final class PGPCenter {
             plain.insert(message.id)
             return
         }
-        let indicator = PGPSecurityRules.indicator(for: security)
-        store(Reading(security: security, indicator: indicator,
-                      body: PGPDisplay.body(for: security, indicator: indicator),
-                      separatePart: PGPDisplay.separatePart(for: security)),
-              for: message.id)
+        let displayedFrom = message.fromHeader
+        let reading = await Task.detached(priority: .userInitiated) {
+            Reading.build(security, displayedFrom: displayedFrom)
+        }.value
+        guard !Task.isCancelled else { return }
+        store(reading, for: message.id)
         if case .failed(.passphraseRequired) = security.encryption,
            passphrases.passphrase(accountId: message.accountId) != nil {
             wrongPassphrase.insert(message.accountId)
@@ -127,10 +179,21 @@ final class PGPCenter {
         return try await engine(accountId: accountId).keys()
     }
 
-    /// Public keys from a file; with `secret`, secret keys (each still under
-    /// its own passphrase) and their public halves.
-    func importKeys(_ data: Data, accountId: String, secret: Bool) async throws -> [PGPKeySummary] {
+    /// What a key file holds, stored nowhere, for the confirmation screen.
+    /// Bounded: at most `maxKeyFileBytes` and `maxKeysPerFile`.
+    func inspect(_ data: Data, accountId: String) async throws -> [PGPKeySummary] {
         guard enabled else { throw PGPEngineError.unavailable }
+        guard data.count <= Self.maxKeyFileBytes else { throw PGPEngineError.tooLarge }
+        let keys = try await engine(accountId: accountId).inspectKeys(data)
+        guard keys.count <= Self.maxKeysPerFile else { throw PGPEngineError.tooLarge }
+        return keys
+    }
+
+    /// Public keys from a file; with `secret`, secret keys (each still under
+    /// its own passphrase) and their public halves. Only after the user
+    /// confirmed what `inspect` showed; the same limits apply.
+    func importKeys(_ data: Data, accountId: String, secret: Bool) async throws -> [PGPKeySummary] {
+        _ = try await inspect(data, accountId: accountId)
         let engine = engine(accountId: accountId)
         let imported = secret ? try await engine.importSecretKeys(data)
                               : try await engine.importKeys(data)
@@ -152,8 +215,12 @@ final class PGPCenter {
 
     // MARK: - Accounts
 
-    /// An account leaves: its passphrase and readings leave memory.
+    /// An account leaves: its passphrase and readings leave memory, and
+    /// Settings forgets it was the account shown. Whatever the switch says.
     func forget(accountId: String) {
+        if defaults.string(forKey: Self.settingsAccountKey) == accountId {
+            defaults.removeObject(forKey: Self.settingsAccountKey)
+        }
         passphrases.forget(accountId: accountId)
         wrongPassphrase.remove(accountId)
         forgetReadings { $0.accountId == accountId }
@@ -170,18 +237,34 @@ final class PGPCenter {
         order.removeAll { gone.contains($0) }
     }
 
-    /// DEC-019, outside the database: the secret keys of a removed account.
-    /// Not isolated: called from the account removal's own task.
-    nonisolated static func removeSecretKeys(accountId: String) {
-        guard PGPFeatures.isEnabled else { return }
-        try? KeychainPGPSecretKeys().deleteAll(accountId: accountId)
+    /// DEC-019, outside the database: the secret keys of a removed account,
+    /// whatever the switch says (a build with it off still removes what a
+    /// build with it on stored). Not isolated: called from the account
+    /// removal's own task.
+    nonisolated static func removeSecretKeys(accountId: String,
+                                             secrets: any PGPSecretKeyStorage = KeychainPGPSecretKeys()) {
+        try? secrets.deleteAll(accountId: accountId)
     }
 
-    /// At launch: secret keys in the Keychain that the database no longer
-    /// lists (a removal or delete cut short) are deleted.
-    nonisolated static func sweepSecretKeys(database: any DatabaseWriter) async {
-        guard PGPFeatures.isEnabled,
-              let keep = try? await database.read({ try PGPKeyTable.secretKeyOwners($0) }) else { return }
-        try? KeychainPGPSecretKeys().deleteAll(except: keep)
+    /// At launch, whatever the switch says: secret keys in the Keychain that
+    /// the database no longer lists (a removal or delete cut short) are
+    /// deleted. A database that cannot be read sweeps nothing.
+    nonisolated static func sweepSecretKeys(database: any DatabaseWriter,
+                                            secrets: any PGPSecretKeyStorage = KeychainPGPSecretKeys()) async {
+        guard let keep = try? await database.read({ try PGPKeyTable.secretKeyOwners($0) }) else { return }
+        try? secrets.deleteAll(except: keep)
+    }
+}
+
+/// Notification observers, removed when their owner goes.
+private final class ObserverTokens {
+    private var tokens: [(NotificationCenter, NSObjectProtocol)] = []
+
+    func add(_ center: NotificationCenter, _ token: NSObjectProtocol) {
+        tokens.append((center, token))
+    }
+
+    deinit {
+        for (center, token) in tokens { center.removeObserver(token) }
     }
 }

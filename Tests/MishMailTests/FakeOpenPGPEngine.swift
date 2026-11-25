@@ -8,6 +8,7 @@ final class FakeOpenPGPEngine: OpenPGPEngine, @unchecked Sendable {
         case verifyDetached(signedData: Data, signature: Data)
         case verifyCleartext(Data)
         case decrypt(Data)
+        case inspectKeys(Data)
         case importKeys(Data)
         case importSecretKeys(Data)
         case keys
@@ -52,6 +53,11 @@ final class FakeOpenPGPEngine: OpenPGPEngine, @unchecked Sendable {
     func decrypt(_ message: Data) async throws -> PGPDecryptionResult {
         record(.decrypt(message))
         return try decryption.get()
+    }
+
+    func inspectKeys(_ data: Data) async throws -> [PGPKeySummary] {
+        record(.inspectKeys(data))
+        return importable
     }
 
     func importKeys(_ data: Data) async throws -> [PGPKeySummary] {

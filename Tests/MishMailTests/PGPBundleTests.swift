@@ -9,9 +9,10 @@ final class PGPBundleTests: XCTestCase {
                                   "OpenPGP-LICENSE.txt": "LICENSE"]
 
     func testTheBuiltAppShipsTheLibrarysLicencesAsPinned() throws {
-        guard let app = UpdateVerifySmokeTests.builtAppURL() else {
-            throw XCTSkip("No built MishMail app in DerivedData; run `make build` first")
-        }
+        // Fails, never skips, without a built app: `make build` first (CI
+        // builds before it tests).
+        let app = try XCTUnwrap(UpdateVerifySmokeTests.builtAppURL(),
+                                "No built MishMail app in DerivedData; run `make build` first")
         let root = ForkIdentityTests.repoRoot
         // `make build` resolves packages here; the checkout is the pinned
         // commit of dreamail-openpgp.

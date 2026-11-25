@@ -40,6 +40,11 @@ protocol OpenPGPEngine: Sendable {
     /// the engine (EFAIL), so a caller has nothing it could show or log.
     func decrypt(_ message: Data) async throws -> PGPDecryptionResult
 
+    /// What `data` holds, without storing anything: every key with its
+    /// fingerprint, all its user IDs and its validity, for the import
+    /// screen to show before the user confirms.
+    func inspectKeys(_ data: Data) async throws -> [PGPKeySummary]
+
     /// Reads public keys from armored or binary data and stores what the
     /// engine parsed and checked (re-serialized, never the bytes handed in).
     /// Broken keys and refused algorithms are not stored; secret material in
@@ -143,6 +148,9 @@ struct UnavailableOpenPGPEngine: OpenPGPEngine {
         throw PGPEngineError.unavailable
     }
     func decrypt(_ message: Data) async throws -> PGPDecryptionResult {
+        throw PGPEngineError.unavailable
+    }
+    func inspectKeys(_ data: Data) async throws -> [PGPKeySummary] {
         throw PGPEngineError.unavailable
     }
     func importKeys(_ data: Data) async throws -> [PGPKeySummary] {

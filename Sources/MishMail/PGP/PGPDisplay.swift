@@ -25,6 +25,8 @@ enum PGPBodyNotice: Sendable, Equatable {
     case unsupportedFormat
     /// Decrypted or signed, but there is no text part to show.
     case noReadableText
+    /// More text than the view shows (`PGPDisplay.maxShownBytes`).
+    case tooLongToShow
 
     /// The headline. Every failure an attacker could cause says the same:
     /// nothing reads as more harmless than a failed integrity check (no
@@ -41,13 +43,15 @@ enum PGPBodyNotice: Sendable, Equatable {
             return "This message could not be decrypted."
         case .noReadableText:
             return "This message has no text to show."
+        case .tooLongToShow:
+            return "This message is too long to show here."
         }
     }
 
     /// The technical reason, shown smaller under the headline.
     var detail: String? {
         switch self {
-        case .unavailable, .noSecretKey, .passphraseRequired, .noReadableText: return nil
+        case .unavailable, .noSecretKey, .passphraseRequired, .noReadableText, .tooLongToShow: return nil
         case .notIntegrityProtected:
             return "Integrity check failed or missing: the encrypted data may have been changed, so nothing of it is shown."
         case .tooLarge: return "The encrypted data is larger than the decryption limit."
@@ -75,6 +79,43 @@ struct PGPSignatureLine: Sendable, Equatable {
 }
 
 enum PGPDisplay {
+    /// The most text shown in place of a body. The library releases up to
+    /// 64 MiB of plaintext; one SwiftUI `Text` of that hangs the app.
+    static let maxShownBytes = 1024 * 1024
+
+    /// The signed mark only when the address the signature vouches for is
+    /// the one the message card shows (`Message.fromHeader`, parsed by
+    /// Gmail), not just the one read from the raw header: a crafted `From`
+    /// (encoded words, comments, two mailboxes) could make them differ.
+    /// Otherwise the signer is not the sender, as far as the user can see.
+    static func bound(_ indicator: PGPIndicator, displayedFrom: String) -> PGPIndicator {
+        let vouched: String
+        switch indicator.reason {
+        case .signed(let address), .encryptedAndSigned(let address): vouched = address
+        default: return indicator
+        }
+        let shown = MessageParser.splitAddresses(displayedFrom)
+        guard shown.count == 1,
+              MessageParser.emailAddress(shown[0]).lowercased() == vouched.lowercased() else {
+            return PGPIndicator(tone: .warning, reason: .signerIsNotSender, showsSignedMark: false,
+                                showsLock: indicator.showsLock, render: indicator.render)
+        }
+        return indicator
+    }
+
+    private enum Readable {
+        case text(String), tooLong, none
+    }
+
+    /// Text in place of the body, or the notice that it is too long.
+    private static func shown(_ readable: Readable) -> PGPBodyDisplay? {
+        switch readable {
+        case .text(let text): return text.utf8.count > maxShownBytes ? .notice(.tooLongToShow) : .text(text)
+        case .tooLong: return .notice(.tooLongToShow)
+        case .none: return nil
+        }
+    }
+
     /// Gmail-style one-line summary next to the sender, with an SF Symbol.
     /// Nil when there is nothing to show.
     static func summary(_ indicator: PGPIndicator) -> (title: String, symbol: String)? {
@@ -112,17 +153,17 @@ enum PGPDisplay {
             }
         case .decrypted(let result, let whole):
             guard whole, indicator.render.decryptedContent == .inline else { return .original }
-            return readableText(ofEntity: result.plaintext).map(PGPBodyDisplay.text)
-                ?? .notice(.noReadableText)
+            return shown(readable(result.plaintext)) ?? .notice(.noReadableText)
         case .notDecrypted:
             return .original
         case .notEncrypted:
             guard indicator.showsSignedMark else { return .original }
             if let text = security.signedText {
+                guard text.count <= maxShownBytes else { return .notice(.tooLongToShow) }
                 return .text(decode(text, contentType: nil))
             }
-            if let content = security.signedContent, let text = readableText(ofEntity: content) {
-                return .text(text)
+            if let content = security.signedContent, let display = shown(readable(content)) {
+                return display
             }
             // Signed, but nothing readable in the signed part: the body as
             // Gmail shows it is not what was signed, so it is not shown.
@@ -134,7 +175,11 @@ enum PGPDisplay {
     /// decrypted on request: shown apart from the rest (`separateView`).
     static func separatePart(for security: PGPMessageSecurity) -> String? {
         guard case .decrypted(let result, false) = security.encryption else { return nil }
-        return readableText(ofEntity: result.plaintext)
+        switch shown(readable(result.plaintext)) {
+        case .text(let text)?: return text
+        case .notice(let notice)?: return notice.text
+        default: return nil
+        }
     }
 
     /// The signatures, for the details popover.
@@ -178,15 +223,25 @@ enum PGPDisplay {
     /// first `text/plain` part that is not an attachment, else the first
     /// `text/html` part turned into text. Never HTML. Nil when there is none.
     static func readableText(ofEntity data: Data) -> String? {
+        if case .text(let text) = readable(data) { return text }
+        return nil
+    }
+
+    private static func readable(_ data: Data) -> Readable {
         let root = RawMIME.parse(data)
         if let plain = firstLeaf(root, type: "text/plain") {
-            return decode(RawMIME.decodedBody(plain, in: data), contentType: plain.header("content-type"))
+            let body = RawMIME.decodedBody(plain, in: data)
+            guard body.count <= 4 * maxShownBytes else { return .tooLong }
+            return .text(decode(body, contentType: plain.header("content-type")))
         }
         if let html = firstLeaf(root, type: "text/html") {
-            return MessageParser.stripHTML(
-                decode(RawMIME.decodedBody(html, in: data), contentType: html.header("content-type")))
+            let body = RawMIME.decodedBody(html, in: data)
+            // Decoding and regex stripping cost time: text far above what is
+            // shown is not processed at all.
+            guard body.count <= 4 * maxShownBytes else { return .tooLong }
+            return .text(MessageParser.stripHTML(decode(body, contentType: html.header("content-type"))))
         }
-        return nil
+        return .none
     }
 
     private static func firstLeaf(_ part: RawMIMEPart, type: String) -> RawMIMEPart? {
@@ -220,5 +275,22 @@ enum PGPDisplay {
             return type == PGPStructure.signatureProtocol || type == PGPStructure.encryptedProtocol
                 || [".asc", ".sig", ".gpg", ".pgp"].contains { name.hasSuffix($0) }
         }
+    }
+
+    /// For each key about to be imported, the addresses of its user IDs
+    /// that another stored key of the account already claims: the import
+    /// screen flags them, since a signature by either key would show that
+    /// address as signed.
+    static func addressesClaimedElsewhere(_ incoming: [PGPKeySummary],
+                                          stored: [PGPKeySummary]) -> [PGPKeyReference: [String]] {
+        var out: [PGPKeyReference: [String]] = [:]
+        for key in incoming {
+            let mine = PGPSecurityRules.signerAddresses(key)
+            let others = stored.filter { $0.key != key.key }
+                .reduce(into: Set<String>()) { $0.formUnion(PGPSecurityRules.signerAddresses($1)) }
+            let clash = mine.intersection(others).sorted()
+            if !clash.isEmpty { out[key.key] = clash }
+        }
+        return out
     }
 }

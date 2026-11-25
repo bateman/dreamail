@@ -233,4 +233,59 @@ final class PGPDisplayTests: XCTestCase {
                                               attachments: [row("signature.asc", "application/pgp-signature")],
                                               enabled: false), "off: nothing is looked at")
     }
+
+    // MARK: - Review round 1
+
+    /// R3: the signed mark only when the From the card shows names the
+    /// address the signature vouches for.
+    func testTheSignedMarkNeedsTheDisplayedSender() {
+        let signed = PGPIndicator(tone: .positive, reason: .signed(address: "alice@example.org"),
+                                  showsSignedMark: true, showsLock: false, render: .plain)
+        for shown in ["Alice <alice@example.org>", "ALICE@Example.ORG", "\"Alice, Inc.\" <alice@example.org>"] {
+            XCTAssertEqual(PGPDisplay.bound(signed, displayedFrom: shown), signed, shown)
+        }
+        for shown in ["Boss <boss@corp.com>", "\"alice@example.org\" <mallory@evil.example>",
+                      "=?utf-8?q?alice@example.org?= <mallory@evil.example>",
+                      "Alice <alice@example.org>, Boss <boss@corp.com>", ""] {
+            let bound = PGPDisplay.bound(signed, displayedFrom: shown)
+            XCTAssertEqual(bound.reason, .signerIsNotSender, shown)
+            XCTAssertFalse(bound.showsSignedMark, shown)
+        }
+        let encrypted = PGPIndicator(tone: .positive, reason: .encryptedAndSigned(address: "alice@example.org"),
+                                     showsSignedMark: true, showsLock: true,
+                                     render: PGPRenderPolicy(decryptedContent: .inline, blocksRemoteContent: true))
+        let bound = PGPDisplay.bound(encrypted, displayedFrom: "Boss <boss@corp.com>")
+        XCTAssertTrue(bound.showsLock, "still encrypted")
+        XCTAssertEqual(bound.render, encrypted.render)
+        XCTAssertFalse(bound.showsSignedMark)
+    }
+
+    /// R4: plaintext above the cap is never handed to a `Text`.
+    func testLongDecryptedTextIsNotShown() {
+        let long = String(repeating: "a", count: PGPDisplay.maxShownBytes + 1)
+        for body in [long, "<p>" + String(repeating: "a", count: 4 * PGPDisplay.maxShownBytes) + "</p>"] {
+            let type = body.hasPrefix("<p>") ? "text/html" : "text/plain"
+            let security = PGPMessageSecurity(
+                encryption: .decrypted(PGPDecryptionResult(
+                    plaintext: Data("Content-Type: \(type)\r\n\r\n\(body)".utf8), signatures: []),
+                                       coversWholeMessage: true),
+                signature: .unsigned, fromHeader: from)
+            XCTAssertEqual(display(security), .notice(.tooLongToShow))
+        }
+        let cleartext = PGPMessageSecurity(
+            encryption: .notEncrypted,
+            signature: .checked([.good(signer: FakeOpenPGPEngine.alice)], coversWholeMessage: true),
+            fromHeader: from, signedText: Data(long.utf8))
+        XCTAssertEqual(display(cleartext), .notice(.tooLongToShow))
+    }
+
+    /// R1: an address another stored key already claims is flagged.
+    func testAddressesClaimedByAnotherStoredKey() {
+        let boss = FakeOpenPGPEngine.key("CCCC", ["Boss <boss@corp.com>"])
+        let mallory = FakeOpenPGPEngine.key("DDDD", ["Mallory <mallory@evil.example>", "<BOSS@corp.com>"])
+        XCTAssertEqual(PGPDisplay.addressesClaimedElsewhere([mallory], stored: [boss]),
+                       [mallory.key: ["boss@corp.com"]])
+        XCTAssertEqual(PGPDisplay.addressesClaimedElsewhere([boss], stored: [boss]), [:], "the same key is no clash")
+        XCTAssertEqual(PGPDisplay.addressesClaimedElsewhere([mallory], stored: []), [:])
+    }
 }

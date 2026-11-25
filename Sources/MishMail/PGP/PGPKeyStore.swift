@@ -91,9 +91,14 @@ extension PGPSecretKeyStorage {
     }
 }
 
-/// Secret keys in the login Keychain: this device only, never synced, one
-/// item per account and key, under a service of their own so they can be
-/// listed and removed without touching the app's other secrets.
+/// Secret keys in the login Keychain, one item per account and key, under a
+/// service of their own so they can be listed and removed without touching
+/// the app's other secrets. Not synchronizable. The item asks for
+/// "after first unlock, this device only", but without
+/// `kSecUseDataProtectionKeychain` macOS keeps it in the file-based login
+/// keychain and ignores that attribute: what protects it is the login
+/// keychain itself (encrypted with the user's login password) and the key's
+/// own passphrase, under which it stays.
 struct KeychainPGPSecretKeys: PGPSecretKeyStorage {
     private static let service =
         (Bundle.main.bundleIdentifier ?? "io.github.bateman.MishMail") + ".openpgp"
@@ -174,11 +179,25 @@ struct KeychainPGPSecretKeys: PGPSecretKeyStorage {
 
 /// Passphrases the user typed to unlock a secret key, per account, held in
 /// memory only: never written to disk, the database, the Keychain or a log.
-/// They go when MishMail quits, when the account goes, or when one of its
-/// keys is deleted.
+/// They go when MishMail quits, the screen locks or the Mac sleeps, the
+/// account goes, or one of its keys is deleted.
 final class PGPPassphrases: @unchecked Sendable {
     private let lock = NSLock()
     private var byAccount: [String: Data] = [:]
+
+    /// Every passphrase, when the screen locks or the Mac sleeps.
+    func forgetAll() {
+        lock.lock(); defer { lock.unlock() }
+        for id in byAccount.keys { wipe(id) }
+        byAccount = [:]
+    }
+
+    /// Zeroes the stored bytes before letting go of them. Copies made
+    /// elsewhere (the text field's `String`, the engine call) cannot be.
+    private func wipe(_ id: String) {
+        guard let count = byAccount[id]?.count, count > 0 else { return }
+        byAccount[id]?.resetBytes(in: 0..<count)
+    }
 
     func passphrase(accountId: String) -> Data? {
         lock.lock(); defer { lock.unlock() }
@@ -187,11 +206,13 @@ final class PGPPassphrases: @unchecked Sendable {
 
     func set(_ passphrase: Data, accountId: String) {
         lock.lock(); defer { lock.unlock() }
+        wipe(accountId)
         byAccount[accountId] = passphrase
     }
 
     func forget(accountId: String) {
         lock.lock(); defer { lock.unlock() }
+        wipe(accountId)
         byAccount[accountId] = nil
     }
 }
@@ -233,6 +254,15 @@ struct DatabasePGPKeyStore: PGPKeyStore {
         passphrases.passphrase(accountId: accountId) ?? Data()
     }
 
+    func certificate(_ key: PGPKeyReference) async throws -> Data? {
+        let account = accountId
+        return try await database.read { db in
+            try PGPKeyRecord.filter(Column("accountId") == account
+                                        && Column("fingerprint") == key.fingerprint)
+                .fetchOne(db)?.certificate
+        }
+    }
+
     /// Adds or replaces each certificate; a stored secret half stays.
     func addCertificates(_ keys: [PGPArmoredKey]) async throws {
         let account = accountId
@@ -251,23 +281,43 @@ struct DatabasePGPKeyStore: PGPKeyStore {
     /// not stored. The certificate row must exist (`RPGPEngine` adds it
     /// first).
     func addSecretKeys(_ keys: [PGPArmoredKey]) async throws {
+        // What each item held before this call, so a failure puts exactly
+        // that back (nil: there was none).
+        var before: [(PGPSecretKeyOwner, Data?)] = []
         for key in keys {
-            try secrets.setSecretKey(key.armored, of: owner(key.key))
+            let owner = owner(key.key)
+            if !before.contains(where: { $0.0 == owner }) {
+                before.append((owner, try secrets.secretKey(of: owner)))
+            }
+        }
+        func rollBack() {
+            for (owner, old) in before {
+                if let old { try? secrets.setSecretKey(old, of: owner) } else { try? secrets.deleteSecretKey(of: owner) }
+            }
+        }
+        do {
+            for key in keys {
+                try secrets.setSecretKey(key.armored, of: owner(key.key))
+            }
+        } catch {
+            rollBack()
+            throw error
         }
         let account = accountId
-        let missing = try await database.write { db -> Bool in
-            var missing = false
-            for key in keys {
-                try db.execute(sql: """
-                    UPDATE pgpKey SET hasSecretKey = 1 WHERE accountId = ? AND fingerprint = ?
-                    """, arguments: [account, key.key.fingerprint])
-                if db.changesCount == 0 { missing = true }
+        do {
+            // One transaction: a key without its certificate row rolls back
+            // every flag of the batch.
+            try await database.write { db in
+                for key in keys {
+                    try db.execute(sql: """
+                        UPDATE pgpKey SET hasSecretKey = 1 WHERE accountId = ? AND fingerprint = ?
+                        """, arguments: [account, key.key.fingerprint])
+                    if db.changesCount == 0 { throw PGPEngineError.malformed }
+                }
             }
-            return missing
-        }
-        if missing {
-            for key in keys { try? secrets.deleteSecretKey(of: owner(key.key)) }
-            throw PGPEngineError.malformed
+        } catch {
+            rollBack()
+            throw error
         }
     }
 

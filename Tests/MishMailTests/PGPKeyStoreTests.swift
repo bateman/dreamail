@@ -135,6 +135,33 @@ final class PGPKeyStoreTests: XCTestCase {
         XCTAssertEqual(secrets.stored, [:])
     }
 
+    /// S3: a failed batch puts back exactly what was there before.
+    func testAFailedSecretImportRestoresWhatWasThere() async throws {
+        let q = try makeDB()
+        let secrets = MemorySecretKeys()
+        let storeA = store(a, q, secrets)
+        try await storeA.addCertificates([PGPArmoredKey(key: k1, armored: cert("1"))])
+        try await storeA.addSecretKeys([PGPArmoredKey(key: k1, armored: secret("old"))])
+        do {
+            // k2 has no certificate row: the whole batch fails.
+            try await storeA.addSecretKeys([PGPArmoredKey(key: k1, armored: secret("new")),
+                                            PGPArmoredKey(key: k2, armored: secret("2"))])
+            XCTFail("expected a failure")
+        } catch {}
+        XCTAssertEqual(secrets.stored, [PGPSecretKeyOwner(accountId: a, key: k1): secret("old")])
+        let flags = try await q.read { try PGPKeyTable.rows($0, accountId: self.a).map(\.hasSecretKey) }
+        XCTAssertEqual(flags, [true])
+    }
+
+    func testForgettingAllPassphrases() {
+        let passphrases = PGPPassphrases()
+        passphrases.set(Data("one".utf8), accountId: a)
+        passphrases.set(Data("two".utf8), accountId: b)
+        passphrases.forgetAll()
+        XCTAssertNil(passphrases.passphrase(accountId: a))
+        XCTAssertNil(passphrases.passphrase(accountId: b))
+    }
+
     func testDeletingAKeyRemovesBothHalvesAndThePassphrase() async throws {
         let q = try makeDB()
         let secrets = MemorySecretKeys()

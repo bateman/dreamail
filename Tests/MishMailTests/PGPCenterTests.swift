@@ -8,11 +8,11 @@ import GRDB
 @MainActor
 final class PGPCenterTests: XCTestCase {
 
-    private func makeCenter(enabled: Bool, engine: FakeOpenPGPEngine = FakeOpenPGPEngine())
-        throws -> PGPCenter {
+    private func makeCenter(enabled: Bool, engine: FakeOpenPGPEngine = FakeOpenPGPEngine(),
+                            defaults: UserDefaults = .standard) throws -> PGPCenter {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q)
-        return PGPCenter(database: q, enabled: enabled, secrets: MemorySecretKeys(),
+        return PGPCenter(database: q, enabled: enabled, secrets: MemorySecretKeys(), defaults: defaults,
                          makeEngine: { _ in engine })
     }
 
@@ -142,5 +142,89 @@ final class PGPCenterTests: XCTestCase {
         _ = try await center.importKeys(Data("k".utf8), accountId: "a@x.com", secret: false)
         XCTAssertNil(center.readings["a@x.com:m1"])
         XCTAssertNotEqual(center.keysRevision, revision)
+    }
+
+    // MARK: - Review round 1
+
+    /// R1 and S2: a file is inspected, not stored, and bounded.
+    func testInspectStoresNothingAndKeyFilesAreBounded() async throws {
+        let engine = FakeOpenPGPEngine()
+        engine.importable = [FakeOpenPGPEngine.alice]
+        let center = try makeCenter(enabled: true, engine: engine)
+        let keys = try await center.inspect(Data("k".utf8), accountId: "a@x.com")
+        XCTAssertEqual(keys, [FakeOpenPGPEngine.alice])
+        XCTAssertEqual(engine.calls, [.inspectKeys(Data("k".utf8))], "nothing is imported")
+
+        for (data, count) in [(Data(count: PGPCenter.maxKeyFileBytes + 1), 1),
+                              (Data("k".utf8), PGPCenter.maxKeysPerFile + 1)] {
+            engine.importable = (0..<count).map { FakeOpenPGPEngine.key(String(format: "%08X", $0), []) }
+            for secret in [false, true] {
+                do {
+                    _ = try await center.importKeys(data, accountId: "a@x.com", secret: secret)
+                    XCTFail("expected a refusal")
+                } catch {
+                    XCTAssertEqual(error as? PGPEngineError, .tooLarge)
+                }
+            }
+        }
+        XCTAssertFalse(engine.calls.contains { if case .importKeys = $0 { return true }; return false })
+        XCTAssertFalse(engine.calls.contains { if case .importSecretKeys = $0 { return true }; return false })
+    }
+
+    /// R5: the removed account leaves Settings' memory too.
+    func testForgettingAnAccountClearsTheSettingsChoice() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PGPCenterTests-\(UUID().uuidString)"))
+        let center = try makeCenter(enabled: false, defaults: defaults)
+        defaults.set("b@x.com", forKey: PGPCenter.settingsAccountKey)
+        center.forget(accountId: "a@x.com")
+        XCTAssertEqual(defaults.string(forKey: PGPCenter.settingsAccountKey), "b@x.com")
+        center.forget(accountId: "b@x.com")
+        XCTAssertNil(defaults.string(forKey: PGPCenter.settingsAccountKey))
+    }
+
+    /// R5: a removed account's secret keys go, and the launch sweep runs,
+    /// whatever the switch says (these take no switch at all).
+    func testSecretKeysOfARemovedAccountGoWhateverTheSwitch() async throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        let secrets = MemorySecretKeys()
+        let a = PGPSecretKeyOwner(accountId: "a@x.com", key: PGPKeyReference(fingerprint: "AAAA"))
+        let b = PGPSecretKeyOwner(accountId: "b@x.com", key: PGPKeyReference(fingerprint: "BBBB"))
+        try secrets.setSecretKey(Data("x".utf8), of: a)
+        try secrets.setSecretKey(Data("y".utf8), of: b)
+        PGPCenter.removeSecretKeys(accountId: "a@x.com", secrets: secrets)
+        XCTAssertEqual(Array(secrets.stored.keys), [b])
+        await PGPCenter.sweepSecretKeys(database: q, secrets: secrets)
+        XCTAssertEqual(secrets.stored, [:], "no row lists b's key")
+    }
+
+    /// S4: a lock or sleep forgets passphrases and decrypted text.
+    func testLockOrSleepForgetsPassphrasesAndReadings() async throws {
+        let engine = FakeOpenPGPEngine()
+        engine.detachedResults[PGPCorpus.signedPartCanonical] = [.good(signer: FakeOpenPGPEngine.alice)]
+        let center = try makeCenter(enabled: true, engine: engine)
+        await center.check(message(), attachments: signatureAttachment,
+                           fetchRaw: RawSource(PGPCorpus.crlf(PGPCorpus.signedSimple())).fetch)
+        center.unlock(accountId: "a@x.com", passphrase: "pw")
+        await center.check(message(), attachments: signatureAttachment,
+                           fetchRaw: RawSource(PGPCorpus.crlf(PGPCorpus.signedSimple())).fetch)
+        XCTAssertNotNil(center.readings["a@x.com:m1"])
+        center.lockedOrAsleep()
+        XCTAssertNil(center.passphrases.passphrase(accountId: "a@x.com"))
+        XCTAssertEqual(center.readings, [:])
+    }
+
+    /// R3, end to end: the card's From decides the signed mark.
+    func testASignatureForAnotherAddressThanTheCardShowsIsNotSigned() async throws {
+        let engine = FakeOpenPGPEngine()
+        engine.detachedResults[PGPCorpus.signedPartCanonical] = [.good(signer: FakeOpenPGPEngine.alice)]
+        let center = try makeCenter(enabled: true, engine: engine)
+        var shown = message()
+        shown.fromHeader = "Boss <boss@corp.com>"
+        await center.check(shown, attachments: signatureAttachment,
+                           fetchRaw: RawSource(PGPCorpus.crlf(PGPCorpus.signedSimple())).fetch)
+        let reading = try XCTUnwrap(center.readings["a@x.com:m1"])
+        XCTAssertEqual(reading.indicator.reason, .signerIsNotSender)
+        XCTAssertEqual(reading.body, .original)
     }
 }

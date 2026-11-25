@@ -10,13 +10,24 @@ import UniformTypeIdentifiers
 /// Keychain on this Mac only. Deleting a key removes both, at once.
 struct PGPKeySettings: View {
     @Environment(MailStore.self) private var store
-    @AppStorage("settings.openPGP.account") private var accountId = ""
+    @AppStorage(PGPCenter.settingsAccountKey) private var accountId = ""
     @State private var keys: [PGPKeySummary] = []
     @State private var loadError: String?
     @State private var importing: ImportKind?
     @State private var importResult: String?
     @State private var deleting: PGPKeySummary?
     @State private var expanded: Set<PGPKeyReference> = []
+    /// A file read and inspected, waiting for the user to confirm.
+    @State private var reviewing: PendingImport?
+
+    struct PendingImport: Identifiable {
+        let id = UUID()
+        let accountId: String
+        let data: Data
+        let kind: ImportKind
+        let keys: [PGPKeySummary]
+        let claimedElsewhere: [PGPKeyReference: [String]]
+    }
 
     enum ImportKind: Identifiable {
         case publicKeys, secretKeys
@@ -73,6 +84,14 @@ struct PGPKeySettings: View {
             importing = nil
             if case .success(let url) = result { Task { await importFile(url, kind: kind) } }
         }
+        .sheet(item: $reviewing) { pending in
+            PGPImportReviewSheet(pending: pending,
+                                 onImport: {
+                                     reviewing = nil
+                                     Task { await confirmImport(pending) }
+                                 },
+                                 onCancel: { reviewing = nil })
+        }
         .confirmationDialog("Delete this key?",
                             isPresented: Binding(get: { deleting != nil },
                                                  set: { if !$0 { deleting = nil } }),
@@ -115,7 +134,14 @@ struct PGPKeySettings: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Details")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(key.userIDs.first ?? "No user ID").font(.system(size: 13, weight: .medium))
+                    if key.userIDs.isEmpty {
+                        Text("No user ID").font(.system(size: 13, weight: .medium))
+                    }
+                    // Every user ID: each one is an address this key can
+                    // sign for.
+                    ForEach(key.userIDs, id: \.self) { userID in
+                        Text(userID).font(.system(size: 13, weight: .medium))
+                    }
                     Text(PGPDisplay.grouped(key.key.fingerprint))
                         .font(.system(size: 11).monospaced())
                         .foregroundStyle(.secondary)
@@ -184,19 +210,40 @@ struct PGPKeySettings: View {
         }
     }
 
+    /// Reads at most one byte more than the limit, whatever the file says
+    /// its size is, then shows what it holds; nothing is stored until the
+    /// user confirms.
     private func importFile(_ url: URL, kind: ImportKind) async {
         let account = accountId
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size <= RPGPEngine.maxInputBytes, let data = try? Data(contentsOf: url) else {
-            importResult = "That file can’t be read as an OpenPGP key."
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            importResult = "That file can’t be read."
+            return
+        }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: PGPCenter.maxKeyFileBytes + 1), !data.isEmpty else {
+            importResult = "That file can’t be read."
             return
         }
         do {
-            let imported = try await store.openPGP.importKeys(data, accountId: account,
-                                                              secret: kind == .secretKeys)
-            importResult = imported.count == 1 ? "Imported 1 key." : "Imported \(imported.count) keys."
+            let keys = try await store.openPGP.inspect(data, accountId: account)
+            let stored = (try? await store.openPGP.keys(accountId: account)) ?? []
+            reviewing = PendingImport(accountId: account, data: data, kind: kind, keys: keys,
+                                      claimedElsewhere: PGPDisplay.addressesClaimedElsewhere(keys, stored: stored))
+            importResult = nil
+        } catch {
+            importResult = Self.message(error)
+        }
+    }
+
+    private func confirmImport(_ pending: PendingImport) async {
+        do {
+            let imported = try await store.openPGP.importKeys(pending.data, accountId: pending.accountId,
+                                                              secret: pending.kind == .secretKeys)
+            let revoked = imported.filter { $0.validity == .revoked }.count
+            importResult = (imported.count == 1 ? "Imported 1 key." : "Imported \(imported.count) keys.")
+                + (revoked > 0 ? " Revoked: \(revoked) (a stored revocation is kept)." : "")
         } catch {
             importResult = Self.message(error)
         }
@@ -215,10 +262,64 @@ struct PGPKeySettings: View {
         switch error as? PGPEngineError {
         case .noSecretKey?: return "No usable secret key in that file (it may be expired, revoked or public only)."
         case .malformed?, .unsupported?: return "That file holds no key MishMail can use."
-        case .tooLarge?: return "That file is too large."
+        case .tooLarge?: return "That file is too large (at most 1 MB and 50 keys)."
         case .unavailable?: return "This version of MishMail has no OpenPGP support."
         case .passphraseRequired?, .notIntegrityProtected?: return "That didn’t work."
         case nil: return error.localizedDescription
         }
+    }
+}
+
+/// What a key file holds, before anything is stored: every key with its
+/// fingerprint, all its user IDs (none verified) and its validity, and the
+/// addresses another stored key already claims.
+private struct PGPImportReviewSheet: View {
+    let pending: PGPKeySettings.PendingImport
+    let onImport: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(pending.kind == .secretKeys ? "Import your secret key?" : "Import these keys?")
+                .font(.headline)
+            Text("A key can name any address. Import it only if you got it from its owner, and compare the fingerprint with them.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(pending.keys, id: \.key) { key in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(PGPDisplay.grouped(key.key.fingerprint))
+                                .font(.system(size: 12).monospaced())
+                                .textSelection(.enabled)
+                            ForEach(key.userIDs, id: \.self) { Text($0).font(.system(size: 12)) }
+                            if key.userIDs.isEmpty {
+                                Text("No user ID").font(.system(size: 12)).foregroundStyle(.secondary)
+                            }
+                            Text(PGPKeySettings.validityText(key))
+                                .font(.system(size: 11))
+                                .foregroundStyle(key.validity == .valid ? Color.secondary : Color.orange)
+                            if let clash = pending.claimedElsewhere[key.key] {
+                                Label("Another of your keys already claims \(clash.joined(separator: ", ")).",
+                                      systemImage: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.openPGP.review.key")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 280)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Import", action: onImport)
+                    .accessibilityIdentifier("settings.openPGP.review.import")
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
     }
 }

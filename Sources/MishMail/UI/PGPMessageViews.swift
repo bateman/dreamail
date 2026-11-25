@@ -55,7 +55,7 @@ private struct PGPDetailsView: View {
             Label(title, systemImage: symbol)
                 .font(.headline)
                 .foregroundStyle(PGPIndicatorButton.color(reading.indicator.tone))
-            ForEach(Array(PGPDisplay.signatureLines(reading.security).enumerated()), id: \.offset) { _, line in
+            ForEach(Array(reading.signatures.enumerated()), id: \.offset) { _, line in
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Signature: \(line.status.rawValue)").font(.system(size: 12, weight: .semibold))
                     ForEach(line.userIDs, id: \.self) { userID in

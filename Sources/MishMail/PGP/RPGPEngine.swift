@@ -63,17 +63,50 @@ struct RPGPEngine: OpenPGPEngine {
         return PGPDecryptionResult(plaintext: reply.data, signatures: try decoded.signatures())
     }
 
+    func inspectKeys(_ data: Data) async throws -> [PGPKeySummary] {
+        try Self.checkSize(data)
+        let now = unixNow
+        let reply = try await call { $0.inspectKeys(data, now) }
+        return try RPGPReply.decode(reply.json).keys ?? []
+    }
+
     /// Stores the certificates the library re-serialized after checking
     /// them, never `data` itself: one armored block per key, in the order of
-    /// the keys the library lists.
+    /// the keys the library lists. A stored revoked certificate is never
+    /// replaced by a copy without the revocation (`keepingRevocations`).
     func importKeys(_ data: Data) async throws -> [PGPKeySummary] {
         try Self.checkSize(data)
         let now = unixNow
         let reply = try await call { $0.importPublic(data, now) }
         let keys = try RPGPReply.decode(reply.json).keys ?? []
         let blocks = try Self.pair(keys, PGPArmorBlocks.split(reply.data))
-        try await store.addCertificates(blocks)
-        return keys
+        let (kept, summaries) = try await keepingRevocations(blocks, keys)
+        try await store.addCertificates(kept)
+        return summaries
+    }
+
+    /// An older copy of a key, without its revocation signature, must not
+    /// make a revoked key valid again: where the stored certificate is
+    /// revoked and the new one is not, the stored one stays, and its summary
+    /// (revoked) is what the import reports.
+    private func keepingRevocations(_ blocks: [PGPArmoredKey], _ keys: [PGPKeySummary])
+        async throws -> ([PGPArmoredKey], [PGPKeySummary]) {
+        var kept: [PGPArmoredKey] = []
+        var summaries: [PGPKeySummary] = []
+        let now = unixNow
+        for (block, key) in zip(blocks, keys) {
+            if key.validity != .revoked, let stored = try await store.certificate(block.key) {
+                let reply = try await call { $0.inspectKeys(stored, now) }
+                if let old = try RPGPReply.decode(reply.json).keys?.first(where: { $0.key == block.key }),
+                   old.validity == .revoked {
+                    summaries.append(old)
+                    continue
+                }
+            }
+            kept.append(block)
+            summaries.append(key)
+        }
+        return (kept, summaries)
     }
 
     /// A separate, explicit action: valid secret keys, re-serialized, into
@@ -93,7 +126,8 @@ struct RPGPEngine: OpenPGPEngine {
         guard Set(publicBlocks.map(\.key)).isSuperset(of: secretBlocks.map(\.key)) else {
             throw PGPEngineError.malformed
         }
-        try await store.addCertificates(publicBlocks)
+        let (kept, _) = try await keepingRevocations(publicBlocks, publicKeys)
+        try await store.addCertificates(kept)
         try await store.addSecretKeys(secretBlocks)
         return keys
     }
@@ -204,6 +238,8 @@ enum PGPArmorBlocks {
 protocol PGPKeyStore: Sendable {
     /// Every certificate (public key), concatenated, armored or binary.
     func certificates() async throws -> Data
+    /// The stored certificate of one key, if any.
+    func certificate(_ key: PGPKeyReference) async throws -> Data?
     /// Every secret key, concatenated.
     func secretKeys() async throws -> Data
     /// The passphrase for the secret keys; empty when they have none.
