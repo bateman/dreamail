@@ -17,14 +17,20 @@ final class DemoSeedTests: XCTestCase {
 
     /// The UI tests' short list: the labels the demo threads carry and the
     /// ones the tests name, with the ids, names and order of the full list.
-    func testSmallDemoKeepsTheLabelsTheThreadsAndTestsUse() {
+    func testSmallDemoKeepsTheLabelsTheThreadsAndTestsUse() throws {
+        let (pool, path) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertTrue(DemoSeed.activate(pool))
+        let threadLabelIds = Set(try pool.read { try String.fetchAll($0, sql: "SELECT labelIds FROM message") }
+            .flatMap { $0.split(separator: " ").map(String.init) }
+            .filter { $0.hasPrefix("Label_") })
         let full = DemoSeed.labels(environment: [:])
         let small = DemoSeed.labels(environment: ["DREAMAIL_DEMO_LABELS": "small"])
         XCTAssertEqual(Set(small.map(\.id)), DemoSeed.smallLabelIds,
                        "every short-list id exists in the full list")
-        XCTAssertTrue(DemoSeed.threadLabelIds.isSubset(of: DemoSeed.smallLabelIds),
-                      "a demo thread's label is missing: \(DemoSeed.threadLabelIds.subtracting(DemoSeed.smallLabelIds))")
-        XCTAssertFalse(DemoSeed.threadLabelIds.isEmpty)
+        XCTAssertTrue(threadLabelIds.isSubset(of: DemoSeed.smallLabelIds),
+                      "a demo thread's label is missing: \(threadLabelIds.subtracting(DemoSeed.smallLabelIds))")
+        XCTAssertFalse(threadLabelIds.isEmpty)
         for label in small {
             let original = full.first { $0.id == label.id }
             XCTAssertEqual(original?.name, label.name, label.id)

@@ -6,7 +6,7 @@ import XCTest
 /// thread row are drawn in the stored colour while their list is focused
 /// in the key window, with glyph and title in white or black as the
 /// contrast rule picks (`AccentPalette.onFill`): white on red, black on
-/// the red swatch #eb5757. Unfocused and inactive-window selections stay
+/// yellow. Unfocused and inactive-window selections stay
 /// the system grey.
 ///
 /// Reads the rendered pixels of window-only screenshots, like
@@ -24,14 +24,15 @@ final class AccentColorUITests: XCTestCase {
     }
 
     private static let red = Accent(hex: "#d0201a", rgb: (208, 32, 26), ink: (255, 255, 255))
+    private static let yellow = Accent(hex: "#ffcc00", rgb: (255, 204, 0), ink: (0, 0, 0))
 
     func testRedAccentPaintsSelectionsWithWhiteInk() throws {
         try checkSelections(Self.red)
     }
 
-    // No yellow launch: the Settings test below renders black ink (the
-    // #eb5757 swatch) in the sidebar and the thread list, and black on
-    // #ffcc00 is the rule's business (AccentColorTests, `spread`).
+    func testYellowAccentPaintsSelectionsWithBlackInk() throws {
+        try checkSelections(Self.yellow)
+    }
 
     /// The real feature path: pick a swatch in Settings → Appearance, and
     /// the main window's selected sidebar and thread rows are repainted

@@ -10,8 +10,8 @@ final class SidebarLabelTreeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
-        // The short label list: a ~70-row sidebar makes every query slow.
-        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
+        // No DREAMAIL_DEMO_LABELS=small: the label tree is checked with
+        // the demo's full, long label list (Vendors below the fold).
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",

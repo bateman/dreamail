@@ -176,7 +176,8 @@ enum DemoSeed {
     /// only) keeps just the ones the UI tests and the demo threads use, with
     /// their ids, names and order: every accessibility snapshot of a ~70-row
     /// sidebar is slow, and rows below the fold need scrolling. Without it
-    /// (`make run`, `make demo`, the label picker's UI tests) the full list.
+    /// (`make run`, `make demo`, the label picker's and the sidebar label
+    /// tree's UI tests) the full list.
     static func labels(environment: [String: String]) -> [DemoLabel] {
         guard environment["DREAMAIL_DEMO_LABELS"] == "small" else { return userLabels }
         return userLabels.filter { smallLabelIds.contains($0.id) }
@@ -192,12 +193,6 @@ enum DemoSeed {
         "Label_clients", "Label_clients_acme", "Label_clients_northwind", "Label_clients_brightloop",
         "Label_vendors", "Label_vendors_aws", "Label_vendors_stripe",
     ]
-
-    /// Every user label id a demo message carries.
-    static var threadLabelIds: Set<String> {
-        Set(messages().flatMap { $0.labelIds.split(separator: " ").map(String.init) }
-            .filter { $0.hasPrefix("Label_") })
-    }
 
     /// Deliberately long list with near-duplicate clusters so the "l" picker's
     /// type-to-filter (and scroll-past-the-fold) can be exercised in demo mode.
