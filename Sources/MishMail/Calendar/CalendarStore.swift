@@ -13,7 +13,9 @@ struct CalendarGrantRecord: Codable, FetchableRecord, PersistableRecord, Equatab
     var grant: CalendarGrant { CalendarGrant(grantedScopeField: scopes) }
 }
 
-/// A calendar of the account's Google calendar list.
+/// A calendar the user chose to count for availability and conflicts.
+/// Only chosen calendars are stored; the full list is read from Google
+/// when the user changes the choice. The primary one is chosen by default.
 struct CalendarSourceRecord: Codable, FetchableRecord, PersistableRecord, Equatable {
     static let databaseTableName = "calendarSource"
     var accountId: String
@@ -21,55 +23,50 @@ struct CalendarSourceRecord: Codable, FetchableRecord, PersistableRecord, Equata
     var summary: String?
     var timeZone: String?
     var isPrimary: Bool
+    /// "freeBusyReader" | "reader" | "writer" | "owner": decides whether
+    /// its events can be read or only its busy periods.
     var accessRole: String?
-    /// Whether its events count for availability. Defaults to what Google
-    /// Calendar shows; which calendars count is a pending design decision.
-    var isSelected: Bool
-    /// Where the next incremental sync starts; nil = full sync next.
+    /// Unused in this release (no agenda): where an incremental sync
+    /// would resume, kept so a later agenda needs no schema change.
     var syncToken: String?
+
+    init(accountId: String, entry: GCalendarListEntry) {
+        self.accountId = accountId
+        self.calendarId = entry.id
+        self.summary = entry.summary
+        self.timeZone = entry.timeZone
+        self.isPrimary = entry.primary ?? false
+        self.accessRole = entry.accessRole
+        self.syncToken = nil
+    }
+
+    /// Event details (and so the invitation's own UID) are readable; a
+    /// free/busy-only calendar gives busy periods.
+    var canReadEvents: Bool { accessRole != "freeBusyReader" }
 }
 
-/// One event instance (recurrences expanded by Google). Only what the
-/// availability check and the invitation card need.
-struct CalendarEventRecord: Codable, FetchableRecord, PersistableRecord, Equatable {
-    static let databaseTableName = "calendarEvent"
+/// Where the event of one invitation message is in the user's Google
+/// Calendar, and the user's answer there. One row per message; it goes
+/// with the message (and so with its thread and account).
+struct CalendarInviteEventRecord: Codable, FetchableRecord, PersistableRecord, Equatable {
+    static let databaseTableName = "calendarInviteEvent"
+    var messageId: String
     var accountId: String
     var calendarId: String
     var eventId: String
-    var iCalUID: String?
-    var summary: String?
-    var status: String?
-    var transparency: String?
+    var iCalUID: String
+    /// "needsAction" | "accepted" | "declined" | "tentative", as Google has it.
     var selfResponse: String?
-    var startAt: Date
-    var endAt: Date
-    var isAllDay: Bool
-
-    init(accountId: String, calendarId: String, event: GCalendarEvent, span: CalendarSpan) {
-        self.accountId = accountId
-        self.calendarId = calendarId
-        self.eventId = event.id
-        self.iCalUID = event.iCalUID
-        self.summary = event.summary
-        self.status = event.status
-        self.transparency = event.transparency
-        self.selfResponse = event.selfResponse
-        self.startAt = span.start
-        self.endAt = span.end
-        self.isAllDay = span.isAllDay
-    }
-
-    var busy: CalendarBusy {
-        CalendarBusy(span: CalendarSpan(start: startAt, end: endAt, isAllDay: isAllDay),
-                     source: .event(calendarId: calendarId, eventId: eventId, summary: summary))
-    }
+    var checkedAt: Date
 }
 
 /// The Calendar tables (migration v61) and their writes. Everything
-/// cascades from `account`, and events from their calendar, so removing an
-/// account or withdrawing Calendar leaves nothing behind; the database's
-/// `secure_delete` and WAL scrub (`DeletionObserver`) then overwrite the
-/// deleted rows (DEC-019). Nothing here talks to Google.
+/// cascades from `account`, invitation events also from their `message`,
+/// so removing an account, a message or its thread, or disconnecting
+/// Calendar leaves nothing behind; the database's `secure_delete` and WAL
+/// scrub (`DeletionObserver`) then overwrite the deleted rows (DEC-019).
+/// No event of the agenda is stored: availability is computed in memory.
+/// Nothing here talks to Google.
 enum CalendarStore {
     static func createTables(_ db: Database) throws {
         try db.create(table: CalendarGrantRecord.databaseTableName) { t in
@@ -86,132 +83,105 @@ enum CalendarStore {
             t.column("timeZone", .text)
             t.column("isPrimary", .boolean).notNull().defaults(to: false)
             t.column("accessRole", .text)
-            t.column("isSelected", .boolean).notNull().defaults(to: true)
             t.column("syncToken", .text)
             t.primaryKey(["accountId", "calendarId"])
         }
-        try db.create(table: CalendarEventRecord.databaseTableName) { t in
-            t.column("accountId", .text).notNull()
+        try db.create(table: CalendarInviteEventRecord.databaseTableName) { t in
+            t.primaryKey("messageId", .text)
+                .references("message", onDelete: .cascade)
+            t.column("accountId", .text).notNull().indexed()
                 .references("account", onDelete: .cascade)
             t.column("calendarId", .text).notNull()
             t.column("eventId", .text).notNull()
-            t.column("iCalUID", .text)
-            t.column("summary", .text)
-            t.column("status", .text)
-            t.column("transparency", .text)
+            t.column("iCalUID", .text).notNull()
             t.column("selfResponse", .text)
-            t.column("startAt", .datetime).notNull()
-            t.column("endAt", .datetime).notNull()
-            t.column("isAllDay", .boolean).notNull().defaults(to: false)
-            t.primaryKey(["accountId", "calendarId", "eventId"])
-            t.foreignKey(["accountId", "calendarId"], references: CalendarSourceRecord.databaseTableName,
-                         onDelete: .cascade)
+            t.column("checkedAt", .datetime).notNull()
         }
-        // The overlap query: one account, events ending after a start.
-        try db.create(index: "calendarEvent_on_accountId_endAt",
-                      on: CalendarEventRecord.databaseTableName, columns: ["accountId", "endAt"])
-        try db.create(index: "calendarEvent_on_accountId_iCalUID",
-                      on: CalendarEventRecord.databaseTableName, columns: ["accountId", "iCalUID"])
     }
 
     // MARK: Grant
 
-    static func saveGrant(_ db: Database, accountId: String, scopes: String, at date: Date) throws {
+    /// A new grant. The first one also chooses the primary calendar.
+    static func saveGrant(_ db: Database, accountId: String, scopes: String, at date: Date,
+                          calendars: [GCalendarListEntry] = []) throws {
+        let first = try CalendarGrantRecord.fetchOne(db, key: accountId) == nil
         try CalendarGrantRecord(accountId: accountId, scopes: scopes, grantedAt: date).save(db)
+        if first, try chosenCalendars(db, accountId: accountId).isEmpty {
+            try setChosenCalendars(db, accountId: accountId, defaultChoice(from: calendars))
+        }
     }
 
     static func grant(_ db: Database, accountId: String) throws -> CalendarGrant? {
         try CalendarGrantRecord.fetchOne(db, key: accountId)?.grant
     }
 
-    /// The user withdrew Calendar (or Google refused the grant): the grant,
-    /// the calendars and every stored event of the account go. The caller
-    /// deletes the Keychain token (`CalendarAuthorization.keychainKey`).
+    /// The user disconnected Calendar (or Google refused the grant): the
+    /// grant, the chosen calendars and the invitation events of the account
+    /// go. The caller deletes the Keychain token.
     static func forget(_ db: Database, accountId: String) throws {
         _ = try CalendarGrantRecord.deleteOne(db, key: accountId)
         _ = try CalendarSourceRecord.filter(Column("accountId") == accountId).deleteAll(db)
+        _ = try CalendarInviteEventRecord.filter(Column("accountId") == accountId).deleteAll(db)
     }
 
-    // MARK: Calendars
+    // MARK: Chosen calendars
 
-    /// Mirrors the calendar list. A calendar no longer listed goes with its
-    /// events; a kept one keeps its sync token and the user's selection.
-    static func replaceCalendars(_ db: Database, accountId: String,
-                                 with entries: [GCalendarListEntry]) throws {
-        let existing = try CalendarSourceRecord
-            .filter(Column("accountId") == accountId).fetchAll(db)
-        let byId = Dictionary(existing.map { ($0.calendarId, $0) }, uniquingKeysWith: { a, _ in a })
-        let listed = Set(entries.map(\.id))
-        for gone in existing where !listed.contains(gone.calendarId) {
-            try gone.delete(db)
-        }
+    /// The primary calendar; with no primary in the list, the calendar the
+    /// API calls "primary" (always the user's own).
+    static func defaultChoice(from list: [GCalendarListEntry]) -> [GCalendarListEntry] {
+        let primary = list.filter { $0.primary == true }
+        return primary.isEmpty
+            ? [GCalendarListEntry(id: "primary", summary: nil, timeZone: nil, primary: true,
+                                  accessRole: "owner", selected: true)]
+            : primary
+    }
+
+    static func chosenCalendars(_ db: Database, accountId: String) throws -> [CalendarSourceRecord] {
+        try CalendarSourceRecord.filter(Column("accountId") == accountId)
+            .order(Column("isPrimary").desc, Column("calendarId")).fetchAll(db)
+    }
+
+    /// Replaces the user's choice. Any calendar the user can see may count,
+    /// read-only, shared and subscribed ones included.
+    static func setChosenCalendars(_ db: Database, accountId: String,
+                                   _ entries: [GCalendarListEntry]) throws {
+        _ = try CalendarSourceRecord.filter(Column("accountId") == accountId).deleteAll(db)
         for entry in entries {
-            let old = byId[entry.id]
-            try CalendarSourceRecord(
-                accountId: accountId, calendarId: entry.id, summary: entry.summary,
-                timeZone: entry.timeZone, isPrimary: entry.primary ?? false,
-                accessRole: entry.accessRole,
-                isSelected: old?.isSelected ?? (entry.selected ?? (entry.primary ?? false)),
-                syncToken: old?.syncToken).save(db)
+            try CalendarSourceRecord(accountId: accountId, entry: entry).save(db)
         }
     }
 
-    // MARK: Events
-
-    /// Applies one sync result. A full sync (no previous token) replaces
-    /// every stored event of the calendar; an incremental one upserts and
-    /// deletes cancelled events. Unreadable times are dropped.
-    static func applySync(_ db: Database, accountId: String, calendarId: String,
-                          result: CalendarSyncResult, isFullSync: Bool,
-                          fallback: TimeZone = .current) throws {
-        guard var source = try CalendarSourceRecord.fetchOne(
-            db, key: ["accountId": accountId, "calendarId": calendarId]) else { return }
-        let events = CalendarEventRecord.filter(Column("accountId") == accountId
-                                                && Column("calendarId") == calendarId)
-        if isFullSync { _ = try events.deleteAll(db) }
-        let zone = result.calendarTimeZone ?? source.timeZone
-        for event in result.events {
-            let key: [String: (any DatabaseValueConvertible)?] = [
-                "accountId": accountId, "calendarId": calendarId, "eventId": event.id]
-            guard event.status != "cancelled",
-                  let span = CalendarSpan.from(start: event.start, end: event.end,
-                                               calendarTimeZone: zone, fallback: fallback) else {
-                _ = try CalendarEventRecord.deleteOne(db, key: key)
-                continue
+    /// After reading the calendar list again: a chosen calendar that is no
+    /// longer listed (unsubscribed, deleted) stops counting; the others get
+    /// their current name, zone and access.
+    static func reconcileChosenCalendars(_ db: Database, accountId: String,
+                                         with list: [GCalendarListEntry]) throws {
+        let listed = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for var chosen in try chosenCalendars(db, accountId: accountId) {
+            // "primary" is the API's alias for the user's own calendar.
+            if let entry = listed[chosen.calendarId] {
+                chosen.summary = entry.summary
+                chosen.timeZone = entry.timeZone
+                chosen.accessRole = entry.accessRole
+                try chosen.update(db)
+            } else if chosen.calendarId != "primary" {
+                try chosen.delete(db)
             }
-            try CalendarEventRecord(accountId: accountId, calendarId: calendarId,
-                                    event: event, span: span).save(db)
         }
-        source.syncToken = result.nextSyncToken
-        if let zone { source.timeZone = zone }
-        try source.update(db)
     }
 
-    /// Google answered 410: the token is gone, so are the stored events.
-    static func resetSync(_ db: Database, accountId: String, calendarId: String) throws {
-        _ = try CalendarEventRecord.filter(Column("accountId") == accountId
-                                           && Column("calendarId") == calendarId).deleteAll(db)
-        try db.execute(sql: """
-            UPDATE calendarSource SET syncToken = NULL WHERE accountId = ? AND calendarId = ?
-            """, arguments: [accountId, calendarId])
+    // MARK: Invitation events
+
+    static func saveInviteEvent(_ db: Database, _ record: CalendarInviteEventRecord) throws {
+        try record.save(db)
     }
 
-    /// Busy events of the selected calendars overlapping `window`, ready
-    /// for `CalendarAvailability.check`. Same exclusions as
-    /// `CalendarAvailability.busy`.
-    static func busy(_ db: Database, accountId: String, overlapping window: DateInterval,
-                     excludingUID inviteUID: String?) throws -> [CalendarBusy] {
-        let rows = try CalendarEventRecord.fetchAll(db, sql: """
-            SELECT e.* FROM calendarEvent e
-            JOIN calendarSource s ON s.accountId = e.accountId AND s.calendarId = e.calendarId
-            WHERE e.accountId = ? AND s.isSelected = 1
-              AND e.endAt >= ? AND e.startAt <= ?
-              AND IFNULL(e.status, '') != 'cancelled'
-              AND IFNULL(e.transparency, '') != 'transparent'
-              AND IFNULL(e.selfResponse, '') != 'declined'
-            ORDER BY e.startAt
-            """, arguments: [accountId, window.start, window.end])
-        return rows.filter { inviteUID == nil || inviteUID == "" || $0.iCalUID != inviteUID }
-            .map(\.busy)
+    static func inviteEvent(_ db: Database, messageId: String) throws -> CalendarInviteEventRecord? {
+        try CalendarInviteEventRecord.fetchOne(db, key: messageId)
+    }
+
+    /// The event was not (or no longer) found in Google Calendar.
+    static func forgetInviteEvent(_ db: Database, messageId: String) throws {
+        _ = try CalendarInviteEventRecord.deleteOne(db, key: messageId)
     }
 }

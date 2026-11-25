@@ -64,8 +64,8 @@ struct CalendarGrant: Equatable, Sendable {
                                    CalendarScope.readOnly, CalendarScope.full])
     }
 
-    /// events.patch of the user's own attendee response.
-    var canRespond: Bool {
+    /// events.patch (the user's own answer) and events.import.
+    var canWriteEvents: Bool {
         !scopes.isDisjoint(with: [CalendarScope.events, CalendarScope.full])
     }
 
@@ -79,14 +79,14 @@ struct CalendarGrant: Equatable, Sendable {
         switch capability {
         case .availability: return canReadAvailability
         case .events: return canReadEvents
-        case .respond: return canRespond
+        case .writeEvents: return canWriteEvents
         case .calendarList: return canListCalendars
         }
     }
 }
 
 enum CalendarCapability: String, Sendable {
-    case availability, events, respond, calendarList
+    case availability, events, writeEvents, calendarList
 }
 
 /// One account's Calendar state, as every caller must handle it.

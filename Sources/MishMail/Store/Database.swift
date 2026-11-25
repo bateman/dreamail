@@ -2794,10 +2794,19 @@ final class AppDatabase: @unchecked Sendable {
             try InlineImageCache.createTable(db)
         }
 
+        // v55 (after v54, the inline-image cache): the persistent remote-image
+        // cache. The bytes of each https image of a message opened with remote
+        // images allowed, keyed by account, message and URL digest, so a later
+        // open shows them without asking the sender again. Cascades with its
+        // message and account (`RemoteImageCache`).
+        m.registerMigration("v55") { db in
+            try RemoteImageCache.createTable(db)
+        }
+
         // v61 (Google Calendar, step 4A; v55–v60 belong to other open
-        // branches and register before it): the Calendar grant, calendars
-        // and event instances, all cascading from the account
-        // (`CalendarStore`). Written only by the Calendar integration, which
+        // branches and register before it): the Calendar grant, the chosen
+        // calendars and each invitation's event, cascading from the account
+        // (invitation events also from their message) (`CalendarStore`). Written only by the Calendar integration, which
         // is off unless the build turns it on (`CalendarFeatures`).
         m.registerMigration("v61") { db in
             try CalendarStore.createTables(db)

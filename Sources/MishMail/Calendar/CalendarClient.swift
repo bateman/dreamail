@@ -377,6 +377,29 @@ actor CalendarClient {
         throw CalendarError.badResponse
     }
 
+    /// The events of one calendar with this iCalendar UID: the invitation's
+    /// own event when Google put it on the calendar. Cancelled ones are
+    /// left out.
+    func events(calendarId: String, iCalUID: String) async throws -> [GCalendarEvent] {
+        try require(.events)
+        let result = try await pagedEvents(calendarId: calendarId, query: ["iCalUID": iCalUID])
+        return result.events.filter { $0.status != "cancelled" }
+    }
+
+    /// "Add to calendar" for an invitation Google did not put on the
+    /// calendar: `events.import` keeps the invitation's UID, so the organizer's
+    /// later updates match it. The body is `CalendarInvitePlan.importBody`.
+    func importEvent(calendarId: String, facts: CalendarInviteFacts,
+                     zone: TimeZone) async throws -> GCalendarEvent {
+        try require(.writeEvents)
+        guard let body = CalendarInvitePlan.importBody(facts, zone: zone) else {
+            throw CalendarError.badResponse
+        }
+        let data = try await send("POST", "/calendars/\(Self.pathSegment(calendarId))/events/import",
+                                  jsonBody: body)
+        return try Self.decode(GCalendarEvent.self, data)
+    }
+
     // MARK: Free/busy
 
     func freeBusy(calendarIds: [String], in interval: DateInterval) async throws -> [CalendarFreeBusy] {
@@ -408,7 +431,7 @@ actor CalendarClient {
     /// other field of every attendee is kept as Google sent it.
     func respond(calendarId: String, eventId: String, response: CalendarResponse,
                  sendUpdates: CalendarSendUpdates) async throws {
-        try require(.respond)
+        try require(.writeEvents)
         let path = "/calendars/\(Self.pathSegment(calendarId))/events/\(Self.pathSegment(eventId))"
         let current = try await send("GET", path, query: ["fields": "attendees"])
         let attendees = try Self.attendees(settingSelfResponse: response, in: current)

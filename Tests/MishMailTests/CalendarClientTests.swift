@@ -172,7 +172,7 @@ final class CalendarClientTests: XCTestCase {
         let c = client(net, scopes: [CalendarScope.eventsFreeBusy], keychain: keychain)
         await assertError(.notGranted(.calendarList)) { _ = try await c.calendars() }
         await assertError(.notGranted(.events)) { _ = try await c.events(calendarId: "p", in: self.window) }
-        await assertError(.notGranted(.respond)) {
+        await assertError(.notGranted(.writeEvents)) {
             try await c.respond(calendarId: "p", eventId: "e", response: .accepted, sendUpdates: .none)
         }
         XCTAssertEqual(net.requests.count, 0)
@@ -187,14 +187,14 @@ final class CalendarClientTests: XCTestCase {
         XCTAssertEqual(partial.scopes, [CalendarScope.eventsFreeBusy], "non-Calendar scopes are ignored")
         XCTAssertTrue(partial.canReadAvailability)
         XCTAssertFalse(partial.canReadEvents)
-        XCTAssertFalse(partial.canRespond)
+        XCTAssertFalse(partial.canWriteEvents)
         XCTAssertFalse(partial.canListCalendars)
         XCTAssertTrue(CalendarGrant(grantedScopeField: nil).isEmpty)
         XCTAssertTrue(CalendarGrant(grantedScopeField: "").isEmpty)
         XCTAssertFalse(CalendarGrant(scopes: [CalendarScope.events]).canReadAvailability,
                        "freebusy.query does not accept calendar.events")
         XCTAssertTrue(CalendarGrant(scopes: [CalendarScope.readOnly]).canListCalendars)
-        XCTAssertFalse(CalendarGrant(scopes: [CalendarScope.readOnly]).canRespond)
+        XCTAssertFalse(CalendarGrant(scopes: [CalendarScope.readOnly]).canWriteEvents)
     }
 
     func testAccessStateTreatsEveryMissingPieceAsNotGranted() {

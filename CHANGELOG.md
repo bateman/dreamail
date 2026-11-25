@@ -6,6 +6,13 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Remote images are kept after the first open.** Remote images of messages
+  you open with images allowed are now kept encrypted with the message, so
+  later opens (also after a relaunch) usually show them without asking the
+  sender. The first time you open such a message, the sender is asked twice for
+  each image (once by the message view, once by MishMail to keep a copy);
+  images a sender makes uncacheable still load from the sender every time.
+  Nothing is downloaded for mail you have not opened.
 - **Accent colour setting.** Settings ▸ Appearance ▸ Accent color picks the
   colour for selected rows (sidebar, Settings, message list; macOS 26 and
   later), buttons, links, badges and highlights, live in every window; Default
