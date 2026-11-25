@@ -112,7 +112,7 @@ enum AccountLifecycle {
         try RemoteImageCache.forget(db, account: id)
         // Answers sent to calendar invites: same.
         try CalendarRSVPStore.forget(db, account: id)
-        // Calendar grant, chosen calendars, invitation events: same.
+        // Calendar grant and chosen calendars: same.
         try CalendarStore.forget(db, accountId: id)
         // The account's mail cascades with the account row.
         let messages = try Int.fetchOne(

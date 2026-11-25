@@ -6,6 +6,23 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **OpenPGP groundwork (off).** Recognition of OpenPGP/MIME and inline
+  messages, exact signed-byte extraction, and the security and rendering rules,
+  behind the `MISHMAIL_PGP` build switch (empty by default). No library, no
+  interface and no change in behaviour yet.
+- **Gmail filters can be edited.** Filters can now be created, edited and
+  deleted in Settings → Gmail filters, with an approximate preview of the
+  matching mail on this Mac and a confirmation before saving a filter that
+  deletes mail or hides it from the Inbox. Gmail has no update call, so an edit
+  creates the new filter and then deletes the old one; if the delete fails both
+  are listed. Forwarding filters are still edited in Gmail.
+- **More Gmail shortcuts.** Mute (`m`), mark as important or not important (`+`
+  or `=`, `-`) and move to (`v`, which also leaves the current label or Trash),
+  each with undo, also in the Message menu, the command palette and the
+  conversation's More menu. Inside a conversation: next and previous message
+  (`n`, `p`) and expand or collapse all (`;`, `:`). The `?` help lists the
+  compose formatting keys. Mute relies on a Gmail label the API may refuse; if
+  it does, the conversation comes back with a message.
 - **Label colors on Gmail.** In the label organizer you can change a label's
   color on Gmail (from Gmail's own palette, so the web and the phone show it
   too) or remove it, separately from the Mac-only color, which still wins on

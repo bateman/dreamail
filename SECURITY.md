@@ -32,6 +32,11 @@ Appearance → Load remote images: Always; Ask each time and VIP senders are
 stricter). Mail in Spam and conversations that were not opened (including
 neighbour pre-render) never load them without a click.
 
+Opening a message means showing its body: a click on its row, the `n` and
+`p` keys (they open the message they move to) and `;` (expand all). One `;`
+opens every message of the conversation, so under "Always" it loads the
+remote images of all of them at once.
+
 **Cached per message.** The first time a message is opened with its remote
 images allowed, it shows them exactly as before (WebKit loads them live),
 and MishMail's own client downloads each cacheable image of that message in
@@ -158,11 +163,10 @@ it belongs to that same account.
   `calendar.events.freebusy` and `calendar.calendarlist.readonly`. MishMail
   changes an event only to write the user's own answer or to add an
   invitation the user chose to add.
-- **Stored:** only the calendars the user chose (the primary one by default)
-  and, for each invitation, where its event is in Google Calendar with
-  Google's organizer and time. Encrypted, deleted with the account, the
-  invitation's message or thread, or when Calendar is disconnected, under
-  the rules below. No agenda is kept; availability is computed in memory.
+- **Stored:** only the grant and the calendars the user chose (the primary
+  one by default). Encrypted, deleted with the account or when Calendar is
+  disconnected, under the rules below. No event is stored: availability and
+  where an invitation's event is in Google Calendar are computed in memory.
 - **Answers:** the iTIP e-mail is always sent. The answer is also written on
   the user's calendar (with Google asked to notify nobody) only when Google's
   event has the invitation's UID, organizer *and* time, so a forged

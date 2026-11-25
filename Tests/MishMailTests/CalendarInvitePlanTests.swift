@@ -21,11 +21,14 @@ final class CalendarInvitePlanTests: XCTestCase {
     }
 
     /// As `locate` records Google's event: its organizer and its time.
+    /// `span` defaults to the invitation's own time; `withoutTime` gives a
+    /// record whose time Google did not give (nil span).
     private func located(_ calendarId: String = "primary", organizer: String? = "Org@y.com",
-                         span: CalendarSpan? = nil, uid: String = "uid-1@google.com") -> CalendarInviteEventRecord {
+                         span: CalendarSpan? = nil, withoutTime: Bool = false,
+                         uid: String = "uid-1@google.com") -> CalendarInviteEventRecord {
         CalendarInviteEventRecord(messageId: "a@x.com:m1", accountId: "a@x.com", calendarId: calendarId,
                                   eventId: "ev1", iCalUID: uid, organizerEmail: organizer,
-                                  span: span ?? meeting, checkedAt: Date())
+                                  span: withoutTime ? nil : (span ?? meeting), checkedAt: Date())
     }
 
     private func source(_ id: String, primary: Bool = false, role: String = "owner") -> CalendarSourceRecord {
@@ -82,7 +85,7 @@ final class CalendarInvitePlanTests: XCTestCase {
                        "another organizer: e-mail only")
         XCTAssertEqual(CalendarRSVPRoute.route(for: facts(), event: located(organizer: nil), canWrite: true),
                        .emailOnly, "Google gave no organizer: no match")
-        XCTAssertEqual(CalendarRSVPRoute.route(for: facts(), event: located(span: nil), canWrite: true),
+        XCTAssertEqual(CalendarRSVPRoute.route(for: facts(), event: located(withoutTime: true), canWrite: true),
                        .emailOnly)
         XCTAssertEqual(CalendarRSVPRoute.route(for: facts(), event: located(uid: "other"), canWrite: true),
                        .emailOnly)

@@ -22,6 +22,16 @@ final class LabelPickerState: ObservableObject {
     // True once arrows moved the highlight; space then toggles the
     // highlighted label instead of typing into the filter. Typing resets it.
     var navigated = false
+    /// `l` toggles labels; `v` (Gmail's Move to) adds one and leaves the inbox.
+    enum Mode { case label, move }
+    @Published var mode = Mode.label
+    /// Move mode: the conversations the move applies to, fixed when the
+    /// picker opens (the toolbar's own conversation, or the key's targets),
+    /// so a selection change while it is open cannot redirect the move.
+    var moveTargetIds: [String] = []
+    /// Changes on every open, so a label created for one picker session
+    /// cannot be applied by a later one.
+    var session = UUID()
 }
 
 /// List-row focus (highlight), split out of MailStore so holding ↓ / j only
@@ -423,10 +433,13 @@ final class MailStore {
     /// Open the label picker with fresh state — every entry point (shortcut,
     /// command palette, toolbar/"Add category") must go through here so a
     /// stale query/highlight from the last use never leaks in.
-    func openLabelPicker() {
+    func openLabelPicker(mode: LabelPickerState.Mode = .label, moveTargetIds: [String] = []) {
         labelPicker.query = ""
         labelPicker.highlight = 0
         labelPicker.navigated = false
+        labelPicker.mode = mode
+        labelPicker.moveTargetIds = mode == .move ? moveTargetIds : []
+        labelPicker.session = UUID()
         mailboxOverlay = .labels
     }
     var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
@@ -824,16 +837,19 @@ final class MailStore {
         computeVIPThreadIds(threads: threads, activeVIP: activeVIP)
     }
 
-    // MARK: - Gmail filters (read-only cache)
+    // MARK: - Gmail filters (in-memory cache; edits in MailStore+Filters)
 
+    /// Per-account Gmail filters and load errors. Written here and by the
+    /// filter edits in MailStore+Filters.swift; dropped with the account.
+    var filterCache = GmailFilterCache()
     /// Per-account Gmail filters, loaded lazily for Settings and for the
     /// "matching filters" disclosure under each message card. Nil entry means
     /// not yet attempted; empty array means loaded and the account has none.
-    private(set) var filtersByAccount: [String: [GFilter]] = [:]
+    var filtersByAccount: [String: [GFilter]] { filterCache.filters }
     /// Human-readable load failure per account (scope missing, network, …).
     /// Cleared on success. On transient failure we keep any previous cache so
     /// matching-filter sections don't vanish because of a blip.
-    private(set) var filtersLoadError: [String: String] = [:]
+    var filtersLoadError: [String: String] { filterCache.loadErrors }
     /// Accounts currently mid-fetch — UI can show a spinner. Backed by a
     /// refcount so overlapping force+lazy loads don't drop the spinner early.
     private(set) var filtersLoading: Set<String> = []
@@ -849,8 +865,7 @@ final class MailStore {
     /// fetch so Settings still gets a refresh.
     func ensureFiltersLoaded(for accountId: String, force: Bool = false) async {
         guard !demoMode else {
-            filtersByAccount[accountId] = []
-            filtersLoadError[accountId] = nil
+            filterCache.setDemo(account: accountId)
             return
         }
         if !force, filtersByAccount[accountId] != nil { return }
@@ -899,21 +914,22 @@ final class MailStore {
     }
 
     private func fetchFilters(accountId: String) async {
-        let previous = filtersByAccount[accountId]
         let client = client(for: accountId)
+        // An edit that lands while this read is in flight wins over it.
+        let revision = filterCache.revision(accountId)
         do {
             let filters = try await client.listFilters()
-            filtersByAccount[accountId] = filters
-            filtersLoadError[accountId] = nil
-        } catch GmailError.http(403, _) {
-            filtersLoadError[accountId] =
-                "MishMail doesn't have permission to read this account's filters yet. Sign in to it again with Add Google Account… (Accounts pane) to grant it; the account and its mail stay as they are."
-            // Keep any previous good cache; only leave the slot empty when we
-            // never had one (so UI can show the scope error).
-            if previous == nil { filtersByAccount[accountId] = nil }
+            // The account may have been removed while the list was in flight.
+            guard isKnownAccount(accountId) else { return }
+            filterCache.loaded(filters, account: accountId, revision: revision)
         } catch {
-            filtersLoadError[accountId] = error.localizedDescription
-            if previous == nil { filtersByAccount[accountId] = nil }
+            guard isKnownAccount(accountId) else { return }
+            let failure = GmailFilterError(error)
+            // Any previous good list stays; a never-loaded slot stays empty
+            // so Settings shows the error.
+            filterCache.loadFailed(failure == .missingScope
+                ? "MishMail doesn't have permission to read this account's filters yet. Sign in to it again with Add Google Account… (Accounts pane) to grant it; the account and its mail stay as they are."
+                : failure.localizedDescription, account: accountId)
         }
     }
 
@@ -2056,8 +2072,7 @@ struct ComposeRequest: Identifiable {
         reloadScheduledSends()
         reloadLocalDrafts()
         sendIdentities = []
-        filtersByAccount[DemoSeed.account] = nil
-        filtersLoadError[DemoSeed.account] = nil
+        filterCache.forget(account: DemoSeed.account)
         return true
     }
 
@@ -3818,8 +3833,21 @@ struct ComposeRequest: Identifiable {
     var hasPendingShortcutPrefix: Bool { keyRouter.hasPendingPrefix() }
 
     /// Set by ContentView: runs the commands whose effect depends on what
-    /// the window shows (`open`, `backToList`, `[` / `]`).
+    /// the window shows (`open`, `backToList`, `[` / `]`, `n` / `p`, `;` / `:`).
     @ObservationIgnored var viewCommandHandler: ((ShortcutCommand) -> Void)?
+
+    /// `n` / `p` / `;` / `:` for the open conversation. ThreadDetailView acts
+    /// on each new request (a fresh id, so the same key twice runs twice).
+    struct ConversationKeyRequest: Equatable {
+        let id = UUID()
+        let threadId: String
+        let action: MessageNavigation.Action
+    }
+    private(set) var conversationKeyRequest: ConversationKeyRequest?
+    func requestConversationKey(_ action: MessageNavigation.Action) {
+        guard let threadId = openedThreadId else { return }
+        conversationKeyRequest = .init(threadId: threadId, action: action)
+    }
 
     /// Returns true if the key was handled. Gmail-style single keys,
     /// including the `g` then … (go to) and `*` then … (select) sequences.
@@ -3890,7 +3918,12 @@ struct ComposeRequest: Identifiable {
         case .label: if selectedThread != nil { openLabelPicker() }
         case .undo: if let undo = undoAction { undo.undo() }
         case .compose: openCompose(ComposeRequest(replyTo: nil))
-        case .open, .backToList, .archiveNext, .archivePrevious:
+        case .mute: toggleMuteTargets()
+        case .markImportant: setImportantTargets(true)
+        case .markNotImportant: setImportantTargets(false)
+        case .moveTo: openMovePicker()
+        case .open, .backToList, .archiveNext, .archivePrevious,
+             .nextMessage, .previousMessage, .expandAll, .collapseAll:
             viewCommandHandler?(command)
         }
     }
@@ -3938,6 +3971,11 @@ struct ComposeRequest: Identifiable {
         }
         let accountId = thread.accountId
         let client = client(for: accountId)
+        // Move mode acts on the picker's targets as they were when the label
+        // was asked for, and only while that same picker is still open.
+        let mode = labelPicker.mode
+        let session = labelPicker.session
+        let moveIds = labelPicker.moveTargetIds
         Task {
             do {
                 let l = try await client.createLabel(name: name)
@@ -3955,7 +3993,16 @@ struct ComposeRequest: Identifiable {
                         .firstIndex(where: { $0.gmailLabelId == l.id }) {
                         self.labelPicker.highlight = idx
                     }
-                    self.toggleLabel(thread, labelId: l.id)
+                    switch mode {
+                    case .label: self.toggleLabel(thread, labelId: l.id)
+                    case .move:
+                        guard MovePickerRules.appliesCreatedLabel(
+                            pickerOpen: self.showLabelPicker,
+                            moveMode: self.labelPicker.mode == .move,
+                            currentSession: self.labelPicker.session,
+                            requestSession: session) else { return }
+                        self.moveThreads(ids: moveIds, toLabel: l.id, accountId: accountId)
+                    }
                 }
             } catch {
                 await MainActor.run { self.lastError = error.localizedDescription }

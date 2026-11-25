@@ -13,6 +13,9 @@ struct ShortcutsHelpView: View {
          ShortcutSequences.goTo.map { (key: "g \($0.key)", title: $0.title) }),
         ("Select (press *, then…)",
          ShortcutSequences.select.map { (key: "* \($0.key)", title: $0.title) }),
+        ("Formatting (in compose)",
+         ComposeFormatKeys.gmailReference.filter(\.supported)
+            .map { (key: $0.keys, title: $0.title) }),
         ("Other", [
             ("↑ / ↓", "Browse conversations"),
             ("⇧↑ / ⇧↓", "Select a range of conversations (also ⇧J / ⇧K)"),
