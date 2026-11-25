@@ -247,6 +247,103 @@ final class ThreadDerivationTests: XCTestCase {
                      "ghost inInbox+snooze must clear")
     }
 
+    /// Snoozed in MishMail, then moved back to Inbox in Gmail Web, on the
+    /// phone or on another Mac. Gmail had already confirmed the archive, so
+    /// INBOX coming back is a user wake: the snooze must clear, or the thread
+    /// stays hidden here while Gmail shows it in the Inbox.
+    func testInboxRestoredElsewhereClearsSnooze() throws {
+        let snooze = Date(timeIntervalSinceNow: 86_400)
+        let archived = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "")
+        var asleep = try XCTUnwrap(derive([archived]))
+        asleep.snoozeUntil = snooze
+        XCTAssertFalse(asleep.inInbox)
+
+        // Same snapshot (Gmail still archived): keep.
+        XCTAssertEqual(try XCTUnwrap(derive([archived], existing: asleep)).snoozeUntil, snooze)
+
+        let restored = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "INBOX")
+        let woken = try XCTUnwrap(derive([restored], existing: asleep))
+        XCTAssertNil(woken.snoozeUntil, "INBOX re-added on Gmail must wake")
+        XCTAssertTrue(woken.inInbox)
+    }
+
+    /// Before Gmail confirms the snooze, the messages still carry INBOX and
+    /// the row's labelIds too: that INBOX is the pending archive, not a wake.
+    func testUnconfirmedSnoozeKeepsDateWhileInboxStillOnGmail() throws {
+        let snooze = Date(timeIntervalSinceNow: 86_400)
+        let m1 = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "INBOX")
+        var justSnoozed = try XCTUnwrap(derive([m1]))
+        justSnoozed.snoozeUntil = snooze
+        justSnoozed.inInbox = false  // optimistic flag only; labelIds keeps INBOX
+        XCTAssertEqual(SyncEngine.preservedSnoozeUntil(
+            existing: justSnoozed, messages: [m1], accountId: account), snooze)
+    }
+
+    /// Wake (or unsnooze), then snooze again before the next sync. Gmail has
+    /// applied the wake's INBOX but not yet the new archive: that INBOX must
+    /// not read as "moved back to Inbox" and drop the new date.
+    func testResnoozeAfterWakeSurvivesTheSyncInBetween() throws {
+        let first = Date(timeIntervalSinceNow: -60)
+        let second = Date(timeIntervalSinceNow: 86_400)
+        let archived = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "")
+        var row = try XCTUnwrap(derive([archived]))
+        row.snoozeUntil = first  // confirmed snooze: labelIds without INBOX
+        ThreadUndo.unsnooze(&row)
+        XCTAssertTrue(row.labels.contains("INBOX"))
+        ThreadUndo.apply(.snooze(until: second), &row)
+        // Same message (same date): only its labels changed on Gmail.
+        var woken = archived
+        woken.labelIds = "INBOX"
+        let synced = try XCTUnwrap(derive([woken], existing: row))
+        XCTAssertEqual(synced.snoozeUntil, second)
+    }
+
+    /// Trashed or reported as spam (here or in Gmail Web) while snoozed: the
+    /// snooze must go, or the wake sweep would put INBOX back on discarded mail.
+    func testTrashOrSpamClearsSnooze() throws {
+        let snooze = Date(timeIntervalSinceNow: 86_400)
+        let archived = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "")
+        var asleep = try XCTUnwrap(derive([archived]))
+        asleep.snoozeUntil = snooze
+        for labels in ["TRASH", "SPAM"] {
+            let gone = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: labels)
+            XCTAssertNil(try XCTUnwrap(derive([gone], existing: asleep)).snoozeUntil, labels)
+        }
+        // A discarded draft (DRAFT TRASH) is not a trashed conversation.
+        let discarded = msg(id: "d1", from: account, daysAgo: 0, labels: "DRAFT TRASH")
+        XCTAssertEqual(SyncEngine.preservedSnoozeUntil(
+            existing: asleep, messages: [discarded, archived], accountId: account), snooze)
+    }
+
+    /// The wake sweep adds INBOX on Gmail; it must skip trash and spam rows
+    /// (a local trash is optimistic until history clears the snooze).
+    func testDueSnoozeSweepSkipsTrashAndSpam() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        let now = Date()
+        let base = try XCTUnwrap(derive([msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "")]))
+        try q.write { db in
+            try Account(id: self.account, displayName: "P", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
+            for (id, trash, spam, until) in [
+                ("due", false, false, now.addingTimeInterval(-60)),
+                ("future", false, false, now.addingTimeInterval(60)),
+                ("trash", true, false, now.addingTimeInterval(-60)),
+                ("spam", false, true, now.addingTimeInterval(-60)),
+            ] {
+                var t = base
+                t.id = "\(self.account):\(id)"
+                t.gmailThreadId = id
+                t.inTrash = trash
+                t.inSpam = spam
+                t.snoozeUntil = until
+                try t.insert(db)
+            }
+        }
+        let due = try q.read { try ThreadListQuery.dueSnoozes(now: now).fetchAll($0) }
+        XCTAssertEqual(due.map(\.gmailThreadId), ["due"])
+    }
+
     func testTrashedThread() throws {
         let t = try XCTUnwrap(derive([msg(id: "m1", from: "a@b.com", daysAgo: 0, labels: "TRASH")]))
         XCTAssertTrue(t.inTrash)

@@ -101,6 +101,9 @@ struct TokenResponse: Decodable {
     let access_token: String
     let expires_in: Int
     let refresh_token: String?
+    /// Space-separated scopes this token grants. The user may untick some
+    /// on the consent screen, so it can be fewer than were asked for.
+    var scope: String? = nil
 }
 
 enum OAuthError: LocalizedError {
@@ -138,6 +141,17 @@ final class OAuthService {
     /// When `loginHint` is set (reauthorizing an existing account), Google
     /// preselects that account instead of showing the account chooser.
     func signIn(loginHint: String? = nil) async throws -> (refreshToken: String, accessToken: String) {
+        let token = try await authorize(scopes: OAuthConfig.scopes, loginHint: loginHint)
+        guard let refresh = token.refresh_token else {
+            throw OAuthError.tokenExchangeFailed("no refresh_token returned")
+        }
+        return (refresh, token.access_token)
+    }
+
+    /// The interactive flow for an explicit scope set. `signIn` uses the
+    /// Gmail scopes; the separate Calendar grant (`CalendarAuthorization`)
+    /// uses only its own, so the Gmail sign-in never changes for it.
+    func authorize(scopes: [String], loginHint: String? = nil) async throws -> TokenResponse {
         guard OAuthConfig.isConfigured else { throw OAuthError.notConfigured }
 
         let verifier = try Self.randomURLSafe(64)
@@ -153,7 +167,7 @@ final class OAuthService {
             .init(name: "client_id", value: OAuthConfig.clientID),
             .init(name: "redirect_uri", value: redirectURI),
             .init(name: "response_type", value: "code"),
-            .init(name: "scope", value: OAuthConfig.scopes.joined(separator: " ")),
+            .init(name: "scope", value: scopes.joined(separator: " ")),
             .init(name: "code_challenge", value: challenge),
             .init(name: "code_challenge_method", value: "S256"),
             .init(name: "state", value: state),
@@ -172,11 +186,7 @@ final class OAuthService {
             codeTask.cancel()
         }
         try Task.checkCancellation()
-        let token = try await exchange(code: code, verifier: verifier, redirectURI: redirectURI)
-        guard let refresh = token.refresh_token else {
-            throw OAuthError.tokenExchangeFailed("no refresh_token returned")
-        }
-        return (refresh, token.access_token)
+        return try await exchange(code: code, verifier: verifier, redirectURI: redirectURI)
     }
 
     /// Refreshes an access token from a stored refresh token.

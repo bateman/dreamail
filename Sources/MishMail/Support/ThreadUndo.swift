@@ -48,6 +48,17 @@ enum ThreadUndo {
         }
     }
 
+    /// Wake or unsnooze: back to the Inbox now. INBOX goes into `labelIds`
+    /// too, not only the flag: a re-snooze before the next sync then still
+    /// reads as "archive not confirmed yet", instead of a stale label set
+    /// without INBOX that a sync would take for "moved back to Inbox" and
+    /// clear the new date (`SyncEngine.preservedSnoozeUntil`).
+    static func unsnooze(_ t: inout MailThread) {
+        t.snoozeUntil = nil
+        t.applyLabelMutation(add: ["INBOX"])
+        t.endGmailSnoozeIfInboxed()
+    }
+
     static func remote(_ action: Action) -> RemoteThreadChange {
         switch action {
         case .archive: return .modify(remove: ["INBOX", "UNREAD"])
