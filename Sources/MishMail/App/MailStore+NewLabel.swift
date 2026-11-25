@@ -28,7 +28,7 @@ extension MailStore {
         do {
             let l = try await client(for: accountId).createLabel(name: fullName)
             let row = LabelRow.created(l, accountId: accountId)
-            try? db.write { db in try row.save(db) }
+            _ = try? await db.write { db in try row.save(db) }
             reloadAccounts()
             return true
         } catch {
