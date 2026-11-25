@@ -117,6 +117,26 @@ extension MailStore {
         }
     }
 
+    /// Return / Space on the highlighted row. A label row is applied (toggled,
+    /// or moved); Return in label mode then closes the picker, Space keeps it
+    /// open. The "Create …" row keeps its own behaviour.
+    func labelPickerActivateHighlighted(closeAfterApply: Bool) {
+        guard let thread = labelPickerThread else { return }
+        let labels = labelPickerLabels(for: thread)
+        let createName = labelPickerCreateName(for: thread)
+        let rowCount = labels.count + (createName != nil ? 1 : 0)
+        let idx = min(labelPicker.highlight, max(rowCount - 1, 0))
+        if let label = labels[safe: idx] {
+            let mode = labelPicker.mode
+            labelPickerCommit(label, thread: thread)
+            if LabelPickerKeyRules.closesAfterApply(mode: mode, closeKey: closeAfterApply) {
+                mailboxOverlay = nil
+            }
+        } else if let createName {
+            createLabelAndApply(name: createName, thread: thread)
+        }
+    }
+
     // MARK: - Shared
 
     private func run(_ plan: ConversationActionRun, bulk: Bool,

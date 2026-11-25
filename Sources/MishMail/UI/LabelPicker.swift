@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Gmail-style "l" label picker for the selected thread: type to filter,
-/// up/down to move, Enter/Space or click to toggle, Esc to close. Opened
+/// up/down to move, Enter applies the highlighted label and closes, Space or click toggles
+/// without closing, Esc closes. Opened
 /// with `v` it is Gmail's "Move to": the pick adds the label, removes the
 /// conversation (or the checked ones) from the inbox and closes.
 /// (Space only toggles after arrow navigation; while typing it stays a
@@ -82,6 +83,14 @@ struct LabelPicker: View {
                                     .onTapGesture { store.labelPickerCommit(label, thread: thread) }
                                     .onHover { if $0 { picker.highlight = idx } }
                                     .id(label.id)
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel(label.name)
+                                    .accessibilityValue(picker.mode == .label ? (applied ? "on" : "off") : "")
+                                    .accessibilityHint(picker.mode == .label
+                                        ? "Click to toggle. Return applies and closes; Space toggles."
+                                        : "Return moves here.")
+                                    .accessibilityAddTraits(.isButton)
+                                    .accessibilityIdentifier("labelPicker.row.\(label.name)")
                                 }
                                 if let createName {
                                     HStack(spacing: 8) {
@@ -137,14 +146,13 @@ struct LabelPicker: View {
                         }
                     }
                     Divider()
-                    // Spell out the keyboard model: Enter toggles the
-                    // highlighted label (or creates, on the Create row).
-                    let enterVerb = highlighted == labels.count && createName != nil
-                        ? "create" : (picker.mode == .move ? "move" : "toggle")
+                    // Spell out the keyboard model: Enter applies and closes
+                    // (creates, on the Create row); Space toggles and stays.
                     HStack(spacing: 10) {
-                        Text("↑↓ select")
-                        Text("⏎ \(enterVerb)")
-                        Text("esc close")
+                        ForEach(LabelPickerKeyRules.footerHints(
+                            mode: picker.mode,
+                            onCreateRow: highlighted == labels.count && createName != nil),
+                                id: \.self) { Text($0) }
                         Spacer()
                     }
                     .font(.caption).foregroundStyle(.secondary)

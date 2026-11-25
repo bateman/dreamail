@@ -1347,35 +1347,15 @@ private extension ContentView {
                     picker.highlight = max(picker.highlight - 1, 0)
                     picker.navigated = true
                     return nil
-                case 36, 76:  // return / keypad enter: toggle (or create)
+                case 36, 76:  // return / keypad enter: apply and close (or create)
                     // Handled here, not by the text field's onSubmit — before
                     // the field wins focus, Return would otherwise be eaten
                     // by the default branch below (it's a control character,
                     // so it neither deletes nor appends).
-                    if let thread = store.labelPickerThread {
-                        let labels = store.labelPickerLabels(for: thread)
-                        let createName = store.labelPickerCreateName(for: thread)
-                        let rowCount = labels.count + (createName != nil ? 1 : 0)
-                        let idx = min(picker.highlight, max(rowCount - 1, 0))
-                        if let label = labels[safe: idx] {
-                            store.labelPickerCommit(label, thread: thread)
-                        } else if let createName {
-                            store.createLabelAndApply(name: createName, thread: thread)
-                        }
-                    }
+                    store.labelPickerActivateHighlighted(closeAfterApply: true)
                     return nil
-                case 49 where picker.navigated:  // space after arrows: toggle
-                    if let thread = store.labelPickerThread {
-                        let labels = store.labelPickerLabels(for: thread)
-                        let createName = store.labelPickerCreateName(for: thread)
-                        let rowCount = labels.count + (createName != nil ? 1 : 0)
-                        let idx = min(picker.highlight, max(rowCount - 1, 0))
-                        if let label = labels[safe: idx] {
-                            store.labelPickerCommit(label, thread: thread)
-                        } else if let createName {
-                            store.createLabelAndApply(name: createName, thread: thread)
-                        }
-                    }
+                case 49 where picker.navigated:  // space after arrows: toggle, stay open
+                    store.labelPickerActivateHighlighted(closeAfterApply: false)
                     return nil
                 default:
                     // If the picker's text field hasn't grabbed focus yet (it
