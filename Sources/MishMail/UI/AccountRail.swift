@@ -12,18 +12,9 @@ extension AccountRailPalette {
 /// to add an account, and at the bottom the Settings button.
 struct AccountRail: View {
     static let avatarSize: CGFloat = 40
-    /// Right edge of the zoom (green) window button, measured from the window's
-    /// left edge: ~70 pt with the larger macOS 26 buttons, ~61 pt before. The
-    /// rail must cover the three buttons entirely.
-    static let windowButtonsExtent: CGFloat = 70
-    /// Visible margin right of the window buttons.
-    static let windowButtonsMargin: CGFloat = 10
-    /// Rail width: the window buttons plus a margin (80 pt). Everything that
-    /// depends on the rail's width reads this constant.
-    static let width: CGFloat = windowButtonsExtent + windowButtonsMargin
-    /// Settings → Appearance: show the "+" (add account) entry. App-wide.
-    static let showAddAccountKey = "showAddAccountInRail"
-    static let showAddAccountDefault = true
+    static let width = AccountRailMetrics.width
+    static let showAddAccountKey = AccountRailMetrics.showAddAccountKey
+    static let showAddAccountDefault = AccountRailMetrics.showAddAccountDefault
 
     @AppStorage(AccountRail.showAddAccountKey) private var showAddAccount =
         AccountRail.showAddAccountDefault

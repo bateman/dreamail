@@ -60,18 +60,18 @@ final class AccountRailPaletteTests: XCTestCase {
     }
 
     func testRailCoversTheWindowButtonsWithAMargin() {
-        XCTAssertEqual(AccountRail.width, 80)
-        XCTAssertGreaterThanOrEqual(AccountRail.width,
-                                    AccountRail.windowButtonsExtent + AccountRail.windowButtonsMargin)
-        XCTAssertGreaterThanOrEqual(AccountRail.windowButtonsMargin, 8)
+        XCTAssertEqual(AccountRailMetrics.width, 80)
+        XCTAssertGreaterThanOrEqual(AccountRailMetrics.width,
+                                    AccountRailMetrics.windowButtonsExtent + AccountRailMetrics.windowButtonsMargin)
+        XCTAssertGreaterThanOrEqual(AccountRailMetrics.windowButtonsMargin, 8)
     }
 
     func testAddAccountEntryIsShownByDefault() {
-        let key = AccountRail.showAddAccountKey
+        let key = AccountRailMetrics.showAddAccountKey
         let saved = UserDefaults.standard.object(forKey: key)
         defer { UserDefaults.standard.set(saved, forKey: key) }
         UserDefaults.standard.removeObject(forKey: key)
-        XCTAssertTrue(AccountRail.showAddAccountDefault)
+        XCTAssertTrue(AccountRailMetrics.showAddAccountDefault)
         XCTAssertNil(UserDefaults.standard.object(forKey: key))
     }
 }
