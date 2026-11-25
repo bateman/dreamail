@@ -173,7 +173,7 @@ final class BackfillDeriveWithLocalEditsTests: XCTestCase {
                 referencesHeader: "", labelIds: unread ? "INBOX UNREAD" : "INBOX",
                 isUnread: unread, hasAttachment: false)
             try q.write { db in
-                try SyncEngine.upsertDerivingThreads(
+                _ = try SyncEngine.upsertDerivingThreads(
                     db, items: [.init(message: m, attachments: [])], accountId: self.account)
             }
         }
