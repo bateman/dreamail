@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 /// borderless fields, minimal footer.
 struct ComposeView: View {
     @Environment(MailStore.self) var store
+    @Environment(\.openSettings) private var openSettings
 
     let request: MailStore.ComposeRequest
 
@@ -42,6 +43,8 @@ struct ComposeView: View {
     /// editor behind a Gmail-style "…" button so the cursor starts at the top
     /// and the quote can't be edited by accident. Emptied on expand.
     @State private var quotedTail: String = ""
+    /// The signature block MishMail put in the body (`ComposeSignatureState`).
+    @State private var signatureState = ComposeSignatureState()
     @State private var attachmentURLs: [URL] = []
     /// Attachments carried back from an undone send, or pulled off the
     /// original message on a forward (data already loaded).
@@ -324,9 +327,7 @@ struct ComposeView: View {
 
     /// Where an inlined quoted original starts in the editor, if any.
     private var quoteStartInBody: String.Index? {
-        (body_.range(of: "\n" + ForwardComposer.marker)
-            ?? body_.range(of: #"\n+On .+ wrote:\n"#, options: .regularExpression))?
-            .lowerBound
+        ComposeQuote.quoteStart(in: body_)
     }
 
     /// Splits the quoted original back out of the editor, re-collapsing it
@@ -694,6 +695,7 @@ struct ComposeView: View {
             store.noteComposingDraft(editingDraft?.id, requestId: request.id)
             store.noteComposingDraft(replacingDraft?.id, requestId: request.id)
             prefill()
+            startSignature()
             // Prefill mutates fields — re-baseline carefully.
             // restore MUST win over editDraft: cancelPendingSend often sets
             // both (editDraft = the autosaved chain). The server draft only
@@ -1084,6 +1086,7 @@ struct ComposeView: View {
                                    rowTitle: { menuTitle($0) },
                                    openRequest: fromOpenRequest)
                 Spacer()
+                signatureMenu
             }
             .padding(.vertical, 4)
             .zIndex(4)
@@ -1166,9 +1169,13 @@ struct ComposeView: View {
                 }
                 .onChange(of: fromAccountId) {
                     syncSlashSelection()
+                    applyDefaultSignature()
                     scheduleAutosave()
                 }
-                .onChange(of: fromEmail) { scheduleAutosave() }
+                .onChange(of: fromEmail) {
+                    applyDefaultSignature()
+                    scheduleAutosave()
+                }
                 .onChange(of: store.allSnippets) {
                     // Delete/edit in Settings while the picker is open.
                     syncSlashSelection()
@@ -1864,6 +1871,111 @@ struct ComposeView: View {
         focusBody()
     }
 
+    // MARK: - Signature
+
+    /// Replies and forwards use the reply default, new mail the other.
+    private var signatureUse: SignatureUse {
+        if let r = request.restore {
+            return r.replyTo != nil || r.forward ? .reply : .newMessage
+        }
+        if let draft = editingDraft {
+            return draft.referencesHeader.isEmpty ? .newMessage : .reply
+        }
+        return original != nil ? .reply : .newMessage
+    }
+
+    /// A draft or undone send keeps the signature it has until the user
+    /// picks another sender; new mail, replies and forwards follow From.
+    private var signatureFollowsSender: Bool {
+        (request.restore == nil && editingDraft == nil) || fromPickedByUser
+    }
+
+    private var senderSignatures: [SignatureRecord] {
+        store.signatureBook.signatures(for: fromAccountId)
+    }
+
+    /// After prefill: the sender's default for a new message, reply or
+    /// forward; for a body opened again, recognise the signature it ends with.
+    private func startSignature() {
+        if signatureFollowsSender {
+            applyDefaultSignature()
+        } else {
+            let head = String(body_[..<(quoteStartInBody ?? body_.endIndex)])
+            signatureState = .restored(head: head, among: senderSignatures)
+        }
+    }
+
+    /// The sender's default replaces the inserted signature, unless the
+    /// user edited it (then the body is left as it is, without asking).
+    private func applyDefaultSignature() {
+        guard signatureFollowsSender, !didFinish, !fromAccountId.isEmpty, !fromEmail.isEmpty
+        else { return }
+        let signature = store.defaultSignature(use: signatureUse, accountId: fromAccountId,
+                                               email: fromEmail)
+        updateSignature { $0.applyDefault(signature, to: $1) }
+    }
+
+    /// The compose signature menu: another signature, or none.
+    private func chooseSignature(_ signature: SignatureRecord?) {
+        updateSignature { $0.choose(signature, in: $1) }
+    }
+
+    /// Runs `change` on the text above any quote (the signature sits there)
+    /// and writes the new text back, keeping the caret above the signature.
+    /// A body still equal to its prefill stays "untouched" for the discard
+    /// and autosave rules.
+    private func updateSignature(_ change: (inout ComposeSignatureState, String) -> String?) {
+        var state = signatureState
+        let end = quoteStartInBody ?? body_.endIndex
+        let head = String(body_[..<end])
+        let next = change(&state, head)
+        signatureState = state
+        guard let next, next != head else { return }
+        let untouched = body_.trimmingCharacters(in: .whitespacesAndNewlines)
+            == initialBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = next + String(body_[end...])
+        var caretLimit = (next as NSString).length
+        if let block = state.block, let range = ComposeSignature.intactRange(of: block, in: next) {
+            caretLimit = NSRange(range, in: next).location
+        }
+        setBody(body, caretUTF16: min(bodyCaretUTF16, caretLimit))
+        if untouched { initialBody = body }
+    }
+
+    private func signatureToggle(_ title: String, _ signature: SignatureRecord?) -> some View {
+        let selected = signature.map {
+            signatureState.block != nil && signatureState.signatureId == $0.id
+        } ?? (signatureState.block == nil)
+        return Toggle(title, isOn: Binding(get: { selected },
+                                           set: { _ in chooseSignature(signature) }))
+    }
+
+    private var signatureMenu: some View {
+        Menu {
+            signatureToggle("No signature", nil)
+            if !senderSignatures.isEmpty { Divider() }
+            ForEach(senderSignatures) { signature in
+                signatureToggle(signature.name, signature)
+            }
+            Divider()
+            Button("Manage Signatures…") {
+                UserDefaults.standard.set(SettingsView.Pane.signatures.rawValue,
+                                          forKey: "settingsPane")
+                openSettings()
+            }
+        } label: {
+            Image(systemName: "signature")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Signature")
+        .accessibilityLabel("Signature")
+        .accessibilityIdentifier("compose.signature")
+    }
+
     private func forwardContextLabel(from original: Message) -> String {
         if request.forward {
             let who = MessageParser.displayName(fromHeader: original.fromHeader)
@@ -2307,10 +2419,17 @@ struct ComposeView: View {
 
     /// Where the quoted original starts (reply/forward), or the end of the
     /// body. Slash triggers only count in the part the user writes in.
+    /// The signature MishMail inserted, while intact, is not part of it:
+    /// AI drafting, suggested replies and snippets write above it.
     private var authoredHeadEnd: String.Index {
-        (body_.range(of: "\n" + ForwardComposer.marker)
-            ?? body_.range(of: #"\n+On .+ wrote:\n"#, options: .regularExpression))?
-            .lowerBound ?? body_.endIndex
+        let quote = quoteStartInBody ?? body_.endIndex
+        let head = String(body_[..<quote])
+        if let block = signatureState.block,
+           let range = ComposeSignature.intactRange(of: block, in: head) {
+            return body_.index(body_.startIndex,
+                               offsetBy: head.distance(from: head.startIndex, to: range.lowerBound))
+        }
+        return quote
     }
 
     /// The active `/query` ending at the caret inside the authored head.
@@ -2636,12 +2755,12 @@ struct ComposeView: View {
     /// (first_name, name, email, date…) are filled from the first recipient.
     private func insertSnippet(_ snippet: Snippet) {
         let text = expandSnippet(snippet)
-        if let quote = body_.range(of: "\n" + ForwardComposer.marker)
-            ?? body_.range(of: #"\n+On .+ wrote:\n"#, options: .regularExpression) {
-            var head = String(body_[..<quote.lowerBound])
+        let end = authoredHeadEnd
+        if end != body_.endIndex {
+            var head = String(body_[..<end])
             while head.hasSuffix("\n") { head.removeLast() }
             let written = head.isEmpty ? text : head + "\n" + text
-            let next = written + "\n" + String(body_[quote.lowerBound...])
+            let next = written + "\n" + String(body_[end...])
             setBody(next, caretUTF16: (written as NSString).length)
         } else if body_.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             setBody(text, caretUTF16: (text as NSString).length)

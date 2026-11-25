@@ -9,7 +9,7 @@ struct SettingsView: View {
     @Environment(MailStore.self) var store
 
     enum Pane: String, Identifiable {
-        case accounts, googleAPI, filters, snippets, general, appearance, shortcuts, ai, updates
+        case accounts, googleAPI, filters, snippets, signatures, general, appearance, shortcuts, ai, updates
 
         var id: String { rawValue }
 
@@ -19,6 +19,7 @@ struct SettingsView: View {
             case .googleAPI: return "Google API"
             case .filters: return "Gmail filters"
             case .snippets: return "Snippets"
+            case .signatures: return "Signatures"
             case .general: return "General"
             case .appearance: return "Appearance"
             case .shortcuts: return "Keyboard shortcuts"
@@ -33,6 +34,7 @@ struct SettingsView: View {
             case .googleAPI: return "key"
             case .filters: return "line.3.horizontal.decrease"
             case .snippets: return "curlybraces"
+            case .signatures: return "signature"
             case .general: return "gearshape"
             case .appearance: return "textformat.size"
             case .shortcuts: return "keyboard"
@@ -54,6 +56,7 @@ struct SettingsView: View {
                     row(.googleAPI)
                     row(.filters)
                     row(.snippets)
+                    row(.signatures)
                 }
                 Section("App") {
                     row(.general)
@@ -107,6 +110,7 @@ struct SettingsView: View {
         case .googleAPI: GoogleAPISettings()
         case .filters: GmailFiltersSettings()
         case .snippets: SnippetsSettings()
+        case .signatures: SignatureSettings()
         case .general: GeneralSettings()
         case .appearance: AppearanceSettings()
         case .shortcuts: ShortcutsSettings(bindings: store.keyBindings)

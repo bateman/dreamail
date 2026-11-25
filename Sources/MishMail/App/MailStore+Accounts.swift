@@ -162,6 +162,8 @@ extension MailStore {
             // The Scheduled and Outbox lists held rows for this account.
             self.reloadScheduledSends()
             self.reloadLocalDrafts()
+            // Its signatures cascaded away with it.
+            self.reloadSignatures()
             // Own-address set changed — drop the weight map and re-mine.
             self.rebuildContacts(forceFull: true)
             await self.reloadPendingThreadOpCount()
