@@ -311,7 +311,7 @@ Avviata dal proprietario il 25 novembre 2026, in parallelo all'ondata 3. Ogni st
 | Step | Contenuto | Branch | Migrazione riservata | Stato della decisione |
 |---|---|---|---|---|
 | 4A | Google Calendar | `feature/google-calendar-integration` | v61 | Perimetro B scelto (DEC-042) |
-| 4B | PGP | `feature/openpgp-support` | v62 | In attesa del progetto |
+| 4B | PGP | `feature/openpgp-support` | v62 | Perimetro B scelto (DEC-045); libreria non ancora approvata |
 
 Google Calendar, perimetro B: disponibilità e conflitti accanto a un invito, risposta scritta direttamente sul calendario, "aggiungi al calendario". Richiede un secondo consenso Google separato, solo per Calendar; l'accesso a Gmail non cambia. Predefiniti adottati in assenza di indicazioni del proprietario, ribaltabili: risposta solo sul calendario per gli eventi già presenti in Google Calendar ed e-mail per gli altri; solo il calendario principale; nessuna notifica degli eventi; in locale solo gli eventi degli inviti.
 
@@ -319,6 +319,15 @@ Google Calendar, lavoro futuro (non avviato):
 
 - Perimetro C: agenda del giorno con sincronizzazione incrementale e promemoria (4–6 settimane dalla base di B; più dati personali in locale, notifiche).
 - Perimetro D: creazione di eventi da un messaggio (oltre 6 settimane dalla base di B).
+
+Per i conflitti l'utente sceglie, per ogni account, quali calendari contano; il principale è selezionato per impostazione predefinita (corregge il predefinito "solo il calendario principale" indicato sopra).
+
+PGP, perimetro B: verifica delle firme, decifratura, import manuale delle chiavi. Predefiniti adottati, ribaltabili: chiavi private nel Keychain solo su questo Mac e protette da passphrase; nessuna copia su disco del testo decifrato; testo decifrato fuori dall'indice di ricerca. Libreria proposta: rPGP (Rust), da integrare con una PR separata che richiede il sì esplicito del proprietario, perché porta Rust nella catena di build.
+
+PGP, lavoro futuro (non avviato):
+
+- Perimetro C: firma e cifratura in invio, generazione e revoca delle chiavi, bozze cifrate solo locali.
+- Perimetro D: ricerca delle chiavi pubbliche in rete (WKD, keys.openpgp.org), Autocrypt, intestazioni protette.
 
 ## Lavori in sospeso
 
@@ -328,6 +337,7 @@ Aggiornato il 25 novembre 2026.
 
 - Label prima dell'oggetto come in Gmail.
 - Google Calendar, perimetri C e D (vedi "Ondata 4").
+- PGP, perimetri C e D (vedi "Ondata 4").
 - Comando "Svuota cache immagini" nelle impostazioni.
 - Avviso nell'app per chi non aveva mai impostato "Load remote images".
 - Immagini remote con una sola richiesta al mittente (2–3 giorni).

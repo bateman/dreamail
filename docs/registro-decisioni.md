@@ -56,6 +56,8 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-042 | **Google Calendar: perimetro B** | Disponibilità accanto all'invito, risposta scritta sul calendario, "aggiungi al calendario", con un secondo consenso Google separato. Agenda, promemoria ed eventi da un messaggio (perimetri C e D) restano lavoro futuro. |
 | DEC-043 | **Immagini remote: prima apertura come oggi** | Alla prima apertura le immagini si caricano dal vivo e l'app le salva in secondo piano per le aperture successive; costo accettato: due richieste al mittente alla prima apertura. La variante a richiesta singola resta un seguito (PR #42). |
 | DEC-044 | **Ondata 4 avviata** | Avviata dal proprietario il 25 novembre 2026 in parallelo all'ondata 3. |
+| DEC-045 | **PGP: perimetro B** | Verifica delle firme, decifratura e import manuale delle chiavi. Invio firmato o cifrato, generazione di chiavi, ricerca di chiavi in rete e Autocrypt (perimetri C e D) restano lavoro futuro. La libreria crittografica si adotta solo con il sì esplicito del proprietario. |
+| DEC-046 | **Calendari per i conflitti scelti dall'utente** | Per ogni account l'utente sceglie quali calendari contano per disponibilità e conflitti; il principale è selezionato per impostazione predefinita. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -447,7 +449,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-24 | 0.10 | Dopo la prima prova su Mac: aggiunte DEC-021–024 (icone monocromatiche, correttore in più lingue, colori delle label come in Gmail, stile di comunicazione conciso). La cache persistente e cifrata delle immagini resta un'opzione in attesa delle prove del proprietario, annotata in [piano-sviluppo.md](piano-sviluppo.md). L'ondata 3 non è avviata. |
 | 2026-11-24 | 0.11 | Terzo giro di richieste: aggiunte DEC-025–028 (colore della label dell'account, foto profilo Google, warning come errori in CI, icone della barra laterale). L'ondata 3 non è avviata. |
 | 2026-11-24 | 0.12 | Quarto giro di richieste: aggiunte DEC-029–040 (forma delle label, anello e titolo dell'account, righe dei messaggi, cache cifrata delle immagini incorporate, immagini remote attive per impostazione predefinita, cache delle immagini remote, colore d'accento configurabile, modifiche semplici senza review, archiviazione e subentro dell'orchestratore, livelli di review, segnalazione di F-01 annullata, avvio dell'ondata 3). Aggiornata DEC-028. DEC-034 è decisa ma ancora in lavorazione (PR #42). L'ondata 3 non è avviata. |
-| 2026-11-25 | **0.13** | Aggiunte DEC-041–044: snooze variante B, Google Calendar perimetro B, prima apertura delle immagini remote, avvio dell'ondata 4. |
+| 2026-11-25 | **0.13** | Aggiunte DEC-041–046: snooze variante B, Google Calendar perimetro B, prima apertura delle immagini remote, avvio dell'ondata 4, PGP perimetro B, calendari per i conflitti scelti dall'utente. |
 
 ---
 
