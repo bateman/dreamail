@@ -60,8 +60,12 @@ struct MainWindowFrame: NSViewRepresentable {
                 guard let w = self?.window else { return }
                 let keys = UserDefaults.standard.dictionaryRepresentation()
                     .filter { $0.key.hasPrefix("NSWindow Frame") }
-                UITestBreadcrumbs.record(
-                    "PROBE autosaveName='\(w.frameAutosaveName)' frame=\(w.frame) keys=\(keys)")
+                let pb = NSPasteboard(name: NSPasteboard.Name(
+                    "io.github.bateman.mishmail.uitest.breadcrumbs"))
+                pb.clearContents()
+                pb.setString(
+                    "PROBE autosaveName='\(w.frameAutosaveName)' frame=\(w.frame) keys=\(keys)",
+                    forType: .string)
             }
             if ProcessInfo.processInfo.environment["MISHMAIL_FRAME_PROBE_ONLY"] == "1" { return }
             guard let window, !MainWindowFrame.ignoresSavedFrame,
