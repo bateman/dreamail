@@ -53,12 +53,13 @@ struct CalendarInviteFacts: Equatable, Sendable {
 /// (#51's path): every field that could tell "the organizer already sees it
 /// in Google Calendar" (PRODID, the UID, the organizer Google copies from the
 /// ICS) is written by the sender, so none of them may drop the e-mail. The
-/// answer is also written on the user's calendar, with Google asked to
-/// notify nobody, when Google holds the very event the invitation describes.
+/// e-mail goes first; once it went, the answer is also written on the
+/// user's calendar, with Google asked to notify nobody, when Google holds the
+/// very event the invitation describes (`CalendarIntegration.answer`).
 enum CalendarRSVPRoute: Equatable, Sendable {
     /// The invitation offers no answer (`CalendarInvite.isActionable`).
     case notAnswerable
-    /// Write the answer on this event, then send the e-mail.
+    /// Send the e-mail, then write the answer on this event.
     case calendarAndEmail(calendarId: String, eventId: String)
     /// The e-mail only: Calendar not connected or read-only, the event is not
     /// in Google Calendar or is not the one the invitation describes, or one
@@ -175,6 +176,7 @@ struct CalendarInviteService: Sendable {
             }
             do {
                 let result = try await client.events(calendarId: calendar.calendarId, in: window)
+                incomplete = incomplete || result.truncated
                 busy += CalendarAvailability.busy(
                     events: result.events, calendarId: calendar.calendarId,
                     calendarTimeZone: result.calendarTimeZone ?? calendar.timeZone,

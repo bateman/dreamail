@@ -6,6 +6,11 @@ import SwiftUI
 ///
 /// RSVP does not write to any local calendar — use **Open in Calendar** (or
 /// Save / Quick Look) to hand the original `.ics` to Calendar.app.
+///
+/// With the Google Calendar build switch on (`MailStore.calendarUIEnabled`)
+/// the card also says whether the user is free, offers "Add to Calendar"
+/// and answers on the Google calendar that holds the event, through
+/// `MailStore.answerInvite`. With it off the card is exactly as before.
 struct CalendarInviteCard: View {
     @Environment(\.mailAccent) private var accent
     @Environment(MailStore.self) private var store
@@ -22,6 +27,10 @@ struct CalendarInviteCard: View {
     }
     @State private var sending: PendingResponse?
     @State private var localRSVPByKey: [String: CalendarInvite.RSVP] = [:]
+    /// Google Calendar's view of each invite, by `rsvpKey` (step 4A, only
+    /// with `MailStore.calendarUIEnabled`). In memory: nothing is stored.
+    @State private var calendarChecks: [String: CalendarInviteCheck] = [:]
+    @State private var addingToCalendar: String?
 
     var body: some View {
         Group {
@@ -125,6 +134,9 @@ struct CalendarInviteCard: View {
                     fileActions
                 }
             } else if invite.isActionable {
+                if store.calendarUIEnabled {
+                    calendarRow(invite)
+                }
                 rsvpRow(for: invite)
                 replyRecipientNote(invite)
             } else {
@@ -179,19 +191,38 @@ struct CalendarInviteCard: View {
         }
     }
 
-    /// Where Accept / Decline / Maybe sends the reply: the ICS's ORGANIZER,
-    /// which its author chose. Always shown; flagged when it is not the
-    /// address the message came from (a forged invite would otherwise make
-    /// the user answer a third party unseen).
     /// Where Accept / Decline / Maybe sends the reply, and from which
     /// address: the ICS's ORGANIZER, which its author chose. Always shown;
     /// flagged when it is not the address the message came from (a forged
     /// invite would otherwise make the user answer a third party unseen).
+    ///
+    /// With Google Calendar connected, the line follows the route the
+    /// buttons take (`CalendarRSVPRoute`): the e-mail always, first, and
+    /// the calendar too when it holds this very event. Until the calendar
+    /// is checked the answer goes by e-mail only, and the line says so.
     @ViewBuilder
     private func replyRecipientNote(_ invite: CalendarInvite) -> some View {
         let sender = MessageParser.emailAddress(message.fromHeader)
         let from = store.rsvpIdentity(for: message, invite: invite).email
-        if invite.organizerIsSender(senderEmail: sender) {
+        let route = answerRoute(invite)
+        if route != .emailOnly {
+            let note = CalendarAnswerNote.text(route: route, accountId: message.accountId,
+                                               from: from, organizer: invite.organizerEmail)
+            if invite.organizerIsSender(senderEmail: sender) {
+                Text(note)
+                    .font(PMFont.caption(fontScale))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            } else {
+                let warning = "\(note). The organizer \(invite.organizerEmail) is not the sender \(CalendarInvite.displaySafe(sender, limit: 254))."
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(PMFont.caption(fontScale))
+                    .foregroundStyle(.orange)
+                    .labelStyle(.titleAndIcon)
+                    .textSelection(.enabled)
+            }
+        } else if invite.organizerIsSender(senderEmail: sender) {
             Text("Reply from \(from) goes to \(invite.organizerEmail)")
                 .font(PMFont.caption(fontScale))
                 .foregroundStyle(.secondary)
@@ -260,10 +291,11 @@ struct CalendarInviteCard: View {
                             invite: CalendarInvite) -> some View {
         let key = rsvpKey(invite)
         let selected = localRSVPByKey[key] == status
-        let busy = sending != nil
+        // An answer and "Add to Calendar" wait for each other.
+        let busy = sending != nil || addingToCalendar != nil
         let thisSending = sending?.key == key && sending?.status == status
         return Button {
-            guard sending == nil else { return }
+            guard sending == nil, addingToCalendar == nil else { return }
             sending = PendingResponse(key: key, status: status)
             Task { await respond(status, invite: invite) }
         } label: {
@@ -341,8 +373,30 @@ struct CalendarInviteCard: View {
     private func helpText(for status: CalendarInvite.RSVP,
                           invite: CalendarInvite) -> String {
         let org = invite.organizerEmail.isEmpty ? "the organizer" : invite.organizerEmail
-        return "\(status.buttonTitle) and email \(org)"
+        switch answerRoute(invite) {
+        case .calendarAndEmail: return "\(status.buttonTitle) in Google Calendar and email \(org)"
+        case .emailOnly, .notAnswerable: return "\(status.buttonTitle) and email \(org)"
+        }
     }
+
+    /// Where the buttons send the answer: the e-mail reply unless Google
+    /// Calendar was checked and holds the event.
+    private func answerRoute(_ invite: CalendarInvite) -> CalendarRSVPRoute {
+        guard store.calendarUIEnabled,
+              let findings = currentCheck(invite)?.findings else { return .emailOnly }
+        return findings.route(for: CalendarInviteFacts(invite))
+    }
+
+    /// The invite's check as it stands now: findings held from before a
+    /// disconnect, a removal or a refused grant are dropped.
+    private func currentCheck(_ invite: CalendarInvite) -> CalendarInviteCheck? {
+        calendarChecks[rsvpKey(invite)]?
+            .current(CalendarIntegration.shared.status(for: message.accountId))
+    }
+
+    /// At most this many invitations of one message are checked when it
+    /// opens: a message with dozens must not send dozens of requests.
+    private static let maxCheckedInvites = 3
 
     // MARK: - Load / respond
 
@@ -365,6 +419,14 @@ struct CalendarInviteCard: View {
             let map = await store.storedRSVPs(for: parsed, accountId: message.accountId)
             guard !Task.isCancelled else { return }
             localRSVPByKey = map
+            // After the card is on screen: the calendar line fills in on
+            // its own, nothing waits for it.
+            if store.calendarUIEnabled {
+                for invite in parsed.filter(\.isActionable).prefix(Self.maxCheckedInvites) {
+                    guard !Task.isCancelled else { return }
+                    await checkCalendar(invite)
+                }
+            }
         } catch {
             guard !Task.isCancelled else { return }
             load = .failed(error.localizedDescription)
@@ -375,11 +437,188 @@ struct CalendarInviteCard: View {
                          invite: CalendarInvite) async {
         let key = rsvpKey(invite)
         defer { sending = nil }
-        await store.rsvpToInvite(invite, status: status, message: message)
+        let outcome = await store.answerInvite(invite, status: status, message: message,
+                                               check: calendarChecks[key])
+        // Google no longer has the event: look again, so the line and the
+        // next answer follow what is really there.
+        if outcome?.eventGone == true { await checkCalendar(invite) }
         // Re-read stored state — only updates on success.
         if let stored = await store.storedRSVPs(
             for: [invite], accountId: message.accountId)[key] {
             withAnimation(PMMotion.feedback) { localRSVPByKey[key] = stored }
         }
+    }
+
+    // MARK: - Google Calendar (step 4A)
+
+    private func checkCalendar(_ invite: CalendarInvite) async {
+        let key = rsvpKey(invite)
+        calendarChecks[key] = .checking
+        let check = await CalendarIntegration.shared.check(
+            CalendarInviteFacts(invite), occurrence: invite.recurrenceIdLine,
+            messageId: message.id, accountId: message.accountId)
+        guard !Task.isCancelled else { return }
+        calendarChecks[key] = check
+    }
+
+    private func addToCalendar(_ invite: CalendarInvite, findings: CalendarInviteFindings) async {
+        let key = rsvpKey(invite)
+        guard addingToCalendar == nil, sending == nil else { return }
+        addingToCalendar = key
+        defer { addingToCalendar = nil }
+        if let updated = await store.addInviteToCalendar(invite, message: message, findings: findings) {
+            calendarChecks[key] = .ready(updated)
+        }
+    }
+
+    private func connectCalendar(_ invite: CalendarInvite) async {
+        await store.connectCalendar(accountId: message.accountId)
+        if case .connected = CalendarIntegration.shared.status(for: message.accountId) {
+            await checkCalendar(invite)
+        }
+    }
+
+    /// Availability and where the event is, under the invite's details.
+    /// Never blocks the card: a small inline state while checking.
+    @ViewBuilder
+    private func calendarRow(_ invite: CalendarInvite) -> some View {
+        let key = rsvpKey(invite)
+        let connecting = CalendarIntegration.shared.connecting.contains(message.accountId)
+        // Not checked (beyond the first invitations of the message): nothing.
+        switch currentCheck(invite) ?? .off {
+        case .off:
+            EmptyView()
+        case .checking:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                calendarCaption("Checking your Google Calendar…")
+            }
+        case .notConnected:
+            HStack(spacing: 6) {
+                calendarCaption("Google Calendar isn't connected for \(message.accountId).")
+                calendarLinkButton(connecting ? "Connecting…" : "Connect…") {
+                    await connectCalendar(invite)
+                }
+                .disabled(connecting)
+            }
+        case .needsConsent:
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(PMFont.caption(fontScale))
+                    .foregroundStyle(.orange)
+                calendarCaption("Google Calendar needs your permission again.")
+                calendarLinkButton(connecting ? "Connecting…" : "Reconnect…") {
+                    await connectCalendar(invite)
+                }
+                .disabled(connecting)
+            }
+        case .offline:
+            HStack(spacing: 6) {
+                calendarCaption("Offline — your calendar can't be checked. Answers go by e-mail.")
+                calendarLinkButton("Retry") { await checkCalendar(invite) }
+            }
+        case .failed(let text):
+            HStack(spacing: 6) {
+                calendarCaption("\(text) — answers go by e-mail.")
+                calendarLinkButton("Retry") { await checkCalendar(invite) }
+            }
+        case .ready(let findings):
+            VStack(alignment: .leading, spacing: 3) {
+                if findings.availabilitySkipped {
+                    calendarCaption("Availability not checked: the invitation lasts more than 31 days.")
+                } else {
+                    availabilityLine(findings.availability)
+                }
+                if findings.event == nil {
+                    HStack(spacing: 6) {
+                        calendarCaption("Not in your Google Calendar.")
+                        if findings.canAddToCalendar(
+                            CalendarInviteFacts(invite),
+                            organizerIsSender: invite.organizerIsSender(
+                                senderEmail: MessageParser.emailAddress(message.fromHeader))) {
+                            if addingToCalendar == key {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                calendarLinkButton("Add to Calendar") {
+                                    await addToCalendar(invite, findings: findings)
+                                }
+                                .disabled(addingToCalendar != nil || sending != nil)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func availabilityLine(_ result: CalendarAvailabilityResult?) -> some View {
+        if let result {
+            if result.isFree && result.isIncomplete {
+                // Possibly none could be read: say so rather than "free".
+                Label("No conflicts found, but some calendars couldn't be checked",
+                      systemImage: "questionmark.circle")
+                    .font(PMFont.caption(fontScale))
+                    .foregroundStyle(.secondary)
+                    .labelStyle(.titleAndIcon)
+            } else if result.isFree {
+                Label("You're free", systemImage: "checkmark.circle")
+                    .font(PMFont.caption(fontScale))
+                    .foregroundStyle(.green)
+                    .labelStyle(.titleAndIcon)
+            } else {
+                Label(conflictText(result), systemImage: "exclamationmark.circle")
+                    .font(PMFont.caption(fontScale))
+                    .foregroundStyle(.orange)
+                    .labelStyle(.titleAndIcon)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    /// "Conflicts with Standup (10:00–10:30)"; all-day events are named
+    /// softly. Titles come from the user's calendars (any visible one,
+    /// DEC-048), are made display-safe and stay on screen, never in a log.
+    private func conflictText(_ result: CalendarAvailabilityResult) -> String {
+        func name(_ busy: CalendarBusy) -> String {
+            switch busy.source {
+            case .event(_, _, let summary):
+                let safe = CalendarInvite.displaySafe(summary ?? "", limit: 80)
+                return safe.isEmpty ? "Busy" : safe
+            case .freeBusy:
+                return "Busy"
+            }
+        }
+        func time(_ busy: CalendarBusy) -> String {
+            let start = busy.span.start.formatted(date: .omitted, time: .shortened)
+            let end = busy.span.end.formatted(date: .omitted, time: .shortened)
+            return "\(start)–\(end)"
+        }
+        var parts: [String] = []
+        let timed = result.conflicts.prefix(3).map { "\(name($0)) (\(time($0)))" }
+        if !timed.isEmpty {
+            var text = "Conflicts with " + timed.joined(separator: ", ")
+            if result.conflicts.count > 3 { text += " and \(result.conflicts.count - 3) more" }
+            parts.append(text)
+        }
+        if let allDay = result.allDayConflicts.first {
+            parts.append("Same day as \(name(allDay)) (all day)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func calendarCaption(_ text: String) -> some View {
+        Text(text)
+            .font(PMFont.caption(fontScale))
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+    }
+
+    private func calendarLinkButton(_ title: String,
+                                    action: @escaping () async -> Void) -> some View {
+        Button(title) { Task { await action() } }
+            .buttonStyle(.link)
+            .font(PMFont.caption(fontScale))
     }
 }

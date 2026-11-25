@@ -276,6 +276,8 @@ struct GFreeBusyResponse: Decodable, Sendable {
 struct CalendarEventPage: Sendable {
     var events: [GCalendarEvent]
     var calendarTimeZone: String?
+    /// The read stopped at its page cap: more events exist than were read.
+    var truncated = false
 }
 
 /// A calendar's busy periods from freebusy.query.
@@ -303,6 +305,10 @@ actor CalendarClient {
     static let pageSize = 250
     /// A pathological server cannot keep a listing paging forever.
     static let maxPages = 200
+    /// Availability reads one invitation's day(s): a calendar with more
+    /// than this many pages there is read in part, and the result says so,
+    /// rather than paging through thousands of events on opening a message.
+    static let availabilityMaxPages = 4
     /// freebusy.query takes at most 50 calendars per request.
     static let freeBusyBatch = 50
     /// Longest invitation UID sent to Google, as `CalendarInvite` caps the
@@ -347,13 +353,17 @@ actor CalendarClient {
             "singleEvents": "true",
             "timeMin": Self.rfc3339(interval.start),
             "timeMax": Self.rfc3339(interval.end),
-        ])
+        ], maxPages: Self.availabilityMaxPages, truncate: true)
     }
 
-    private func pagedEvents(calendarId: String, query base: [String: String]) async throws -> CalendarEventPage {
+    /// `truncate`: at `maxPages`, return what was read (`truncated`) rather
+    /// than fail.
+    private func pagedEvents(calendarId: String, query base: [String: String],
+                             maxPages: Int = CalendarClient.maxPages,
+                             truncate: Bool = false) async throws -> CalendarEventPage {
         var result = CalendarEventPage(events: [])
         var pageToken: String?
-        for _ in 0..<Self.maxPages {
+        for _ in 0..<maxPages {
             var query = base
             query["maxResults"] = String(Self.pageSize)
             query["pageToken"] = pageToken
@@ -364,7 +374,9 @@ actor CalendarClient {
             guard let next = page.nextPageToken, !next.isEmpty else { return result }
             pageToken = next
         }
-        throw CalendarError.badResponse
+        guard truncate else { throw CalendarError.badResponse }
+        result.truncated = true
+        return result
     }
 
     /// The events of one calendar with this iCalendar UID: the invitation's

@@ -65,6 +65,22 @@ final class SidebarCountsIndexTests: XCTestCase {
         }
     }
 
+    /// The per-account unread count (avatar badges) is a grouped COUNT over
+    /// the same predicate; it must not scan the whole table.
+    func testUnreadByAccountIsIndexed() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        try q.read { db in
+            try self.assertIndexedCount(db, sql: """
+                SELECT accountId, COUNT(*) AS n FROM thread
+                WHERE (isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
+                  AND inPromotions = 0 AND inSocial = 0
+                  AND (snoozeUntil IS NULL OR snoozeUntil <= ?))
+                GROUP BY accountId
+                """, arguments: [Date()])
+        }
+    }
+
     /// v22 partials have no v18 competitor — pin the exact index name so a
     /// predicate drift that drops the partial is caught.
     func testReminderAndSnoozedCountsUseV22Indexes() throws {
