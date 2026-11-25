@@ -82,6 +82,29 @@ final class SidebarLabelMenuUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }
 
+    /// On the open label, "⋮" opens the menu only: it must not also run
+    /// the row's tap, which would reopen the label and close the open
+    /// conversation.
+    func testDotsOnTheOpenLabelDoNotReopenIt() {
+        let app = launch()
+        let research = label("Label_research", in: app)
+        XCTAssertTrue(research.waitForExistence(timeout: 10))
+        research.click()
+        let row = element("threadRow.\(account):t2", in: app)
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.click()
+        let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
+        XCTAssertTrue(subject.waitForExistence(timeout: 5), "the conversation is open")
+
+        research.hover()
+        let dots = element("sidebar.label.menu.\(account).Label_research", in: app)
+        XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label shows its ⋮")
+        dots.click()
+        XCTAssertTrue(menuItem("labelMenu.edit", "Edit", in: app).waitForExistence(timeout: 5))
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        XCTAssertTrue(subject.exists, "the ⋮ click did not reopen the label")
+    }
+
     func testParentColorGoesToItsSublabels() {
         let app = launch()
         let vendors = label("Label_vendors", in: app)

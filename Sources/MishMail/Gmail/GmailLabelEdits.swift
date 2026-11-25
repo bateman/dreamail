@@ -129,6 +129,14 @@ enum LabelBatch {
         return box.all
     }
 
+    /// A refusal that a second try will not change: a 4xx other than a
+    /// rate limit (400 bad name, 404 gone, 409 name taken).
+    static func isPermanent(_ error: Error) -> Bool {
+        guard case GmailError.http(let code, let body) = error else { return false }
+        if code == 429 || (code == 403 && MessageFetchFailureKind.isRateLimitBody(body)) { return false }
+        return (400..<500).contains(code)
+    }
+
     private struct IndexedItem<Item: Sendable>: Sendable {
         let index: Int
         let item: Item
@@ -211,18 +219,19 @@ enum LabelRename {
         case partial(renamed: [Change], notRenamed: [Change], cause: Error)
     }
 
-    /// Sends the renames (bounded), retries the failed ones once, and when
+    /// Sends the renames (bounded, in `waves`), retries once the ones that
+    /// failed for a reason that may pass (not a permanent 4xx), and when
     /// some still fail undoes the ones that landed, so the tree does not end
-    /// half moved. `store` gets each label's name on Gmail as far as known.
+    /// half moved. `names` is each label's name on Gmail as far as known.
     static func execute(_ changes: [Change], remote: LabelRemote) async -> (Outcome, names: [String: String]) {
         var names = Dictionary(uniqueKeysWithValues: changes.map { ($0.rowId, $0.from) })
         var failures = await send(changes, forward: true, remote: remote)
-        if !failures.isEmpty {
-            let retry = failures.keys.sorted().map { changes[$0] }
-            let again = await send(retry, forward: true, remote: remote)
-            failures = Dictionary(uniqueKeysWithValues: again.map { (changes.firstIndex(of: retry[$0.key])!, $0.value) })
+        let retry = failures.filter { !LabelBatch.isPermanent($0.value) }.keys.sorted()
+        if !retry.isEmpty {
+            let again = await send(retry.map { changes[$0] }, forward: true, remote: remote)
+            for (k, i) in retry.enumerated() { failures[i] = again[k] }
         }
-        guard let cause = failures.values.first else {
+        guard let cause = failures.keys.min().flatMap({ failures[$0] }) else {
             for c in changes { names[c.rowId] = c.to }
             return (.renamed, names)
         }
@@ -238,18 +247,65 @@ enum LabelRename {
 
     private static func send(_ changes: [Change], forward: Bool,
                              remote: LabelRemote) async -> [Int: Error] {
-        await LabelBatch.run(changes) { c in
-            let target = forward ? c.to : c.from
-            do {
-                _ = try await remote.patchLabel(id: c.gmailLabelId, GmailLabelPatch(name: target))
-            } catch {
-                // "Name exists": not a failure when the label itself already
-                // has that name on Gmail (a parent's rename carried it along,
-                // or an earlier attempt landed after its answer was lost).
-                guard isNameConflict(error),
-                      let current = try? await remote.label(id: c.gmailLabelId),
-                      current.name == target else { throw error }
+        let steps = changes.map { forward ? (from: $0.from, to: $0.to) : (from: $0.to, to: $0.from) }
+        var failures: [Int: Error] = [:]
+        for wave in waves(steps) {
+            let result = await LabelBatch.run(wave) { i in
+                let c = changes[i]
+                let target = forward ? c.to : c.from
+                do {
+                    _ = try await remote.patchLabel(id: c.gmailLabelId, GmailLabelPatch(name: target))
+                } catch {
+                    // "Name exists": not a failure when the label itself
+                    // already has that name on Gmail (a parent's rename
+                    // carried it along, or an earlier attempt landed after
+                    // its answer was lost).
+                    guard isNameConflict(error),
+                          let current = try? await remote.label(id: c.gmailLabelId),
+                          current.name == target else { throw error }
+                }
             }
+            for (k, error) in result { failures[wave[k]] = error }
+        }
+        return failures
+    }
+
+    /// The order of the renames, as groups sent one after the other: none
+    /// takes a name another label still holds (Gmail compares names
+    /// ignoring case). `A` → `A/B` while `A/B` exists goes after
+    /// `A/B` → `A/B/B`. Indexes into `steps`.
+    static func waves(_ steps: [(from: String, to: String)]) -> [[Int]] {
+        var pending = Array(steps.indices)
+        var out: [[Int]] = []
+        while !pending.isEmpty {
+            let ready = pending.filter { i in
+                !pending.contains { j in
+                    j != i && steps[j].from.caseInsensitiveCompare(steps[i].to) == .orderedSame
+                }
+            }
+            // A cycle cannot come from one prefix shift; send the rest as is.
+            guard !ready.isEmpty else {
+                out.append(pending)
+                break
+            }
+            out.append(ready)
+            pending.removeAll { ready.contains($0) }
+        }
+        return out
+    }
+
+    /// Saved views whose filter chips name a renamed label, with the stored
+    /// display name updated (the id stays).
+    static func views(_ views: [SavedView], after changes: [Change]) -> [SavedView] {
+        views.compactMap { view in
+            guard let data = view.chipsJSON,
+                  var chips = try? JSONDecoder().decode(FilterChips.self, from: data) else { return nil }
+            let before = chips
+            for c in changes { chips.followRename(labelId: c.gmailLabelId, from: c.from, to: c.to) }
+            guard chips != before, let encoded = try? JSONEncoder().encode(chips) else { return nil }
+            var updated = view
+            updated.chipsJSON = encoded
+            return updated
         }
     }
 
@@ -339,7 +395,8 @@ enum LabelRemoval {
     }
 
     /// "Deleted means gone" (DEC-019): the rows, the conversations'
-    /// memberships and the saved views on them go. The label's color only
+    /// memberships (the junction and the id lists of threads and messages)
+    /// and the saved views on them go. The label's color only
     /// on this Mac and its order are columns of the row; what UserDefaults
     /// keeps per label goes with `forgetDefaults`.
     static func forget(_ db: Database, rows: [LabelRow], views: [SavedView] = []) throws {
@@ -348,6 +405,14 @@ enum LabelRemoval {
                 DELETE FROM thread_label
                 WHERE labelId = ? AND threadId IN (SELECT id FROM thread WHERE accountId = ?)
                 """, arguments: [row.gmailLabelId, row.accountId])
+            // The opaque id also goes from the space-separated id lists.
+            for table in ["thread", "message"] {
+                try db.execute(sql: """
+                    UPDATE \(table)
+                    SET labelIds = trim(replace(' ' || labelIds || ' ', ' ' || ? || ' ', ' '))
+                    WHERE accountId = ? AND instr(' ' || labelIds || ' ', ' ' || ? || ' ') > 0
+                    """, arguments: [row.gmailLabelId, row.accountId, row.gmailLabelId])
+            }
             try db.execute(sql: "DELETE FROM label WHERE id = ?", arguments: [row.id])
         }
         for view in views {
@@ -413,6 +478,9 @@ enum LabelVisibilityEdit {
         await didStore()
         do {
             _ = try await remote.patchLabel(id: before.gmailLabelId, patch)
+            // Again once Gmail has it: a sync that listed the labels before
+            // the patch landed may have written the old value back meanwhile.
+            try? await db.write { db in try store(db, patch, rowId: rowId) }
         } catch {
             try? await db.write { db in
                 try store(db, GmailLabelPatch(
@@ -441,20 +509,29 @@ enum LabelVisibilityEdit {
 // MARK: - Color cascade
 
 extension GmailLabelColorEdit {
-    /// The labels whose Gmail color did not change, and the first reason.
+    /// The labels whose Gmail color did not change, and why.
     struct CascadeResult {
         var failed: [String] = []
+        /// The first reason, in label order.
         var cause: Error?
+        /// The failures do not all have the same reason.
+        var mixedCauses = false
+        /// Failed labels a retry will not change (a permanent 4xx).
+        var permanent: Set<String> = []
+        /// The ones a retry may fix.
+        var retryable: [String] { failed.filter { !permanent.contains($0) } }
     }
 
     /// Sets (or removes) the Gmail color of several labels: a parent and
-    /// its sublabels. One transaction stores every new color, `didStore`
-    /// runs once (one tree rebuild), then one `labels.patch` per label goes
-    /// out, at most `LabelBatch.maxInFlight` at a time; one transaction
-    /// keeps Gmail's answers and puts back the colors of the labels whose
-    /// call failed.
+    /// its sublabels. One transaction stores every new color (and clears the
+    /// Mac-only color of the labels in `clearingLocalColor`, so a sublabel
+    /// shows its parent's new color: the owner's rule), `didStore` runs once
+    /// (one tree rebuild), then one `labels.patch` per label goes out, at
+    /// most `LabelBatch.maxInFlight` at a time; one transaction keeps Gmail's
+    /// answers and puts back the colors of the labels whose call failed.
     static func applyMany(_ target: GmailLabelColor?,
                           labelRowIds ids: [String],
+                          clearingLocalColor: Set<String> = [],
                           db: any DatabaseWriter,
                           pending: PendingLabelColorEdits = .shared,
                           now: () -> Date = { Date() },
@@ -463,75 +540,92 @@ extension GmailLabelColorEdit {
                               async throws -> GLabel) async -> CascadeResult {
         let wanted = target?.colors ?? .none
         var result = CascadeResult()
+        var errors: [(String, Error)] = []
         let begun = ClaimBox()
         let claims: [Claim]
         do {
-            let (claimed, refused, cause) = try await db.write { db -> ([Claim], [String], Error?) in
+            let (claimed, refused) = try await db.write { db -> ([Claim], [(String, Error)]) in
                 var claimed: [Claim] = []
-                var refused: [String] = []
-                var cause: Error?
+                var refused: [(String, Error)] = []
                 for id in ids {
                     guard let row = try LabelRow.fetchOne(db, key: id) else {
-                        refused.append(id); cause = cause ?? Failure.unknownLabel; continue
+                        refused.append((id, Failure.unknownLabel)); continue
                     }
                     guard row.type == "user" else {
-                        refused.append(id); cause = cause ?? Failure.systemLabel; continue
+                        refused.append((id, Failure.systemLabel)); continue
                     }
                     guard pending.begin(id, colors: wanted) else {
-                        refused.append(id); cause = cause ?? Failure.inFlight; continue
+                        refused.append((id, Failure.inFlight)); continue
                     }
                     begun.add(id)
                     try store(db, wanted, id: id)
+                    let clearsLocal = clearingLocalColor.contains(id) && row.color != nil
+                    if clearsLocal { try setLocalColor(db, hex: nil, labelRowIds: [id]) }
                     claimed.append(Claim(id: id, gmailLabelId: row.gmailLabelId,
                                          before: LabelColors(background: row.gmailBackgroundColor,
-                                                             text: row.gmailTextColor)))
+                                                             text: row.gmailTextColor),
+                                         localBefore: clearsLocal ? row.color : nil))
                 }
-                return (claimed, refused, cause)
+                return (claimed, refused)
             }
             claims = claimed
-            result.failed = refused
-            result.cause = cause
+            errors = refused
         } catch {
             // Rolled back: release only the edits this call started.
             for id in begun.all { pending.cancel(id) }
             return CascadeResult(failed: ids, cause: error)
         }
-        guard !claims.isEmpty else { return result }
-        await didStore()
-        let answers = AnswerBox()
-        let failures = await LabelBatch.run(claims) { claim in
-            answers.set(claim.id, try await patch(claim.gmailLabelId, target))
-        }
-        let got = answers.all
-        let stamp = now()
-        let notApplied = (try? await db.write { db -> [String] in
-            var notApplied: [String] = []
-            for (i, claim) in claims.enumerated() {
-                if failures[i] == nil, let answer = got[claim.id] {
-                    let confirmed = colors(of: answer)
-                    try store(db, confirmed, id: claim.id)
-                    pending.confirm(claim.id, colors: confirmed, now: stamp)
-                    if confirmed != wanted { notApplied.append(claim.id) }
-                } else {
-                    pending.cancel(claim.id)
-                    // Only over our own write: a sync may have stored newer colors.
-                    try db.execute(sql: """
-                        UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ?
-                        WHERE id = ? AND gmailBackgroundColor IS ? AND gmailTextColor IS ?
-                        """, arguments: [claim.before.background, claim.before.text, claim.id,
-                                         wanted.background, wanted.text])
+        if !claims.isEmpty {
+            await didStore()
+            let answers = AnswerBox()
+            let failures = await LabelBatch.run(claims) { claim in
+                answers.set(claim.id, try await patch(claim.gmailLabelId, target))
+            }
+            let got = answers.all
+            // What each claim ends with: Gmail's answer, or nil to put back.
+            let confirmed: [LabelColors?] = claims.indices.map { i in
+                failures[i] == nil ? got[claims[i].id].map(colors(of:)) : nil
+            }
+            _ = try? await db.write { db in
+                for (i, claim) in claims.enumerated() {
+                    if let colors = confirmed[i] {
+                        try store(db, colors, id: claim.id)
+                    } else {
+                        // Only over our own writes: a sync may have stored newer colors.
+                        try db.execute(sql: """
+                            UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ?
+                            WHERE id = ? AND gmailBackgroundColor IS ? AND gmailTextColor IS ?
+                            """, arguments: [claim.before.background, claim.before.text, claim.id,
+                                             wanted.background, wanted.text])
+                        if let local = claim.localBefore {
+                            try db.execute(sql: "UPDATE label SET color = ? WHERE id = ? AND color IS NULL",
+                                           arguments: [local, claim.id])
+                        }
+                    }
                 }
             }
-            return notApplied
-        }) ?? []
-        for (i, claim) in claims.enumerated() where failures[i] != nil {
-            result.failed.append(claim.id)
-            result.cause = result.cause ?? failures[i]
+            // After the transaction, whatever became of it: no claim may stay
+            // in flight for the app's lifetime.
+            let stamp = now()
+            for (i, claim) in claims.enumerated() {
+                if let colors = confirmed[i] {
+                    pending.confirm(claim.id, colors: colors, now: stamp)
+                    if colors != wanted { errors.append((claim.id, Failure.notApplied)) }
+                } else {
+                    pending.cancel(claim.id)
+                    errors.append((claim.id, failures[i] ?? Failure.notApplied))
+                }
+            }
         }
-        if !notApplied.isEmpty {
-            result.failed += notApplied
-            result.cause = result.cause ?? Failure.notApplied
-        }
+        let order = Dictionary(ids.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
+        errors.sort { (order[$0.0] ?? 0) < (order[$1.0] ?? 0) }
+        result.failed = errors.map(\.0)
+        result.cause = errors.first?.1
+        result.mixedCauses = Set(errors.map { "\($0.1)" }).count > 1
+        result.permanent = Set(errors.filter { _, error in
+            if let failure = error as? Failure { return failure == .systemLabel || failure == .unknownLabel }
+            return LabelBatch.isPermanent(error)
+        }.map(\.0))
         return result
     }
 
@@ -547,6 +641,8 @@ extension GmailLabelColorEdit {
         let id: String
         let gmailLabelId: String
         let before: LabelColors
+        /// The Mac-only color this edit cleared, put back if it fails.
+        let localBefore: String?
     }
 
     private final class ClaimBox: @unchecked Sendable {
@@ -561,5 +657,47 @@ extension GmailLabelColorEdit {
         private var answers: [String: GLabel] = [:]
         func set(_ id: String, _ label: GLabel) { lock.withLock { answers[id] = label } }
         var all: [String: GLabel] { lock.withLock { answers } }
+    }
+}
+
+// MARK: - What else names a label
+
+extension FilterChips {
+    /// After a rename: the stored display name follows the label (the id
+    /// stays). Matched on id and old name, as ids repeat across accounts.
+    mutating func followRename(labelId gmailLabelId: String, from: String, to: String) {
+        if labelId == gmailLabelId, labelName == from { labelName = to }
+    }
+
+    /// After a removal: the filter on that label goes.
+    mutating func dropLabel(_ row: LabelRow) {
+        guard labelId == row.gmailLabelId, labelName == nil || labelName == row.name else { return }
+        labelId = nil
+        labelName = nil
+        labelExclude = false
+    }
+}
+
+/// Where the sidebar's selection goes after a label edit.
+enum LabelSelection {
+    /// After a removal: Inbox when the open view was a removed label or a
+    /// removed saved view, else nil (stay).
+    static func afterRemoval(_ selected: MailboxView, removed: [LabelRow],
+                             views: [SavedView]) -> MailboxView? {
+        switch selected {
+        case .label(let account, let labelId, _):
+            return removed.contains { $0.accountId == account && $0.gmailLabelId == labelId } ? .inbox : nil
+        case .saved(let id, _):
+            return views.contains { $0.id == id } ? .inbox : nil
+        default:
+            return nil
+        }
+    }
+
+    /// After a rename: the same label view under its new name, else nil.
+    static func afterRename(_ selected: MailboxView, names: [String: String]) -> MailboxView? {
+        guard case .label(let account, let labelId, let old) = selected,
+              let name = names["\(account):\(labelId)"], name != old else { return nil }
+        return .label(account: account, labelId: labelId, name: name)
     }
 }

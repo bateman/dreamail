@@ -206,6 +206,61 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertGreaterThan(gauge.peak, 0)
     }
 
+    /// The owner's rule, visible: a sublabel with its own Mac-only color
+    /// shows the parent's new Gmail color, because that override goes. The
+    /// parent keeps its own Mac-only color (DEC-023).
+    func testGmailColorOnAParentClearsTheSublabelsMacOnlyColor() async throws {
+        var labels = rows
+        labels[0].color = "#EB5757"   // the parent
+        labels[2].color = "#27AE60"   // a sublabel
+        labels[4].color = "#2D9CDB"   // the look-alike
+        let q = try makeDB(labels)
+        let family = LabelFamily.members(of: labels[0], in: labels).map(\.id)
+        let result = await GmailLabelColorEdit.applyMany(
+            blue, labelRowIds: family, clearingLocalColor: Set(family.dropFirst()), db: q,
+            pending: PendingLabelColorEdits()) { id, color in
+                self.answer(id, color)
+            }
+        XCTAssertTrue(result.failed.isEmpty)
+        let after = try stored(q)
+        XCTAssertNil(after[id("L3")]?.color, "the sublabel shows the parent's new color")
+        XCTAssertEqual(after[id("L3")]?.displayColors.background, "#4a86e8")
+        XCTAssertEqual(after[id("L1")]?.color, "#EB5757", "the label itself keeps its Mac-only color")
+        XCTAssertEqual(after[id("L5")]?.color, "#2D9CDB", "the look-alike is not touched")
+    }
+
+    /// A failed sublabel gets its Mac-only color back with its Gmail color.
+    func testCascadeFailurePutsBackTheClearedMacOnlyColor() async throws {
+        var labels = rows
+        labels[2].color = "#27AE60"
+        let q = try makeDB(labels)
+        let family = LabelFamily.members(of: labels[0], in: labels).map(\.id)
+        let result = await GmailLabelColorEdit.applyMany(
+            blue, labelRowIds: family, clearingLocalColor: Set(family.dropFirst()), db: q,
+            pending: PendingLabelColorEdits()) { id, color in
+                if id == "L3" { throw GmailError.http(400, "bad") }
+                return self.answer(id, color)
+            }
+        XCTAssertEqual(result.failed, [id("L3")])
+        XCTAssertEqual(result.permanent, [id("L3")], "a 400 is not offered for retry")
+        XCTAssertTrue(result.retryable.isEmpty)
+        XCTAssertEqual(try stored(q)[id("L3")]?.color, "#27AE60")
+    }
+
+    func testCascadeSaysWhenTheReasonsDiffer() async throws {
+        let q = try makeDB()
+        let family = LabelFamily.members(of: rows[0], in: rows).map(\.id)
+        let result = await GmailLabelColorEdit.applyMany(
+            blue, labelRowIds: family, db: q, pending: PendingLabelColorEdits()) { id, color in
+                if id == "L2" { throw URLError(.timedOut) }
+                if id == "L4" { throw GmailError.http(500, "") }
+                return self.answer(id, color)
+            }
+        XCTAssertEqual(result.failed, [id("L2"), id("L4")])
+        XCTAssertTrue(result.mixedCauses)
+        XCTAssertEqual(result.retryable, [id("L2"), id("L4")])
+    }
+
     func testMacOnlyColorGoesToEverySublabel() throws {
         let q = try makeDB()
         let family = LabelFamily.members(of: rows[0], in: rows).map(\.id)
@@ -366,6 +421,89 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertEqual(GmailClient.rateLimitAttempts(method: "POST", path: "/labels"), 0)
     }
 
+    /// `A` → `A/B` while `A/B` exists: `A/B` moves first, or Gmail would
+    /// refuse `A`'s new name.
+    func testRenameIntoItsOwnFamilyGoesDeepestFirst() async throws {
+        let labels = [row("A", "A"), row("B", "A/B")]
+        let changes = try LabelRename.plan(label: labels[0], name: "B", parent: nil, rows: labels).get()
+        XCTAssertEqual(changes.map(\.to), ["B", "B/B"])
+        let into = try LabelRename.plan(label: labels[0], name: "A/B", parent: nil, rows: labels).get()
+        XCTAssertEqual(into.map(\.to), ["A/B", "A/B/B"])
+        let waves = LabelRename.waves(into.map { (from: $0.from, to: $0.to) })
+        XCTAssertEqual(waves, [[1], [0]])
+
+        // A remote that refuses a name another label holds, ignoring case.
+        let held = Names(["A": "A", "B": "A/B"])
+        let remote = FakeRemote()
+        remote.failPatch = { id, patch, _ in
+            guard let name = patch.name else { return nil }
+            return held.take(id, name) ? nil : GmailError.http(409, "Label name exists or conflicts")
+        }
+        let (outcome, names) = await LabelRename.execute(into, remote: remote)
+        guard case .renamed = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(names, [id("A"): "A/B", id("B"): "A/B/B"])
+    }
+
+    func testPermanentRefusalsAreNotRetried() async throws {
+        let remote = FakeRemote()
+        remote.failPatch = { id, _, _ in id == "L3" ? GmailError.http(400, "Invalid label name") : nil }
+        let changes = try LabelRename.plan(label: rows[0], name: "Calls", parent: nil, rows: rows).get()
+        _ = await LabelRename.execute(changes, remote: remote)
+        let forwardL3 = remote.patches.filter { $0.0 == "L3" && $0.1.name == "Calls/PRIN/2025" }
+        XCTAssertEqual(forwardL3.count, 1, "a 400 is sent once")
+        XCTAssertTrue(LabelBatch.isPermanent(GmailError.http(404, "")))
+        XCTAssertFalse(LabelBatch.isPermanent(GmailError.http(429, "")))
+        XCTAssertFalse(LabelBatch.isPermanent(GmailError.http(503, "")))
+        XCTAssertFalse(LabelBatch.isPermanent(URLError(.timedOut)))
+    }
+
+    func testRenameFollowsInFilterChipsAndSavedViews() throws {
+        var chips = FilterChips()
+        chips.labelId = "L2"
+        chips.labelName = "Bandi/PRIN"
+        let changes = try LabelRename.plan(label: rows[0], name: "Calls", parent: nil, rows: rows).get()
+        for c in changes { chips.followRename(labelId: c.gmailLabelId, from: c.from, to: c.to) }
+        XCTAssertEqual(chips.labelName, "Calls/PRIN")
+        XCTAssertEqual(chips.labelId, "L2")
+
+        let views = [view(1, account: a, labelId: nil, chipsLabel: "L2"), view(2, account: a, labelId: "L7")]
+        var named = views
+        var withName = FilterChips()
+        withName.labelId = "L2"
+        withName.labelName = "Bandi/PRIN"
+        named[0].chipsJSON = try JSONEncoder().encode(withName)
+        let updated = LabelRename.views(named, after: changes)
+        XCTAssertEqual(updated.map(\.id), [1])
+        let decoded = try JSONDecoder().decode(FilterChips.self, from: XCTUnwrap(updated.first?.chipsJSON))
+        XCTAssertEqual(decoded.labelName, "Calls/PRIN")
+
+        var dropped = chips
+        dropped.labelExclude = true
+        dropped.dropLabel(row("L2", "Calls/PRIN"))
+        XCTAssertNil(dropped.labelId)
+        XCTAssertNil(dropped.labelName)
+        XCTAssertFalse(dropped.labelExclude)
+        var otherAccount = chips
+        otherAccount.dropLabel(row("L2", "Something else", account: b))
+        XCTAssertEqual(otherAccount.labelId, "L2", "same id, another label: kept")
+    }
+
+    func testSelectionAfterRemovalAndRename() {
+        let removed = LabelRemoval.order(rows[0], rows: rows)
+        let open = MailboxView.label(account: a, labelId: "L3", name: "Bandi/PRIN/2025")
+        XCTAssertEqual(LabelSelection.afterRemoval(open, removed: removed, views: []), .inbox)
+        let otherAccount = MailboxView.label(account: b, labelId: "L1", name: "Bandi/other")
+        XCTAssertNil(LabelSelection.afterRemoval(otherAccount, removed: removed, views: []))
+        XCTAssertNil(LabelSelection.afterRemoval(.starred, removed: removed, views: []))
+        let savedView = view(9, account: a, labelId: "L2")
+        XCTAssertEqual(LabelSelection.afterRemoval(.saved(9, "v9"), removed: removed, views: [savedView]), .inbox)
+
+        XCTAssertEqual(LabelSelection.afterRename(open, names: [id("L3"): "Calls/PRIN/2025"]),
+                       .label(account: a, labelId: "L3", name: "Calls/PRIN/2025"))
+        XCTAssertNil(LabelSelection.afterRename(open, names: [id("L3"): "Bandi/PRIN/2025"]))
+        XCTAssertNil(LabelSelection.afterRename(otherAccount, names: [id("L1"): "x"]))
+    }
+
     // MARK: Remove
 
     /// The confirmation named one label; a sync renamed it meanwhile (or
@@ -498,6 +636,10 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertEqual(memberships, ["a@x.com:t2 L5", "b@x.com:t3 L1"])
         let threads = try await q.read { try MailThread.fetchCount($0) }
         XCTAssertEqual(threads, 3, "conversations are kept")
+        let ids = try await q.read { db in
+            try String.fetchAll(db, sql: "SELECT labelIds FROM thread ORDER BY id")
+        }
+        XCTAssertEqual(ids, ["INBOX", "INBOX L5", "INBOX L1"], "the id lists lose the removed label only")
     }
 
     /// A sublabel that cannot be deleted keeps its parent: nothing shallower
@@ -645,4 +787,21 @@ private final class Gauge: @unchecked Sendable {
     func enter() { lock.withLock { now += 1; max = Swift.max(max, now) } }
     func leave() { lock.withLock { now -= 1 } }
     var peak: Int { lock.withLock { max } }
+}
+
+/// Label names on a fake Gmail: a rename takes a name only when no other
+/// label holds it, ignoring case.
+private final class Names: @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: [String: String]
+    init(_ names: [String: String]) { self.names = names }
+    func take(_ id: String, _ name: String) -> Bool {
+        lock.withLock {
+            if names.contains(where: { $0.key != id && $0.value.caseInsensitiveCompare(name) == .orderedSame }) {
+                return false
+            }
+            names[id] = name
+            return true
+        }
+    }
 }

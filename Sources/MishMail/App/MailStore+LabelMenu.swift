@@ -138,6 +138,7 @@ extension MailStore {
             localFailure = "The names couldn't be saved on this Mac (\(error.localizedDescription)). "
                 + "They appear after the next sync."
         }
+        followRenameInFilters(changes, names: names)
         if case .renamed = outcome {
             reloadAccounts()
             followRename(names, accountId: accountId)
@@ -176,12 +177,30 @@ extension MailStore {
         }
     }
 
-    /// The open label view keeps its selection under the new name.
+    /// The open label view keeps its selection under the new name (the
+    /// stored one: after a failed rename, Gmail's as read back).
     private func followRename(_ names: [String: String], accountId: String) {
-        guard case .label(let account, let labelId, let old) = selectedView, account == accountId,
-              let name = labelsById[accountId]?[labelId]?.name ?? names["\(accountId):\(labelId)"],
-              name != old else { return }
-        goTo(.label(account: account, labelId: labelId, name: name))
+        let current = Dictionary(userLabels(forAccount: accountId).map { ($0.id, $0.name) },
+                                 uniquingKeysWith: { a, _ in a })
+        var known = names
+        for key in names.keys { if let name = current[key] { known[key] = name } }
+        if let view = LabelSelection.afterRename(selectedView, names: known) { goTo(view) }
+    }
+
+    /// The label filter chip and the saved views' chips keep naming a
+    /// renamed label by its name on Gmail.
+    private func followRenameInFilters(_ changes: [LabelRename.Change], names: [String: String]) {
+        let landed = changes.filter { names[$0.rowId] == $0.to }
+        guard !landed.isEmpty else { return }
+        for c in landed { chips.followRename(labelId: c.gmailLabelId, from: c.from, to: c.to) }
+        let updated = LabelRename.views(savedViews, after: landed)
+        guard !updated.isEmpty else { return }
+        do {
+            try db.write { db in for view in updated { try view.update(db) } }
+        } catch {
+            lastError = "Saved views couldn't be updated on this Mac (\(error.localizedDescription))."
+        }
+        reloadSavedViews()
     }
 
     // MARK: Remove
@@ -225,11 +244,12 @@ extension MailStore {
                     + "(\(error.localizedDescription)). They go at the next sync."
             }
             LabelRemoval.forgetDefaults(report.deleted)
+            for row in report.deleted { self.chips.dropLabel(row) }
             self.endLabelEdit(ids)
             self.reloadAccounts()
             self.reloadSavedViews()
-            if self.removedSelection(report.deleted, views: views, accountId: accountId) {
-                self.goTo(.inbox)
+            if let next = LabelSelection.afterRemoval(self.selectedView, removed: report.deleted, views: views) {
+                self.goTo(next)
             }
             guard let cause = report.cause else { return }
             if OfflinePolicy.shouldDefer(cause) { self.isOffline = true }
@@ -256,18 +276,6 @@ extension MailStore {
                     else { return }
                     self.removeLabel(again)
                 })
-        }
-    }
-
-    /// Whether the open view was a removed label or a removed saved view.
-    private func removedSelection(_ rows: [LabelRow], views: [SavedView], accountId: String) -> Bool {
-        switch selectedView {
-        case .label(let account, let labelId, _):
-            return account == accountId && rows.contains { $0.gmailLabelId == labelId }
-        case .saved(let id, _):
-            return views.contains { $0.id == id }
-        default:
-            return false
         }
     }
 

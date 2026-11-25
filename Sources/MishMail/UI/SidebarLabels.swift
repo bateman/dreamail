@@ -160,11 +160,20 @@ struct SidebarLabelRow: View {
             SidebarLabelTag(colors: node.colors)
         }
         .listItemTint(.monochrome)
-        // Gmail's "⋮" takes the count's place on hover and on the open label.
-        .modifier(SidebarCount(count: showsMenuButton(selected) ? 0 : unread,
+        // The full width up to the count, so the "⋮" sits right before it.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Gmail's "⋮" takes the count's place on hover; on the open label it
+        // is drawn beside the count, which stays.
+        .modifier(SidebarCount(count: hidesCount ? 0 : unread,
                                painted: accent.paintsSelection))
         .help(node.fullName)
         .accessibilityIdentifier("sidebar.label.\(node.accountId).\(node.gmailLabelId)")
+        // The row's tap opens the label. It is attached here, under the
+        // "⋮" overlay, so a click on "⋮" can never also open (or reopen)
+        // the label: the overlay is not part of the view the tap watches.
+        .simultaneousGesture(
+            TapGesture().onEnded { store.goTo(view) },
+            including: reselect ? .gesture : .subviews)
         .overlay(alignment: .trailing) {
             if showsMenuButton(selected) {
                 LabelMenuButton(node: node, onNewLabel: onNewLabel) { pickingColor = true }
@@ -180,15 +189,14 @@ struct SidebarLabelRow: View {
         .contextMenu {
             LabelMenuItems(node: node, onNewLabel: onNewLabel) { pickingColor = true }
         }
-        .simultaneousGesture(
-            TapGesture().onEnded { store.goTo(view) },
-            including: reselect ? .gesture : .subviews)
         .tag(view)
     }
 }
 
 extension SidebarLabelRow {
     fileprivate func showsMenuButton(_ selected: Bool) -> Bool { hovering || selected || pickingColor }
+    /// The count gives way to "⋮" only while the pointer is on the row.
+    fileprivate var hidesCount: Bool { hovering || pickingColor }
 }
 
 /// Gmail's label glyph: a tag filled with the label's color (the Mac-only

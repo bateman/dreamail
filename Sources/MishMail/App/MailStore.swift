@@ -4180,18 +4180,23 @@ struct ComposeRequest: Identifiable {
             showNotice("Changing label colors on Gmail is disabled in the demo inbox")
             return
         }
-        let ids = labelFamily(label).map(\.id).filter { !gmailLabelColorSaving.contains($0) }
+        let family = labelFamily(label).map(\.id)
+        let ids = family.filter { !gmailLabelColorSaving.contains($0) }
         guard label.type == "user", !ids.isEmpty else { return }
-        setGmailLabelColor(rowIds: ids, accountId: label.accountId, to: color)
+        // The sublabels show the parent's new color: their Mac-only colors,
+        // which would win on display (DEC-023), go.
+        setGmailLabelColor(rowIds: ids, clearing: Set(family.dropFirst()), accountId: label.accountId,
+                           to: color)
     }
 
-    private func setGmailLabelColor(rowIds ids: [String], accountId: String, to color: GmailLabelColor?) {
+    private func setGmailLabelColor(rowIds ids: [String], clearing: Set<String>, accountId: String,
+                                    to color: GmailLabelColor?) {
         let client = client(for: accountId)
         let pool = db
         gmailLabelColorSaving.formUnion(ids)
         Task { @MainActor [weak self] in
             let result = await GmailLabelColorEdit.applyMany(
-                color, labelRowIds: ids, db: pool,
+                color, labelRowIds: ids, clearingLocalColor: clearing, db: pool,
                 didStore: { self?.reloadAccounts() }) { labelId, color in
                     try await client.patchLabelColor(id: labelId, color: color)
                 }
@@ -4214,14 +4219,17 @@ struct ComposeRequest: Identifiable {
                 let names = result.failed.compactMap { id in
                     self.labelsByAccount[accountId]?.first { $0.id == id }?.name
                 }
+                let reason = result.mixedCauses ? "Some labels could not be updated." : message
+                let retryable = result.retryable
                 self.labelMenu.failure = LabelEditFailure(
                     title: "Some labels kept their old color",
-                    message: "\(message)\n\n" + LabelEditFailure.list(names),
-                    retry: { [weak self] in
+                    message: "\(reason)\n\n" + LabelEditFailure.list(names),
+                    retry: retryable.isEmpty ? nil : { [weak self] in
                         guard let self else { return }
-                        let again = result.failed.filter { !self.gmailLabelColorSaving.contains($0) }
+                        let again = retryable.filter { !self.gmailLabelColorSaving.contains($0) }
                         guard !again.isEmpty else { return }
-                        self.setGmailLabelColor(rowIds: again, accountId: accountId, to: color)
+                        self.setGmailLabelColor(rowIds: again, clearing: clearing, accountId: accountId,
+                                                to: color)
                     })
             }
         }
