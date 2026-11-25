@@ -110,6 +110,9 @@ struct LabelMenuPresentation: ViewModifier {
             .sheet(item: $store.labelMenu.editing) { label in
                 EditLabelSheet(label: label)
             }
+            .sheet(item: $store.labelMenu.coloring) { label in
+                LabelColorSheet(label: label)
+            }
             .alert(Text(verbatim: removing.map {
                        LabelRemovalText.title(label: $0, multipleAccounts: store.accounts.count > 1)
                    } ?? ""),
@@ -147,6 +150,30 @@ struct LabelMenuPresentation: ViewModifier {
             } message: { failure in
                 Text(verbatim: failure.message)
             }
+    }
+}
+
+/// "Label color ▸ Choose color…": the Organize sheet's palette for one
+/// label, showing its colors as they are now.
+struct LabelColorSheet: View {
+    @Environment(MailStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let label: LabelRow
+
+    var body: some View {
+        let row = store.userLabels(forAccount: label.accountId).first { $0.id == label.id } ?? label
+        VStack(alignment: .leading, spacing: 8) {
+            Text(verbatim: "Label color: " + LabelText.quoted(row.name)).font(.headline)
+                .padding([.top, .horizontal], 12)
+            LabelColorPalette(label: row) { dismiss() }
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("labelColor.done")
+            }
+            .padding([.bottom, .horizontal], 12)
+        }
     }
 }
 

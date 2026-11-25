@@ -42,6 +42,23 @@ final class SidebarLabelMenuUITests: XCTestCase {
         app.menuItems.matching(NSPredicate(format: "identifier == %@ OR title == %@", id, title)).firstMatch
     }
 
+    /// Scrolls the sidebar until `element` can be clicked: the demo has
+    /// some 70 labels, so Vendors and the labels' More row start below the
+    /// fold.
+    @discardableResult
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        let sidebar = app.outlines.firstMatch
+        for step in [-300.0, 300.0] {
+            var tries = 0
+            while !(element.exists && element.isHittable), tries < 15 {
+                sidebar.scroll(byDeltaX: 0, deltaY: step)
+                tries += 1
+            }
+            if element.exists && element.isHittable { return true }
+        }
+        return element.exists && element.isHittable
+    }
+
     private func waitForAbsence(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while element.exists, Date() < deadline {
@@ -110,6 +127,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         let vendors = label("Label_vendors", in: app)
         let aws = label("Label_vendors_aws", in: app)
         XCTAssertTrue(vendors.waitForExistence(timeout: 10))
+        XCTAssertTrue(reveal(vendors, in: app), "Vendors can be scrolled to")
         XCTAssertTrue(aws.waitForExistence(timeout: 5), "Vendors starts open")
 
         vendors.rightClick()
@@ -125,6 +143,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(red), "picking a color closes the palette")
 
         // The sublabel now has the same color: its palette checks it.
+        XCTAssertTrue(reveal(aws, in: app))
         aws.rightClick()
         XCTAssertTrue(color.waitForExistence(timeout: 5))
         color.hover()
@@ -149,6 +168,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
 
         XCTAssertTrue(waitForAbsence(research), "a hidden label leaves the list")
         XCTAssertTrue(more.waitForExistence(timeout: 5), "and goes behind the labels' More row")
+        XCTAssertTrue(reveal(more, in: app), "the labels' More row can be scrolled to")
         more.click()
         XCTAssertTrue(research.waitForExistence(timeout: 5), "More shows it")
     }
@@ -158,6 +178,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         let app = launch()
         let vendors = label("Label_vendors", in: app)
         XCTAssertTrue(vendors.waitForExistence(timeout: 10))
+        XCTAssertTrue(reveal(vendors, in: app))
         vendors.rightClick()
         let remove = menuItem("labelMenu.remove", "Remove label", in: app)
         XCTAssertTrue(remove.waitForExistence(timeout: 5))
@@ -169,6 +190,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(waitForAbsence(cancel))
         XCTAssertTrue(vendors.exists, "Cancel keeps the label")
+        XCTAssertTrue(reveal(vendors, in: app))
         XCTAssertTrue(label("Label_vendors_aws", in: app).exists)
     }
 }

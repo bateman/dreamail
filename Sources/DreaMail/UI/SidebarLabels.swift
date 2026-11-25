@@ -141,7 +141,6 @@ struct SidebarLabelRow: View {
     let node: SidebarLabelNode
     let onNewLabel: (NewLabelRequest) -> Void
     @State private var hovering = false
-    @State private var pickingColor = false
 
     var body: some View {
         let view = MailboxView.label(account: node.accountId, labelId: node.gmailLabelId,
@@ -176,27 +175,28 @@ struct SidebarLabelRow: View {
             including: reselect ? .gesture : .subviews)
         .overlay(alignment: .trailing) {
             if showsMenuButton(selected) {
-                LabelMenuButton(node: node, onNewLabel: onNewLabel) { pickingColor = true }
+                LabelMenuButton(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
             }
         }
         .onHover { hovering = $0 }
-        .popover(isPresented: $pickingColor, arrowEdge: .trailing) {
-            if let row = store.labelRow(node) {
-                LabelColorPalette(label: row) { pickingColor = false }
-            }
-        }
         .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
         .contextMenu {
-            LabelMenuItems(node: node, onNewLabel: onNewLabel) { pickingColor = true }
+            LabelMenuItems(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
         }
         .tag(view)
     }
 }
 
 extension SidebarLabelRow {
-    fileprivate func showsMenuButton(_ selected: Bool) -> Bool { hovering || selected || pickingColor }
+    fileprivate func showsMenuButton(_ selected: Bool) -> Bool { hovering || selected }
+
+    /// "Choose color…": the Organize sheet's palette, in one sheet hosted
+    /// by `LabelMenuPresentation` (not a popover on every row).
+    fileprivate func pickColor() {
+        if let row = store.labelRow(node) { store.labelMenu.coloring = row }
+    }
     /// The count gives way to "⋮" only while the pointer is on the row.
-    fileprivate var hidesCount: Bool { hovering || pickingColor }
+    fileprivate var hidesCount: Bool { hovering }
 }
 
 /// Gmail's label glyph: a tag filled with the label's color (the Mac-only

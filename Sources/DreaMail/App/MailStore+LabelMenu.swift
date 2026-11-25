@@ -7,6 +7,8 @@ import GRDB
 struct LabelMenuState {
     var editing: LabelRow?
     var removing: LabelRow?
+    /// The label whose color palette is open.
+    var coloring: LabelRow?
     var failure: LabelEditFailure?
     var inFlight: Set<String> = []
 }
