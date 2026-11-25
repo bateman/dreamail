@@ -1,6 +1,19 @@
 # App name
 
-## Chosen: MishMail
+## Current: DreaMail
+
+Since November 2026 this fork is called **DreaMail** (capital D, capital M;
+`dreamail` in paths, URLs and the URL scheme; `DREAMAIL_` for build switches
+and environment variables). The decision and the derived forms are DEC-061
+and DEC-065 in [the decision register](registro-decisioni.md); the study is
+[`docs/studi/rebranding-dreamail.md`](studi/rebranding-dreamail.md). Its
+name check found only "DreamMail", with two m's, an abandoned Windows mail
+client. Re-check trademarks (EUIPO, TMview, WIPO) and the `.app` and `.dev`
+domains before a public launch.
+
+The rest of this note is the history of the previous name, kept as it was.
+
+## Previous: MishMail
 
 MishMail is a play on *mishmish*, the Hebrew word for apricot. It is short,
 memorable, and gives the app a distinctive visual identity: mail plus an

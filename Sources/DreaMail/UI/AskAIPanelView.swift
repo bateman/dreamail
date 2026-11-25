@@ -1,0 +1,1391 @@
+import SwiftUI
+
+/// The Ask AI side panel: transcript, confirm card, and composer.
+///
+/// All state lives on `AskAIController` (`@Observable`), so the panel is a
+/// thin renderer. Two rules the controller enforces silently, and this view
+/// must therefore show:
+/// - `send`, `newConversation`, `loadConversation`, and `deleteConversation`
+///   are no-ops while a turn runs. Every such control is disabled while
+///   `controller.isRunning`.
+/// - The `send_draft` confirm line comes from `pendingConfirmation.summary`
+///   (built from the stored draft), never from the model's arguments.
+struct AskAIPanelView: View {
+    @Environment(\.mailAccent) private var accent
+    let controller: AskAIController
+    @Environment(MailStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    @State private var input = ""
+    @State private var conversations: [ChatConversationRow] = []
+    @FocusState private var inputFocused: Bool
+    @State private var showAttachPopover = false
+    @State private var attachQuery = ""
+    @State private var attachResults: [AskAIController.AttachedThread] = []
+    /// Installed-and-enabled Ollama models for the model menu. The stored
+    /// provider row does not track what `ollama pull` added or the Settings
+    /// toggles turned off, so the panel asks the live endpoint once.
+    @State private var localModels: [String] = []
+    @State private var modelPickerShown = false
+    @State private var expandedThinking: Set<UUID> = []
+    @State private var hostedNoticeDismissed = false
+    @State private var expandedTraces: Set<String> = []
+    @State private var thinking = Ollama.thinking(for: .askAI).rawValue
+    @State private var revealedBubbleIDs: Set<UUID> = []
+    @State private var providerConfig: LLMProviderConfig?
+    @State private var transcriptNearBottom = true
+    /// Parsed markdown per bubble, with the text it came from. A bubble's
+    /// text can change after it stops streaming ("_Stopped._", an error
+    /// line), so a hit only counts when the source text still matches.
+    @State private var parsedBubbleText: [UUID: ParsedBubbleText] = [:]
+    @State private var expandedDraftIDs: Set<UUID> = []
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            transcript
+            if let pending = controller.pendingConfirmation {
+                Divider()
+                if expandedDraftIDs.contains(pending.id) {
+                    // The full draft has no height cap, so the card scrolls
+                    // as one unit. The buttons sit below the body, so the
+                    // user passes the whole draft on the way to them.
+                    ScrollView(.vertical) {
+                        confirmCard(pending)
+                    }
+                    .scrollIndicators(.visible)
+                } else {
+                    confirmCard(pending)
+                }
+            }
+            Divider()
+            composer
+        }
+        .background(Color.mailSidebar)
+        .task { await refreshConversations() }
+        .onAppear { refreshProviderConfig() }
+        .task {
+            let installed = (try? await Ollama.installedModels()) ?? []
+            localModels = Ollama.enabledModels(installed: installed)
+        }
+        // The list is only correct after a turn writes the title / a new row.
+        .onChange(of: controller.isRunning) { _, running in
+            if !running { Task { await refreshConversations() } }
+        }
+        .onChange(of: controller.conversationID) {
+            Task { await refreshConversations() }
+        }
+        .onChange(of: store.showAskAI) { _, shown in
+            if !shown { declinePendingConfirmation() }
+        }
+        .onChange(of: controller.providerID) {
+            hostedNoticeDismissed = false
+            refreshProviderConfig()
+        }
+        .onDisappear {
+            declinePendingConfirmation()
+        }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.accentForeground)
+                conversationMenu
+                Spacer(minLength: 8)
+                Button {
+                    store.showAskAI = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressScaleButtonStyle())
+                .foregroundStyle(.secondary)
+                .help("Close Ask AI (⌥⌘M)")
+                .accessibilityLabel("Close Ask AI")
+                .pmHitTarget()
+            }
+            modelMenu
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var currentTitle: String {
+        guard let id = controller.conversationID,
+              let row = conversations.first(where: { $0.id == id })
+        else { return "Ask AI" }
+        return row.title
+    }
+
+    private var conversationMenu: some View {
+        Menu {
+            Button("New chat") { controller.newConversation() }
+                .disabled(controller.isRunning)
+            if let id = controller.conversationID {
+                // Deleting the live conversation would orphan the running
+                // turn's writes, so the controller refuses it while running.
+                Button("Delete this chat", systemImage: "trash", role: .destructive) {
+                    controller.deleteConversation(id: id)
+                }
+                .disabled(controller.isRunning)
+            }
+            if !conversations.isEmpty {
+                Divider()
+                Section("Recent") {
+                    ForEach(conversations) { row in
+                        Button {
+                            controller.loadConversation(id: row.id)
+                        } label: {
+                            if row.id == controller.conversationID {
+                                Label(row.title, systemImage: "checkmark")
+                            } else {
+                                Text(row.title)
+                            }
+                        }
+                        .disabled(controller.isRunning)
+                    }
+                }
+            }
+        } label: {
+            Text(currentTitle)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    private var modelMenu: some View {
+        let modelName = controller.modelID.isEmpty
+            ? "Pick a model"
+            : AskAIModelMenu.displayName(controller.modelID)
+        return Button {
+            modelPickerShown = true
+        } label: {
+            HStack(spacing: 4) {
+                Text(modelName)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let locality = headerLocality {
+                    Text(locality).font(.caption2).foregroundStyle(.secondary)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(controller.isRunning)
+        .help(controller.modelID.isEmpty ? "Model for this chat" : controller.modelID)
+        .accessibilityLabel(controller.modelID.isEmpty
+                            ? "Pick a model"
+                            : "Model \(controller.modelID)")
+        // The panel hugs the window's right edge, so the picker opens to the
+        // side (leftward), not downward over the transcript.
+        .popover(isPresented: $modelPickerShown, arrowEdge: .leading) {
+            ModelPickerPopover(
+                localModels: localModels,
+                currentProviderID: controller.providerID,
+                currentModelID: controller.modelID,
+                thinking: thinking,
+                onSetThinking: { setThinking($0) },
+                onPick: { providerID, model in
+                    let previous = controller.modelID
+                    let previousProvider = controller.providerID
+                    let wasLocal = previousProvider == LLMProviderStore.builtInOllamaID
+                    if previousProvider != providerID {
+                        controller.dropCurrentTurnReasoningItems()
+                    }
+                    controller.providerID = providerID
+                    controller.modelID = model
+                    modelPickerShown = false
+                    // Switching away from a local model leaves its weights in
+                    // Ollama for the whole keep_alive window. Nothing will use
+                    // them, so drop them now.
+                    if wasLocal, previous != model {
+                        Task { await Ollama.unload(model: previous) }
+                    }
+                },
+                onSetDefault: { provider, model in
+                    setAskAIDefault(model, for: provider)
+                },
+                onTogglePin: { provider, model in
+                    togglePin(model, for: provider)
+                },
+                showsThinking: providerConfig.map { $0.kind == .ollama || LLMHostedThinking.supports(controller.modelID) } ?? false,
+                showsSpeed: providerConfig.map { $0.kind != .ollama && LLMRemotePolicy.sendsMailOffDevice($0) } ?? false,
+                speedFast: controller.hostedSpeedFast,
+                speedHelp: hostedSpeedHelp,
+                onSetSpeed: { controller.setHostedSpeedFast($0) })
+        }
+    }
+
+    /// Points new Ask AI chats at this model. The open chat keeps its model.
+    /// Settings → AI → Ask AI is the same stored assignment.
+    private func setAskAIDefault(_ model: String, for provider: LLMProviderConfig) {
+        LLMProviderStore.setAssignment(
+            LLMTaskAssignment(providerID: provider.id, model: model), for: .askAI)
+    }
+
+    private var headerLocality: String? {
+        guard let config = providerConfig else { return nil }
+        let cloudModel = config.kind == .ollama && LLMRemotePolicy.isOllamaCloudModel(controller.modelID)
+        return cloudModel || !LLMRemotePolicy.isPrivateLAN(config) ? "Hosted" : "Local"
+    }
+
+    /// Adds or removes a model from the provider's pin list. Pinned models
+    /// are what the picker's browse column shows.
+    private func togglePin(_ model: String, for provider: LLMProviderConfig) {
+        var list = LLMProviderStore.load()
+        guard let index = list.firstIndex(where: { $0.id == provider.id }) else { return }
+        var pins = list[index].pinnedModels ?? []
+        if let existing = pins.firstIndex(of: model) {
+            pins.remove(at: existing)
+        } else {
+            pins.append(model)
+        }
+        list[index].pinnedModels = pins.isEmpty ? nil : pins
+        LLMProviderStore.save(list)
+    }
+
+    private func declinePendingConfirmation() {
+        if let pending = controller.pendingConfirmation {
+            controller.confirmPendingTool(id: pending.id, allow: false)
+        }
+    }
+
+    // MARK: - Transcript
+
+    private var transcript: some View {
+        ScrollViewReader { scroller in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if controller.bubbles.isEmpty { emptyState }
+                    ForEach(Array(controller.bubbles.enumerated()),
+                            id: \.element.id) { index, bubble in
+                        bubbleView(bubble, index: index).id(bubble.id)
+                    }
+                    // Scroll anchor: a zero-height tail row keeps the newest
+                    // bubble fully visible while it grows.
+                    Color.clear.frame(height: 1).id(Self.tailID)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: controller.bubbles.count) {
+                // A new user turn always follows the tail again, however
+                // far up the user had scrolled.
+                if controller.bubbles.last?.role == .user { transcriptNearBottom = true }
+                if transcriptNearBottom { scrollToTail(scroller) }
+            }
+            // Streaming appends to the last bubble without changing the count.
+            .onChange(of: controller.bubbles.last?.text) {
+                if transcriptNearBottom { scrollToTail(scroller) }
+            }
+            .modifier(TranscriptNearBottomTracker(nearBottom: $transcriptNearBottom))
+            .onAppear {
+                if revealedBubbleIDs.isEmpty {
+                    revealedBubbleIDs = Set(controller.bubbles.map(\.id))
+                }
+            }
+            .onChange(of: controller.conversationID) {
+                revealedBubbleIDs = Set(controller.bubbles.map(\.id))
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private static let tailID = "askai.tail"
+
+    private func scrollToTail(_ scroller: ScrollViewProxy) {
+        scroller.scrollTo(Self.tailID, anchor: .bottom)
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Ask about your mail.")
+                .font(.system(size: 13, weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Pick a starting point, or type below.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(AskAITrace.emptyPrompts(
+                    hasSelectedThread: store.selectedThread != nil)) { chip in
+                    Button {
+                        controller.send(chip.prompt)
+                    } label: {
+                        Text(chip.title)
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(PressScaleButtonStyle())
+                    .disabled(controller.isRunning)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func bubbleView(_ bubble: AskAIController.Bubble, index: Int) -> some View {
+        let shown = revealedBubbleIDs.contains(bubble.id)
+        VStack(alignment: .leading, spacing: 5) {
+            if bubble.role == .user {
+                Text(bubble.text)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(.accentFill.opacity(0.16),
+                                in: RoundedRectangle(cornerRadius: PMRadius.md))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
+                if !bubble.reasoningText.isEmpty {
+                    thinkingDisclosure(bubble)
+                }
+                if !bubble.text.isEmpty {
+                    HStack(alignment: .bottom, spacing: 1) {
+                        Group {
+                            if bubble.isStreaming {
+                                Text(bubble.text)
+                            } else {
+                                Text(parsedBubbleText[bubble.id]
+                                        .flatMap { $0.source == bubble.text ? $0.parsed : nil }
+                                     ?? AttributedString(bubble.text))
+                                    .task(id: bubble.text) {
+                                        if parsedBubbleText[bubble.id]?.source != bubble.text {
+                                            parsedBubbleText[bubble.id] = ParsedBubbleText(
+                                                source: bubble.text,
+                                                parsed: AskAIContext.displayedText(bubble.text))
+                                        }
+                                    }
+                            }
+                        }
+                        .textSelection(.enabled)
+                        .foregroundStyle(bubble.isError ? Color.red : Color.primary)
+                        if bubble.isStreaming { streamingCaret }
+                    }
+                }
+                if bubble.isStreaming, bubble.text.isEmpty {
+                    streamingPulse(hasText: false)
+                }
+                ForEach(bubble.toolTraces) { tool in
+                    toolTraceRow(tool)
+                }
+                if let audit = bubble.auditLine {
+                    Text(audit)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                if !bubble.followUps.isEmpty, !controller.isRunning {
+                    followUpRow(bubble.followUps)
+                }
+                // Tool-only turns skip the per-turn label: an agent loop that
+                // searches five times would stack five bare token lines above
+                // the answer. The conversation total still counts them.
+                if let cost = bubble.costLabel, !bubble.text.isEmpty {
+                    Text(cost)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                if bubble.isError { retryButton }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(shown ? 1 : 0)
+        .offset(y: shown ? 0 : 8)
+        .onAppear {
+            guard !revealedBubbleIDs.contains(bubble.id) else { return }
+            let delay = 0.06 * Double(min(index, 6))
+            withAnimation(PMMotion.feedback.delay(delay)) {
+                revealedBubbleIDs.insert(bubble.id)
+                return
+            }
+        }
+    }
+
+    private func refreshProviderConfig() {
+        providerConfig = LLMProviderStore.load().first { $0.id == controller.providerID }
+    }
+
+    /// Collapsed thinking trace. While the model is still reasoning (no
+    /// visible text yet) the row pulses "Thinking"; expanding shows the trace.
+    private func thinkingDisclosure(_ bubble: AskAIController.Bubble) -> some View {
+        let expanded = expandedThinking.contains(bubble.id)
+        return VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    if expanded { expandedThinking.remove(bubble.id) }
+                    else { expandedThinking.insert(bubble.id) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 9))
+                    Text(bubble.isStreaming && bubble.text.isEmpty ? "Thinking…" : "Thought process")
+                        .font(.caption2)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .semibold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                Text(bubble.reasoningText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.04),
+                                in: RoundedRectangle(cornerRadius: PMRadius.sm))
+            }
+        }
+    }
+
+    private func streamingPulse(hasText: Bool) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            if !hasText {
+                Text("Thinking…").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var streamingCaret: some View {
+        Group {
+            if accessibilityReduceMotion {
+                Text("▍")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            } else {
+                TimelineView(.animation(minimumInterval: 0.53, paused: false)) { timeline in
+                    let on = Int(timeline.date.timeIntervalSinceReferenceDate / 0.53) % 2 == 0
+                    Text("▍")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.primary.opacity(on ? 0.85 : 0.12))
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func toolTraceRow(_ tool: AskAITrace.Tool) -> some View {
+        let expanded = expandedTraces.contains(tool.id)
+        return VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(PMMotion.feedback) {
+                    if expanded { expandedTraces.remove(tool.id) }
+                    else { expandedTraces.insert(tool.id) }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    if tool.status == .running {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: tool.status == .failed
+                              ? "exclamationmark.triangle"
+                              : "checkmark")
+                    }
+                    Text(AskAITrace.statusLabel(tool))
+                    if let cue = AskAITrace.argumentSummary(
+                        name: tool.name, argumentsJSON: tool.argumentsJSON) {
+                        Text(cue)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .semibold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let preview = tool.resultPreview, !preview.isEmpty {
+                        Text(preview)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    ForEach(tool.threads) { thread in
+                        Button {
+                            controller.openTracedThread(id: thread.id)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "envelope")
+                                Text(thread.subject.isEmpty ? thread.id : thread.subject)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                            .font(.caption2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if let messageID = tool.queuedMessageID, store.pendingSend?.messageId == messageID {
+                        Button("Undo send") {
+                            controller.undoQueuedSend(messageID: messageID)
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.04),
+                            in: RoundedRectangle(cornerRadius: PMRadius.sm))
+            }
+        }
+    }
+
+    private func followUpRow(_ chips: [AskAITrace.PromptChip]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(chips) { chip in
+                    Button {
+                        controller.send(chip.prompt)
+                    } label: {
+                        Text(chip.title)
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(PressScaleButtonStyle())
+                }
+            }
+        }
+    }
+
+    private var hostedSpeedHelp: String {
+        guard let config = providerConfig else {
+            return "Use a cheaper hosted model when one exists in this family."
+        }
+        let resolved = controller.resolvedModelID(for: config)
+        if controller.hostedSpeedFast, resolved != controller.modelID {
+            return "Fast uses \(resolved) instead of \(controller.modelID)."
+        }
+        return "Fast picks a cheaper model in this family when the provider lists one."
+    }
+
+    private func setThinking(_ raw: String) {
+        thinking = raw
+        Ollama.setThinking(LLMThinking(rawValue: raw), for: .askAI)
+    }
+
+    /// Re-sends the last user turn. The failed assistant bubble stays, so the
+    /// transcript still shows what went wrong.
+    private var retryButton: some View {
+        Button("Retry") {
+            controller.retryLastTurn()
+        }
+        // A link-looking button in the accent's text colour (`.link` would
+        // draw it in `.tint`, the control fill, which skips the text rule).
+        .buttonStyle(.plain)
+        .foregroundStyle(.accentText)
+        .font(.caption)
+        .disabled(!controller.canRetry)
+    }
+
+    // MARK: - Confirm card
+
+    private func confirmCard(_ pending: AskAIController.PendingToolConfirmation) -> some View {
+        let isSend = pending.toolName == AskAITools.sendDraftToolName
+        let isCreate = pending.toolName == "create_draft"
+        let expanded = expandedDraftIDs.contains(pending.id)
+        let body = pending.bodyPreview
+        // Require an explicit expansion for every non-empty draft. This is a
+        // deliberate review gate when scroll-position tracking is uncertain.
+        let bodyNeedsReview = body.map { !$0.isEmpty } ?? false
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.shield")
+                Text(pending.toolName)
+                    .font(.caption2.monospaced())
+            }
+            .foregroundStyle(.secondary)
+            // Always the controller's summary: for send_draft it names the
+            // resolved recipients and the hidden Bcc count.
+            Text(AskAITools.revealedInvisibleCharacters(pending.summary))
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+            if let body, !body.isEmpty {
+                let lineCount = AskAITools.confirmPreviewLineCount(body)
+                let preview = AskAITools.confirmPreviewText(body)
+                Text("Draft body · \(body.unicodeScalars.count) characters · \(lineCount) lines")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if expanded {
+                    // Expanded means the whole body, with no height cap and
+                    // no scroll region whose hidden scrollbar could keep a
+                    // tail out of sight.
+                    draftPreviewText(preview)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(Color.primary.opacity(0.04),
+                                    in: RoundedRectangle(cornerRadius: PMRadius.sm))
+                } else {
+                    ScrollView(.vertical) {
+                        draftPreviewText(preview)
+                    }
+                    .frame(maxHeight: 240)
+                    .background(Color.primary.opacity(0.04),
+                                in: RoundedRectangle(cornerRadius: PMRadius.sm))
+                }
+                if bodyNeedsReview && !expanded {
+                    Button("Show full draft") {
+                        expandedDraftIDs.insert(pending.id)
+                    }
+                    .buttonStyle(.borderless)
+                    Text("Show full draft before confirming.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+            if isSend {
+                Text("DreaMail queues the message. You can undo it for \(Int(MailStore.undoSendWindow)) seconds.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button(isSend ? "Send" : (isCreate ? "Create draft" : "Allow")) {
+                    controller.confirmPendingTool(id: pending.id, allow: true)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(isSend ? .red : accent.fill)
+                // Create and send put mail on the wire. Return would confirm
+                // a keystroke meant for the chat, so those need a click.
+                .keyboardShortcut(nil)
+                .disabled(bodyNeedsReview && !expanded)
+                Button("Don't allow") {
+                    controller.confirmPendingTool(id: pending.id, allow: false)
+                }
+                .keyboardShortcut(.cancelAction)
+                if controller.canOpenPendingInCompose {
+                    Button("Open in compose") {
+                        controller.openPendingInCompose(id: pending.id)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.mailContent,
+                    in: RoundedRectangle(cornerRadius: PMRadius.outer(
+                        inner: PMRadius.sm, padding: 12)))
+    }
+
+    private func draftPreviewText(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+    }
+
+    // MARK: - Composer
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if controller.showsHostedNotice, !hostedNoticeDismissed {
+                hostedNotice
+            }
+            attachmentRow
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Ask AI…", text: $input, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...6)
+                    .focused($inputFocused)
+                    .onSubmit(submit)
+                    // A send during a run is dropped by the controller, so the
+                    // field goes quiet until the turn ends.
+                    .disabled(controller.isRunning)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(Color.mailContent,
+                                in: RoundedRectangle(cornerRadius: PMRadius.md))
+                if controller.isRunning {
+                    Button {
+                        controller.stop()
+                    } label: {
+                        Image(systemName: "stop.fill")
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressScaleButtonStyle())
+                    .help("Stop")
+                    .accessibilityLabel("Stop Ask AI")
+                    .pmHitTarget()
+                } else {
+                    Button {
+                        submit()
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressScaleButtonStyle(
+                        enabled: !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Send (↩)")
+                    .accessibilityLabel("Send to Ask AI")
+                    .pmHitTarget()
+                }
+            }
+            if let cost = controller.conversationCostLabel {
+                Text(cost)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .padding(12)
+    }
+
+    private var hostedNotice: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "lock.slash")
+                .foregroundStyle(.secondary)
+            Text("This chat sends mail text to \(providerConfig?.label ?? "the provider").")
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button("OK") {
+                hostedNoticeDismissed = true
+                controller.acknowledgeHostedNotice()
+            }
+            .font(.caption)
+            .buttonStyle(.plain)
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: PMRadius.sm))
+    }
+
+    // MARK: - Attachments
+
+    /// Context chips: the open thread, pinned threads, and the attach button.
+    private var attachmentRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    if store.selectedThread != nil { contextChip }
+                    ForEach(controller.attachedThreads) { attached in
+                        attachedChip(attached)
+                    }
+                    attachButton
+                }
+            }
+            if !controller.attachedThreads.isEmpty ||
+                (store.selectedThread != nil && controller.includeSelectedThread) {
+                Text("Goes with your next question.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func attachedChip(_ attached: AskAIController.AttachedThread) -> some View {
+        Button {
+            controller.detachThread(id: attached.id)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "xmark")
+                Text(attached.subject.isEmpty ? "(no subject)" : attached.subject)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 160)
+            }
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.accentFill.opacity(0.16), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Stop sending this conversation")
+    }
+
+    private var attachButton: some View {
+        Button {
+            showAttachPopover = true
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "plus")
+                Text("Attach")
+            }
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.06), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Search for a conversation to attach")
+        .popover(isPresented: $showAttachPopover, arrowEdge: .top) {
+            attachSearch
+        }
+    }
+
+    private var attachSearch: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Search conversations…", text: $attachQuery)
+                .textFieldStyle(.roundedBorder)
+            if attachResults.isEmpty {
+                Text(attachQuery.count >= ThreadTypeahead.minimumQueryLength
+                     ? "No matches." : "Type to search your mail.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(attachResults) { row in
+                Button {
+                    controller.attachThread(id: row.id, subject: row.subject)
+                    showAttachPopover = false
+                    attachQuery = ""
+                    attachResults = []
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "text.bubble")
+                            .foregroundStyle(.secondary)
+                        Text(row.subject.isEmpty ? "(no subject)" : row.subject)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(controller.attachedThreads.contains { $0.id == row.id })
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
+        .task(id: attachQuery) {
+            attachResults = await controller.searchThreadsToAttach(query: attachQuery)
+        }
+    }
+
+    private var contextChipTitle: String {
+        let subject = store.selectedThread?.subject.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let label = subject.isEmpty ? "This thread" : subject
+        if controller.includeSelectedThread {
+            return label
+        }
+        return "Add \(label)"
+    }
+
+    private var contextChip: some View {
+        Button {
+            controller.includeSelectedThread.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: controller.includeSelectedThread ? "xmark" : "plus")
+                Text(contextChipTitle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 160)
+            }
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(controller.includeSelectedThread
+                        ? accent.fill.opacity(0.16)
+                        : Color.primary.opacity(0.06),
+                        in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(controller.includeSelectedThread
+              ? "Stop sending the open conversation"
+              : "Send the open conversation with your next question")
+    }
+
+    private func submit() {
+        let text = input
+        guard !controller.isRunning,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        controller.send(text)
+        input = ""
+    }
+
+    private func refreshConversations() async {
+        conversations = await controller.listConversations()
+    }
+}
+
+/// A provider's brand mark (vendored monochrome template asset) at a fixed
+/// footprint, tinted like secondary text; SF-symbol fallback for providers
+/// without a mark.
+private struct ProviderIcon: View {
+    let provider: LLMProviderConfig
+    var size: CGFloat = 13
+
+    var body: some View {
+        Group {
+            if let asset = AskAIModelMenu.brandAsset(for: provider) {
+                Image(asset)
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+            } else {
+                Image(systemName: AskAIModelMenu.fallbackIcon)
+                    .font(.system(size: size - 1))
+            }
+        }
+        .foregroundStyle(.secondary)
+        .frame(width: 16)
+    }
+}
+
+/// Aside-style model picker: search on top, one row per provider with an
+/// icon; hovering or clicking a provider flies its model list out in a second
+/// column to the side, like a native submenu. Typing switches to a flat
+/// filtered list over the FULL stored model lists, so curation never hides a
+/// model from search.
+private struct ModelPickerPopover: View {
+    let localModels: [String]
+    let currentProviderID: UUID
+    let currentModelID: String
+    let thinking: String
+    let onSetThinking: (String) -> Void
+    let onPick: (UUID, String) -> Void
+    let onSetDefault: (LLMProviderConfig, String) -> Void
+    let onTogglePin: (LLMProviderConfig, String) -> Void
+    let showsThinking: Bool
+    let showsSpeed: Bool
+    let speedFast: Bool
+    let speedHelp: String
+    let onSetSpeed: (Bool) -> Void
+
+    /// Snapshot of the store, re-read after every default/pin mutation so the
+    /// open popover reflects it immediately. Seeded at init — an empty first
+    /// layout pass would let the popover size itself to nothing.
+    @State private var providers: [LLMProviderConfig] = LLMProviderStore.load()
+    @State private var askDefault = LLMProviderStore.assignment(for: .askAI)
+    @State private var query = ""
+    @State private var expandedProviderID: UUID?
+    @State private var floor: LLMModelIntelligence? = AskAIModelMenu.storedFloor()
+    @FocusState private var searchFocused: Bool
+
+    private func mutate(_ action: () -> Void) {
+        action()
+        providers = LLMProviderStore.load()
+        askDefault = LLMProviderStore.assignment(for: .askAI)
+    }
+
+    private var defaultCaption: String {
+        let label = providers.first { $0.id == askDefault.providerID }?.label ?? "Model"
+        let model = askDefault.model.isEmpty
+            ? "none"
+            : AskAIModelMenu.displayName(askDefault.model)
+        return "\(label) · \(model)"
+    }
+
+    private func isAskDefault(_ provider: LLMProviderConfig, _ model: String) -> Bool {
+        provider.id == askDefault.providerID && model == askDefault.model
+    }
+
+    private var isSearching: Bool {
+        !query.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var expandedProvider: LLMProviderConfig? {
+        guard !isSearching, let id = expandedProviderID else { return nil }
+        return providers.first { $0.id == id }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                TextField("Search models", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($searchFocused)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Default for new chats")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text(defaultCaption)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(askDefault.model)
+                HStack(spacing: 8) {
+                    if showsThinking { popoverThinkingMenu }
+                    if showsSpeed { popoverSpeedMenu }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            if !isSearching {
+                Divider()
+                HStack(spacing: 6) {
+                    Text("Show")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Menu {
+                        Button("Frontier") { setFloor(.frontier) }
+                        Button("Strong and above") { setFloor(.strong) }
+                        Button("Current and above") { setFloor(.current) }
+                        Button("All models") { setFloor(nil) }
+                    } label: {
+                        Text(AskAIModelMenu.floorLabel(floor))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+            }
+            Divider()
+            HStack(alignment: .top, spacing: 0) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        if isSearching {
+                            searchResults
+                        } else {
+                            ForEach(providers) { provider in providerRow(provider) }
+                        }
+                    }
+                    .padding(6)
+                }
+                .frame(width: isSearching ? 280 : 220)
+                // The flyout: the expanded provider's models, to the side.
+                if let provider = expandedProvider {
+                    Divider()
+                    modelColumn(provider)
+                        .frame(width: 240)
+                        .transition(.opacity)
+                }
+            }
+            .frame(maxHeight: 320)
+        }
+        // Explicit width: sizing to ideal content lets the text field
+        // stretch the popover across the window.
+        .frame(width: isSearching ? 280 : (expandedProvider == nil ? 220 : 461))
+        .onAppear {
+            expandedProviderID = currentProviderID
+            searchFocused = true
+        }
+    }
+
+    // MARK: - Browse mode
+
+    /// Ollama rows list the live installed-and-enabled models; other rows the
+    /// stored (curated) list.
+    private func listedModels(_ provider: LLMProviderConfig) -> AskAIModelMenu.ProviderModels {
+        var listed = provider
+        if provider.kind == .ollama, !localModels.isEmpty {
+            listed.models = localModels
+        }
+        let isCurrent = provider.id == currentProviderID
+        return AskAIModelMenu.models(for: listed, selected: isCurrent ? currentModelID : nil,
+                                       floor: floor)
+    }
+
+    private var popoverThinkingMenu: some View {
+        Menu {
+            Button("Off — fastest") { onSetThinking("off") }
+            Button("Low") { onSetThinking("low") }
+            Button("Medium") { onSetThinking("medium") }
+            Button("High") { onSetThinking("high") }
+            Button("Extra high") { onSetThinking("xhigh") }
+            Button("Model default") { onSetThinking("default") }
+        } label: {
+            Text(thinking == "default" ? "Think" : "Think: \(LLMThinking(rawValue: thinking).displayLabel)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("How hard the model thinks before it answers")
+    }
+
+    private var popoverSpeedMenu: some View {
+        Menu {
+            Button("Default") { onSetSpeed(false) }
+            Button("Fast") { onSetSpeed(true) }
+        } label: {
+            Text(speedFast ? "Fast" : "Default")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(speedHelp)
+    }
+
+    private func setFloor(_ value: LLMModelIntelligence?) {
+        floor = value
+        AskAIModelMenu.setStoredFloor(value)
+    }
+
+    private func providerRow(_ provider: LLMProviderConfig) -> some View {
+        let expanded = expandedProviderID == provider.id
+        return Button {
+            expandedProviderID = provider.id
+        } label: {
+            HStack(spacing: 8) {
+                ProviderIcon(provider: provider, size: 13)
+                Text(provider.label)
+                    .font(.system(size: 12, weight: .medium))
+                Spacer(minLength: 4)
+                if provider.id == currentProviderID {
+                    Circle().fill(.accentForeground).frame(width: 5, height: 5)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(expanded ? Color.primary.opacity(0.06) : .clear,
+                    in: RoundedRectangle(cornerRadius: PMRadius.sm))
+        .onHover { hovering in
+            if hovering { expandedProviderID = provider.id }
+        }
+    }
+
+    private func modelColumn(_ provider: LLMProviderConfig) -> some View {
+        let entry = listedModels(provider)
+        let groups = AskAIModelMenu.grouped(entry.models)
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 1) {
+                ForEach(groups) { group in
+                    if groups.count > 1 {
+                        Text(group.intelligence.title)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .textCase(.uppercase)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 6)
+                            .padding(.bottom, 1)
+                    }
+                    ForEach(group.models, id: \.self) { model in
+                        modelRow(provider: provider, model: model)
+                    }
+                }
+                if entry.hiddenCount > 0 {
+                    Text("\(entry.hiddenCount) more — search above")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                }
+                Text("Right-click a model to pin it here")
+                    .font(.caption2)
+                    .foregroundStyle(.quaternary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+            }
+            .padding(6)
+        }
+    }
+
+    private func modelRow(provider: LLMProviderConfig, model: String) -> some View {
+        let isSelected = provider.id == currentProviderID && model == currentModelID
+        let isDefault = isAskDefault(provider, model)
+        let isPinned = (provider.pinnedModels ?? []).contains(model)
+        let title = AskAIModelMenu.displayName(model)
+        return Button {
+            onPick(provider.id, model)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if LLMHostedThinking.supports(model) {
+                        Text("Ask AI thinking: \(LLMThinking(rawValue: thinking).displayLabel)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                    if title != model {
+                        // Routed ids keep the vendor prefix visible as a subtitle.
+                        Text(model)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                if isDefault {
+                    Text("default")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 4)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.accentForeground)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(model)
+        .background(.accentFill.opacity(isSelected ? 0.10 : 0),
+                    in: RoundedRectangle(cornerRadius: PMRadius.sm))
+        .contextMenu { modelActions(provider: provider, model: model,
+                                    isDefault: isDefault,
+                                    isPinned: isPinned) }
+    }
+
+    @ViewBuilder
+    private func modelActions(provider: LLMProviderConfig, model: String,
+                              isDefault: Bool, isPinned: Bool) -> some View {
+        Button(isPinned ? "Unpin" : "Pin to \(provider.label)") {
+            mutate { onTogglePin(provider, model) }
+        }
+        if !isDefault {
+            Button("Use for new Ask AI chats") {
+                mutate { onSetDefault(provider, model) }
+            }
+        }
+        if LLMHostedThinking.supports(model) {
+            Divider()
+            Button("Think: off") { pickWithThinking(provider, model, "off") }
+            Button("Think: low") { pickWithThinking(provider, model, "low") }
+            Button("Think: medium") { pickWithThinking(provider, model, "medium") }
+            Button("Think: high") { pickWithThinking(provider, model, "high") }
+            Button("Think: extra high") { pickWithThinking(provider, model, "xhigh") }
+            Button("Think: model default") { pickWithThinking(provider, model, "default") }
+        }
+    }
+
+    private func pickWithThinking(_ provider: LLMProviderConfig, _ model: String, _ level: String) {
+        onSetThinking(level)
+        onPick(provider.id, model)
+    }
+
+    // MARK: - Search mode
+
+    @ViewBuilder
+    private var searchResults: some View {
+        let hits = AskAIModelMenu.search(providers: providers, query: query)
+        if hits.isEmpty {
+            Text("No models match “\(query)”.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(8)
+        }
+        ForEach(hits) { hit in
+            if let provider = providers.first(where: { $0.id == hit.providerID }) {
+                Button {
+                    onPick(hit.providerID, hit.model)
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        ProviderIcon(provider: provider, size: 12)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(AskAIModelMenu.displayName(hit.model))
+                                .font(.system(size: 12))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            if LLMHostedThinking.supports(hit.model) {
+                                Text("Ask AI thinking: \(LLMThinking(rawValue: thinking).displayLabel)")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                            if AskAIModelMenu.displayName(hit.model) != hit.model {
+                                Text(hit.model)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        Text(hit.providerLabel)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(hit.model)
+                .contextMenu {
+                    modelActions(provider: provider, model: hit.model,
+                                 isDefault: isAskDefault(provider, hit.model),
+                                 isPinned: (provider.pinnedModels ?? []).contains(hit.model))
+                }
+            }
+        }
+    }
+}
+
+/// Cached markdown for one finished bubble, keyed by the text it parsed.
+private struct ParsedBubbleText {
+    let source: String
+    let parsed: AttributedString
+}
+
+/// Keeps "follow the tail" in sync with wheel, trackpad, scrollbar and
+/// keyboard scrolling. Only an offset change counts: content growing under
+/// a streaming answer must not read as the user scrolling away.
+private struct TranscriptNearBottomTracker: ViewModifier {
+    @Binding var nearBottom: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.onScrollGeometryChange(for: AskAILayout.ScrollMetrics.self) { geometry in
+                AskAILayout.ScrollMetrics(
+                    offsetY: geometry.contentOffset.y,
+                    containerHeight: geometry.containerSize.height,
+                    contentHeight: geometry.contentSize.height)
+            } action: { old, new in
+                if let near = AskAILayout.nearBottomAfterScroll(from: old, to: new) {
+                    nearBottom = near
+                }
+            }
+        } else {
+            // macOS 14 has no scroll geometry; a drag is the best signal.
+            content.simultaneousGesture(DragGesture(minimumDistance: 4).onChanged { value in
+                if value.translation.height < -8 { nearBottom = false }
+                if value.translation.height > 8 { nearBottom = true }
+            })
+        }
+    }
+}

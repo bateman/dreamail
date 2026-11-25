@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.24
+Versione: 0.25
 Ultimo aggiornamento: 25 novembre 2026
 Stato: documento in evoluzione
 
@@ -80,6 +80,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-066 | **Chat: account personali** | Gli account del proprietario sono personali (@gmail.com). La Chat API richiede Workspace per essere attivata e il supporto agli account personali non è documentato: per ora solo il collegamento a Chat nel browser dalla barra degli account; la chat nativa resta subordinata a una prova. |
 | DEC-067 | **Calendar: solo il pannello come in Gmail** | L'obiettivo è il pannello a destra della posta (passi 1–3 dello studio: ciò che c'è già, agenda in sola lettura, promemoria). La finestra calendario completa e i task non sono in programma. |
 | DEC-068 | **Difetto di rPGP da segnalare a monte** | Il sottoflusso in `aead_setup_rfc9580` (rPGP 0.21.1) è descritto nell'issue 8 di `bateman/dreamail-openpgp`; la segnalazione agli sviluppatori di rPGP la fa il proprietario. |
+| DEC-069 | **Rinomina in DreaMail eseguita** | Applicati i nomi di DEC-061 e DEC-065 in una sola PR (`chore/rename-dreamail`), con uno script di sostituzioni esatte (nel corpo della PR #73, tolto dal repository a lavoro finito) e una revisione a mano; libreria OpenPGP fissata a `v0.2.0` (commit `b87eb51`), che cambia solo i nomi (`DreaMailRPGP`, `dm_pgp_*`). Nessuna migrazione: le chiavi delle preferenze (`askAI.…`, `llm.task.askAI`, `ollama.think.askAI`), il nome della finestra (`DreaMailMainWindow`) e il valore `askAI` della colonna `llmUsage.task` partono nuovi con il bundle nuovo; nessuna tabella né identificativo di migrazione porta il nome, quindi nessuna migrazione dello schema è stata toccata. Il pannello About perde "Support MishMail" e guadagna la riga "Based on MishMail by Ron Boger."; `.github/FUNDING.yml` e la sezione Support del README sono rimossi. Il nome vecchio resta solo dove è storia o attribuzione: voci passate del changelog, decisioni e step già registrati, archivi, studi, riferimenti all'upstream, la sezione del README per chi viene da MishMail. Il test `OldProductNameTests` vieta il ritorno del nome vecchio nell'albero del prodotto, con un elenco esplicito di eccezioni. Il prefisso `MM` delle funzioni Objective-C dell'app (`MMEnsureTextLayout`) non è il nome e resta. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -155,7 +156,7 @@ La colonna "Stato nel fork" riporta ciò che il codice contiene al commit `18294
 
 ## 8. Strategia di sviluppo: MishMail + Postie
 
-Repository di sviluppo (fork): bateman/mishmail
+Repository di sviluppo (fork): bateman/dreamail (fino a DEC-065 bateman/mishmail; GitHub reindirizza il vecchio indirizzo)
 Repository upstream (originale): ronboger/mishmail
 Repository di riferimento Postie: igorkulman/Postie
 
@@ -483,6 +484,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-25 | **0.22** | Aggiunta DEC-063 (barra laterale come Gmail: scostamenti). |
 | 2026-11-25 | **0.23** | Aggiunta DEC-064 (OpenPGP: regole di fiducia e formati). |
 | 2026-11-25 | **0.24** | Aggiunte DEC-065 (rebranding: si fa), DEC-066 (Chat: account personali), DEC-067 (Calendar: solo pannello), DEC-068 (difetto di rPGP da segnalare). |
+| 2026-11-25 | **0.25** | Aggiunta DEC-069 (rinomina in DreaMail eseguita); repository di sviluppo `bateman/dreamail`. |
 
 ---
 

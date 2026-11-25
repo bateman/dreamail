@@ -2,31 +2,31 @@
 
 ## What this project does and where untrusted input enters
 
-MishMail is a local-first macOS email client (SwiftUI/AppKit, macOS 14+).
+DreaMail is a local-first macOS email client (SwiftUI/AppKit, macOS 14+).
 It syncs Gmail through the Gmail API into a local SQLCipher database and
 renders mail on the device. Untrusted input enters at these points:
 
 - Email content: MIME bodies, headers, HTML mail, and attachments. Parsed
-  in `Sources/MishMail/Gmail` (`MessageParsing.swift` especially) and
-  rendered through `Sources/MishMail/Support/HTMLBody*.swift` into a
+  in `Sources/DreaMail/Gmail` (`MessageParsing.swift` especially) and
+  rendered through `Sources/DreaMail/Support/HTMLBody*.swift` into a
   locked-down WKWebView.
 - Gmail API responses. The API transport is trusted; the message content
   it carries is not.
-- `mailto:` and other deep links (`Sources/MishMail/Store/
+- `mailto:` and other deep links (`Sources/DreaMail/Store/
   DeepLinkThreadResolver.swift`, `Support/DefaultMailClient.swift`).
 - Attachments saved to disk or opened through QuickLook, and files dropped
   into the compose window.
-- The local MCP server (`Sources/MishMail/MCP`). It is an HTTP listener on
+- The local MCP server (`Sources/DreaMail/MCP`). It is an HTTP listener on
   127.0.0.1 only, gated by a bearer token compared in constant time
-  (`Sources/MishMail/Support/MCPServerSecurity.swift`). Any local process
+  (`Sources/DreaMail/Support/MCPServerSecurity.swift`). Any local process
   — or a web page making local requests — can reach the port.
 - The OAuth loopback listener during sign-in
-  (`Sources/MishMail/Auth/OAuth.swift`).
-- The self-update path (`Sources/MishMail/Support/UpdateChecker.swift`,
+  (`Sources/DreaMail/Auth/OAuth.swift`).
+- The self-update path (`Sources/DreaMail/Support/UpdateChecker.swift`,
   `UpdateInstaller.swift`) plus the relauncher helper
-  (`Sources/MishMailRelauncher`), which removes the quarantine attribute
+  (`Sources/DreaMailRelauncher`), which removes the quarantine attribute
   from a downloaded update.
-- LLM provider features (Ask Mish, summaries, drafts). Email content is
+- LLM provider features (Ask AI, summaries, drafts). Email content is
   sent to a model that can call tools, so prompt injection through email
   is in scope.
 
@@ -56,9 +56,9 @@ only where they create security-relevant behavior.
 
 ## How to exercise it
 
-`Tests/MishMailTests` holds unit tests over the non-UI core: parsers,
+`Tests/DreaMailTests` holds unit tests over the non-UI core: parsers,
 MIME, the database schema, sync derivation, and the MCP router. It
-compiles the same `Sources/MishMail/{Gmail,Store,Auth,MCP,Support}`
+compiles the same `Sources/DreaMail/{Gmail,Store,Auth,MCP,Support}`
 directories without an app host.
 
 Important for the scan container: the app builds only on macOS with
@@ -86,12 +86,12 @@ for inspecting the schema in `Store/Database.swift`.
 
 ## Anything to leave alone
 
-- Do not report the missing app sandbox on `MishMailRelauncher`. It is
+- Do not report the missing app sandbox on `DreaMailRelauncher`. It is
   intentionally unsandboxed so it can remove `com.apple.quarantine` from
   updates; the reasons are documented in `project.yml` and the
   entitlements file.
 - Debug and Release builds are two distinct apps on purpose
-  (`MishMail Debug`, `io.github.bateman.MishMail.debug`). Differences between
+  (`DreaMail Debug`, `io.github.bateman.DreaMail.debug`). Differences between
   them are intentional.
-- `Support/DemoSeed.swift` only acts when the `MISHMAIL_DEMO=1`
+- `Support/DemoSeed.swift` only acts when the `DREAMAIL_DEMO=1`
   environment variable is set.

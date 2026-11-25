@@ -1,4 +1,4 @@
-"""Shared MCP client for the MishMail helper scripts."""
+"""Shared MCP client for the DreaMail helper scripts."""
 
 import ipaddress
 import json
@@ -10,12 +10,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-DISCOVERY = (Path.home() / "Library/Containers/io.github.bateman.MishMail/Data"
-             / "Library/Application Support/MishMail/mcp.json")
+DISCOVERY = (Path.home() / "Library/Containers/io.github.bateman.DreaMail/Data"
+             / "Library/Application Support/DreaMail/mcp.json")
 # Preferred: a copy of the token outside the app container. Reading the
 # container itself needs Full Disk Access, and on a Mac without it the read
 # BLOCKS on a TCC prompt rather than failing — so try this first.
-TOKEN_FILE = Path.home() / ".config/mishmail/mcp-token"
+TOKEN_FILE = Path.home() / ".config/dreamail/mcp-token"
 DEFAULT_PORT = "41888"
 
 
@@ -114,7 +114,7 @@ def advertised_server(discovery=DISCOVERY):
     The app writes mcp.json (port, pid) when its server starts and removes it
     when the server stops; a build with the AI features switched off never
     writes it and deletes a stale one. With no file, or one whose process is
-    gone, nothing is listening for MishMail on that port, and posting the
+    gone, nothing is listening for DreaMail on that port, and posting the
     bearer token there would hand it to whatever is. Returns None only when
     the file exists but cannot be read (a process without access to the app
     container, such as a launchd agent): the caller then relies on the
@@ -122,7 +122,7 @@ def advertised_server(discovery=DISCOVERY):
     try:
         text = Path(discovery).read_text()
     except FileNotFoundError:
-        sys.exit("MishMail advertises no MCP server (no mcp.json): MCP is off, the "
+        sys.exit("DreaMail advertises no MCP server (no mcp.json): MCP is off, the "
                  "app is not running, or this build has the AI features switched "
                  "off. Nothing was sent.")
     except PermissionError:
@@ -133,7 +133,7 @@ def advertised_server(discovery=DISCOVERY):
         sys.exit(f"{discovery} is not valid JSON. Nothing was sent.")
     pid = cfg.get("pid") if isinstance(cfg, dict) else None
     if not isinstance(pid, int) or pid <= 0 or not _pid_alive(pid):
-        sys.exit("mcp.json names no running MishMail process: the MCP server is "
+        sys.exit("mcp.json names no running DreaMail process: the MCP server is "
                  "not up. Nothing was sent.")
     return cfg
 
@@ -148,25 +148,25 @@ def run(main):
 
 
 class MCP:
-    """Minimal JSON-RPC client against the in-app MishMail MCP server."""
+    """Minimal JSON-RPC client against the in-app DreaMail MCP server."""
 
     def __init__(self, discovery=DISCOVERY):
         # Env wins over the discovery file: a launchd agent (or any process
         # without Full Disk Access) cannot read another app's sandbox
         # container, but the port is fixed and the token is stable, so both
         # can simply be supplied.
-        token = os.environ.get("MISHMAIL_MCP_TOKEN")
-        port = os.environ.get("MISHMAIL_MCP_PORT", DEFAULT_PORT)
+        token = os.environ.get("DREAMAIL_MCP_TOKEN")
+        port = os.environ.get("DREAMAIL_MCP_PORT", DEFAULT_PORT)
         if not token and TOKEN_FILE.exists():
             token = TOKEN_FILE.read_text().strip() or None
         cfg = advertised_server(discovery)
-        if cfg and cfg.get("port") is not None and "MISHMAIL_MCP_PORT" not in os.environ:
+        if cfg and cfg.get("port") is not None and "DREAMAIL_MCP_PORT" not in os.environ:
             port = cfg["port"]
         if not token and cfg and cfg.get("token"):
             # Legacy mcp.json that still stored the bearer token.
             token = cfg["token"]
         if not token:
-            sys.exit("MISHMAIL_MCP_TOKEN is unset, ~/.config/mishmail/mcp-token "
+            sys.exit("DREAMAIL_MCP_TOKEN is unset, ~/.config/dreamail/mcp-token "
                      "is missing, and mcp.json has no token. Copy the token "
                      "from Settings → AI → MCP.")
         self.url = f"http://127.0.0.1:{port}/mcp"

@@ -1,6 +1,6 @@
-# Contributing to MishMail
+# Contributing to DreaMail
 
-Thanks for your interest! MishMail is a native macOS Gmail client built with
+Thanks for your interest! DreaMail is a native macOS Gmail client built with
 SwiftUI, the Gmail REST API, and GRDB/SQLCipher.
 
 ## Getting set up
@@ -17,7 +17,7 @@ make checks    # shellcheck + Python script tests + CI pin checks (no Xcode)
 ```
 
 The Xcode project is **generated** from [`project.yml`](project.yml) by
-xcodegen — it is git-ignored, so never commit `MishMail.xcodeproj`. Edit
+xcodegen — it is git-ignored, so never commit `DreaMail.xcodeproj`. Edit
 `project.yml` (targets, settings, dependencies) and re-run `xcodegen generate`.
 
 Signing defaults to portable ad-hoc; see
@@ -36,7 +36,7 @@ a docs-only commit after a red one has a green run.
 Settings. It takes about eleven minutes, so it runs only for a release:
 `make release` starts it and waits, and `make ui-test-ci` starts it by hand
 for a pushed branch. Run it for a change to the UI structure. Tests live in
-`Tests/MishMailTests` and cover the non-UI core: message/MIME parsing, the
+`Tests/DreaMailTests` and cover the non-UI core: message/MIME parsing, the
 DB schema and migrations, thread derivation, search-query parsing, and
 send-scheduling. The test target is **hostless** — it compiles `Gmail/`,
 `Store/`, `Auth/`, MCP helpers, and `Support/` by directory (app-only files
@@ -49,7 +49,7 @@ update a test.
 ## Code layout
 
 ```
-Sources/MishMail/
+Sources/DreaMail/
   App/        app entry + MailStore (observable UI state) and MailStore+*
               command extensions (sync, mutations, compose, reminders, AI,
               accounts)
