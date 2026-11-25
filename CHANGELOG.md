@@ -6,6 +6,18 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Row actions on hover, star on the left.** With the pointer on a
+  conversation, archive, trash, mark as unread or read and snooze appear at the
+  right end of the row, in this order, as in Gmail. The star now sits to the
+  left of the sender.
+- **Unread count on each profile photo.** The account switcher shows each
+  account's unread count as a badge in the top-right corner of its photo ("99+"
+  above 99). The badges add up to the Dock badge when that counts all accounts.
+- **Google Calendar interface (off).** Behind the `MISHMAIL_CALENDAR` build
+  switch (empty by default): connect Calendar per account and choose the
+  calendars that count (primary by default) in Settings → Accounts; on an
+  invitation, see whether you are free, add it to your calendar, and have your
+  answer saved there after the e-mail reply. Nothing changes in the app.
 - **Snooze aligned with Gmail.** Conversations snoozed in Gmail on the web or
   the phone now appear under Snoozed (Gmail still wakes them). Removing an
   account first deletes its data, then puts its MishMail snoozes back in the

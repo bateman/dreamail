@@ -290,13 +290,15 @@ Aggiornato il 25 novembre 2026.
 
 ### Aggiunti dalle PR unite dopo il 25 novembre 2026
 
-- ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme.
+- ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme. **Provato dal proprietario il 25 novembre 2026: non superato** (più lento di prima, corpo tagliato, 20–30 s su alcune mail alla prima apertura); correzione nella PR #59.
 - ☐ **C-40** Inviti di calendario (PR #51): invito da Google Calendar, da Outlook/Exchange e da Apple Calendar; Accetta, Forse, Rifiuta cambiano lo stato presso l'organizzatore; riga "Reply from … goes to …"; avviso arancione se l'organizzatore non è il mittente; evento spostato chiede di nuovo; occorrenza o serie annullata senza pulsanti; risposta da un alias. Passi completi nel corpo della PR #51.
 - ☐ **C-41** Colore delle label su Gmail (PR #48): MishMail → Organize Labels → clic sul pallino di una label utente → "Color on Gmail"; il colore compare subito e, entro un minuto, su Gmail web e telefono; dopo una sync non torna indietro; "No color on Gmail" toglie davvero il colore (non verificato: la documentazione non lo dice); senza rete torna il colore vecchio con un avviso; il colore solo-Mac resta prevalente. Passi completi nel corpo della PR #48.
 - ☐ **C-42** Shortcut di Gmail (PR #50): `m` silenzia davvero su un account reale e `m` di nuovo toglie il silenzio (non verificato: l'API di Gmail potrebbe rifiutare la label `MUTED`; in quel caso la conversazione torna con un avviso); `+` / `-` importanza; `v` sposta, anche da una vista label, dal Cestino, con righe spuntate di due account e dalla barra della conversazione con altre righe spuntate; `n` / `p` / `;` / `:` in una conversazione; tutti i tasti su tastiera italiana. Passi completi nel corpo della PR #50.
 - ☐ **C-43** Filtri Gmail (PR #49): MishMail → ⌘, → Gmail filters; creare un filtro, modificarlo, cancellarlo e ritrovare lo stesso risultato su Gmail web; anteprima dei messaggi corrispondenti; conferma prima di salvare un filtro che cancella o salta la Inbox; messaggio di Gmail per un filtro già esistente; un filtro con inoltro non è modificabile ma si può cancellare; soglia di dimensione in MB. Passi completi nel corpo della PR #49.
 - ☐ **C-44** Snooze allineato a Gmail (PR #47): posticipare una conversazione su Gmail web, poi Sync in MishMail: compare sotto Snoozed con "Snoozed in Gmail" e non è in Inbox (non verificato da nessuno: che l'API di Gmail accetti `in:snoozed` e restituisca solo la posta posticipata); "Unsnooze" su Gmail web la riporta in Inbox dopo la sync; posticipare in MishMail su un account di prova e rimuovere l'account: su Gmail web la conversazione è di nuovo in Inbox; senza rete la rimozione si completa e un avviso dice quante sono rimaste archiviate. Passi completi nel corpo della PR #47.
 - ☐ **C-45** Google Calendar (PR #55 e #57, solo con `MISHMAIL_CALENDAR = YES` in `Local.xcconfig`, da provare quando l'interfaccia è unita): consenso reale; risposta a un invito di un organizzatore Google (deve ricevere una sola notifica: non verificato); risposta a un invito Outlook; "Add to Google Calendar" su un evento già presente (non verificato cosa fa Google con un identificativo esistente); rimozione dell'account: permesso e calendari scelti spariscono.
+- ☐ **C-46** Azioni al passaggio del mouse (PR #52): con il mouse su una riga della lista compaiono, da sinistra, archivia, cestina, segna come non letta/letta, posticipa; ciascuna agisce su quella riga senza aprire la conversazione; la stella è a sinistra del mittente; la data non è tagliata con testo grande; la riga non salta entrando e uscendo con il mouse; resa con il pannello di lettura aperto (lista stretta).
+- ☐ **C-47** Badge dei non letti per account (PR #58): nel selettore degli account ogni foto profilo ha il suo numero in alto a destra, sopra l'anello; sparisce a zero; "99+" oltre 99; nessun badge su "tutti gli account"; la somma coincide con il Dock se il badge del Dock conta tutti gli account; alone e contrasto in modalità chiara e scura.
 
 ## Ondata 3 — parità Gmail
 
@@ -408,7 +410,7 @@ Aggiornato il 25 novembre 2026.
 | — | `docs/process-review-tiers` | #46 | Unito, modifica semplice |
 | 3A–3E | vedi "Ondata 3" | — | In lavorazione dal 25 novembre 2026 |
 | 4A–4B | vedi "Ondata 4" | — | In lavorazione dal 25 novembre 2026 |
-| — | `ux/thread-row-hover-actions` | #52 | In lavorazione (livello basso rischio) |
+| — | `ux/thread-row-hover-actions` | #52 | Unito |
 | — | `ci/skip-duplicate-runs` | #53 | Unito dal proprietario, fuori flusso |
 | 3C | `feature/ics-rsvp-verification` | #51 | Unito |
 | 3B | `feature/gmail-label-color-editing` | #48 | Unito |
@@ -417,6 +419,7 @@ Aggiornato il 25 novembre 2026.
 | 4B | `feature/openpgp-support` | #54 | Unito (fondamenta senza libreria, dietro `MISHMAIL_PGP`) |
 | 4B | `feature/openpgp-rpgp-engine` | #56 | Unito (solo la parte Swift, non collegata). Libreria nel repository `bateman/dreamail-openpgp` (PR 1 unita lì). Manca: rilascio della libreria (workflow Release, lanciato dal proprietario), commit con versione e checksum, poi una sessione nuova per collegamento, archivio delle chiavi, Keychain, migrazione v62 e interfaccia |
 | 4A | `feature/google-calendar-integration` | #55 | Unito (logica, dietro `MISHMAIL_CALENDAR`) |
-| 4A | `feature/google-calendar-ui` | #57 | In review (interfaccia) |
+| 4A | `feature/google-calendar-ui` | #57 | Unito (interfaccia, dietro `MISHMAIL_CALENDAR`); da provare con account reali (C-45) |
 | 3D | `feature/snooze-gmail-alignment` | #47 | Unito |
-| — | `ux/account-avatar-unread-badge` | #58 | In review (livello basso rischio) |
+| — | `ux/account-avatar-unread-badge` | #58 | Unito |
+| — | `perf/remote-image-cache-regression` | #59 | In lavorazione: regressione di #42 segnalata dal proprietario (corpo tagliato e 20–30 s alla prima apertura con immagini lente) |
