@@ -194,6 +194,10 @@ struct SnoozeSheet: View {
     let snooze: (Date?) -> Void
     let cancel: () -> Void
 
+    /// The limit of a snooze set here: only this Mac knows the date.
+    static let limitNote = "Comes back while MishMail is open on this Mac. "
+        + "Until then Gmail on the web, the phone and other Macs shows it as archived."
+
     /// Daypart-aware list (this morning after midnight, drop evening past 6pm, …).
     private var presets: [DatePickSheet.Preset] {
         SnoozePresets.presets().map { .init(title: $0.title, date: $0.date) }
@@ -209,7 +213,8 @@ struct SnoozeSheet: View {
                 placeholder: "When? — try \"tomorrow\", \"fri 3pm\", \"aug 12\"",
                 presets: presets,
                 clearOption: current != nil ? ("Unsnooze", "back to inbox") : nil,
-                footnote: current.map { "Currently snoozed until \(SnoozeDateParser.format($0))" },
+                footnote: (current.map { "Currently snoozed until \(SnoozeDateParser.format($0)).\n" } ?? "")
+                    + Self.limitNote,
                 onCancel: cancel,
                 pick: snooze
             )

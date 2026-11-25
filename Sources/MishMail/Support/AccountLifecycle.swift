@@ -125,6 +125,49 @@ enum AccountLifecycle {
         try DeletedMessageResidue.forget(db, account: id)
     }
 
+    /// The database half of a removal: reads the account's MishMail snoozes
+    /// (`ThreadListQuery.snoozesToRelease`) and purges, in the caller's one
+    /// transaction. A failed read fails the purge, so it is reported like
+    /// one and nothing is deleted.
+    static func purgeAccountReturningSnoozes(_ db: Database, id: String) throws -> [String] {
+        let snoozed = try ThreadListQuery.snoozesToRelease(accountId: id)
+            .select(Column("gmailThreadId"), as: String.self).fetchAll(db)
+        try purgeAccount(db, id: id)
+        return snoozed
+    }
+
+    /// How a removal ended: the purge failed (nothing deleted), or it went
+    /// ahead and `notReleased` snoozes could not go back to Gmail's Inbox.
+    enum RemovalOutcome: Equatable {
+        case purgeFailed
+        case removed(notReleased: Int)
+    }
+
+    /// Order of an account removal. The marker comes first and the purge
+    /// next, so nothing waits on the network before the account's data is
+    /// gone: a quit after the purge finishes the removal at launch
+    /// (`removalsToFinish`), a quit before it leaves the account intact
+    /// (`stale`). The snooze release runs after the purge, while the sign-in
+    /// is still in the Keychain, and before `removeOutside` deletes it.
+    @MainActor
+    static func runRemoval(markPending: () -> Void,
+                           purge: () async throws -> [String],
+                           clearPending: () -> Void,
+                           release: ([String]) async -> Int,
+                           removeOutside: () async -> Void) async -> RemovalOutcome {
+        markPending()
+        let snoozed: [String]
+        do {
+            snoozed = try await purge()
+        } catch {
+            clearPending()
+            return .purgeFailed
+        }
+        let notReleased = await release(snoozed)
+        await removeOutside()
+        return .removed(notReleased: notReleased)
+    }
+
     struct AccountRemovedError: LocalizedError {
         var errorDescription: String? { "This account was removed from MishMail." }
     }
@@ -197,7 +240,9 @@ enum AccountLifecycle {
             + "its saved views, snippets available only to it, its sync and filter settings"
             + (aiFeaturesEnabled ? ", its notifications" : " and its notifications")
             + chats
-            + ". Gmail mail on the server is not deleted."
+            + ". Gmail mail on the server is not deleted. "
+            + "Conversations snoozed in MishMail are first put back in the Gmail Inbox; "
+            + "if Gmail can't be reached they stay archived in All Mail, and you are told how many."
     }
 
     static let removalFailedMessage =

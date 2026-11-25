@@ -26,6 +26,7 @@ struct NewMailNotifications {
         var inPromotions: Bool
         var inSocial: Bool
         var snoozeUntil: Date?
+        var gmailSnoozed: Bool = false
     }
 
     /// False until the launch baseline (or the first sync pass, whichever
@@ -39,7 +40,7 @@ struct NewMailNotifications {
         guard c.isUnread, c.inInbox, !c.inTrash, !c.inSpam,
               !c.inPromotions, !c.inSocial else { return false }
         if let until = c.snoozeUntil, until > now { return false }
-        return true
+        return !c.gmailSnoozed
     }
 
     /// Adopts `current` as already known, so none of it notifies.
@@ -107,10 +108,11 @@ struct NewMailNotifications {
             .filter(Column("inPromotions") == false)
             .filter(Column("inSocial") == false)
             .filter(Column("snoozeUntil") == nil || Column("snoozeUntil") <= now)
+            .filter(Column("gmailSnoozed") == false)
             .select(Column("id"), Column("fromEmail"), Column("allFromEmails"),
                     Column("lastInboundDate"), Column("isUnread"), Column("inInbox"),
                     Column("inTrash"), Column("inSpam"), Column("inPromotions"),
-                    Column("inSocial"), Column("snoozeUntil"))
+                    Column("inSocial"), Column("snoozeUntil"), Column("gmailSnoozed"))
             .asRequest(of: Candidate.self)
             .fetchAll(db)
     }

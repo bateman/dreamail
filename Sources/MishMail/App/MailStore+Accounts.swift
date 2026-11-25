@@ -85,6 +85,10 @@ extension MailStore {
         // `accounts` now so late sync errors, reauth requests and attachment
         // downloads for it are ignored (see `isKnownAccount`).
         let engine = engines[id]
+        // Taken now: the snooze release runs after the purge, with the
+        // sign-in still in the Keychain until `removeOutsideDatabase`.
+        let gmail = client(for: id)
+        let reachable = !isOffline
         accounts.removeAll { $0.id == id }
         forgetAccountPhoto(id)
         // DEC-019: the account's Gmail filters leave memory with it.
@@ -101,20 +105,29 @@ extension MailStore {
             // the account comes back on reload, and the user is told. The
             // account row and its queued edits, offline drafts, scheduled
             // sends, triage rows, saved views and Ask Mish chats go in one
-            // transaction.
-            AccountLifecycle.markRemovalPending(id)
-            do {
-                try await pool.write { db in
-                    try AccountLifecycle.purgeAccount(db, id: id)
-                }
-            } catch {
-                AccountLifecycle.clearRemovalPending(id)
+            // transaction. Then the account's MishMail snoozes go back to
+            // Gmail's Inbox (they would stay archived for good), within a
+            // short deadline, before the sign-in is deleted.
+            let outcome = await AccountLifecycle.runRemoval(
+                markPending: { AccountLifecycle.markRemovalPending(id) },
+                purge: {
+                    try await pool.write { db in
+                        try AccountLifecycle.purgeAccountReturningSnoozes(db, id: id)
+                    }
+                },
+                clearPending: { AccountLifecycle.clearRemovalPending(id) },
+                release: { snoozed in
+                    await SnoozeRelease.release(snoozed, reachable: reachable) {
+                        try await gmail.modifyThread(id: $0, add: ["INBOX"])
+                    }
+                },
+                removeOutside: { await Self.removeOutsideDatabase(accountId: id) })
+            guard case .removed(let notReleased) = outcome else {
                 guard let self, !self.isShuttingDown else { return }
                 self.reloadAccounts()
                 self.lastError = AccountLifecycle.removalFailedMessage
                 return
             }
-            await Self.removeOutsideDatabase(accountId: id)
             // After the Keychain delete: the next token request finds no
             // refresh token and fails, instead of reusing the cached one.
             await GmailClient.shared(accountEmail: id).forgetAccessToken()
@@ -147,6 +160,9 @@ extension MailStore {
             // Own-address set changed — drop the weight map and re-mine.
             self.rebuildContacts(forceFull: true)
             await self.reloadPendingThreadOpCount()
+            if let note = SnoozeRelease.notReleasedMessage(notReleased) {
+                self.lastError = note
+            }
         }
     }
 

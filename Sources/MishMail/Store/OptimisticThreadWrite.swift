@@ -31,6 +31,7 @@ enum OptimisticThreadWrite {
             try ThreadLabels.rewrite(db, threadId: updated.id, labelIds: updated.labelIds)
         }
         if old.snoozeUntil != updated.snoozeUntil { try update("snoozeUntil", updated.snoozeUntil) }
+        if old.gmailSnoozed != updated.gmailSnoozed { try update("gmailSnoozed", updated.gmailSnoozed) }
         if old.participants != updated.participants { try update("participants", updated.participants) }
         if old.messageCount != updated.messageCount { try update("messageCount", updated.messageCount) }
         if old.hasAttachment != updated.hasAttachment { try update("hasAttachment", updated.hasAttachment) }

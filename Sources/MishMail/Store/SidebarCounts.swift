@@ -20,10 +20,12 @@ enum SidebarCounts {
     /// SQL AND-clause matching inbox list `notSnoozed`: no future snooze.
     /// Bind `now` as the sole argument for this fragment.
     static let notActivelySnoozedSQL =
-        " AND (snoozeUntil IS NULL OR snoozeUntil <= ?)"
+        " AND gmailSnoozed = 0 AND (snoozeUntil IS NULL OR snoozeUntil <= ?)"
 
-    /// True while the thread is sleeping (list-hidden from Inbox).
+    /// True while the thread is sleeping (list-hidden from Inbox): a future
+    /// local snooze, or snoozed in Gmail itself (`GmailSnoozed`).
     static func isActivelySnoozed(_ thread: MailThread, now: Date = Date()) -> Bool {
+        if thread.gmailSnoozed { return true }
         guard let until = thread.snoozeUntil else { return false }
         return until > now
     }
@@ -139,8 +141,12 @@ enum SidebarCounts {
         let starred = try count(db, account: activeAccount, where: """
             isStarred = 1 AND inTrash = 0
             """)
+        // Two counts so each reads its own partial index; the second skips
+        // rows the first already counted.
         let snoozed = try count(db, account: activeAccount, where: """
             snoozeUntil IS NOT NULL AND snoozeUntil > ? AND inTrash = 0
+            """, arguments: [now]) + count(db, account: activeAccount, where: """
+            gmailSnoozed = 1 AND inTrash = 0 AND (snoozeUntil IS NULL OR snoozeUntil <= ?)
             """, arguments: [now])
         let drafts = try count(db, account: activeAccount, where: """
             inDrafts = 1 AND inTrash = 0
