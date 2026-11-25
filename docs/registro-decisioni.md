@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.23
+Versione: 0.24
 Ultimo aggiornamento: 25 novembre 2026
 Stato: documento in evoluzione
 
@@ -76,6 +76,10 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-062 | **Chat e Calendar integrati: solo studio per ora** | Chat di Gmail e Google Calendar completo non si costruiscono finché il client di posta non è completo e stabile per l'uso quotidiano. Studi in `docs/studi/google-chat.md` e `docs/studi/google-calendar.md`. |
 | DEC-063 | **Barra laterale come Gmail: scostamenti** | Spam mostra solo ciò che il Mac ha (spam arrivato dopo l'aggiunta dell'account o segnalato dall'app): lo spam più vecchio resta su Gmail. La vista di tutte le etichette esce dalla barra laterale e resta su `g l`, Go ▸ Labels e palette. "Purchases" di Gmail non è offerta: l'API non ha quell'etichetta. Outbox e Reminders restano visibili fuori da "More" quando non sono vuoti. |
 | DEC-064 | **OpenPGP: regole di fiducia e formati** | Una chiave si salva solo dopo una conferma che mostra impronta e tutti gli indirizzi dichiarati; un indirizzo già coperto da un'altra chiave è segnalato. Una copia più vecchia non annulla una revoca né una scadenza: per importare una chiave rinnovata si elimina prima quella scaduta, finché la libreria non fonde i certificati. Ogni decifratura fallita ha lo stesso testo e lo stesso colore: "non supportato" e "danneggiato" non sono verdetti autenticati. La libreria decifra il formato OCB di GnuPG 2.4 (pacchetto 20), che è cifratura autenticata; il resto della politica (DEC-051) non cambia. |
+| DEC-065 | **Rebranding a DreaMail: si fa** | Rinomina completa in una volta, identificativi del bundle compresi (opzione A dello studio), senza migrazione automatica: non ci sono dati solo locali da salvare, l'accesso si rifà. "Support MishMail" e il file delle donazioni verso l'autore originale sono rimossi; l'attribuzione e il copyright dell'autore originale restano. Il nome è libero per quanto verificato: esiste solo "DreamMail" con due m. Forme derivate come nella sezione 9 dello studio (bundle `io.github.bateman.DreaMail`, repository `bateman/dreamail`). Ordine: libreria v0.2.0 con i nomi nuovi, poi una PR di rinomina nell'app, poi rinomina del repository e reinstallazione da parte del proprietario. |
+| DEC-066 | **Chat: account personali** | Gli account del proprietario sono personali (@gmail.com). La Chat API richiede Workspace per essere attivata e il supporto agli account personali non è documentato: per ora solo il collegamento a Chat nel browser dalla barra degli account; la chat nativa resta subordinata a una prova. |
+| DEC-067 | **Calendar: solo il pannello come in Gmail** | L'obiettivo è il pannello a destra della posta (passi 1–3 dello studio: ciò che c'è già, agenda in sola lettura, promemoria). La finestra calendario completa e i task non sono in programma. |
+| DEC-068 | **Difetto di rPGP da segnalare a monte** | Il sottoflusso in `aead_setup_rfc9580` (rPGP 0.21.1) è descritto nell'issue 8 di `bateman/dreamail-openpgp`; la segnalazione agli sviluppatori di rPGP la fa il proprietario. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -478,6 +482,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-25 | **0.21** | Aggiunte DEC-061 (nomi del rebranding a DreaMail) e DEC-062 (Chat e Calendar integrati: solo studio). |
 | 2026-11-25 | **0.22** | Aggiunta DEC-063 (barra laterale come Gmail: scostamenti). |
 | 2026-11-25 | **0.23** | Aggiunta DEC-064 (OpenPGP: regole di fiducia e formati). |
+| 2026-11-25 | **0.24** | Aggiunte DEC-065 (rebranding: si fa), DEC-066 (Chat: account personali), DEC-067 (Calendar: solo pannello), DEC-068 (difetto di rPGP da segnalare). |
 
 ---
 
