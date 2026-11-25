@@ -682,8 +682,7 @@ extension MailStore {
             // Sticky keep after unstar so triage can continue in Starred.
             return !t.isStarred && !starStateKeepIds.contains(t.id)
         case .snoozed:
-            guard let until = t.snoozeUntil else { return true }
-            return until <= Date()
+            return !SidebarCounts.isActivelySnoozed(t) || t.inTrash
         case .trash:
             return !t.inTrash
         case .allMail:

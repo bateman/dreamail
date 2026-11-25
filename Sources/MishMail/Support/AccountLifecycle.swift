@@ -190,7 +190,9 @@ enum AccountLifecycle {
             + "its saved views, snippets available only to it, its sync and filter settings"
             + (aiFeaturesEnabled ? ", its notifications" : " and its notifications")
             + chats
-            + ". Gmail mail on the server is not deleted."
+            + ". Gmail mail on the server is not deleted. "
+            + "Conversations snoozed in MishMail are first put back in the Gmail Inbox; "
+            + "if Gmail can't be reached they stay archived in All Mail, and you are told how many."
     }
 
     static let removalFailedMessage =

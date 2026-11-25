@@ -131,7 +131,8 @@ struct ThreadListView: View {
         case .starred:
             return ("No starred conversations", "star", "Star a conversation to keep it here.")
         case .snoozed:
-            return ("Nothing snoozed", "clock", "Snoozed conversations will return here later.")
+            return ("Nothing snoozed", "clock",
+                    "Conversations snoozed here or in Gmail wait here until they come back.")
         default:
             return ("Nothing in \(store.selectedView.title)", "tray", "You're all caught up.")
         }
@@ -722,6 +723,11 @@ private struct ThreadListSections: View, Equatable {
             store.setRead(thread, read: thread.isUnread)
         }
         Menu("Snooze") {
+            if thread.gmailSnoozed {
+                // No wake-up time is readable from Gmail; Gmail wakes it.
+                Text("Snoozed in Gmail: Gmail brings it back")
+                Divider()
+            }
             // Its own view so the presets (daypart math + one date format
             // per preset) are computed when the submenu is materialized,
             // not for every row whenever the section body runs.

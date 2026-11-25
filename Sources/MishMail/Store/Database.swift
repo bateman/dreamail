@@ -60,6 +60,11 @@ struct MailThread: Codable, Identifiable, Hashable, FetchableRecord, Persistable
     /// and the row timestamp keep using `lastDate` (newest any message).
     /// "Remind if no reply" cancels only when this advances past `reminderSetAt`.
     var lastInboundDate: Date? = nil
+    /// Snoozed in Gmail itself (web or phone), read from Gmail's `in:snoozed`
+    /// search. No wake-up time is readable and Gmail wakes it, never
+    /// MishMail. Only set on rows without INBOX, trash or spam
+    /// (`GmailSnoozed`); a derive that sees INBOX again clears it.
+    var gmailSnoozed: Bool = false
 
     var labels: [String] { labelIds.split(separator: " ").map(String.init) }
 
@@ -2792,6 +2797,17 @@ final class AppDatabase: @unchecked Sendable {
         // and account (`InlineImageCache`).
         m.registerMigration("v54") { db in
             try InlineImageCache.createTable(db)
+        }
+        // v60: conversations snoozed in Gmail itself (`GmailSnoozed`). The
+        // Snoozed list and count read the flagged subset only.
+        m.registerMigration("v60") { db in
+            try db.alter(table: "thread") { t in
+                t.add(column: "gmailSnoozed", .boolean).notNull().defaults(to: false)
+            }
+            try db.execute(sql: """
+                CREATE INDEX thread_gmail_snoozed
+                ON thread(accountId) WHERE gmailSnoozed = 1
+                """)
         }
         return m
     }

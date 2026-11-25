@@ -85,11 +85,25 @@ extension MailStore {
         // `accounts` now so late sync errors, reauth requests and attachment
         // downloads for it are ignored (see `isKnownAccount`).
         let engine = engines[id]
+        // Taken before the account leaves `accounts`; the sign-in is still in
+        // the Keychain until the purge, so the snooze release below can call.
+        let gmail = client(for: id)
+        let reachable = !isOffline
         accounts.removeAll { $0.id == id }
         forgetAccountPhoto(id)
         leaveScope(ofRemovedAccount: id)
         Task { @MainActor [weak self] in
             await engine?.cancelSync()
+            // MishMail snoozes would stay archived on Gmail for good once
+            // the account is gone: put them back first. Never blocks the
+            // removal; what could not go back is reported after it.
+            let snoozed = (try? await pool.read { db in
+                try ThreadListQuery.snoozesToRelease(accountId: id)
+                    .select(Column("gmailThreadId"), as: String.self).fetchAll(db)
+            }) ?? []
+            let notReleased = await SnoozeRelease.release(snoozed, reachable: reachable) {
+                try await gmail.modifyThread(id: $0, add: ["INBOX"])
+            }
             // The database purge comes first because it is the step that can
             // fail. On failure nothing irreversible has happened yet: the
             // sign-in, notifications and attachment copies are still there,
@@ -142,6 +156,9 @@ extension MailStore {
             // Own-address set changed — drop the weight map and re-mine.
             self.rebuildContacts(forceFull: true)
             await self.reloadPendingThreadOpCount()
+            if let note = SnoozeRelease.notReleasedMessage(notReleased) {
+                self.lastError = note
+            }
         }
     }
 

@@ -15,14 +15,34 @@ enum ThreadListQuery {
     /// indexable; it is a residual filter applied to rows the index walks.
     static func notSnoozed(_ q: QueryInterfaceRequest<MailThread>,
                            now: Date) -> QueryInterfaceRequest<MailThread> {
-        q.filter(Column("snoozeUntil") == nil || Column("snoozeUntil") <= now)
+        q.filter((Column("snoozeUntil") == nil || Column("snoozeUntil") <= now)
+                 && Column("gmailSnoozed") == false)
     }
 
     /// Snoozes the wake sweep should fire. Trash and spam are skipped: waking
     /// adds INBOX on Gmail, which must never reach a discarded conversation.
+    /// Nor a conversation snoozed in Gmail itself: Gmail wakes those.
     static func dueSnoozes(now: Date) -> QueryInterfaceRequest<MailThread> {
         MailThread.filter(Column("snoozeUntil") != nil && Column("snoozeUntil") <= now
-                          && Column("inTrash") == false && Column("inSpam") == false)
+                          && Column("inTrash") == false && Column("inSpam") == false
+                          && Column("gmailSnoozed") == false)
+    }
+
+    /// Snoozed list: a future local snooze or a Gmail snooze, out of trash.
+    static func snoozed(now: Date) -> QueryInterfaceRequest<MailThread> {
+        MailThread.filter(((Column("snoozeUntil") != nil && Column("snoozeUntil") > now)
+                           || Column("gmailSnoozed") == true)
+                          && Column("inTrash") == false)
+    }
+
+    /// Local snoozes of one account to hand back to Gmail's Inbox before the
+    /// account is removed: the same rows the wake sweep would wake, whatever
+    /// their date.
+    static func snoozesToRelease(accountId: String) -> QueryInterfaceRequest<MailThread> {
+        MailThread.filter(Column("accountId") == accountId
+                          && Column("snoozeUntil") != nil
+                          && Column("inTrash") == false && Column("inSpam") == false
+                          && Column("gmailSnoozed") == false)
     }
 
     /// Unified inbox. Category filtering is layered on by the chips.
