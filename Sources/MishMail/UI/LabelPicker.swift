@@ -181,7 +181,7 @@ struct LabelPicker: View {
                     // (creates, on the Create row); Space toggles and stays.
                     HStack(spacing: 10) {
                         ForEach(LabelPickerKeyRules.footerHints(
-                            mode: picker.mode,
+                            moveMode: picker.mode == .move,
                             onCreateRow: highlighted == labels.count && createName != nil),
                                 id: \.self) { Text($0) }
                         Spacer()

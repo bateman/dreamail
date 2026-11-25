@@ -26,14 +26,14 @@ enum MovePickerRules {
 enum LabelPickerKeyRules {
     /// Whether the picker closes after a label row was applied by a key.
     /// Move mode closes itself in `moveThreads`; label mode closes on Return.
-    static func closesAfterApply(mode: LabelPickerState.Mode, closeKey: Bool) -> Bool {
-        mode == .label && closeKey
+    static func closesAfterApply(moveMode: Bool, closeKey: Bool) -> Bool {
+        !moveMode && closeKey
     }
 
     /// The footer's key hints for the highlighted row.
-    static func footerHints(mode: LabelPickerState.Mode, onCreateRow: Bool) -> [String] {
+    static func footerHints(moveMode: Bool, onCreateRow: Bool) -> [String] {
         if onCreateRow { return ["↑↓ select", "↵ create", "esc close"] }
-        return mode == .move
+        return moveMode
             ? ["↑↓ select", "↵ move", "esc close"]
             : ["↑↓ select", "↵ apply and close", "space toggle", "esc close"]
     }

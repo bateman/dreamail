@@ -127,9 +127,9 @@ extension MailStore {
         let rowCount = labels.count + (createName != nil ? 1 : 0)
         let idx = min(labelPicker.highlight, max(rowCount - 1, 0))
         if let label = labels[safe: idx] {
-            let mode = labelPicker.mode
+            let moveMode = labelPicker.mode == .move
             labelPickerCommit(label, thread: thread)
-            if LabelPickerKeyRules.closesAfterApply(mode: mode, closeKey: closeAfterApply) {
+            if LabelPickerKeyRules.closesAfterApply(moveMode: moveMode, closeKey: closeAfterApply) {
                 mailboxOverlay = nil
             }
         } else if let createName {
