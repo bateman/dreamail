@@ -146,6 +146,7 @@ struct MishMailApp: App {
                 // everything in the window, sheets and popovers included.
                 .mailAccentRoot(tintsDefault: true)
                 .frame(minWidth: 900, minHeight: 560)
+                .background(MainWindowFrame())
                 .onChange(of: appThemeRaw) {
                     AppTheme.apply(.from(raw: appThemeRaw))
                 }
