@@ -12,15 +12,26 @@ enum WindowFramePlacement {
     static func fit(_ saved: CGRect, in visibleFrames: [CGRect],
                     minSize: CGSize) -> CGRect {
         guard let main = visibleFrames.first else { return saved }
-        let target = visibleFrames
-            .map { ($0, $0.intersection(saved)) }
-            .filter { !$0.1.isNull && $0.1.width > 0 && $0.1.height > 0 }
-            .max { $0.1.width * $0.1.height < $1.1.width * $1.1.height }?.0 ?? main
+        var target = main
+        var bestArea: CGFloat = 0
+        for screen in visibleFrames {
+            let overlap = screen.intersection(saved)
+            if overlap.isNull { continue }
+            let area: CGFloat = overlap.width * overlap.height
+            if area > bestArea {
+                bestArea = area
+                target = screen
+            }
+        }
         var frame = saved
-        frame.size.width = max(min(saved.width, target.width), min(minSize.width, target.width))
-        frame.size.height = max(min(saved.height, target.height), min(minSize.height, target.height))
-        frame.origin.x = min(max(frame.minX, target.minX), target.maxX - frame.width)
-        frame.origin.y = min(max(frame.minY, target.minY), target.maxY - frame.height)
+        let minW: CGFloat = min(minSize.width, target.width)
+        let minH: CGFloat = min(minSize.height, target.height)
+        frame.size.width = max(min(saved.width, target.width), minW)
+        frame.size.height = max(min(saved.height, target.height), minH)
+        let maxX: CGFloat = target.maxX - frame.width
+        let maxY: CGFloat = target.maxY - frame.height
+        frame.origin.x = min(max(frame.minX, target.minX), maxX)
+        frame.origin.y = min(max(frame.minY, target.minY), maxY)
         return frame
     }
 }
