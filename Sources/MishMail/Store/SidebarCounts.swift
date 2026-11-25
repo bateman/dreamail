@@ -123,10 +123,9 @@ enum SidebarCounts {
         let awake = notActivelySnoozedSQL
         // Primary-tab unread only (matches memberships). Starred category mail
         // is list-pinned via CategoryHide but does not inflate this badge.
-        let inbox = try count(db, account: activeAccount, where: """
-            isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-            AND inPromotions = 0 AND inSocial = 0\(hideSQL)\(awake)
-            """, arguments: [now])
+        let inbox = try count(db, account: activeAccount,
+                              where: primaryUnreadSQL(hideSQL: hideSQL),
+                              arguments: [now])
         let promotions = try count(db, account: activeAccount, where: """
             isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
             AND inPromotions = 1\(awake)
@@ -158,10 +157,9 @@ enum SidebarCounts {
         if badgeAccount == activeAccount {
             badge = inbox
         } else {
-            badge = try count(db, account: badgeAccount, where: """
-                isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-                AND inPromotions = 0 AND inSocial = 0\(hideSQL)\(awake)
-                """, arguments: [now])
+            badge = try count(db, account: badgeAccount,
+                              where: primaryUnreadSQL(hideSQL: hideSQL),
+                              arguments: [now])
         }
 
         return ([
@@ -173,6 +171,32 @@ enum SidebarCounts {
             "snoozed": snoozed,
             "drafts": drafts,
         ], badge)
+    }
+
+    /// The primary-inbox unread predicate behind the inbox count, the Dock
+    /// badge and the per-account avatar badges: one definition, so they
+    /// cannot drift. Bind `now` as its sole argument.
+    private static func primaryUnreadSQL(hideSQL: String) -> String {
+        """
+        isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
+        AND inPromotions = 0 AND inSocial = 0\(hideSQL)\(notActivelySnoozedSQL)
+        """
+    }
+
+    /// Unread count per account (same predicate as the Dock badge); an
+    /// account with none is absent. The per-account badges add up to the
+    /// Dock badge when it counts every account.
+    static func fetchUnreadByAccount(
+        db: Database,
+        now: Date = Date(),
+        hideCategories: Set<String> = []
+    ) throws -> [String: Int] {
+        let predicate = primaryUnreadSQL(hideSQL: primaryHideSQL(hide: hideCategories))
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT accountId, COUNT(*) AS n FROM thread
+            WHERE (\(predicate)) GROUP BY accountId
+            """, arguments: [now])
+        return Dictionary(uniqueKeysWithValues: rows.map { ($0["accountId"] as String, $0["n"] as Int) })
     }
 
     /// `COUNT(*)` with optional account scope. `where` is raw SQL predicates

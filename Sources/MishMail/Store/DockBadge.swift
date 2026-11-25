@@ -50,6 +50,16 @@ enum DockBadge {
         return count > cap ? "\(cap)+" : String(count)
     }
 
+    /// Largest number the avatar badge shows; above it reads "99+". Lower
+    /// than the Dock's cap so the capsule stays small on a 29-35 pt avatar.
+    static let avatarCap = 99
+
+    /// Text of the badge on an account's avatar. Empty = no badge.
+    static func avatarLabel(for count: Int) -> String {
+        if count <= 0 { return "" }
+        return count > avatarCap ? "\(avatarCap)+" : String(count)
+    }
+
     /// Number for the notification-center badge, which takes no text.
     static func systemCount(for count: Int) -> Int {
         min(max(count, 0), cap)
@@ -142,6 +152,45 @@ enum DockBadge {
             }
             count = max(0, current + delta)
             return true
+        }
+    }
+
+    // MARK: - Per-account counts
+
+    /// Unread per account, for the badge on each account's avatar. Same
+    /// predicate as the Dock badge (`SidebarCounts.fetchUnreadByAccount`)
+    /// and the same two writers: recounts (authoritative) and local
+    /// actions (optimistic deltas, via `delta`).
+    struct AccountCounts: Equatable {
+        private(set) var counts: [String: Int] = [:]
+        /// Bumped by every local action, so a recount whose read started
+        /// before it cannot undo its delta.
+        private(set) var epoch = 0
+        /// Set by the first recount. Before it the counts are unknown, so a
+        /// delta has nothing to move (as for `Counter`).
+        private(set) var loaded = false
+
+        /// Unread for one account; 0 when unknown or none.
+        func unread(for account: String) -> Int { counts[account] ?? 0 }
+
+        /// A database recount, taken with the `epoch` read before it began.
+        /// Accounts missing from it (none unread, or removed) drop out.
+        @discardableResult
+        mutating func applyRecount(_ new: [String: Int], epoch: Int) -> Bool {
+            guard epoch == self.epoch else { return false }
+            counts = new.filter { $0.value > 0 }
+            loaded = true
+            return true
+        }
+
+        /// A local action: `delta` per account, summed over its threads.
+        mutating func applyDelta(_ delta: [String: Int]) {
+            epoch += 1
+            guard loaded else { return }
+            for (account, d) in delta where d != 0 {
+                let value = max(0, (counts[account] ?? 0) + d)
+                counts[account] = value > 0 ? value : nil
+            }
         }
     }
 
