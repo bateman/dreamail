@@ -1,4 +1,0 @@
-module MishMailRPGP {
-    header "mishmail_rpgp.h"
-    export *
-}
