@@ -438,8 +438,8 @@ final class SecureDeleteMaintenanceTests: XCTestCase {
         let item = NotificationContent.MailItem(accountId: "me@example.com",
                                                 threadId: "me@example.com:t1",
                                                 sender: "A", subject: "B")
-        let posted = NotificationContent.newMail([item], showDetails: false, salt: "s").map(\.id)
-            + NotificationContent.reminders([item], showDetails: true, salt: "s").map(\.id)
+        let posted = NotificationContent.newMail([item], detailAccounts: [], salt: "s").map(\.id)
+            + NotificationContent.reminders([item], detailAccounts: ["me@example.com"], salt: "s").map(\.id)
         let withdrawn = NotificationContent.threadIdentifiers(
             accountId: "me@example.com", threadId: "me@example.com:t1", salt: "s")
         XCTAssertEqual(Set(withdrawn), Set(posted))
