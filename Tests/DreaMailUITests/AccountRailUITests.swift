@@ -1,7 +1,8 @@
 import XCTest
 
-/// The account rail: the window's traffic lights lie over it, and the
-/// Appearance toggle shows / hides its "+" entry. Demo inbox.
+/// The account rail and its top band (the window's traffic lights lie on the
+/// band), and the Appearance toggle that shows / hides the rail's "+" entry.
+/// Demo inbox.
 final class AccountRailUITests: XCTestCase {
     private func launch(extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
@@ -22,24 +23,70 @@ final class AccountRailUITests: XCTestCase {
         root.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
-    func testWindowButtonsLieEntirelyOverTheRail() {
+    /// One launch: the top band covers the three window buttons (sidebar
+    /// hidden, then shown), and the rail below it is 64 pt wide.
+    func testWindowButtonsLieInsideTheTopBandAndTheRailBelowIsNarrow() {
         let app = launch()
         let settings = element(app, "accountRail.settings")
         XCTAssertTrue(settings.waitForExistence(timeout: 10), "the rail is on screen")
         let window = app.windows.firstMatch
-        // The rail's right edge: the settings gear is centred in it, so its
-        // midline is half the rail's width from the window's left edge.
-        let railRight = window.frame.minX + (settings.frame.midX - window.frame.minX) * 2
-        for button in [window.buttons[XCUIIdentifierCloseWindow],
+        let band = element(app, "accountRail.topBand")
+        XCTAssertTrue(band.waitForExistence(timeout: 5), "the top band is on screen")
+        let buttons = [window.buttons[XCUIIdentifierCloseWindow],
                        window.buttons[XCUIIdentifierMinimizeWindow],
-                       window.buttons[XCUIIdentifierFullScreenWindow]] {
-            XCTAssertTrue(button.exists)
-            XCTAssertLessThan(button.frame.maxX, railRight,
-                              "window button \(button.identifier) \(button.frame) must lie inside the rail (right edge \(railRight), window \(window.frame))")
+                       window.buttons[XCUIIdentifierFullScreenWindow]]
+        func assertButtonsInBand(_ when: String) {
+            for button in buttons {
+                XCTAssertTrue(button.exists)
+                let b = band.frame
+                let f = button.frame
+                XCTAssertGreaterThanOrEqual(f.minX, b.minX, "\(when): \(button.identifier) \(f) in band \(b)")
+                XCTAssertLessThanOrEqual(f.maxX, b.maxX, "\(when): \(button.identifier) \(f) in band \(b)")
+                XCTAssertGreaterThanOrEqual(f.minY, b.minY, "\(when): \(button.identifier) \(f) in band \(b)")
+                XCTAssertLessThanOrEqual(f.maxY, b.maxY, "\(when): \(button.identifier) \(f) in band \(b)")
+            }
+            let zoom = window.buttons[XCUIIdentifierFullScreenWindow]
+            XCTAssertGreaterThanOrEqual(band.frame.maxX - zoom.frame.maxX, 8,
+                                        "\(when): a visible margin right of the green button")
         }
-        let zoom = window.buttons[XCUIIdentifierFullScreenWindow]
-        XCTAssertGreaterThanOrEqual(railRight - zoom.frame.maxX, 8,
-                                    "a visible margin right of the green button")
+        assertButtonsInBand("sidebar hidden")
+        XCTAssertEqual(band.frame.minX, window.frame.minX, accuracy: 1, "the band starts at the window's left edge")
+
+        // The rail below the band: the settings gear is centred in it, so its
+        // midline is half the rail's width from the window's left edge.
+        let railWidth = (settings.frame.midX - window.frame.minX) * 2
+        XCTAssertEqual(railWidth, 64, accuracy: 2, "the rail below the band is 64 pt wide")
+        XCTAssertGreaterThanOrEqual(element(app, "accountRail.account.you@example.com").frame.minY, band.frame.maxY,
+                                    "avatars start below the band")
+
+        // Sidebar shown: the band runs over the sidebar's top, up to its
+        // right edge, and the sidebar's content starts below it.
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
+        let compose = element(app, "composeButton")
+        XCTAssertTrue(compose.waitForExistence(timeout: 5), "the sidebar is shown")
+        func assertBandOverSidebar(_ when: String) {
+            XCTAssertTrue(waitUntil { band.frame.maxX > compose.frame.maxX },
+                          "\(when): the band reaches the sidebar's right edge (\(band.frame), compose \(compose.frame))")
+            XCTAssertLessThan(band.frame.maxX - compose.frame.maxX, 40,
+                              "\(when): the band ends at the sidebar's right edge (\(band.frame), compose \(compose.frame))")
+            XCTAssertGreaterThanOrEqual(compose.frame.minY, band.frame.maxY,
+                                        "\(when): sidebar content starts below the band")
+            assertButtonsInBand(when)
+        }
+        assertBandOverSidebar("sidebar shown")
+
+        // The layout is rebuilt when a conversation opens: the band follows.
+        let row = element(app, "threadRow.you@example.com:t3")
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.click()
+        XCTAssertTrue(compose.waitForExistence(timeout: 5))
+        assertBandOverSidebar("conversation open")
+
+        // Hidden again: back to the minimum.
+        app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitUntil { abs(band.frame.width - 90) < 1 },
+                      "sidebar hidden: the band is 90 pt wide (\(band.frame))")
+        assertButtonsInBand("sidebar hidden again")
     }
 
     func testAppearanceToggleHidesAndShowsTheAddEntry() {

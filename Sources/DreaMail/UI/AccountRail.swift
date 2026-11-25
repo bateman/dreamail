@@ -11,7 +11,7 @@ extension AccountRailPalette {
 /// (ring, unread badge), "All accounts" first when there are several, a "+"
 /// to add an account, and at the bottom the Settings button.
 struct AccountRail: View {
-    static let avatarSize: CGFloat = 40
+    static let avatarSize = AccountRailMetrics.avatarSize
     static let width = AccountRailMetrics.width
     static let showAddAccountKey = AccountRailMetrics.showAddAccountKey
     static let showAddAccountDefault = AccountRailMetrics.showAddAccountDefault
@@ -48,8 +48,8 @@ struct AccountRail: View {
         }
         .frame(width: Self.width)
         .frame(maxHeight: .infinity)
-        // Behind the title bar too, so there is no seam under the traffic
-        // lights.
+        // Behind the title bar too, so it joins the top band
+        // (`AccountRailTopBand`) with no seam.
         .background(AccountRailPalette.background.ignoresSafeArea())
         // A drop outside an account avatar still clears the dragged id.
         .onDrop(of: [.text], isTargeted: nil) { _ in
@@ -189,6 +189,69 @@ struct AccountRail: View {
             .accessibilityIdentifier("accountRail.settings")
         }
         .padding(.bottom, 10)
+    }
+}
+
+/// The top of the upside-down "L": a band in the rail's colour, as tall as the
+/// title-bar row, from the window's left edge across the window buttons to the
+/// sidebar's right edge. An overlay of the window's content, so it also covers
+/// the top of the sidebar; toolbar items (the sidebar toggle) stay above it.
+struct AccountRailTopBand: View {
+    @Environment(MailStore.self) private var store
+    /// Whether the sidebar is on screen (decided by `ContentView`).
+    let sidebarVisible: Bool
+
+    var body: some View {
+        // Read here, not inside the GeometryReader closure, so the view
+        // observes the store.
+        let width = AccountRailMetrics.bandWidth(
+            sidebarTrailing: store.sidebarTrailingEdge, sidebarVisible: sidebarVisible)
+        GeometryReader { proxy in
+            let top = proxy.safeAreaInsets.top
+            AccountRailPalette.background
+                .frame(width: width, height: top)
+                .offset(y: -top)
+                // Only the UI test looks the band up, by frame.
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("accountRail.topBand")
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Reports the right edge of the view it backs, in window coordinates. Measured
+/// in AppKit: the sidebar lives in a split-view column, where SwiftUI's own
+/// geometry (`GeometryReader`, `.global`) did not give the column's real edge.
+struct TrailingEdgeReader: NSViewRepresentable {
+    let onChange: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> EdgeView {
+        let view = EdgeView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ view: EdgeView, context: Context) {
+        view.onChange = onChange
+        view.report()
+    }
+
+    final class EdgeView: NSView {
+        var onChange: ((CGFloat) -> Void)?
+        private var last: CGFloat?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
+        override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); report() }
+        override func layout() { super.layout(); report() }
+
+        func report() {
+            guard window != nil else { return }
+            let edge = convert(bounds, to: nil).maxX.rounded()
+            guard edge != last else { return }
+            last = edge
+            DispatchQueue.main.async { [weak self] in self?.onChange?(edge) }
+        }
     }
 }
 
