@@ -11,6 +11,10 @@ final class LabelPickerUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
+    private func search(_ app: XCUIApplication) -> XCUIElement {
+        element(app, "labelPicker.search")
+    }
+
     /// The picker's label rows, top to bottom.
     private func rows(_ app: XCUIApplication) -> [XCUIElement] {
         app.descendants(matching: .any)
@@ -21,7 +25,7 @@ final class LabelPickerUITests: XCTestCase {
 
     private func openPicker(_ app: XCUIApplication) {
         app.typeKey("l", modifierFlags: [])
-        XCTAssertTrue(app.textFields["Label as…"].waitForExistence(timeout: 5), "the picker opens")
+        XCTAssertTrue(search(app).waitForExistence(timeout: 5), "the picker opens")
         XCTAssertTrue(rows(app).count >= 3, "the picker lists labels")
     }
 
@@ -48,7 +52,7 @@ final class LabelPickerUITests: XCTestCase {
         let before = rows(app)[1].value as? String
         app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
-        XCTAssertTrue(app.textFields["Label as…"].waitForNonExistence(timeout: 5),
+        XCTAssertTrue(search(app).waitForNonExistence(timeout: 5),
                       "Return closes the picker")
 
         openPicker(app)
@@ -60,11 +64,11 @@ final class LabelPickerUITests: XCTestCase {
         let firstBefore = first.value as? String, thirdBefore = third.value as? String
         first.click()
         third.click()
-        XCTAssertTrue(app.textFields["Label as…"].exists, "clicking keeps the picker open")
+        XCTAssertTrue(search(app).exists, "clicking keeps the picker open")
         XCTAssertNotEqual(firstBefore, rows(app)[0].value as? String)
         XCTAssertNotEqual(thirdBefore, rows(app)[2].value as? String)
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        XCTAssertTrue(app.textFields["Label as…"].waitForNonExistence(timeout: 5), "Esc closes")
+        XCTAssertTrue(search(app).waitForNonExistence(timeout: 5), "Esc closes")
 
         openPicker(app)
         XCTAssertNotEqual(firstBefore, rows(app)[0].value as? String, "first pick stayed applied")

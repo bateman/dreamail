@@ -25,6 +25,8 @@ struct LabelPicker: View {
     // changes re-render only this view, not the whole window.
     @ObservedObject var picker: LabelPickerState
     @FocusState private var focused: Bool
+    /// Gmail's "Create new" footer row: the same sheet as the sidebar's "+".
+    @State private var newLabel: NewLabelRequest?
 
     /// Stable id for the "Create …" row so ScrollViewReader can find it
     /// after the filtered list shrinks (index-based ids churn under filter).
@@ -44,11 +46,26 @@ struct LabelPicker: View {
                 let rowCount = labels.count + (createName != nil ? 1 : 0)
                 let highlighted = min(picker.highlight, max(rowCount - 1, 0))
                 VStack(spacing: 0) {
-                    TextField(placeholder, text: $picker.query)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 15))
-                        .padding(12)
-                        .focused($focused)
+                    // Gmail's header: a title, then the filter field with a
+                    // magnifier and an accent underline.
+                    Text(title)
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12).padding(.top, 10)
+                    HStack(spacing: 6) {
+                        TextField(placeholder, text: $picker.query)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 15))
+                            .focused($focused)
+                            .accessibilityLabel(title)
+                            .accessibilityIdentifier("labelPicker.search")
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 6)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(.accentForeground).frame(height: 2)
+                    }
+                    .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 8)
                     if store.accounts.count > 1 {
                         Text(thread.accountId)
                             .font(.caption).foregroundStyle(.secondary)
@@ -146,6 +163,20 @@ struct LabelPicker: View {
                         }
                     }
                     Divider()
+                    if picker.mode == .label {
+                        Button {
+                            newLabel = NewLabelRequest(accountId: thread.accountId, parent: nil)
+                        } label: {
+                            Text("Create new")
+                                .font(.system(size: 13))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("labelPicker.createNew")
+                        Divider()
+                    }
                     // Spell out the keyboard model: Enter applies and closes
                     // (creates, on the Create row); Space toggles and stays.
                     HStack(spacing: 10) {
@@ -162,6 +193,7 @@ struct LabelPicker: View {
                 .frame(width: 380)
                 .shadow(radius: 24)
                 .padding(.top, 130)
+                .sheet(item: $newLabel) { NewLabelSheet(request: $0) }
                 .onAppear { focused = true }
                 .onChange(of: focused) {
                     // When the field finally wins focus, macOS selects all —
@@ -178,9 +210,11 @@ struct LabelPicker: View {
         }
     }
 
+    private var title: String { picker.mode == .move ? "Move to:" : "Label as:" }
+
     /// "Move 5 conversations to…" when the move covers several.
     private var placeholder: String {
-        guard picker.mode == .move else { return "Label as…" }
+        guard picker.mode == .move else { return "" }
         let n = picker.moveTargetIds.count
         return n > 1 ? "Move \(n) conversations to…" : "Move to…"
     }
