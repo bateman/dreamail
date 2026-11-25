@@ -173,6 +173,9 @@ struct SidebarLabelRow: View {
         .modifier(SidebarCount(count: hidesCount ? 0 : unread,
                                painted: accent.paintsSelection))
         .help(node.fullName)
+        // A container, so the "⋮" in the title stays its own element (for
+        // VoiceOver and the UI tests) instead of merging into the label.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sidebar.label.\(node.accountId).\(node.gmailLabelId)")
         // The row's tap opens the label. "⋮" is a menu button: its click
         // opens the menu (AppKit takes the mouse down) and the UI test
