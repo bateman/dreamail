@@ -374,7 +374,10 @@ final class GmailLabelColorEditTests: XCTestCase {
 
     func testLabelIdIsOnePathSegment() {
         XCTAssertEqual(GmailClient.pathSegment("Label_12"), "Label_12")
-        XCTAssertEqual(GmailClient.pathSegment("../filters?x=1#y"), "..%2Ffilters%3Fx=1%23y")
+        XCTAssertEqual(GmailClient.pathSegment("../filters?x=1#y"), "..%2Ffilters%3Fx%3D1%23y")
+        // Filter ids share the helper; non-ASCII letters are encoded too.
+        XCTAssertEqual(GmailClient.pathSegment("ANe1Bm-x_y"), "ANe1Bm-x_y")
+        XCTAssertEqual(GmailClient.pathSegment("é"), "%C3%A9")
     }
 
     // MARK: - Mac-only color precedence (DEC-023)

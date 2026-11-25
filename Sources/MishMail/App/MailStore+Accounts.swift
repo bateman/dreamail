@@ -91,6 +91,8 @@ extension MailStore {
         let reachable = !isOffline
         accounts.removeAll { $0.id == id }
         forgetAccountPhoto(id)
+        // DEC-019: the account's Gmail filters leave memory with it.
+        filterCache.forget(account: id)
         leaveScope(ofRemovedAccount: id)
         PendingLabelColorEdits.shared.forgetAccount(id)
         Task { @MainActor [weak self] in

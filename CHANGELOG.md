@@ -6,6 +6,12 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Gmail filters can be edited.** Filters can now be created, edited and
+  deleted in Settings → Gmail filters, with an approximate preview of the
+  matching mail on this Mac and a confirmation before saving a filter that
+  deletes mail or hides it from the Inbox. Gmail has no update call, so an edit
+  creates the new filter and then deletes the old one; if the delete fails both
+  are listed. Forwarding filters are still edited in Gmail.
 - **More Gmail shortcuts.** Mute (`m`), mark as important or not important (`+`
   or `=`, `-`) and move to (`v`, which also leaves the current label or Trash),
   each with undo, also in the Message menu, the command palette and the
