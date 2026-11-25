@@ -188,8 +188,8 @@ class CheckTestSkipsTests(TempFiles):
         return status, out.getvalue()
 
     PASSED = (
-        "Test Case '-[MishMailTests.FooTests testBar]' started.\n"
-        "Test Case '-[MishMailTests.FooTests testBar]' passed (0.001 seconds).\n"
+        "Test Case '-[DreaMailTests.FooTests testBar]' started.\n"
+        "Test Case '-[DreaMailTests.FooTests testBar]' passed (0.001 seconds).\n"
         "\t Executed 2425 tests, with 0 failures (0 unexpected) in 61.0 (63.0) seconds\n"
     )
 
@@ -198,13 +198,13 @@ class CheckTestSkipsTests(TempFiles):
 
     def test_allowlisted_skip_passes(self):
         log = self.PASSED + (
-            "Test Case '-[MishMailTests.HTMLBodyHeightLoopTests "
+            "Test Case '-[DreaMailTests.HTMLBodyHeightLoopTests "
             "testViewportLengthsArePinnedNotCollapsed]' skipped (4.460 seconds).\n")
         self.assertEqual(self.run_check(log)[0], 0)
 
     def test_unlisted_skip_fails(self):
         log = self.PASSED + (
-            "Test Case '-[MishMailTests.UpdateVerifySmokeTests testBuiltAppVerifies]' "
+            "Test Case '-[DreaMailTests.UpdateVerifySmokeTests testBuiltAppVerifies]' "
             "skipped (0.001 seconds).\n")
         status, out = self.run_check(log)
         self.assertEqual(status, 1)
@@ -212,7 +212,7 @@ class CheckTestSkipsTests(TempFiles):
 
     def test_ui_test_target_skip_fails(self):
         log = self.PASSED + (
-            "Test Case '-[MishMailUITests.SmokeTests testLaunch]' skipped (0.1 seconds).\n")
+            "Test Case '-[DreaMailUITests.SmokeTests testLaunch]' skipped (0.1 seconds).\n")
         self.assertEqual(self.run_check(log)[0], 1)
 
     def test_log_without_tests_fails(self):
@@ -231,7 +231,7 @@ class CheckPackagePinsTests(TempFiles):
     REV = "46098847eeabdb008f238bef5750a8e64097b6ed"
     PACKAGE = f"  GRDB:\n    url: {URL}\n    revision: {REV}\n"
     PROJECT = textwrap.dedent(f"""\
-        name: MishMail
+        name: DreaMail
         options:
           bundleIdPrefix: io.github.bateman
         packages:
@@ -240,11 +240,11 @@ class CheckPackagePinsTests(TempFiles):
             url: {URL}
             revision: {REV}  # tag 3.0.0
         targets:
-          MishMail:
+          DreaMail:
             type: application
             dependencies:
               - package: GRDB
-              - target: MishMailRelauncher
+              - target: DreaMailRelauncher
               - sdk: Security.framework
         """)
 
@@ -349,7 +349,7 @@ class NeedsBuildTests(TempFiles):
         # and everything under scripts/ and .github/.
         for paths in ([], ["README.md"], ["CONTRIBUTING.md"], ["SECURITY.md"],
                       ["scripts/README.md"], [".github/workflows/ci.yml"],
-                      ["docs/a.md", "Sources/MishMail/App/MailStore.swift"],
+                      ["docs/a.md", "Sources/DreaMail/App/MailStore.swift"],
                       ["docsx/a.md"], ["Tests/docs/a.md"], ["sub/CHANGELOG.md"]):
             with self.subTest(paths=paths):
                 self.assertTrue(needs_build.needs_build(paths))

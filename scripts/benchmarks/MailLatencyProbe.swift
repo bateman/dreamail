@@ -72,7 +72,7 @@ struct MailLatencyProbe: NSViewRepresentable {
             guard Self.reported.insert(key).inserted else { return }
             let seconds = ProcessInfo.processInfo.systemUptime - start
             let token = ProcessInfo.processInfo.environment["MAIL_BENCH_TRIAL"] ?? ""
-            let pasteboard = NSPasteboard(name: .init("mishmail.benchmark.\(key)"))
+            let pasteboard = NSPasteboard(name: .init("dreamail.benchmark.\(key)"))
             pasteboard.clearContents()
             pasteboard.setString("\(token) \(seconds)", forType: .string)
             // Stage breakdown for click-driven opens: app intervals that
@@ -85,7 +85,7 @@ struct MailLatencyProbe: NSViewRepresentable {
                 let end = sample.at.timeIntervalSince(click) * 1000
                 stages.append("\(sample.event)@\(Int(end - sample.ms))+\(Int(sample.ms))")
             }
-            let board = NSPasteboard(name: .init("mishmail.benchmark.stages.\(key)"))
+            let board = NSPasteboard(name: .init("dreamail.benchmark.stages.\(key)"))
             board.clearContents()
             board.setString("\(token) " + stages.joined(separator: ","), forType: .string)
         }

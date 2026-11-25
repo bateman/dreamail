@@ -1,7 +1,7 @@
-# MishMail
+# DreaMail
 
 A native, local-first Gmail client for macOS. SwiftUI, Gmail REST API, SQLite.
-No MishMail server, no telemetry. Mail stays on your Mac except calls to
+No DreaMail server, no telemetry. Mail stays on your Mac except calls to
 Google's Gmail API. Optional AI can stay on-device (Ollama) or, if you turn it
 on, send mail text to a hosted model you choose — with host consent, and with
 silent auto-sort refusing cloud providers.
@@ -10,22 +10,22 @@ silent auto-sort refusing cloud providers.
 > keyboard-driven inbox that runs entirely on their own
 > hardware. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-![MishMail inbox](docs/screenshots/inbox.png)
+![DreaMail inbox](docs/screenshots/inbox.png)
 
 | Read a conversation | Compose without leaving your inbox |
 |---|---|
-| ![MishMail reading pane](docs/screenshots/reading-pane.png) | ![MishMail composer](docs/screenshots/compose.png) |
+| ![DreaMail reading pane](docs/screenshots/reading-pane.png) | ![DreaMail composer](docs/screenshots/compose.png) |
 
-## Try MishMail
+## Try DreaMail
 
 - **Build from source (recommended):** clone the repository, install
   `xcodegen`, then run `make demo`. The Debug app opens an isolated demo inbox.
   `make run` opens the same app with your real account and needs stable signing.
-- **Binaries:** this fork publishes none; build from source. Upstream
-  development builds are on
+- **Binaries:** this fork publishes none; build from source. Development
+  builds of the upstream project, MishMail, are on
   [ronboger/mishmail's GitHub Releases](https://github.com/ronboger/mishmail/releases/latest)
   under the upstream bundle identifier, and this fork's builds
-  (`io.github.bateman.MishMail`) never update from them.
+  (`io.github.bateman.DreaMail`) never update from them.
 - **Explore safely:** on first launch, choose **Try demo inbox** to browse
   fictional mail before connecting Google. Demo mode never syncs or sends.
 Connecting a real inbox requires your own free Google Desktop OAuth client;
@@ -50,7 +50,7 @@ the guided setup is below. You can evaluate the entire interface first.
   Snippets trigger with `/name` in the body, fill variables like
   `{first_name}` and `{my_first_name}`, and can move an introducer to Bcc for
   you.
-- **Optional AI** — draft, summarize, triage, and Ask Mish. The default is a
+- **Optional AI** — draft, summarize, triage, and Ask AI. The default is a
   local [Ollama](https://ollama.com) model (nothing is uploaded; it works in
   airplane mode). You can also attach hosted providers (Claude, ChatGPT, Grok,
   Gemini, OpenRouter, or a custom endpoint). Hosted tasks send mail text off
@@ -72,7 +72,7 @@ The app uses **your own** free Google OAuth client, so no third party ever sees
 your mail. (See [Why bring your own client?](#why-bring-your-own-oauth-client)
 for the reasoning.)
 
-1. Go to https://console.cloud.google.com/ and create a project (e.g. "MishMail").
+1. Go to https://console.cloud.google.com/ and create a project (e.g. "DreaMail").
 2. **APIs & Services → Library** → search "Gmail API" → **Enable**.
 3. **APIs & Services → OAuth consent screen**:
    - User type: **External**, fill in app name + your email, save.
@@ -91,23 +91,23 @@ for the reasoning.)
    - Application type: **Desktop app**.
    - Copy the **Client ID** and **Client Secret** (or download the
      `client_secret_*.json`).
-5. Launch MishMail → **Settings (Cmd-,) → Google API** → paste both.
+5. Launch DreaMail → **Settings (Cmd-,) → Google API** → paste both.
    (Debug and Release are separate apps with separate Keychains — paste into
    whichever build you're using. Never commit client secrets; each person brings
    their own free Desktop client.)
 6. Sidebar → **Add Google Account…** → your browser opens → sign in → the
    browser redirects to `http://127.0.0.1:<port>/oauth2/callback` → you should
-   see **“Signed in.”** → return to MishMail; the account appears. Repeat for
+   see **“Signed in.”** → return to DreaMail; the account appears. Repeat for
    each account.
 
 > During sign-in Google shows a **"Google hasn't verified this app"** screen
 > because it's your own unverified test client. That's expected — click
 > **Advanced → Continue**. The requested scope is `gmail.modify` plus your basic
-> profile (email/name); MishMail never sees a password.
+> profile (email/name); DreaMail never sees a password.
 
 ### Why bring your own OAuth client?
 
-Shipping a shared client ID would make MishMail a data broker for every
+Shipping a shared client ID would make DreaMail a data broker for every
 user's mailbox and would drag the project through Google's restricted-scope
 verification (a CASA security assessment for `gmail.modify`). Bring-your-own
 client keeps your mail flowing only between your Mac and Google — nobody else,
@@ -118,7 +118,7 @@ including the author, is ever in the loop. It costs you five minutes once.
 ```sh
 brew install xcodegen        # once
 xcodegen generate
-xcodebuild -project MishMail.xcodeproj -scheme MishMail -configuration Release build
+xcodebuild -project DreaMail.xcodeproj -scheme DreaMail -configuration Release build
 ```
 
 Or, with the included Makefile:
@@ -133,7 +133,7 @@ make hooks    # pre-commit runs unit tests; post-merge removes merged branches a
 make checks   # shellcheck + Python script tests + CI pin checks (no Xcode)
 ```
 
-You can also open `MishMail.xcodeproj` in Xcode. Configure the free Personal
+You can also open `DreaMail.xcodeproj` in Xcode. Configure the free Personal
 Team signing described below before running a real inbox; use `make demo` (or
 `make run DEMO=1`) for the no-signing, Keychain-free demo.
 
@@ -179,7 +179,7 @@ published as updates for other users.
 ### Releases & updates
 
 **In this fork the updater is disabled.** The release channel is a build
-setting with no default (`MISHMAIL_UPDATE_CHANNEL` in
+setting with no default (`DREAMAIL_UPDATE_CHANNEL` in
 [`Config/Signing.xcconfig`](Config/Signing.xcconfig), `OWNER/REPO`), and the
 tracked value is empty: the app makes no release checks, never contacts a
 releases API, and never replaces itself; Settings → Updates says updates are
@@ -192,7 +192,7 @@ With a channel configured, the
 app checks once a day; when a newer version exists, an **Update app** button
 appears at the bottom of the sidebar and an **Install and Relaunch** button in
 **Settings → Updates** — clicking either downloads and verifies the release
-zip, replaces MishMail where it's installed, and restarts it. Because the app
+zip, replaces DreaMail where it's installed, and restarts it. Because the app
 is sandboxed, the *first* update asks once for permission to its own install
 folder (usually `/Applications`); the grant is remembered, so later updates are
 a single click. If that permission is declined or the swap fails, the verified
@@ -202,15 +202,15 @@ To update from the terminal instead — or to cross from a build older than
 0.4.1, whose updater predates all of this — run:
 
 ```sh
-scripts/update-mishmail.sh --repo OWNER/REPO
+scripts/update-dreamail.sh --repo OWNER/REPO
 ```
 
 The repository is required: there is no default channel. It runs the same
 checks the app does (SHA-256 against `SHA256SUMS`, code signature, Team ID
 continuity and bundle identifier of the install it's replacing, and the
 release version against the bundle's own), installs only a strictly newer
-version, then replaces `/Applications/MishMail.app` and relaunches. Pass a
-path as the last argument if MishMail lives elsewhere; `--allow-downgrade`
+version, then replaces `/Applications/DreaMail.app` and relaunches. Pass a
+path as the last argument if DreaMail lives elsewhere; `--allow-downgrade`
 reinstalls the same or an older release, for recovery only.
 
 To cut a release: bump `MARKETING_VERSION` in `project.yml`, then
@@ -292,11 +292,11 @@ compose, Settings).
 ## AI (optional)
 
 **In this fork the AI features and the MCP server are switched off.** The
-switch is a build setting (`MISHMAIL_AI_FEATURES` in
+switch is a build setting (`DREAMAIL_AI_FEATURES` in
 [`Config/Signing.xcconfig`](Config/Signing.xcconfig)) whose tracked value is
 empty: no AI control is shown, no model provider, custom endpoint or Ollama
 daemon is contacted, no stored provider key is read, and the MCP server never
-starts, whatever an earlier build stored. Set `MISHMAIL_AI_FEATURES = YES` in
+starts, whatever an earlier build stored. Set `DREAMAIL_AI_FEATURES = YES` in
 `Config/Local.xcconfig` to build them in; the rest of this section and the
 MCP section describe that build.
 
@@ -309,13 +309,13 @@ decisions, and stream into a separate preview. **Use draft** applies it;
 selection or the whole authored draft. Generated text never overwrites edits
 made while the model is working. Set your preferred tone, sign-off, or booking
 link once in **Settings → AI → How I write**; drafts, suggested replies, and
-Ask Mish reuse it.
+Ask AI reuse it.
 
 Thread summaries include the current state and a **Next** action. Completed
 summaries are saved locally; new replies flag them for **Refresh**. In
 **Settings → AI**, you can opt into summaries when opening long threads with
 Ollama on this Mac. Hosted and LAN models always use the explicit summary
-button. Ask Mish refreshes changed open and pinned conversations on the next
+button. Ask AI refreshes changed open and pinned conversations on the next
 question, and keeps each question tied to the thread that was selected when
 you asked it.
 
@@ -325,28 +325,81 @@ you asked it.
 ollama pull llama3.2
 ```
 
-Then in **Settings → AI** point MishMail at your local Ollama (default
-`http://127.0.0.1:11434`). Drafts, summaries, triage, and Ask Mish run on
-this Mac. MishMail refuses cleartext non-loopback endpoints. LAN Ollama
+Then in **Settings → AI** point DreaMail at your local Ollama (default
+`http://127.0.0.1:11434`). Drafts, summaries, triage, and Ask AI run on
+this Mac. DreaMail refuses cleartext non-loopback endpoints. LAN Ollama
 (RFC1918 / link-local) is treated as on-network, not as a cloud host.
 
 **Hosted.** Settings → AI can connect Claude, ChatGPT, Grok, Gemini,
 OpenRouter, or a custom OpenAI-compatible endpoint. Each task (drafts,
-summaries, triage, Ask Mish) has its own assignment. A hosted assignment
+summaries, triage, Ask AI) has its own assignment. A hosted assignment
 sends that task's mail text to the provider. Preset hosts are expected;
 a typed-in host requires an explicit consent that matches scheme, host, and
 port. Silent inbox auto-sort skips when Triage is a cloud model so new-mail
-snippets are not uploaded in the background. Ask Mish shows a one-time notice
+snippets are not uploaded in the background. Ask AI shows a one-time notice
 before a hosted chat.
 
 ## Where things live
 
-This fork's bundle identifier is `io.github.bateman.MishMail` (Debug:
-`io.github.bateman.MishMail.debug`), so it has its own sandbox container,
+This fork's bundle identifier is `io.github.bateman.DreaMail` (Debug:
+`io.github.bateman.DreaMail.debug`), so it has its own sandbox container,
 defaults domain and Keychain items:
 
-- Mail cache (SQLCipher-encrypted): `~/Library/Containers/io.github.bateman.MishMail/Data/Library/Application Support/MishMail/mail.sqlite`
-- OAuth refresh tokens, client secret, and the DB key: macOS Keychain (`io.github.bateman.MishMail`)
+- Mail cache (SQLCipher-encrypted): `~/Library/Containers/io.github.bateman.DreaMail/Data/Library/Application Support/DreaMail/mail.sqlite`
+- OAuth refresh tokens, client secret, and the DB key: macOS Keychain (`io.github.bateman.DreaMail`)
+
+### Coming from a MishMail install of this fork
+
+Until November 2026 this fork was called MishMail, with bundle identifier
+`io.github.bateman.MishMail` (Debug: `io.github.bateman.MishMail.debug`).
+DreaMail is a new app to macOS: nothing is migrated, so install DreaMail,
+paste the Google client ID and secret again, sign in to each account and let
+it resync. Local-only data (signatures, saved views, VIPs, blocked senders,
+local drafts, scheduled sends) stays in the old container. Once DreaMail
+works, quit MishMail and remove what it left behind:
+
+```sh
+# The old app, and its mail cache, attachments, logs and preferences
+rm -rf /Applications/MishMail.app
+rm -rf ~/Library/Containers/io.github.bateman.MishMail ~/Library/Containers/io.github.bateman.MishMail.debug
+rm -f ~/Library/Logs/MishMailRelauncher.log /tmp/mishmail-summarize.log /tmp/mishmail-summarize.err
+# Only if you set up the MCP helper scripts
+rm -rf ~/.config/mishmail
+# Old Google refresh tokens, client secret, database key and OpenPGP keys.
+# Each command deletes one item; repeat until it reports that none was found.
+security delete-generic-password -s io.github.bateman.MishMail
+security delete-generic-password -s io.github.bateman.MishMail.debug
+security delete-generic-password -s io.github.bateman.MishMail.openpgp
+security delete-generic-password -s io.github.bateman.MishMail.debug.openpgp
+```
+
+Neither app revokes the Google grant when it deletes its own copy: the old
+refresh tokens stay valid at Google until they expire (after 7 days for an
+OAuth client in "Testing") or until you revoke them. DreaMail reuses the same
+client, so removing MishMail's Keychain items is enough; to end the grant
+anyway, remove the app at https://myaccount.google.com/permissions and sign in
+to DreaMail again.
+
+If you installed the daily-summary agent, unload it with
+`launchctl bootout gui/$(id -u)/io.github.bateman.mishmail-summarize` and
+delete `~/Library/LaunchAgents/io.github.bateman.mishmail-summarize.plist`.
+A `Config/Local.xcconfig` that still sets `MISHMAIL_…` switches is ignored:
+rename them to `DREAMAIL_…` (same suffix: `DREAMAIL_AI_FEATURES`,
+`DREAMAIL_CALENDAR`, `DREAMAIL_PGP`, `DREAMAIL_UPDATE_CHANNEL`). A
+notarization profile stored as `MishMail-notary` must be stored again as
+`DreaMail-notary`.
+
+In a development checkout, git leaves behind the folders of the old names
+when they still hold untracked or ignored files, and the unit tests scan the
+disk: `make test` fails until they are gone. After pulling the rename:
+
+```sh
+git clean -ndX Sources Tests   # check what would be deleted
+git clean -fdX Sources Tests
+find Sources Tests -type d -empty -delete
+rm -rf MishMail.xcodeproj ~/Library/Developer/Xcode/DerivedData/MishMail-*
+make gen
+```
 
 ### Coming from an upstream (`dev.ronboger.MishMail`) install
 
@@ -388,7 +441,7 @@ OAuth client and you want to keep the grant.
   your IP address (approximate location and network), and details of the mail
   client (macOS WebKit User-Agent, language). Exceptions under every setting:
   mail in Spam needs its own click, and conversations you have not opened
-  (including the neighbors MishMail pre-renders for fast navigation) never load
+  (including the neighbors DreaMail pre-renders for fast navigation) never load
   remote images. To stop it, choose Settings → Appearance → Load remote images
   → Ask each time (or VIP senders, which loads only for VIPs that pass Gmail's
   authentication checks); Load images then works per message or per
@@ -403,7 +456,7 @@ OAuth client and you want to keep the grant.
   instead of handing you an unverified binary.
 - **App Sandbox** enabled with a minimal entitlement set (network client, the
   transient loopback listener for sign-in, and user-selected file access).
-  `make release` uses `MishMail.Distribution.entitlements` (library validation
+  `make release` uses `DreaMail.Distribution.entitlements` (library validation
   on) whenever `Config/Local.xcconfig` sets a `DEVELOPMENT_TEAM` — see
   [docs/RELEASING.md](docs/RELEASING.md).
 - **No secret logging**, parameterized SQL throughout, CRLF-folded MIME headers,
@@ -423,20 +476,8 @@ OAuth client and you want to keep the grant.
 
 See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
-## Support
-
-MishMail is free and always will be — no accounts, no upsells, no telemetry. If
-it's earned a place in your day and you'd like to help keep it maintained, a tip
-is genuinely appreciated (but never expected):
-
-- **[GitHub Sponsors](https://github.com/sponsors/ronboger)** — one-time or
-  monthly, 0% platform fee.
-- **Ethereum** — `0x34fC989CF3eF410F7fa1D3B236DA42d88005e99B`
-
-Prefer to contribute code or a bug report instead? That's worth more than money —
-see [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## License
 
-[MIT](LICENSE) © 2026 Ron Boger. Depends on
+[MIT](LICENSE) © 2026 Ron Boger. DreaMail is derived from
+[MishMail](https://github.com/ronboger/mishmail) by Ron Boger. Depends on
 [GRDB.swift](https://github.com/duckduckgo/GRDB.swift) (SQLCipher build, MIT).

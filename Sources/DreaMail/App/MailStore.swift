@@ -1,0 +1,5130 @@
+import Foundation
+import SwiftUI
+import AppKit
+import GRDB
+
+/// Per-keystroke label picker state, split out of MailStore so typing and
+/// arrow keys only re-render the picker — the rest of the window observes
+/// MailStore and must not churn on every character.
+@MainActor
+final class LabelPickerState: ObservableObject {
+    // The filter text lives here (not @State in the view) so the window key
+    // monitor can route typed characters in while the text field is still
+    // winning the focus race — otherwise a fast second keystroke falls
+    // through to the thread list's type-select.
+    @Published var query = "" {
+        didSet { if query != oldValue { navigated = false } }
+    }
+    // Arrow-key highlight. Driven by the window-level key monitor (the
+    // picker's text field eats arrow events before SwiftUI's onKeyPress sees
+    // them); the view clamps it to the filtered list.
+    @Published var highlight = 0
+    // True once arrows moved the highlight; space then toggles the
+    // highlighted label instead of typing into the filter. Typing resets it.
+    var navigated = false
+    /// `l` toggles labels; `v` (Gmail's Move to) adds one and leaves the inbox.
+    enum Mode { case label, move }
+    @Published var mode = Mode.label
+    /// Move mode: the conversations the move applies to, fixed when the
+    /// picker opens (the toolbar's own conversation, or the key's targets),
+    /// so a selection change while it is open cannot redirect the move.
+    var moveTargetIds: [String] = []
+    /// Changes on every open, so a label created for one picker session
+    /// cannot be applied by a later one.
+    var session = UUID()
+}
+
+/// List-row focus (highlight), split out of MailStore so holding ↓ / j only
+/// re-renders views that observe this object — not the whole mailbox tree
+/// (sidebar, detail, compose). The expensive reading-pane id stays on
+/// MailStore as `openedThreadId` and only changes when a conversation opens.
+@MainActor
+final class ListFocusState: ObservableObject {
+    @Published var id: String?
+}
+
+/// Central mailbox **state**. Command work lives in focused extensions
+/// (`MailStore+Sync`, `+Mutations`, `+Compose`, `+Reminders`, `+AI`,
+/// `+Accounts`) and in Support policy types (`AccountLifecycle`,
+/// `LocalReminders`, `AITriage`, `ComposeDrafts`). Do not grow this class
+/// with new command loops — put them next to the matching service.
+///
+/// `@Observable`, not `ObservableObject`. As one object with sixty-odd
+/// published properties feeding every view in the window, `objectWillChange`
+/// meant a sync-status string, a toast, or a rebuilt contacts array
+/// invalidated the thread list and the reading pane along with the label that
+/// actually changed. Observation tracks reads per property, so a view only
+/// re-renders for the properties its own `body` touched.
+///
+/// `ListFocusState` stays a separate object: it predates this and still earns
+/// its keep by keeping key-repeat focus moves out of the store entirely.
+@MainActor
+@Observable
+final class MailStore {
+    /// Published account rows for views. `lastSyncAt` is deliberately nil here
+    /// (see `lastSyncByAccount`) — never write these values back to the
+    /// database; re-fetch inside the write transaction instead.
+    var accounts: [Account] = [] { didSet { rebuildOwnDisplayNames() } }
+    /// Orders account reloads, so an older snapshot never replaces a newer one.
+    @ObservationIgnored var accountReloads = LatestOnly()
+    /// Each account's own Google profile photo, decoded from the database
+    /// (`loadAccountPhotos`). Missing: the initial disc is drawn.
+    var accountPhotos: [String: NSImage] = [:]
+    @ObservationIgnored var accountPhotoData: [String: Data] = [:]
+    @ObservationIgnored var loadedPhotoAccountIds: Set<String> = []
+    @ObservationIgnored var photoRefreshTasks: [String: AccountPhotoRefreshHandle] = [:]
+    /// When each account's photo is next worth checking (in memory only).
+    @ObservationIgnored var photoNextCheck: [String: Date] = [:]
+    @ObservationIgnored var photoLoadTask: Task<Void, Never>?
+    /// Per-account last-sync timestamps, published separately from `accounts`
+    /// so a successful poll tick does not reassign the array views enumerate.
+    /// Every successful `syncNow` stamps `Account.lastSyncAt`, and leaving that
+    /// field on the row type would make `if nextAccounts != accounts` always
+    /// fail — republishing the sidebar, account rail, Accounts settings,
+    /// and FilterBar on every tick forever.
+    private(set) var lastSyncByAccount: [String: Date] = [:]
+    /// From identities (primary + Gmail send-as) across all linked accounts.
+    /// Used by compose's From picker; never confuse `email` with API mailbox.
+    var sendIdentities: [SendIdentity] = [] { didSet { rebuildOwnDisplayNames() } }
+    var labelsByAccount: [String: [LabelRow]] = [:] {
+        didSet { rebuildLabelIndexes() }
+    }
+
+    /// `accountId → gmailLabelId → row` and `accountId → name → row`.
+    ///
+    /// Every visible thread row resolves a name and a color for each of its
+    /// labels, and both lookups used to be a linear scan of the account's
+    /// label array — per label, per row, on every body pass. These are plain
+    /// stored properties (not `@ObservationIgnored`) precisely so a view that
+    /// reads them through `labelName` / `labelColors` still re-renders when the
+    /// labels change; `labelsByAccount`'s `didSet` is what republishes them.
+    private(set) var labelsById: [String: [String: LabelRow]] = [:]
+    private(set) var labelsByName: [String: [String: LabelRow]] = [:]
+    /// `accountId → label tree` for the sidebar (`SidebarLabelTree`). Built
+    /// with the indexes above, once per label change, so the sidebar never
+    /// sorts and nests hundreds of labels on a body pass.
+    private(set) var labelTrees: [String: [SidebarLabelNode]] = [:]
+
+    var threads: [MailThread] = []
+    var savedViews: [SavedView] = []
+    var selectedView: MailboxView = .inbox {
+        didSet {
+            readStateKeepIds.removeAll()
+            starStateKeepIds.removeAll()
+            starNavAnchor = nil
+            starScrollHoldId = nil
+            resetListWindow()
+        }
+    }
+    /// Lightweight list focus. Keyboard repeat updates this immediately.
+    /// Backed by `listFocus` so key-repeat does not publish through MailStore
+    /// (which would rebuild the reading-pane tree, sidebar, and every view
+    /// observing the store). Views that read selection in `body` must observe
+    /// `listFocus` — a focus-only change publishes nothing on MailStore.
+    ///
+    /// The setter is the single drop site for thread-long unstar pins (category
+    /// hide): every focus path eventually writes here (List binding →
+    /// `selectThread`, keyboard → `moveSelection`, auto-advance). Intent is
+    /// read from `pendingSelectionIntent` (set just before this write).
+    var selectedThreadId: String? {
+        get { listFocus.id }
+        set {
+            let old = listFocus.id
+            listFocus.id = newValue
+            guard old != newValue else { return }
+            // pendingSelectionIntent is set by setSelectionFocus before this
+            // write; List/direct paths default to .click via consumeSelectionIntent
+            // parity (drop is correct for click).
+            applyThreadLongStarPinDrops(
+                selectionIntent: pendingSelectionIntent ?? .click)
+        }
+    }
+    /// Narrow observation surface for list focus — injected as
+    /// `@EnvironmentObject` alongside the store (which goes in as an
+    /// `@Observable` `.environment` value) in DreaMailApp.
+    let listFocus = ListFocusState()
+    /// Conversation whose content is mounted in the reading pane. This can
+    /// intentionally lag list focus while keyboard browsing coalesces repeats.
+    private(set) var openedThreadId: String?
+    private var pendingSelectionIntent: ThreadSelectionIntent?
+    /// Gmail drafts retained remotely during Undo Send but hidden locally so
+    /// the thread never shows both "Draft" and "Sending…".
+    var suppressedDraftMessageIds: Set<String> = []
+    var suppressedDraftThreadIds: Set<String> = []
+    var suppressedDraftThreadByMessageId: [String: String] = [:]
+    /// Drafts hidden for a send in flight (undo window through delivery).
+    /// One of the two sources `suppressedDraftMessageIds` is computed from;
+    /// the other is the scheduled rows (see `ScheduledDraftSuppression`).
+    @ObservationIgnored var pendingSendDraftIds: Set<String> = []
+    /// Draft ids an *open compose card* owns (the draft it was opened on plus
+    /// every autosave replacement), keyed by the compose request so a card that
+    /// unmounts after its successor appeared can only release its own ids.
+    /// Purely a render-time hide for the in-thread draft card — the rows stay
+    /// in the payload, unlike undo-send suppression above.
+    var composingDraftIdsByRequest: [UUID: Set<String>] = [:]
+    /// Multi-select checkboxes (Gmail `x` / click toggle). Bulk
+    /// archive/trash/star/read act on this set when non-empty; the focused
+    /// `selectedThreadId` still drives the reading pane.
+    var checkedThreadIds: Set<String> = []
+    /// Anchor for shift-click range select on checkboxes.
+    private var lastCheckedThreadId: String?
+    /// Sticky anchor for shift+↑/↓ range select. Set on the first shifted
+    /// arrow press; cleared by any other selection change (see selectThread).
+    private var shiftSelectAnchorId: String?
+    /// Cancels in-flight neighbor header/body warm when selection moves.
+    @ObservationIgnored
+    private var neighborPrefetchTask: Task<Void, Never>?
+    /// In-flight contacts rebuild (full-table `message` scan); must be
+    /// cancelled and awaited before the DatabasePool is closed on quit.
+    @ObservationIgnored
+    private var contactsRebuildTask: Task<Void, Never>?
+    /// Once true, no new background database work is started. Set by
+    /// `prepareForTermination()` on app quit.
+    private enum Termination { case active, stopping, finished }
+    private var termination: Termination = .active
+    var isShuttingDown: Bool { termination != .active }
+    /// True once `prepareForTermination()` has fully finished. The delegate's
+    /// `applicationShouldTerminate` answers `.terminateNow` from then on —
+    /// there is nothing left to wait for, and waiting would deadlock the
+    /// updater's quit (see the delegate for the mechanics).
+    var hasCompletedTermination: Bool { termination == .finished }
+    /// Single-flight quit work so a second Cmd-Q / re-entrant
+    /// `applicationShouldTerminate` awaits the same shutdown instead of
+    /// replying `true` while the first close is still in flight.
+    private let terminationSlot = DatabaseLifecycle.FlightSlot()
+    /// Gmail-style "?" cheat sheet.
+    var showShortcutsHelp = false
+    /// User-rebindable single-key shortcuts (Settings → Keyboard shortcuts).
+    let keyBindings = KeyBindings()
+    /// Live text in the search field. Drives ONLY the dropdown preview —
+    /// the inbox list keeps showing `committedSearch` until you commit.
+    var searchText: String = ""
+    /// The query the thread list is actually filtered by. Set when a search
+    /// is committed (Enter / View all results / picking a suggestion).
+    var committedSearch: String = ""
+    /// Bumped by `/` (Gmail-style) to move keyboard focus into the sidebar
+    /// search field. The sidebar watches this and drives its `@FocusState`.
+    var searchFocusToken = 0
+    /// True while the search field is focused, so ContentView can float the
+    /// wide command-K-style results panel over the message list.
+    var searchActive = false
+    /// ↑/↓ highlight in the search dropdown (the panel clamps to its rows,
+    /// same pattern as the label picker's highlight).
+    var searchHighlight = 0
+    /// Bumped by Enter while the dropdown is open; the panel runs the
+    /// highlighted row.
+    var searchActivateToken = 0
+
+    /// Commit a query: filter the thread list by it and remember it.
+    func commitSearch(_ query: String) {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        searchText = q
+        committedSearch = q
+        recordSearch(q)
+        clearCheckedThreads()
+        resetListWindow()
+        reloadThreads()
+    }
+
+    /// Drop an active search and return to the plain view (Esc, or the ✕ on
+    /// the results banner).
+    func clearSearch() {
+        guard !searchText.isEmpty || !committedSearch.isEmpty else { return }
+        searchText = ""
+        committedSearch = ""
+        clearCheckedThreads()
+        resetListWindow()
+        reloadThreads()
+    }
+
+    /// Switch mailbox (g-then-i, command palette "Go to…", etc.) and leave any
+    /// active `/` search. Without clearing search, the list stays on the FTS
+    /// path and ignores `selectedView` — so `gi` after a search looked like a
+    /// no-op when already on Inbox, and left a filtered overlay otherwise.
+    /// Always exits full-window conversation focus so `g i` works as "back to
+    /// the list" even when already on that mailbox (Esc is the other exit;
+    /// same-view go-to used to no-op and leave focus stuck).
+    /// View changes rely on ContentView's `selectedView` onChange to reload;
+    /// same-view go-to reloads here after clearing search.
+    func goTo(_ view: MailboxView) {
+        let plan = GoToMailbox.plan(
+            destinationIsCurrent: selectedView == view,
+            searchText: searchText,
+            committedSearch: committedSearch)
+        // Clear inline — do not call clearSearch(). That helper reloads, and a
+        // cross-view goTo already reloads once via ContentView's selectedView
+        // onChange; calling clearSearch would double-reload.
+        if plan.clearSearch {
+            searchText = ""
+            committedSearch = ""
+        }
+        // Exit focus before changing the view so the list is what the user
+        // sees; cross-view onChange also clears selection (which drops focus),
+        // but same-view paths never hit that.
+        threadFocusMode = false
+        // Land on the list: close any open conversation. Cross-view goTo also
+        // clears via the selectedView onChange, but same-view (`g i` while
+        // already in Inbox) never fires it — and in compactDetail the open
+        // conversation covers the list, so without this nothing changes.
+        if plan.closeConversation {
+            clearSelection()
+        }
+        if plan.changeView {
+            selectedView = view
+        } else if plan.reloadImmediately {
+            reloadThreads()
+        }
+    }
+    /// Recent search queries, newest first, shown under the search field while
+    /// it has focus. Persisted so history survives relaunch.
+    var recentSearches: [String] =
+        UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
+
+    /// Remember a submitted/picked query: dedupe (case-insensitive), move to
+    /// front, cap the list so the dropdown stays scannable.
+    func recordSearch(_ query: String) {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        var list = recentSearches.filter { $0.caseInsensitiveCompare(q) != .orderedSame }
+        list.insert(q, at: 0)
+        recentSearches = Array(list.prefix(8))
+        UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
+    }
+
+    func removeRecentSearch(_ query: String) {
+        recentSearches.removeAll { $0 == query }
+        UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
+    }
+
+    func clearRecentSearches() {
+        recentSearches = []
+        UserDefaults.standard.removeObject(forKey: "recentSearches")
+    }
+    var chips = FilterChips.initial(for: .inbox) {
+        // Category picks persist per view so they're back after relaunch.
+        // Only user edits persist — programmatic resets (view switches) go
+        // through resetChips() so built-in defaults never get frozen into
+        // UserDefaults as if the user had chosen them.
+        didSet {
+            if !suppressChipPersistence, chips.category != oldValue.category {
+                FilterChips.saveCategory(chips.category, for: selectedView)
+            }
+        }
+    }
+    @ObservationIgnored
+    private var suppressChipPersistence = false
+
+    /// Reset the filter bar for the current view: factory defaults plus the
+    /// user's persisted category pick. Doesn't count as a user edit.
+    func resetChips() {
+        suppressChipPersistence = true
+        chips = FilterChips.initial(for: selectedView)
+        suppressChipPersistence = false
+    }
+    var activeAccountId: String?   // nil = all accounts (unified)
+    var mailProgress = MailProgress()
+    var syncStatus: String { mailProgress.message }
+    var presentedError: PresentedError?
+    /// Existing callers can continue assigning plain messages; they show an
+    /// informational banner. Sync failures use `setSyncFailureError` so only
+    /// those banners offer a retry action.
+    var lastError: String? {
+        get { presentedError?.message }
+        set { presentedError = newValue.map(ErrorRecovery.none) }
+    }
+    var lastErrorRecovery: ErrorRecoveryAction {
+        presentedError?.recovery ?? .none
+    }
+    private(set) var demoMode = DemoSeed.isActive
+    /// Label row ids whose Gmail color is being saved; the organizer
+    /// disables the Gmail swatches for them meanwhile.
+    private(set) var gmailLabelColorSaving: Set<String> = []
+    /// Account ids whose saved sign-in Google has rejected (expired/revoked
+    /// refresh token); the Accounts settings pane offers a "Reauthorize"
+    /// button for these.
+    var accountsNeedingReauth: Set<String> = []
+    var accountSignInTask: Task<Void, Never>?
+    var connectingAccount: Bool { accountSignInTask != nil }
+    /// True once a Gmail call failed for want of a network, or the path
+    /// monitor reports none. Cleared by the next request that succeeds. Drives
+    /// the "Offline" sync control and routes edits/drafts/sends into the
+    /// offline queues instead of the error banner.
+    var isOffline = false
+    /// Drafts saved while offline (the Outbox). Uploaded on reconnect.
+    var localDrafts: [LocalDraft] = []
+    /// Thread edits waiting to replay against Gmail (see `PendingThreadOp`).
+    var pendingThreadOpCount = 0
+    @ObservationIgnored var connectivity: ConnectivityMonitor?
+    /// One-at-a-time guards: the poll tick, the reconnect edge and the due
+    /// sweep can all ask for a flush at once; a second pass over the same
+    /// rows would double-send. Stored here (not in the `MailStore+…` files
+    /// that use them) because extensions cannot hold stored properties.
+    @ObservationIgnored var pendingOpsFlushInFlight = false
+    @ObservationIgnored var localDraftFlushInFlight = false
+    @ObservationIgnored var scheduledSendFlushInFlight = false
+    /// The Outbox draft open in compose right now — the reconnect flush must
+    /// not upload it underneath the editor.
+    @ObservationIgnored var composingLocalDraftId: Int64?
+    var composeRequest: ComposeRequest? {
+        didSet {
+            guard oldValue?.id != composeRequest?.id else { return }
+            composeMode = .expanded
+            slashPickerVisible = false
+            fromPickerOpen = false
+        }
+    }
+    enum ComposeMode { case expanded, minimized, finishing }
+    var composeMode: ComposeMode = .expanded
+    /// Compose card is collapsed to a title strip. Draft
+    /// state stays mounted; inbox shortcuts work again while minimized.
+    var composeMinimized: Bool { composeMode == .minimized }
+    /// Send / discard / save-and-close claimed the card. Send unmounts in the
+    /// same turn; discard/save may still await draft persist. UI is locked;
+    /// mailbox keys (`e`, `g i`, …) work again and bypass a lagging text focus.
+    var composeFinishing: Bool { composeMode == .finishing }
+    /// ComposeView publishes whether the `/` snippet picker is showing so the
+    /// ContentView Esc ladder can dismiss it without relying on local-monitor
+    /// install order (monitors fire FIFO; an early `return nil` starves later ones).
+    var slashPickerVisible = false
+    /// ComposeView publishes whether the From identity list is open so the
+    /// Esc ladder closes the list instead of saving-and-closing the draft.
+    var fromPickerOpen = false
+    /// Bumped to close the From list (FromIdentityPicker observes it).
+    private(set) var fromPickerDismissToken = 0
+    func dismissFromPicker() {
+        guard fromPickerOpen else { return }
+        fromPickerDismissToken &+= 1
+    }
+    /// Bumped to dismiss the `/` picker (ComposeView sets `slashDismissed`).
+    private(set) var slashPickerDismissToken = 0
+    func dismissSlashPicker() {
+        guard slashPickerVisible else { return }
+        slashPickerDismissToken &+= 1
+    }
+    /// Bumped for expanded-compose Esc (sheet dismiss → save & close). Same
+    /// role as the close button's `.cancelAction`, but works while NSText has focus.
+    private(set) var composeEscToken = 0
+    func requestComposeEsc() { composeEscToken &+= 1 }
+    /// Reading pane fills the window (sidebar + list hidden). Toggled with ⌘↩
+    /// when a conversation is selected and Send is not claiming the chord.
+    var threadFocusMode = false
+    /// ContentView mirrors its AppStorage pane flag here so keyboard reply
+    /// can choose inline vs floating without reading UserDefaults itself.
+    var readingPaneHiddenForCompose = false
+    var triageUndo: UndoAction?
+    var undoAction: UndoAction? { UndoToast.visible(mailbox: triageUndo, send: sendWindow?.undo) }
+    var editingView: SavedView?
+    var editingAccountLabels = false
+    var showLabelOrganizer = false
+    enum MailboxOverlay {
+        case commands, labels, snoozeThread(MailThread), snoozeChecked
+    }
+    var mailboxOverlay: MailboxOverlay?
+    var showLabelPicker: Bool { if case .labels = mailboxOverlay { return true }; return false }
+    var showCommandPalette: Bool { if case .commands = mailboxOverlay { return true }; return false }
+    var snoozingThread: MailThread? {
+        if case .snoozeThread(let thread) = mailboxOverlay { return thread }
+        return nil
+    }
+    var snoozingChecked: Bool { if case .snoozeChecked = mailboxOverlay { return true }; return false }
+    /// Draft message pending the "Delete this draft?" alert (per-message so
+    /// multi-draft threads discard the card that was clicked, not always the newest).
+    var confirmingDraftDelete: Message?
+    // Per-keystroke picker state lives in its own object so typing in the
+    // picker publishes only to the picker. A `let` is also invisible to
+    // Observation, so the store itself never reports a change for it.
+    let labelPicker = LabelPickerState()
+
+    /// Open the label picker with fresh state — every entry point (shortcut,
+    /// command palette, toolbar/"Add category") must go through here so a
+    /// stale query/highlight from the last use never leaks in.
+    func openLabelPicker(mode: LabelPickerState.Mode = .label, moveTargetIds: [String] = []) {
+        labelPicker.query = ""
+        labelPicker.highlight = 0
+        labelPicker.navigated = false
+        labelPicker.mode = mode
+        labelPicker.moveTargetIds = mode == .move ? moveTargetIds : []
+        labelPicker.session = UUID()
+        mailboxOverlay = .labels
+    }
+    var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
+
+    /// Ask AI side panel visibility.
+    var showAskAI = false
+    /// The Ask AI agent loop. Created on first use, so a launch that never
+    /// opens the panel builds no chat state and starts no MCP bridge.
+    @ObservationIgnored
+    private(set) var askAIController: AskAIController?
+
+    func askAIControllerCreatingIfNeeded() -> AskAIController {
+        if let existing = askAIController { return existing }
+        let controller = AskAIController(store: self)
+        askAIController = controller
+        return controller
+    }
+
+    /// "Handle with AI": open the panel and let the agent work the open
+    /// thread on the Handle-with-AI model.
+    func handleSelectedThreadWithAI() {
+        guard AIFeatures.isEnabled, selectedThread != nil else { return }
+        showAskAI = true
+        askAIControllerCreatingIfNeeded().handleSelectedThread()
+    }
+
+    var unreadCounts: [String: Int] = [:]   // sidebar badges
+    var notice: String?                      // transient confirmation toast
+    @ObservationIgnored
+    private var noticeTimer: Timer?
+
+    /// Cache state for this launch (F-02). Fixed until relaunch, so views
+    /// read it directly; ContentView shows its persistent indicator.
+    var storageState: AppDatabase.StorageState { AppDatabase.shared.storageState }
+
+    /// The one gate for local changes while the cache is read-only. SQLite
+    /// refuses the write anyway; this stops the change *before* it touches
+    /// Gmail or the Keychain, and tells the user once instead of failing
+    /// silently. Returns true when the caller may go ahead.
+    func cacheAcceptsWrites(silent: Bool = false) -> Bool {
+        guard let refusal = storageState.writeRefusal else { return true }
+        if !silent { showNotice(refusal) }
+        return false
+    }
+
+    func showNotice(_ text: String) {
+        notice = text
+        noticeTimer?.invalidate()
+        noticeTimer = Timer.scheduledTimer(withTimeInterval: 3.5, repeats: false) { [weak self] timer in
+            Task { @MainActor in
+                guard let self, self.noticeTimer === timer else { return }
+                self.notice = nil
+                self.noticeTimer = nil
+            }
+        }
+    }
+
+    // MARK: - On-device AI triage
+
+    var aiCategories: [String: String] = [:]   // threadId → category
+    var classificationTask: Task<Void, Never>?
+    var classifying: Bool { classificationTask != nil }
+    /// Single-flight load of the persisted map. Stored for the process lifetime
+    /// so later calls are no-ops; concurrent callers await the same task
+    /// instead of racing an empty map (which would re-classify already-sorted
+    /// threads and clobber in-flight `classify` writes on late assignment).
+    @ObservationIgnored
+    var aiCategoriesLoad: Task<Void, Never>?
+
+
+    /// Auto-triage: after each sync, quietly classify new inbox mail with the
+    /// selected provider. Quiet on purpose — the provider may be unconfigured
+    /// or unreachable — and backs off ten minutes after a failure so a down
+    /// server isn't retried on every 60-second sync tick.
+    static let autoClassifyKey = AITriage.autoClassifyKey
+    /// Compose shows auto-generated reply chips for fresh replies (default on).
+    static let suggestRepliesKey = AITriage.suggestRepliesKey
+    @ObservationIgnored
+    var autoClassifyPausedUntil: Date?
+
+
+    // MARK: - VIP senders
+
+    /// Lowercased VIP addresses, and which loaded threads they sent. Kept in
+    /// memory so the priority partition never queries per row.
+    private(set) var vipEmails: Set<String> = []
+    private(set) var vipThreadIds: Set<String> = []
+    /// email → ordered group tags (multi-group; empty = ungrouped).
+    private(set) var vipGroups: [String: [String]] = [:]
+    private(set) var vipGroupEnabled: [String: Bool] = [:]
+
+    /// VIPs that actually count: paused only when *every* tagged group is off
+    /// (ungrouped senders always count).
+    var activeVIPEmails: Set<String> {
+        vipEmails.filter {
+            VIPMembership.isActive(groups: vipGroups[$0] ?? [], groupEnabled: vipGroupEnabled)
+        }
+    }
+
+    func loadVIPs() {
+        let (senders, tags, groupRows): ([VIPSender], [VIPSenderGroup], [VIPGroupRow]) =
+            (try? db.read { db in
+                (try VIPSender.fetchAll(db),
+                 try VIPSenderGroup.fetchAll(db),
+                 try VIPGroupRow.fetchAll(db))
+            }) ?? ([], [], [])
+        vipEmails = Set(senders.map { $0.email.lowercased() })
+        if demoMode { vipEmails.formUnion(DemoSeed.vipSenders) }
+        var groups: [String: [String]] = [:]
+        for tag in tags {
+            let email = tag.email.lowercased()
+            groups[email, default: []].append(tag.groupName)
+        }
+        // Pre-v34 rows may only have denormalized groupName; fold those in.
+        for row in senders {
+            let email = row.email.lowercased()
+            if groups[email] == nil, let g = row.groupName, !g.isEmpty {
+                groups[email] = [g]
+            }
+        }
+        for key in groups.keys {
+            groups[key] = VIPMembership.normalizeGroups(groups[key] ?? [])
+        }
+        vipGroups = groups
+        vipGroupEnabled = Dictionary(uniqueKeysWithValues: groupRows.map { ($0.name, $0.enabled) })
+    }
+
+    /// Group definitions persist in their own table so a group survives losing
+    /// its last member; tag values still count for rows created before v14.
+    private func ensureVIPGroup(_ name: String?, in db: GRDB.Database) throws {
+        guard let name, !name.isEmpty else { return }
+        if try VIPGroupRow.fetchOne(db, key: name) == nil {
+            try VIPGroupRow(name: name).insert(db)
+        }
+    }
+
+    private func ensureVIPGroups(_ names: [String], in db: GRDB.Database) throws {
+        for name in names { try ensureVIPGroup(name, in: db) }
+    }
+
+    /// Replace membership tags for an existing or new VIP row. Dual-writes
+    /// `vipSender.groupName` as the first tag for pre-v34 readers.
+    private func writeVIPMembership(
+        email: String, groups: [String], in db: GRDB.Database
+    ) throws {
+        let names = VIPMembership.normalizeGroups(groups)
+        try ensureVIPGroups(names, in: db)
+        try VIPSender(email: email, groupName: names.first).save(db)
+        try VIPSenderGroup.filter(Column("email") == email).deleteAll(db)
+        for name in names {
+            try VIPSenderGroup(email: email, groupName: name).insert(db)
+        }
+    }
+
+    func addVIP(_ email: String, group: String? = nil) {
+        addVIP(email, groups: VIPMembership.resolveGroups(group: group, groups: nil))
+    }
+
+    /// Add (or re-tag) a VIP with zero or more groups. Existing senders keep
+    /// their membership and gain any new tags (union). Empty `groups` on an
+    /// already-VIP sender is a no-op; brand-new senders use
+    /// `defaultGroupsForNew` when `groups` is empty (MCP seeds "Suggested").
+    func addVIP(
+        _ email: String,
+        groups: [String],
+        defaultGroupsForNew: [String] = []
+    ) {
+        guard !demoMode else {
+            showNotice("VIP changes are disabled in the demo inbox")
+            return
+        }
+        guard cacheAcceptsWrites() else { return }
+        let e = email.trimmingCharacters(in: .whitespaces).lowercased()
+        guard e.contains("@") else { return }
+        let adding = VIPMembership.normalizeGroups(groups)
+        let seed = VIPMembership.normalizeGroups(defaultGroupsForNew)
+        var wasNew = false
+        var changed = false
+        try? db.write { db in
+            let existing = try VIPSender.fetchOne(db, key: e) != nil
+            if existing {
+                guard !adding.isEmpty else { return } // leave existing tags alone
+                let current = try VIPSenderGroup
+                    .filter(Column("email") == e)
+                    .fetchAll(db)
+                    .map(\.groupName)
+                let merged = VIPMembership.union(existing: current, adding: adding)
+                try writeVIPMembership(email: e, groups: merged, in: db)
+                changed = true
+            } else {
+                let tags = adding.isEmpty ? seed : adding
+                try writeVIPMembership(email: e, groups: tags, in: db)
+                wasNew = true
+                changed = true
+            }
+        }
+        guard changed else { return }
+        loadVIPs()
+        reloadThreads()
+        showNotice(wasNew ? "\(e) added to VIPs" : "\(e) updated in VIPs")
+    }
+
+    /// Result of a bulk VIP write: brand-new rows vs existing rows whose tags
+    /// were unioned (skips of already-VIP with empty groups are neither).
+    struct VIPBulkResult: Equatable {
+        var added: Int
+        var updated: Int
+    }
+
+    /// Batch add (VIP manager paste box / MCP bulk): one write, one reload,
+    /// one notice. Returns how many were newly inserted (not already VIP).
+    @discardableResult
+    func addVIPs(_ emails: [String], group: String? = nil) -> Int {
+        addVIPsDetailed(
+            emails,
+            groups: VIPMembership.resolveGroups(group: group, groups: nil)
+        ).added
+    }
+
+    /// Batch add with multi-group tags. Non-empty `groups` are unioned onto
+    /// every email (new and existing). Empty `groups` only inserts brand-new
+    /// senders (existing left untouched), seeded with `defaultGroupsForNew`
+    /// when that is non-empty.
+    @discardableResult
+    func addVIPs(
+        _ emails: [String],
+        groups: [String],
+        defaultGroupsForNew: [String] = []
+    ) -> Int {
+        addVIPsDetailed(
+            emails, groups: groups, defaultGroupsForNew: defaultGroupsForNew
+        ).added
+    }
+
+    /// Same as `addVIPs` but reports both new and re-tagged counts (for MCP).
+    @discardableResult
+    func addVIPsDetailed(
+        _ emails: [String],
+        groups: [String],
+        defaultGroupsForNew: [String] = []
+    ) -> VIPBulkResult {
+        guard !demoMode else {
+            showNotice("VIP changes are disabled in the demo inbox")
+            return VIPBulkResult(added: 0, updated: 0)
+        }
+        guard cacheAcceptsWrites() else { return VIPBulkResult(added: 0, updated: 0) }
+        let wanted = VIPMembership.normalizeGroups(groups)
+        let seed = VIPMembership.normalizeGroups(defaultGroupsForNew)
+        let normalized = Array(Set(
+            emails.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                .filter { $0.contains("@") }
+        )).sorted()
+        guard !normalized.isEmpty else { return VIPBulkResult(added: 0, updated: 0) }
+        var newCount = 0
+        var firstNew: String?
+        var updatedCount = 0
+        try? db.write { db in
+            for e in normalized {
+                let existing = try VIPSender.fetchOne(db, key: e) != nil
+                if existing {
+                    guard !wanted.isEmpty else { continue }
+                    let current = try VIPSenderGroup
+                        .filter(Column("email") == e)
+                        .fetchAll(db)
+                        .map(\.groupName)
+                    let merged = VIPMembership.union(existing: current, adding: wanted)
+                    try writeVIPMembership(email: e, groups: merged, in: db)
+                    updatedCount += 1
+                } else {
+                    let tags = wanted.isEmpty ? seed : wanted
+                    try writeVIPMembership(email: e, groups: tags, in: db)
+                    newCount += 1
+                    if firstNew == nil { firstNew = e }
+                }
+            }
+        }
+        guard newCount > 0 || updatedCount > 0 else {
+            return VIPBulkResult(added: 0, updated: 0)
+        }
+        loadVIPs()
+        reloadThreads()
+        if newCount == 0 {
+            showNotice(updatedCount == 1
+                       ? "\(normalized[0]) updated in VIPs"
+                       : "\(updatedCount) VIP tags updated")
+        } else if newCount == 1, let e = firstNew {
+            showNotice("\(e) added to VIPs")
+        } else {
+            showNotice("\(newCount) senders added to VIPs")
+        }
+        return VIPBulkResult(added: newCount, updated: updatedCount)
+    }
+
+    func removeVIP(_ email: String) {
+        guard !demoMode else {
+            showNotice("VIP changes are disabled in the demo inbox")
+            return
+        }
+        guard cacheAcceptsWrites() else { return }
+        let e = email.trimmingCharacters(in: .whitespaces).lowercased()
+        try? db.write { _ = try VIPSender.deleteOne($0, key: e) }
+        loadVIPs()
+        reloadThreads()
+    }
+
+    /// Replace group membership with a single group (or clear). Used by the
+    /// simple picker; multi-tag edits go through `setVIPGroups`.
+    func setVIPGroup(_ email: String, group: String?) {
+        let g = (group ?? "").isEmpty ? [] : [group!]
+        setVIPGroups(email, groups: g)
+    }
+
+    /// Replace all group tags for a VIP (must already exist).
+    func setVIPGroups(_ email: String, groups: [String]) {
+        guard !demoMode else {
+            showNotice("VIP changes are disabled in the demo inbox")
+            return
+        }
+        let e = email.trimmingCharacters(in: .whitespaces).lowercased()
+        guard vipEmails.contains(e) else { return }
+        let names = VIPMembership.normalizeGroups(groups)
+        try? db.write { db in
+            try writeVIPMembership(email: e, groups: names, in: db)
+        }
+        loadVIPs()
+        reloadThreads()
+    }
+
+    /// Toggle one group tag on/off for a VIP (UI multi-select).
+    func toggleVIPGroup(_ email: String, group: String) {
+        guard !demoMode else {
+            showNotice("VIP changes are disabled in the demo inbox")
+            return
+        }
+        guard cacheAcceptsWrites() else { return }
+        let e = email.trimmingCharacters(in: .whitespaces).lowercased()
+        let g = group.trimmingCharacters(in: .whitespaces)
+        guard e.contains("@"), !g.isEmpty else { return }
+        var current = vipGroups[e] ?? []
+        if let idx = current.firstIndex(of: g) {
+            current.remove(at: idx)
+        } else {
+            current.append(g)
+        }
+        if vipEmails.contains(e) {
+            setVIPGroups(e, groups: current)
+        } else {
+            addVIP(e, groups: current)
+        }
+    }
+
+    /// Pause/resume VIP status for a whole group.
+    func setVIPGroupEnabled(_ name: String, _ enabled: Bool) {
+        guard !demoMode else {
+            showNotice("VIP changes are disabled in the demo inbox")
+            return
+        }
+        try? db.write { try VIPGroupRow(name: name, enabled: enabled).save($0) }
+        loadVIPs()
+        reloadThreads()
+    }
+
+    var allVIPGroupNames: [String] {
+        var names = Set(vipGroupEnabled.keys)
+        for tags in vipGroups.values { names.formUnion(tags) }
+        return names.sorted()
+    }
+
+    /// Recomputes which of the loaded threads came from a VIP. Any message From
+    /// in the thread can pin it (not only the newest). Pure in-memory now
+    /// (see `computeVIPThreadIds`), so no database read on the main actor.
+    func refreshVIPThreadIds() {
+        let active = activeVIPEmails
+        guard !active.isEmpty, !threads.isEmpty else {
+            if !vipThreadIds.isEmpty { vipThreadIds = [] }
+            return
+        }
+        let hits = Self.computeVIPThreadIds(threads: threads, activeVIP: active)
+        if hits != vipThreadIds { vipThreadIds = hits }
+    }
+
+    /// VIP hits for a thread list — see `VIPMembership.threadIds`. Pure and
+    /// in-memory; safe off MainActor.
+    nonisolated static func computeVIPThreadIds(threads: [MailThread],
+                                                activeVIP: Set<String>) -> Set<String> {
+        VIPMembership.threadIds(in: threads, activeVIP: activeVIP)
+    }
+
+    /// Source-compatible wrapper for callers that already hold a read
+    /// transaction (the off-main reload paths). The database is no longer
+    /// consulted.
+    nonisolated static func computeVIPThreadIds(threads: [MailThread],
+                                                activeVIP: Set<String>,
+                                                db: Database) throws -> Set<String> {
+        computeVIPThreadIds(threads: threads, activeVIP: activeVIP)
+    }
+
+    // MARK: - Gmail filters (in-memory cache; edits in MailStore+Filters)
+
+    /// Per-account Gmail filters and load errors. Written here and by the
+    /// filter edits in MailStore+Filters.swift; dropped with the account.
+    var filterCache = GmailFilterCache()
+    /// Per-account Gmail filters, loaded lazily for Settings and for the
+    /// "matching filters" disclosure under each message card. Nil entry means
+    /// not yet attempted; empty array means loaded and the account has none.
+    var filtersByAccount: [String: [GFilter]] { filterCache.filters }
+    /// Human-readable load failure per account (scope missing, network, …).
+    /// Cleared on success. On transient failure we keep any previous cache so
+    /// matching-filter sections don't vanish because of a blip.
+    var filtersLoadError: [String: String] { filterCache.loadErrors }
+    /// Accounts currently mid-fetch — UI can show a spinner. Backed by a
+    /// refcount so overlapping force+lazy loads don't drop the spinner early.
+    private(set) var filtersLoading: Set<String> = []
+    /// The account Settings ▸ Gmail filters shows. In memory only, so a
+    /// removed account's address is not left behind; an id that is no
+    /// longer an account falls back to the first one.
+    var settingsFiltersAccount: String?
+    private var filterLoadRefCounts: [String: Int] = [:]
+    /// In-flight filter fetches; concurrent callers await the same task.
+    /// Token lets a finishing load clear its slot without clobbering a newer one.
+    @ObservationIgnored
+    private var filterLoadTasks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
+
+    /// Fetch filters for one account. Non-force short-circuits only on a
+    /// successful cache hit (errors are retried). Concurrent loads coalesce;
+    /// a `force` caller that joins an in-flight load then starts a fresh
+    /// fetch so Settings still gets a refresh.
+    func ensureFiltersLoaded(for accountId: String, force: Bool = false) async {
+        guard !demoMode else {
+            filterCache.setDemo(account: accountId)
+            return
+        }
+        if !force, filtersByAccount[accountId] != nil { return }
+
+        if let inflight = filterLoadTasks[accountId] {
+            await inflight.task.value
+            if !force { return }
+            // Force after waiting: only join if a *different* load started
+            // while we slept. The finished load's continuation may not have
+            // cleared its slot yet (same-token stale entry) — fall through
+            // and refresh in that case, or the Settings force is dropped.
+            if let again = filterLoadTasks[accountId], again.token != inflight.token {
+                await again.task.value
+                return
+            }
+            // else fall through and refresh
+        }
+
+        let token = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.fetchFilters(accountId: accountId)
+        }
+        filterLoadTasks[accountId] = (token, task)
+        beginFilterLoad(accountId)
+        await task.value
+        if filterLoadTasks[accountId]?.token == token {
+            filterLoadTasks[accountId] = nil
+        }
+        endFilterLoad(accountId)
+    }
+
+    private func beginFilterLoad(_ accountId: String) {
+        filterLoadRefCounts[accountId, default: 0] += 1
+        filtersLoading.insert(accountId)
+    }
+
+    private func endFilterLoad(_ accountId: String) {
+        let n = (filterLoadRefCounts[accountId] ?? 1) - 1
+        if n <= 0 {
+            filterLoadRefCounts[accountId] = nil
+            filtersLoading.remove(accountId)
+        } else {
+            filterLoadRefCounts[accountId] = n
+        }
+    }
+
+    private func fetchFilters(accountId: String) async {
+        let client = client(for: accountId)
+        // An edit that lands while this read is in flight wins over it.
+        let revision = filterCache.revision(accountId)
+        do {
+            let filters = try await client.listFilters()
+            // The account may have been removed while the list was in flight.
+            guard isKnownAccount(accountId) else { return }
+            filterCache.loaded(filters, account: accountId, revision: revision)
+        } catch {
+            guard isKnownAccount(accountId) else { return }
+            let failure = GmailFilterError(error)
+            // Any previous good list stays; a never-loaded slot stays empty
+            // so Settings shows the error.
+            filterCache.loadFailed(failure == .missingScope
+                ? "DreaMail doesn't have permission to read this account's filters yet. Sign in to it again with Add Google Account… (Accounts pane) to grant it; the account and its mail stay as they are."
+                : failure.localizedDescription, account: accountId)
+        }
+    }
+
+    /// Best-effort filters whose criteria match this message. Empty when the
+    /// account's filters aren't loaded yet or none match.
+    func matchingFilters(for message: Message) -> [GFilter] {
+        guard let filters = filtersByAccount[message.accountId] else { return [] }
+        return GmailFilterMatch.matching(filters, message: .init(message))
+    }
+
+    /// Open the thread in gmail.com (useful for filter edits / full Gmail UI).
+    func openInGmail(_ thread: MailThread) {
+        guard !demoMode else {
+            showNotice("Opening Gmail is disabled in the demo inbox")
+            return
+        }
+        guard let url = GmailWebLinks.threadURL(
+            accountEmail: thread.accountId, gmailThreadId: thread.gmailThreadId)
+        else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// ⌘L / Copy link: put a gmail.com conversation URL on the clipboard.
+    /// Paste it in a browser to open the thread on the web.
+    func copyThreadLink(_ thread: MailThread) {
+        guard let string = GmailWebLinks.copyPasteboardString(
+            accountEmail: thread.accountId, gmailThreadId: thread.gmailThreadId)
+        else {
+            showNotice("Couldn't copy link")
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: .string)
+        showNotice("Copied link")
+    }
+
+    /// Gmail-style unsubscribe for a message that already has a parsed
+    /// `List-Unsubscribe` action. Caller owns the confirmation dialog.
+    func unsubscribe(from message: Message) {
+        Task { await performUnsubscribe(message) }
+    }
+
+    /// Fill `listUnsubscribe` on pre-v37 rows and `replyToHeader` on pre-v43
+    /// rows (nil) via a metadata get. Returns the header values so the
+    /// reading pane can patch in place without replacing the hydrated body.
+    func refreshUnsubscribeHeaders(_ message: Message) async
+        -> (String, String, replyTo: String, deliveredTo: String)? {
+        if let header = message.listUnsubscribe, let replyTo = message.replyToHeader,
+           let deliveredTo = message.deliveredTo {
+            return (header, message.listUnsubscribePost ?? "", replyTo, deliveredTo)
+        }
+        guard let stored = try? await db.read({
+            try Message.fetchOne($0, key: message.id)
+        }) else {
+            return nil
+        }
+        if let header = stored.listUnsubscribe, let replyTo = stored.replyToHeader,
+           let deliveredTo = stored.deliveredTo {
+            return (header, stored.listUnsubscribePost ?? "", replyTo, deliveredTo)
+        }
+        guard !demoMode else {
+            return (stored.listUnsubscribe ?? "", stored.listUnsubscribePost ?? "",
+                    stored.replyToHeader ?? "", stored.deliveredTo ?? "")
+        }
+        do {
+            let g = try await client(for: message.accountId)
+                .getMessage(id: message.gmailId, format: "metadata")
+            let (parsed, _) = MessageParser.parse(g, accountId: message.accountId)
+            try await db.write { db in
+                // Do not resurrect a row deleted while we were fetching.
+                guard try Message.fetchOne(db, key: message.id) != nil else { return }
+                _ = try SyncEngine.upsertPending(
+                    db,
+                    items: [.init(message: parsed, attachments: [], headersOnly: true)])
+                try SyncEngine.deriveThreads(
+                    db, for: [parsed.threadId], accountId: message.accountId)
+            }
+            return (parsed.listUnsubscribe ?? "", parsed.listUnsubscribePost ?? "",
+                    parsed.replyToHeader ?? "", parsed.deliveredTo ?? "")
+        } catch {
+            return nil
+        }
+    }
+
+    private func performUnsubscribe(_ message: Message) async {
+        guard let action = ListUnsubscribe.offer(from: message)?.preferredAction else {
+            showNotice("This message has no unsubscribe link")
+            return
+        }
+        if demoMode {
+            showNotice("Unsubscribed (demo)")
+            return
+        }
+        switch action {
+        case .oneClick(let url):
+            do {
+                try await ListUnsubscribe.performOneClick(url)
+                showNotice("Unsubscribed from this mailing list")
+            } catch {
+                lastError = "Unsubscribe failed: \(error.localizedDescription)"
+            }
+        case .mailto(let mailto):
+            do {
+                try await sendUnsubscribeMail(mailto, message: message)
+                showNotice("Unsubscribe email sent")
+            } catch {
+                lastError = "Unsubscribe failed: \(error.localizedDescription)"
+            }
+        case .open(let url):
+            NSWorkspace.shared.open(url)
+            showNotice("Opened the sender's unsubscribe page")
+        }
+    }
+
+    /// One-off RFC 2369 mailto: — not threaded onto the original conversation.
+    /// From is the delivered-to identity when we can see it (send-as alias
+    /// that subscribed), else the mailbox primary.
+    private func sendUnsubscribeMail(_ mailto: ListUnsubscribe.Mailto,
+                                     message: Message) async throws {
+        let fromEmail = ListUnsubscribe.fromEmail(
+            toHeader: message.toHeader,
+            ccHeader: message.ccHeader,
+            bccHeader: message.bccHeader,
+            deliveredTo: message.deliveredTo,
+            ownEmails: ownEmailAddresses,
+            accountId: message.accountId)
+        let raw = MIMEBuilder.build(
+            from: fromHeader(accountId: message.accountId, fromEmail: fromEmail),
+            to: mailto.address,
+            subject: mailto.subject,
+            bodyText: mailto.body)
+        try await client(for: message.accountId).send(raw: raw, threadId: nil)
+    }
+
+    /// Block the thread's newest-from address (denorm `fromEmail`). No-op for
+    /// empty / own addresses. Used by the reading-pane ⋯ menu.
+    func blockThreadSender(_ thread: MailThread) {
+        let email = thread.fromEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard email.contains("@") else { return }
+        guard !accounts.contains(where: { $0.id.lowercased() == email }) else { return }
+        blockSender(email)
+    }
+
+    // MARK: - Blocked senders
+
+    /// Lowercased blocked addresses. Their threads move to Spam immediately
+    /// on block and again after every sync (new arrivals).
+    private(set) var blockedEmails: Set<String> = []
+
+    func loadBlocked() {
+        let rows = (try? db.read { try BlockedSender.fetchAll($0) }) ?? []
+        blockedEmails = Set(rows.map { $0.email.lowercased() })
+    }
+
+    func isBlocked(_ email: String) -> Bool {
+        blockedEmails.contains(email.trimmingCharacters(in: .whitespaces).lowercased())
+    }
+
+    func blockSender(_ email: String) {
+        guard !demoMode else {
+            showNotice("Blocking is disabled in the demo inbox")
+            return
+        }
+        guard cacheAcceptsWrites() else { return }
+        let e = email.trimmingCharacters(in: .whitespaces).lowercased()
+        guard e.contains("@") else { return }
+        try? db.write { try BlockedSender(email: e).save($0) }
+        loadBlocked()
+        Task { await applyBlocklist() }
+        showNotice("Blocked \(e) — their mail goes to Spam")
+    }
+
+    func unblockSender(_ email: String) {
+        guard !demoMode else {
+            showNotice("Blocking is disabled in the demo inbox")
+            return
+        }
+        guard cacheAcceptsWrites() else { return }
+        let e = email.trimmingCharacters(in: .whitespaces).lowercased()
+        try? db.write { _ = try BlockedSender.deleteOne($0, key: e) }
+        loadBlocked()
+        showNotice("Unblocked \(e)")
+    }
+
+    /// Moves every inbox thread from a blocked sender to Spam. Quiet (no
+    /// per-thread undo toast — blocking is the undoable act, via Unblock).
+    /// Runs on block and after each sync so new arrivals never linger.
+    /// Matches denorm `fromEmail` / `allFromEmails` in SQL (no full inbox load).
+    ///
+    /// Async: this runs at the end of every sync, and the scan is over the
+    /// whole inbox. On the main actor that was a SQLCipher decrypt burst once
+    /// a minute, landing in the middle of whatever the user was typing.
+    func applyBlocklist() async {
+        // `prepareForTermination` sets this on the main actor before its first
+        // suspension, so a block performed as the app quits cannot start a new
+        // read after the shutdown sequence has begun.
+        guard !isShuttingDown, !blockedEmails.isEmpty else { return }
+        let blocked = Array(blockedEmails)
+        let pool = db
+        let hits = await PerfMetrics.measureAsync(.syncBlocklist, meta: "blocked=\(blocked.count)") {
+            (try? await pool.read { db -> [MailThread] in
+                // Exact token match — no LIKE (underscore is common in emails
+                // and is a single-char wildcard under LIKE).
+                var parts: [String] = []
+                var args: [String] = []
+                for e in blocked {
+                    parts.append("""
+                        (fromEmail = ?
+                         OR instr(' ' || allFromEmails || ' ', ' ' || ? || ' ') > 0)
+                        """)
+                    args.append(contentsOf: [e, e])
+                }
+                return try MailThread.fetchAll(
+                    db,
+                    sql: """
+                        SELECT * FROM thread
+                        WHERE inInbox = 1 AND inTrash = 0
+                          AND (\(parts.joined(separator: " OR ")))
+                        """,
+                    arguments: StatementArguments(args))
+            }) ?? []
+        }
+        for thread in hits {
+            mutateThread(thread, remote: .modify(add: ["SPAM"], remove: ["INBOX"])) { t in
+                // Same path as markSpam — preserves tab-category denorm and
+                // keeps labelIds / inSpam / inInbox coherent.
+                t.applyLabelMutation(add: ["SPAM"], remove: ["INBOX"])
+            }
+        }
+    }
+
+    /// User-facing label for an account ("Personal", "Fund", …).
+    func renameAccount(_ id: String, label: String) {
+        let trimmed = label.trimmingCharacters(in: .whitespaces)
+        try? db.write { db in
+            if var account = try Account.fetchOne(db, key: id) {
+                account.displayName = trimmed.isEmpty ? id : trimmed
+                try account.update(db)
+            }
+        }
+        reloadAccounts()
+    }
+
+    /// Local color of the account's label pill (`#rrggbb`); nil, or a
+    /// malformed value, resets it to the default. Never sent to Google.
+    func setAccountLabelColor(_ id: String, hex: String?) {
+        try? db.write { db in
+            try AccountLabelColor.set(db, accountId: id, hex: hex)
+        }
+        reloadAccounts()
+    }
+
+    /// Whether notifications about this account's mail show sender and
+    /// subject (`NotificationContent`). Local only; goes with the account.
+    func setNotificationDetails(_ id: String, _ on: Bool) {
+        try? db.write { db in
+            try NotificationContent.setDetails(db, accountId: id, on: on) {
+                Notifier.removeNotifications(forAccount: $0)
+            }
+        }
+        reloadAccounts()
+    }
+
+    /// `NotificationContent.detailAccounts`, read now, off main.
+    func notificationDetailAccounts() async -> Set<String> {
+        let pool = db
+        return (try? await pool.read { NotificationContent.detailAccounts($0) }) ?? []
+    }
+
+    /// Name recipients see on outgoing mail ("Ron Boger <ron@…>").
+    func setSenderName(_ id: String, name: String) {
+        try? db.write { db in
+            if var account = try Account.fetchOne(db, key: id) {
+                account.senderName = name.trimmingCharacters(in: .whitespaces)
+                try account.update(db)
+            }
+        }
+        reloadAccounts()
+    }
+
+    
+struct ComposeRequest: Identifiable {
+        let id = UUID()
+        let replyTo: Message?
+        var replyAll = false
+        var forward = false
+        /// Gmail "Forward all": package every message in the source thread into
+        /// the body (still a **new** conversation — no threadId / In-Reply-To).
+        var forwardAll = false
+        var editDraft: Message? = nil   // an existing Gmail draft being edited
+        var restore: PendingSend? = nil // undone send: reopen with this content
+        /// Outbox row this compose continues (saved offline). Autosave
+        /// updates it in place until the upload succeeds.
+        var localDraft: LocalDraft? = nil
+        var prefillTo: String? = nil    // new mail straight to this address
+        /// Optional headers from a `mailto:` handoff (cc/bcc/subject/body).
+        var prefillCc: String? = nil
+        var prefillBcc: String? = nil
+        var prefillSubject: String? = nil
+        var prefillBody: String? = nil
+        /// Mailbox a brand-new compose should send from when nothing else
+        /// pins one (no reply parent, no draft). Set by the `mailto:` path
+        /// from the recipients' correspondence history; nil = active account.
+        var preferredAccountId: String? = nil
+        /// Floating card vs reading-pane dock. Placement helpers set this;
+        /// pop-out / hide-pane can promote inline → floating without remount.
+        var presentation: ComposePresentation = .floating
+
+        /// Thread this compose is bound to (reply parent or draft), if any.
+        var boundThreadId: String? { replyTo?.threadId ?? editDraft?.threadId }
+    }
+
+    /// Open compose with placement decided from the current selection / pane.
+    /// Callers that already fixed `presentation` (pop-out) should assign
+    /// `composeRequest` directly instead.
+    func openCompose(_ request: ComposeRequest,
+                     readingPaneHidden: Bool? = nil) {
+        var req = request
+        let paneHidden = readingPaneHidden ?? readingPaneHiddenForCompose
+        req.presentation = ComposePlacement.preferred(
+            replyTo: req.replyTo,
+            editDraft: req.editDraft,
+            forward: req.forward,
+            selectedThreadId: selectedThreadId,
+            readingPaneHidden: paneHidden)
+        composeRequest = req
+    }
+
+    /// `mailto:` waiting while an expanded compose is open (matches in-app
+    /// compose shortcuts). Latest wins: a newer link replaces the queue, and
+    /// a direct open (e.g. after minimize) clears it.
+    private var pendingMailto: DefaultMailClient.Mailto?
+
+    /// Last `mailto:` that opened a compose card, and last thread deep link
+    /// opened. Guard against one external open reaching two scenes, or an app
+    /// firing the link twice — see `ExternalOpenDedupe` for the rules.
+    private var lastMailto: ExternalOpenDedupe.MailtoRecord?
+    private var lastDeepLink: (payload: DreaMailDeepLinks.ThreadTarget, at: Date)?
+    /// Thread the last deep link actually opened, so a repeat is dropped only
+    /// while that conversation is still on screen.
+    private var lastDeepLinkThreadId: String?
+
+    /// Handle a system open-URL: compose for `mailto:`, or open a locally
+    /// cached Gmail conversation for an app-owned `dreamail://thread/…` link.
+    func handleOpenURL(_ url: URL) {
+        let now = Date()
+        if let target = DreaMailDeepLinks.parseThreadURL(url) {
+            // Raise the app first: even a delivery we drop was a click, and
+            // the window it already opened has to come front.
+            NSApp.activate(ignoringOtherApps: true)
+            // A doubled delivery would otherwise repeat the "not available"
+            // notice and re-open the thread. Only suppress it while the
+            // conversation it opened is still showing: a lookup that failed,
+            // or a user who has navigated away, deserves a real re-open.
+            if ExternalOpenDedupe.isRepeat(target, last: lastDeepLink, now: now),
+               let opened = lastDeepLinkThreadId, selectedThreadId == opened {
+                return
+            }
+            lastDeepLink = (target, now)
+            // Sets `lastDeepLinkThreadId` once the off-main lookup lands.
+            openDeepLinkedThread(target)
+            return
+        }
+        guard let mail = DefaultMailClient.parseMailto(url) else { return }
+        // Raise the app before anything else: even a delivery we drop was a
+        // click on a link, and the window it already opened has to come front.
+        NSApp.activate(ignoringOtherApps: true)
+        if ExternalOpenDedupe.shouldDropMailto(
+            mail, last: lastMailto,
+            activeCard: composeRequest.map {
+                .init(id: $0.id, isMinimized: composeMinimized)
+            },
+            now: now) {
+            return
+        }
+        lastMailto = .init(mail: mail, at: now, requestId: nil)
+        // Expanded compose owns the card — same guard as in-app shortcuts.
+        // Content would still land in Gmail Drafts via onDisappear →
+        // saveDraftIfNeeded, but yanking the open card mid-sentence is bad UX.
+        // Queue and open once the user finishes/dismisses. Minimized compose
+        // is fine to replace (saveDraftIfNeeded still runs).
+        if composeRequest != nil && !composeMinimized {
+            pendingMailto = mail
+            showNotice("Finish your draft — the email link will open next")
+            return
+        }
+        openMailtoCompose(mail)
+    }
+
+    /// Resolve both Gmail thread ids and message ids. Gmail web links commonly
+    /// carry a message token even though opening them displays the conversation.
+    ///
+    /// The lookup runs on a pool reader: its primary-key probes are cheap,
+    /// but the fallback scans (`gmailThreadId`, `message.gmailId`,
+    /// `lower(accountId)`) have no index and used to walk whole SQLCipher
+    /// tables on the main actor. The app is already raised by the caller, so
+    /// the few ms before the thread opens are not a visible change.
+    private func openDeepLinkedThread(_ target: DreaMailDeepLinks.ThreadTarget) {
+        deepLinkGeneration += 1
+        let generation = deepLinkGeneration
+        let knownAccountIds = accounts.map(\.id)
+        let pool = db
+        Task { [weak self] in
+            let thread: MailThread? = (try? await pool.read { db in
+                try DeepLinkThreadResolver.resolve(
+                    db: db, token: target.token, accountEmail: target.accountEmail,
+                    knownAccountIds: knownAccountIds)
+            }) ?? nil
+            // Latest link wins: an older lookup still in flight must neither
+            // open its thread over a newer one nor post a stale notice.
+            guard let self, !self.isShuttingDown,
+                  generation == self.deepLinkGeneration else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            guard let thread else {
+                self.showNotice("That Gmail conversation isn't available in DreaMail yet")
+                self.lastDeepLinkThreadId = nil
+                return
+            }
+            self.openThread(thread)
+            self.lastDeepLinkThreadId = thread.id
+        }
+    }
+
+    /// Latest deep link wins — see `openDeepLinkedThread`.
+    @ObservationIgnored private var deepLinkGeneration = 0
+
+    /// Open compose from a parsed `mailto:`. Joins address arrays with ", "
+    /// for the existing String prefill fields (ComposeView re-splits via
+    /// MessageParser — same path as header "email to X").
+    ///
+    /// With several linked mailboxes the From default comes from who the
+    /// mail is addressed to (`RecipientMailbox`), looked up on a pool reader
+    /// before the card mounts. The user sees the right account, not a card
+    /// that flips a moment after it opens.
+    private func openMailtoCompose(_ mail: DefaultMailClient.Mailto) {
+        // Direct open supersedes anything queued (e.g. mailto while expanded,
+        // then minimize, then a second mailto — only the direct one should win).
+        pendingMailto = nil
+        mailtoOpenGeneration += 1
+        let generation = mailtoOpenGeneration
+        guard accounts.count > 1 else {
+            presentMailtoCompose(mail, preferredAccountId: nil)
+            return
+        }
+        let addresses = mail.to + mail.cc + mail.bcc
+        let pool = db
+        Task { [weak self] in
+            let mailbox = try? await pool.read { db in
+                try RecipientMailbox.mostRecentMailbox(db: db, addresses: addresses)
+            }
+            guard let self, !self.isShuttingDown,
+                  generation == self.mailtoOpenGeneration else { return }
+            // A compose opened while we looked: same rule as handleOpenURL.
+            if self.composeRequest != nil && !self.composeMinimized {
+                self.pendingMailto = mail
+                self.showNotice("Finish your draft — the email link will open next")
+                return
+            }
+            self.presentMailtoCompose(mail, preferredAccountId: mailbox)
+        }
+    }
+
+    /// Latest `mailto:` open wins; an older lookup still in flight must not
+    /// present its card over a newer one.
+    @ObservationIgnored private var mailtoOpenGeneration = 0
+
+    private func presentMailtoCompose(_ mail: DefaultMailClient.Mailto,
+                                      preferredAccountId: String?) {
+        let fields = DefaultMailClient.composePrefill(from: mail)
+        openCompose(.init(
+            replyTo: nil,
+            prefillTo: fields.to,
+            prefillCc: fields.cc,
+            prefillBcc: fields.bcc,
+            prefillSubject: fields.subject,
+            prefillBody: fields.body,
+            preferredAccountId: preferredAccountId))
+        // Bind the dedupe record to the card this link just opened, so a
+        // repeat delivery is dropped but a re-click after it closes is not.
+        lastMailto?.requestId = composeRequest?.id
+    }
+
+    /// Clear the active compose card. Flushes a queued `mailto:` if any so a
+    /// browser handoff still lands after the user closes their draft.
+    func clearComposeRequest() {
+        composeRequest = nil
+        slashPickerVisible = false
+        fromPickerOpen = false
+        guard let mail = pendingMailto else { return }
+        pendingMailto = nil
+        openMailtoCompose(mail)
+    }
+
+    /// Promote an inline compose to the floating card (same request id).
+    func popOutCompose() {
+        guard var req = composeRequest else { return }
+        req.presentation = .floating
+        composeRequest = req
+        if !composeFinishing { composeMode = .expanded }
+    }
+
+    /// Full-window side by side: the source conversation left, the draft
+    /// right. Needs a real conversation to show — replies and forwards carry
+    /// one via `replyTo`; a fresh compose or a draft-only thread does not.
+    ///
+    /// The source conversation is resolved before the layout flips, so the
+    /// left column never renders a "Conversation unavailable" frame (and
+    /// `thread(withId:)` never has to read the database from a view body).
+    /// Usually it is in the loaded list and this is synchronous; otherwise a
+    /// pool read fetches it and split appears a few ms later.
+    func enterSplitCompose() {
+        guard let req = composeRequest, req.replyTo != nil,
+              let threadId = req.boundThreadId else { return }
+        if let loaded = threads.first(where: { $0.id == threadId }) {
+            splitThreadSnapshot = loaded
+            applySplitPresentation(requestId: req.id)
+            return
+        }
+        splitThreadLoadGeneration += 1
+        let generation = splitThreadLoadGeneration
+        let pool = db
+        Task { [weak self] in
+            let fetched = (try? await pool.read { try MailThread.fetchOne($0, key: threadId) }) ?? nil
+            guard let self, !self.isShuttingDown,
+                  generation == self.splitThreadLoadGeneration else { return }
+            // Same outcome as the old synchronous body read on a miss: split
+            // with the "unavailable" placeholder when the row is gone.
+            if let fetched { self.splitThreadSnapshot = fetched }
+            self.applySplitPresentation(requestId: req.id)
+        }
+    }
+
+    /// Flip the card to split — only if it is still the card that asked
+    /// (the user may have closed or replaced it during the async fetch).
+    private func applySplitPresentation(requestId: ComposeRequest.ID) {
+        guard var req = composeRequest, req.id == requestId else { return }
+        req.presentation = .split
+        composeRequest = req
+        if !composeFinishing { composeMode = .expanded }
+    }
+
+    /// Leave split without closing the draft — recompute the normal placement
+    /// from the current selection (inline if its thread is still open).
+    func exitSplitCompose() {
+        guard var req = composeRequest, req.presentation == .split else { return }
+        req.presentation = ComposePlacement.preferred(
+            replyTo: req.replyTo,
+            editDraft: req.editDraft,
+            forward: req.forward,
+            selectedThreadId: selectedThreadId,
+            readingPaneHidden: readingPaneHiddenForCompose)
+        composeRequest = req
+    }
+
+    func toggleSplitCompose() {
+        if composeRequest?.presentation == .split {
+            exitSplitCompose()
+        } else {
+            enterSplitCompose()
+        }
+    }
+
+    /// Resolve a thread for the split conversation column even after the
+    /// visible list moved on (view switch, reload) — the live list first,
+    /// then the snapshot `enterSplitCompose` took. Called from a view body,
+    /// so it never touches the database: a SQLCipher page miss there is an
+    /// AES decrypt + HMAC on every render.
+    func thread(withId id: String) -> MailThread? {
+        threads.first { $0.id == id }
+            ?? (splitThreadSnapshot?.id == id ? splitThreadSnapshot : nil)
+    }
+
+    /// The split column's conversation as of entering split. Only read when
+    /// the thread has left `threads`; the live row wins whenever present.
+    @ObservationIgnored private var splitThreadSnapshot: MailThread?
+    /// Latest `enterSplitCompose` fetch wins.
+    @ObservationIgnored private var splitThreadLoadGeneration = 0
+
+    /// If compose was inline for a thread we left or hid, keep the work as a
+    /// floating card instead of tearing it down.
+    func promoteInlineComposeIfNeeded(selectedThreadId: String?,
+                                      readingPaneHidden: Bool) {
+        guard var req = composeRequest, req.presentation == .inline else { return }
+        let stillHere = !readingPaneHidden
+            && req.boundThreadId != nil
+            && req.boundThreadId == selectedThreadId
+        guard !stillHere else { return }
+        req.presentation = .floating
+        composeRequest = req
+    }
+
+    /// Reading pane too short for any inline card — float so we never keep a
+    /// zero-height dock that steals focus (same request id / editor state).
+    func demoteInlineComposeIfPaneTooShort(paneHeight: CGFloat) {
+        guard var req = composeRequest, req.presentation == .inline else { return }
+        guard ComposePlacement.resolvedPresentation(
+            .inline, paneHeight: paneHeight) == .floating else { return }
+        req.presentation = .floating
+        composeRequest = req
+    }
+
+    struct UndoAction: Identifiable {
+        var id = UUID()
+        let label: String
+        let undo: () -> Void
+    }
+
+    var selectedThread: MailThread? {
+        threads.first { $0.id == selectedThreadId }
+    }
+
+    func setActiveAccount(_ id: String?) {
+        activeAccountId = id
+        // A label belongs to one account: switching to another leaves it
+        // for that account's Inbox, as Gmail does.
+        let next = SidebarScope.view(selectedView, afterSwitchingTo: id)
+        if next != selectedView { selectedView = next }
+        clearSelection()
+        clearCheckedThreads()
+        readStateKeepIds.removeAll()
+        starStateKeepIds.removeAll()
+        reloadThreads()
+    }
+
+    func clearCheckedThreads() {
+        checkedThreadIds.removeAll()
+        lastCheckedThreadId = nil
+        shiftSelectAnchorId = nil
+        // Uncheck all: drop thread-long pins that were only retained by check.
+        applyThreadLongStarPinDrops(selectionIntent: nil)
+    }
+
+    /// Toggle multi-select on one thread. With `extendRange` (shift-click),
+    /// checks every row between the last toggle and this id in display order.
+    func toggleChecked(_ id: String, extendRange: Bool = false) {
+        let order = selectionOrder
+        if extendRange, let anchor = lastCheckedThreadId,
+           let range = SelectionAdvance.rangeIds(in: order, from: anchor, to: id) {
+            let allOn = range.allSatisfy { checkedThreadIds.contains($0) }
+            if allOn {
+                for rid in range { checkedThreadIds.remove(rid) }
+            } else {
+                for rid in range { checkedThreadIds.insert(rid) }
+            }
+            lastCheckedThreadId = id
+            applyThreadLongStarPinDrops(selectionIntent: nil)
+            return
+        }
+        if checkedThreadIds.contains(id) {
+            checkedThreadIds.remove(id)
+        } else {
+            checkedThreadIds.insert(id)
+        }
+        lastCheckedThreadId = id
+        applyThreadLongStarPinDrops(selectionIntent: nil)
+    }
+
+    /// Cmd-A: check every thread currently loaded in the list (Gmail-style
+    /// select-all). Does not fetch further pages — only what's already in
+    /// `selectionOrder`.
+    func checkAllVisibleThreads() {
+        let order = selectionOrder
+        guard !order.isEmpty else { return }
+        let result = SelectionAdvance.selectAll(order: order)
+        checkedThreadIds = result.checked
+        lastCheckedThreadId = result.anchor
+        applyThreadLongStarPinDrops(selectionIntent: nil)
+    }
+
+    /// Gmail `* a` / `* n` / `* r` / `* u` / `* s` / `* t`: check the loaded
+    /// conversations in that state (replacing the current checks), or clear.
+    func checkVisibleThreads(_ selection: ShortcutSequences.Selection) {
+        switch selection {
+        case .deselectAll:
+            clearCheckedThreads()
+        case .selectAll:
+            checkAllVisibleThreads()
+        case .read, .unread, .starred, .unstarred:
+            let byId = Dictionary(threads.map { ($0.id, $0) },
+                                  uniquingKeysWith: { first, _ in first })
+            let ids = ShortcutSequences.checkedIds(
+                order: selectionOrder, selection: selection,
+                state: { id in byId[id].map { ($0.isUnread, $0.isStarred) } })
+            checkedThreadIds = Set(ids)
+            lastCheckedThreadId = ids.last
+            applyThreadLongStarPinDrops(selectionIntent: nil)
+        }
+    }
+
+    /// Gmail `x`: toggle check on the focused conversation.
+    func toggleCheckSelected() {
+        guard let id = selectedThreadId else { return }
+        toggleChecked(id)
+    }
+
+    let db = AppDatabase.shared.dbPool
+    /// OpenPGP (step 4B): inert unless the build turns it on.
+    let openPGP = PGPCenter(database: AppDatabase.shared.dbPool)
+    let threadDetailRepository = ThreadDetailRepository(
+        db: AppDatabase.shared.dbPool,
+        inlineImages: InlineImageStore(db: AppDatabase.shared.dbPool),
+        remoteImages: RemoteImageStore(db: AppDatabase.shared.dbPool))
+    /// Persistent, encrypted `cid:` image cache (`InlineImageCache`): read
+    /// with the payload by the repository, written by `inlineCIDImages`,
+    /// shut down before the pool closes.
+    var inlineImageStore: InlineImageStore? { threadDetailRepository.inlineImages }
+    /// Persistent, encrypted remote-image cache (`RemoteImageCache`): read by
+    /// the prefetch (cache only), written by `resolveRemoteImages` (an open
+    /// message whose remote images are allowed), shut down before the pool
+    /// closes.
+    var remoteImageStore: RemoteImageStore? { threadDetailRepository.remoteImages }
+    /// The app's own remote-image client (`RemoteImageTransport.live`).
+    @ObservationIgnored
+    var remoteImageTransport: RemoteImageTransport = .live
+    @ObservationIgnored
+    var syncTimer: Timer?
+    @ObservationIgnored
+    var undoTimer: Timer?
+    @ObservationIgnored
+    var engines: [String: SyncEngine] = [:]
+    @ObservationIgnored
+    var clients: [String: GmailClient] = [:]
+    /// What the new-mail notifier has already accounted for this session.
+    /// Unseeded until the launch baseline is in place: every unread thread
+    /// already in the cache would look "new", so the first pass only records
+    /// what is there rather than announcing all of it.
+    @ObservationIgnored
+    var newMailNotifications = NewMailNotifications()
+    /// Serial tail for optimistic thread writes. UI updates happen first; the
+    /// tail preserves mutation order and is awaited before database shutdown.
+    @ObservationIgnored
+    var threadMutationPersistenceTask: Task<Result<Void, Error>, Never>?
+    /// Serial tail for bulk Gmail pushes (`mutateThreads`), so one bulk
+    /// action's bounded calls finish before the next bulk action's start.
+    @ObservationIgnored
+    var bulkRemoteTail: Task<Void, Never>?
+    /// Rapid triage reconciles once after the user pauses instead of launching
+    /// a full list/count query for every key press.
+    @ObservationIgnored
+    var threadMutationReconcileTask: Task<Void, Never>?
+    // Threads whose read state changed while an unread/read filter was active.
+    // They stay listed (so opening an unread thread doesn't yank it out from
+    // under the reading pane) until the filter is dropped or the view changes.
+    @ObservationIgnored
+    var readStateKeepIds: Set<String> = []
+
+    var readStateFilterActive: Bool {
+        if chips.unreadOnly || chips.readOnly { return true }
+        if case .saved(let id, _) = selectedView,
+           savedViews.first(where: { $0.id == id })?.unreadOnly == true { return true }
+        // Cmd-K / search operators share the same stickiness so opening an
+        // is:unread result and auto-marking it read doesn't yank the row.
+        let search = committedSearch.trimmingCharacters(in: .whitespaces)
+        if !search.isEmpty, SearchQuery.parse(search).unread != nil { return true }
+        return false
+    }
+
+    // Threads just unstarred while a star-gated list was active (category hide
+    // pin-through, Starred mailbox, starredOnly saved view, is:starred search).
+    // Session policy: stay until view/filter change. Thread policy (category
+    // hide only): stay while selected or multi-checked; leave-thread drops pin.
+    @ObservationIgnored
+    var starStateKeepIds: Set<String> = []
+
+    var starStateFilterActive: Bool {
+        currentStarStickinessPolicy() != .none
+    }
+
+    /// Effective category-hide set for the list currently on screen.
+    /// Inbox/account use live chips; saved views use their chipsJSON (or
+    /// legacy excludePromotions) because baseQuery does not read store.chips.
+    /// Internal so PrioritySplit can suppress IMPORTANT-only Priority hoists
+    /// for threads that only appear via category-hide pin-through.
+    ///
+    /// Read from ThreadListView's body and layout pass, so the saved-view
+    /// chips decode goes through `decodedSavedChips` (memoized on the JSON
+    /// bytes) instead of running a JSONDecoder on every body evaluation.
+    /// Still reads `selectedView` / `savedViews` / `chips` directly, so
+    /// Observation tracking is unchanged.
+    var effectiveCategoryHide: Set<String> {
+        if case .saved(let id, _) = selectedView,
+           let v = savedViews.first(where: { $0.id == id }) {
+            if let data = v.chipsJSON,
+               let saved = decodedSavedChips(data) {
+                return saved.category.hide
+            }
+            if v.excludePromotions {
+                return ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"]
+            }
+            return []
+        }
+        return chips.category.hide
+    }
+
+    /// Last saved-view chips decode, keyed on the exact JSON bytes. One
+    /// entry is enough: only the saved view on screen is ever asked for, and
+    /// editing it produces new bytes (a miss) rather than a stale hit.
+    /// `@ObservationIgnored` — a cache fill must never publish.
+    @ObservationIgnored
+    private var savedChipsMemo: (data: Data, chips: FilterChips?)?
+
+    /// `FilterChips` decoded from a saved view's `chipsJSON`, memoized.
+    /// Comparing the bytes is a memcmp; the decode it skips is not.
+    func decodedSavedChips(_ data: Data) -> FilterChips? {
+        if let memo = savedChipsMemo, memo.data == data { return memo.chips }
+        let chips = try? JSONDecoder().decode(FilterChips.self, from: data)
+        savedChipsMemo = (data, chips)
+        return chips
+    }
+
+    func currentStarStickinessPolicy() -> StarStickinessPolicy {
+        var viewIsStarred = false
+        var viewLabelIsStarred = false
+        var savedStarredOnly = false
+        var savedHide: Set<String> = []
+        var savedLabelId: String?
+        var savedExcludePromotionsLegacy = false
+
+        if case .starred = selectedView { viewIsStarred = true }
+        if case .label(_, let labelId, _) = selectedView, labelId == "STARRED" {
+            viewLabelIsStarred = true
+        }
+        if case .saved(let id, _) = selectedView,
+           let v = savedViews.first(where: { $0.id == id }) {
+            savedStarredOnly = v.starredOnly
+            savedLabelId = v.labelId
+            if let data = v.chipsJSON,
+               let saved = decodedSavedChips(data) {
+                savedHide = saved.category.hide
+                if saved.labelId == "STARRED" { savedLabelId = "STARRED" }
+            } else if v.excludePromotions {
+                savedExcludePromotionsLegacy = true
+            }
+        }
+
+        return StarStickiness.policy(
+            committedSearch: committedSearch,
+            chipsHide: chips.category.hide,
+            chipsLabelId: chips.labelId,
+            viewIsStarred: viewIsStarred,
+            viewLabelIsStarred: viewLabelIsStarred,
+            savedStarredOnly: savedStarredOnly,
+            savedHide: savedHide,
+            savedLabelId: savedLabelId,
+            savedExcludePromotionsLegacy: savedExcludePromotionsLegacy)
+    }
+
+    /// Drop thread-long unstar pins that are no longer selected or checked,
+    /// and optimistically remove rows that only stayed via that pin.
+    func applyThreadLongStarPinDrops(
+        selectionIntent: ThreadSelectionIntent?
+    ) {
+        // Key-repeat j/k hits the selection setter every step; skip policy
+        // work (and saved-view JSON decode) when nothing is pinned.
+        guard !starStateKeepIds.isEmpty else { return }
+        let policy = currentStarStickinessPolicy()
+        let toDrop = StarStickiness.idsToDrop(
+            keepIds: starStateKeepIds,
+            selectedId: selectedThreadId,
+            checkedIds: checkedThreadIds,
+            policy: policy,
+            selectionIntent: selectionIntent)
+        guard !toDrop.isEmpty else { return }
+        for id in toDrop { starStateKeepIds.remove(id) }
+
+        let hide = effectiveCategoryHide
+        threads.removeAll { t in
+            guard toDrop.contains(t.id) else { return false }
+            return StarStickiness.leavesDueToCategoryHide(
+                hide: hide,
+                inPromotions: t.inPromotions,
+                inSocial: t.inSocial,
+                labelIds: t.labelIds,
+                isStarred: t.isStarred,
+                isKept: starStateKeepIds.contains(t.id))
+        }
+    }
+
+    /// Tracked so termination can cancel and await it; the body can still be
+    /// mid-VACUUM when the user quits shortly after first launch.
+    @ObservationIgnored private var startupTask: Task<Void, Never>?
+
+    /// Everything here runs *before the first frame*: the app holds the store
+    /// in `@State`, so this initializer executes inside the first evaluation
+    /// of the app's body. Only work the first frame actually renders from
+    /// belongs in it — accounts and saved views (sidebar), VIPs (the Priority
+    /// split the very first list query partitions on), the blocklist (tiny
+    /// table; Sync All in the first moments must not race an empty set), and
+    /// the list query itself, which is already asynchronous.
+    ///
+    /// Everything else — snippets, scheduled sends, the unread notification
+    /// baseline, contact mining, the MCP server — is needed by a surface the user has not
+    /// reached yet, and moved to `runDeferredStartupWork`.
+    init() {
+        let demoSeeded = DemoSeed.seedIfRequested(AppDatabase.shared.dbPool)
+        reloadAccounts()
+        // An environment flag must never turn a real Debug account into a
+        // fake/offline account when seeding was correctly refused.
+        demoMode = demoSeeded && !accounts.isEmpty
+            && accounts.allSatisfy { $0.id == DemoSeed.account }
+        // Primaries immediately; send-as aliases fill in after the API call.
+        sendIdentities = fallbackIdentities()
+        reloadSavedViews()
+        loadVIPs()
+        // Tiny table, but correctness-critical before any early Sync All:
+        // applyBlocklist with an empty set is a silent no-op. Keep this on
+        // the launch path so a future "defer more" pass does not re-open the
+        // window that put it in runDeferredStartupWork.
+        loadBlocked()
+        reloadThreads()
+        startupTask = Task { await self.runDeferredStartupWork() }
+        // The opt-in MCP server starts in runDeferredStartupWork, not here:
+        // its Keychain token read and NWListener bind are main-thread work
+        // no first-frame surface needs.
+    }
+
+    // MARK: - MCP server
+
+    static let mcpEnabledKey = MCPSwitchedOff.enabledKey
+    static let mcpTokenKey = "mcp.token"
+    static let mcpPortKey = "mcp.port"
+
+    /// Default fixed port so client configs survive app relaunches.
+    static let mcpDefaultPort = 41888
+
+    private var mcpListener: (server: MCPServer, port: UInt16)?
+    var mcpPort: UInt16? { mcpListener?.port }
+    var mcpRunning: Bool { mcpListener != nil }
+
+    /// Cached bearer token for Settings copy snippet (Keychain-backed).
+    private(set) var mcpToken: String?
+
+    /// Discovery file next to mail.sqlite (`mcp.json`).
+    var mcpDiscoveryURL: URL {
+        AppDatabase.shared.directoryURL.appendingPathComponent("mcp.json")
+    }
+
+    var isMCPEnabled: Bool {
+        get {
+            AIFeatures.isEnabled && UserDefaults.standard.bool(forKey: Self.mcpEnabledKey)
+        }
+        set {
+            // A build without AI features stores nothing and runs nothing.
+            guard AIFeatures.isEnabled else {
+                stopMCPServer()
+                return
+            }
+            UserDefaults.standard.set(newValue, forKey: Self.mcpEnabledKey)
+            if newValue {
+                // First opt-in after a build without AI features: the old
+                // token may still be posted by a helper (launchd) to a port
+                // anyone could have bound meanwhile, so mint a new one.
+                if MCPSwitchedOff.takeTokenRotation(defaults: .standard) {
+                    Keychain.delete(Self.mcpTokenKey)
+                    mcpToken = nil
+                }
+                startMCPServer()
+            } else {
+                stopMCPServer()
+            }
+        }
+    }
+
+    /// Preferred listen port. 0 = ephemeral (changes every launch); anything
+    /// else is bound verbatim. Restarts the server when changed while running.
+    var mcpPreferredPort: Int {
+        get {
+            UserDefaults.standard.object(forKey: Self.mcpPortKey) == nil
+                ? Self.mcpDefaultPort
+                : UserDefaults.standard.integer(forKey: Self.mcpPortKey)
+        }
+        set {
+            let clamped = min(max(newValue, 0), 65535)
+            UserDefaults.standard.set(clamped, forKey: Self.mcpPortKey)
+            if mcpRunning { startMCPServer() }
+        }
+    }
+
+    /// Generate or load the Keychain bearer token (32 random bytes, hex).
+    func ensureMCPToken() throws -> String {
+        if let existing = mcpToken, !existing.isEmpty { return existing }
+        let token = try Keychain.existingOrCreate(from: Keychain.read(Self.mcpTokenKey)) {
+            var bytes = [UInt8](repeating: 0, count: 32)
+            guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+                throw KeychainError.status(errSecParam)
+            }
+            let hex = bytes.map { String(format: "%02x", $0) }.joined()
+            try Keychain.set(hex, forKey: Self.mcpTokenKey)
+            return hex
+        }
+        mcpToken = token
+        return token
+    }
+
+    /// The only place a server is created. Refuses, before the token read,
+    /// the bind and the discovery file, in a build without AI features.
+    /// The only place a server is created and `mcp.json` written. With the
+    /// AI features off it returns before the token read, the bind and the
+    /// file, whatever `mcp.enabled` says (MCPServerGateTests checks this).
+    func startMCPServer() {
+        guard AIFeatures.isEnabled else { return }
+        stopMCPServer()
+        do {
+            let token = try ensureMCPToken()
+            let bridge = MCPBridge(store: self)
+            let server = MCPServer(tools: bridge)
+            let port = try server.start(token: token, preferredPort: UInt16(mcpPreferredPort))
+            mcpListener = (server, port)
+            writeMCPDiscovery(port: port)
+        } catch {
+            showNotice("MCP server failed to start: \(error.localizedDescription)")
+        }
+    }
+
+    func stopMCPServer() {
+        mcpListener?.server.stop()
+        mcpListener = nil
+        removeMCPDiscovery()
+    }
+
+    /// Port and pid only. The bearer token stays in the Keychain; a file
+    /// next to the database must not duplicate it.
+    private func writeMCPDiscovery(port: UInt16) {
+        let url = mcpDiscoveryURL
+        let payload: [String: Any] = [
+            "port": Int(port),
+            "pid": Int(ProcessInfo.processInfo.processIdentifier),
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) else {
+            return
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            NSLog("DreaMail: failed to write mcp.json: %@", DiagnosticLog.describe(error))
+        }
+    }
+
+    private func removeMCPDiscovery() {
+        try? FileManager.default.removeItem(at: mcpDiscoveryURL)
+    }
+
+    /// Startup work that no on-screen surface is waiting for.
+    ///
+    /// Nothing here may sit behind the network. The send-as refresh and the
+    /// scheduled-send flush both make Gmail calls, so they run in their own
+    /// task — a slow or hanging request must not be able to delay polling,
+    /// which is what produces new mail at all.
+    private func runDeferredStartupWork() async {
+        guard !isShuttingDown else { return }
+        // Purge a pre-redaction log and age out old lines even when no
+        // error is logged this session.
+        DiagnosticLog.maintainAtLaunch()
+        // Earlier builds kept invite answers in plain-text UserDefaults.
+        CalendarRSVPStore.purgeLegacyDefaults()
+        reloadScheduledSends()
+        reloadLocalDrafts()
+        await reloadPendingThreadOpCount()
+        // MCP is opt-in (UserDefaults). It lived at the end of init, which
+        // ran its Keychain read (a securityd round trip) and listener bind
+        // before the first frame despite the intent. Here it is past the
+        // first suspension point, so the window has had a chance to draw;
+        // a bind failure still only surfaces as a notice.
+        // The build switch wins over the stored opt-in. Without it, an
+        // earlier build's state goes: the stale mcp.json, and the opt-in
+        // itself, so turning AI back on needs a fresh choice (and token).
+        if !AIFeatures.isEnabled {
+            MCPSwitchedOff.cleanUp(defaults: .standard, discoveryURL: mcpDiscoveryURL)
+        } else if isMCPEnabled, !isShuttingDown {
+            startMCPServer()
+        }
+        // Contacts first: recipient autocomplete is the first deferred
+        // surface a user reaches (`c`, type a name), and the mine runs on a
+        // pool reader, so nothing below waits on it.
+        rebuildContacts()
+        // Baseline before polling: every unread thread already in the cache
+        // would otherwise look new and fire a notification.
+        await seedUnreadBaseline()
+        // Once answered, repaint (a paint before the answer may not have
+        // shown) and read what the settings now allow.
+        Notifier.requestPermission { [weak self] in
+            Task { @MainActor in
+                self?.repaintDockBadge()
+                self?.refreshDockBadgeSystemStatus()
+            }
+        }
+        await startPolling()
+        rebuildMetadataIfNeeded()
+        reloadSnippets()
+        seedDefaultSnippetsIfNeeded()
+        reloadSignatures()
+
+        // Send-as identities before firing due scheduled sends, so From
+        // headers get alias display names rather than bare emails.
+        Task { [weak self] in
+            await self?.refreshSendIdentities()
+            await self?.fireDueScheduledSends()
+        }
+        // Last, and off the main actor: the one-time post-v24 VACUUM can take
+        // tens of seconds on a large mailbox. Re-check shut-down: the entry
+        // guard was before startPolling and friends, and reclaimSpaceIfNeeded
+        // only refuses once AppDatabase.beginShutdown has run.
+        guard !isShuttingDown else { return }
+        await AppDatabase.shared.reclaimSpaceOffMain()
+    }
+
+    func enterDemoMode() {
+        guard accounts.isEmpty else {
+            showNotice("Remove real accounts before starting the demo inbox.")
+            return
+        }
+        guard DemoSeed.activate(db) else {
+            showNotice("The demo inbox couldn't be started.")
+            return
+        }
+        demoMode = true
+        lastError = nil
+        // The whole mailbox was just replaced under the cache.
+        applyThreadContentChange(.everything)
+        accountsNeedingReauth.removeAll()
+        selectedView = .inbox
+        clearSelection()
+        reloadAccounts()
+        reloadSavedViews()
+        loadVIPs()
+        loadBlocked()
+        reloadThreads()
+        reloadScheduledSends()
+        reloadLocalDrafts()
+        sendIdentities = fallbackIdentities()
+        showNotice("Fictional mail — nothing syncs or sends")
+    }
+
+    @discardableResult
+    func exitDemoMode() -> Bool {
+        guard demoMode else { return true }
+        guard DemoSeed.deactivate(db) else {
+            showNotice("The demo inbox couldn't be closed. Try again.")
+            return false
+        }
+        demoMode = false
+        lastError = nil
+        // Demo mail was just deleted out from under the cache.
+        applyThreadContentChange(.everything)
+        accountsNeedingReauth.removeAll()
+        selectedView = .inbox
+        clearSelection()
+        // Drop any queued browser mailto: — demo teardown isn't a user close.
+        // The dedupe record goes too, or a re-click would be read as a repeat
+        // of a handoff that no longer exists.
+        pendingMailto = nil
+        lastMailto = nil
+        lastDeepLink = nil
+        lastDeepLinkThreadId = nil
+        composeRequest = nil
+        reloadAccounts()
+        reloadSavedViews()
+        loadVIPs()
+        loadBlocked()
+        reloadThreads()
+        reloadScheduledSends()
+        reloadLocalDrafts()
+        sendIdentities = []
+        filterCache.forget(account: DemoSeed.account)
+        return true
+    }
+
+    /// One-time seed of the starter snippets, so `/` in compose has something
+    /// to show on a fresh install. Runs once (tracked in UserDefaults) and
+    /// skips names that already exist, so it never fights an import or a delete.
+    private func seedDefaultSnippetsIfNeeded() {
+        let key = "didSeedDefaultSnippets"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let planned = SnippetImport.plan(SnippetDefaults.items,
+                                         existingNames: allSnippets.map(\.name))
+        try? db.write { db in
+            for item in planned {
+                var s = Snippet(id: nil, name: item.name, body: item.body,
+                                movesToBcc: item.movesToBcc ?? false)
+                s.accountIds = item.accountIds ?? []
+                try s.insert(db)
+            }
+        }
+        UserDefaults.standard.set(true, forKey: key)
+        if !planned.isEmpty {
+            reloadSnippets()
+        }
+    }
+
+    // MARK: - Contacts (derived from synced mail; no extra Google scopes)
+
+    /// UI-facing contact type (stable path for AddressField / search).
+    typealias Contact = ContactMiner.Contact
+
+    private(set) var contacts: [Contact] = []
+    /// Full weight map kept in memory so incremental passes merge correctly
+    /// (the published list is only the top 2000).
+    @ObservationIgnored
+    private var contactWeights: ContactMiner.WeightMap = [:]
+    /// Bumped by every mining pass; a pass commits its weight map only if no
+    /// newer pass started after it (the newer one began from the same base
+    /// map and high-water mark, so the older result is simply superseded).
+    @ObservationIgnored
+    private var contactsRebuildGeneration = 0
+    /// Bumped whenever the weight map is committed or a re-rank starts; an
+    /// off-main ranking publishes only if nothing newer has been ranked since.
+    @ObservationIgnored
+    private var contactsRankGeneration = 0
+    private static let contactsHighWaterKey = "contacts.highWaterRowId"
+
+    /// Every address we consider "me" for reply recipient filtering: linked
+    /// account primaries plus send-as aliases (so replying to own mail as an
+    /// alias doesn't put that alias in To).
+    var ownEmailAddresses: Set<String> {
+        ContactMiner.ownAddresses(
+            accountIds: accounts.map(\.id),
+            aliasEmails: sendIdentities.map(\.email))
+    }
+
+    /// Lowercased own address → name recipients should see. Account
+    /// `senderName` fills the primary. A send-as display name replaces it
+    /// when that alias has its own name. An empty name, or a name that is
+    /// the address itself, does not count.
+    private var ownDisplayNames: [String: String] = [:]
+
+    private func rebuildOwnDisplayNames() {
+        var map: [String: String] = [:]
+        func store(_ email: String, _ rawName: String) {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.caseInsensitiveCompare(email) != .orderedSame else { return }
+            map[email.lowercased()] = name
+        }
+        for account in accounts { store(account.id, account.senderName) }
+        for identity in sendIdentities { store(identity.email, identity.displayName) }
+        if ownDisplayNames != map { ownDisplayNames = map }
+    }
+
+    /// Sender or recipient label. Uses `ownDisplayNames` when the header
+    /// is only an address, so a bare `From: <me@…>` still shows the name.
+    func participantDisplayName(fromHeader: String) -> String {
+        MessageParser.displayName(fromHeader: fromHeader, ownDisplayNames: ownDisplayNames)
+    }
+
+    /// From identities offered for a compose mode. Pass the mailbox that
+    /// owns the thread/draft for reply/forward/edit; nil for brand-new mail.
+    func fromIdentities(forMailbox mailboxAccountId: String?) -> [SendIdentity] {
+        let all = sendIdentities.isEmpty ? fallbackIdentities() : sendIdentities
+        return SendIdentityResolver.available(all: all, forMailbox: mailboxAccountId)
+    }
+
+    /// Synthetic primaries when send-as hasn't been fetched yet (offline /
+    /// first paint / scope missing).
+    private func fallbackIdentities() -> [SendIdentity] {
+        accounts.map {
+            SendIdentity(email: $0.id, displayName: $0.senderName,
+                         accountId: $0.id, isPrimary: true, isDefault: true)
+        }
+    }
+
+    /// Per-account send-as fetch stamps for `SendAsRefreshPolicy`.
+    @ObservationIgnored
+    private var sendAsLastSuccess: [String: Date] = [:]
+    @ObservationIgnored
+    private var sendAsLastAttempt: [String: Date] = [:]
+
+    /// Post-sync entry point: refresh one account's send-as aliases only when
+    /// `SendAsRefreshPolicy` says they are stale. Launch and sign-in call
+    /// `refreshSendIdentities` directly and always fetch.
+    func refreshSendIdentitiesIfStale(accountId: String) async {
+        guard SendAsRefreshPolicy.isDue(
+            lastSuccess: sendAsLastSuccess[accountId],
+            lastAttempt: sendAsLastAttempt[accountId],
+            now: Date()) else { return }
+        await refreshSendIdentities(accountId: accountId)
+    }
+
+    /// Refresh send-as identities for one account (or all). Failures leave
+    /// that account as primary-only so compose still works.
+    func refreshSendIdentities(accountId: String? = nil) async {
+        guard !demoMode else {
+            setSendIdentities(fallbackIdentities())
+            return
+        }
+        let targets = accountId.map { [$0] } ?? accounts.map(\.id)
+        guard !targets.isEmpty else {
+            setSendIdentities([])
+            return
+        }
+        var byAccount = sendIdentities.reduce(into: [String: [SendIdentity]]()) { dict, id in
+            dict[id.accountId, default: []].append(id)
+        }
+        // Keep non-targeted accounts; replace targeted ones.
+        for id in targets {
+            let senderName = accounts.first { $0.id == id }?.senderName ?? ""
+            let rows: [GSendAs]
+            sendAsLastAttempt[id] = Date()
+            do {
+                rows = try await client(for: id).listSendAs()
+                sendAsLastSuccess[id] = Date()
+            } catch {
+                // Pre-scope tokens get 403; network blips too. Primary-only.
+                rows = []
+            }
+            byAccount[id] = SendIdentityResolver.identities(
+                accountId: id, senderName: senderName, sendAs: rows)
+        }
+        // Drop removed accounts.
+        let live = Set(accounts.map(\.id))
+        setSendIdentities(byAccount
+            .filter { live.contains($0.key) }
+            .values
+            .flatMap { $0 }
+            .sorted { a, b in
+                if a.accountId != b.accountId { return a.accountId < b.accountId }
+                if a.isPrimary != b.isPrimary { return a.isPrimary }
+                return a.email.lowercased() < b.email.lowercased()
+            })
+    }
+
+    /// Assign only on change: the From picker and every compose surface
+    /// observe `sendIdentities`, and a refresh almost always returns the same
+    /// aliases. A real change alters the own-address set, so re-rank contacts
+    /// (own addresses are filtered at ranking, not mining — no rescan).
+    private func setSendIdentities(_ next: [SendIdentity]) {
+        guard next != sendIdentities else { return }
+        let ownBefore = ownEmailAddresses
+        sendIdentities = next
+        if ownEmailAddresses != ownBefore { rerankContacts() }
+    }
+
+    /// Re-mine contacts from message headers. Incremental by default (messages
+    /// with rowid above the high-water mark); full when forced, on first run,
+    /// or when the in-memory map is empty (always the case at launch).
+    ///
+    /// Everything heavy runs off the main actor: the scan, the header parsing
+    /// in `ContactMiner.merge`, and the sort in `ranked`. On a large mailbox
+    /// the launch-time full pass parses every message's From/To/Cc, and doing
+    /// that inside `MainActor.run` froze the first seconds of scrolling. The
+    /// main actor only swaps in the finished map and the finished list.
+    ///
+    /// The map deliberately contains the user's own addresses; they are
+    /// dropped at ranking time (see `ContactMiner.ranked`). So send-as aliases
+    /// arriving after launch, or an account being added, only re-rank — they
+    /// no longer force a second full scan.
+    func rebuildContacts(forceFull: Bool = false) {
+        guard !isShuttingDown else { return }
+        let full = forceFull
+            || contactWeights.isEmpty
+            || UserDefaults.standard.integer(forKey: Self.contactsHighWaterKey) == 0
+        if full {
+            // Reset now, not at commit: if this pass is superseded before it
+            // lands, the pass that replaces it must also be full (a forced
+            // rebuild after account removal must not degrade to incremental).
+            UserDefaults.standard.set(0, forKey: Self.contactsHighWaterKey)
+        }
+        let afterRowId = full
+            ? Int64(0)
+            : Int64(UserDefaults.standard.integer(forKey: Self.contactsHighWaterKey))
+        // Copy-on-write: the pass mutates its own copy off-main; the live map
+        // is only replaced on commit.
+        let base: ContactMiner.WeightMap = full ? [:] : contactWeights
+        let ownAddresses = ownEmailAddresses
+        contactsRebuildGeneration += 1
+        let generation = contactsRebuildGeneration
+        let pool = db
+        // Tracked Task (not fire-and-forget): termination must cancel + await
+        // this full-table scan before closing the DatabasePool / process exit.
+        // Detached so the merge and ranking below never run on the main actor
+        // (a plain `Task {}` here inherits MailStore's isolation).
+        contactsRebuildTask?.cancel()
+        contactsRebuildTask = Task.detached(priority: .utility) { [weak self] in
+            guard !Task.isCancelled else { return }
+            // Merge while streaming rows through a cursor rather than
+            // materializing every message's headers first: the launch pass
+            // touches the whole table, and the array was pure peak memory.
+            // Termination interrupts the pool, which ends the cursor early.
+            let mined: (weights: ContactMiner.WeightMap, maxSeen: Int64, rows: Int)?
+            mined = try? await pool.read {
+                db -> (weights: ContactMiner.WeightMap, maxSeen: Int64, rows: Int) in
+                let sql: String
+                let args: StatementArguments
+                if afterRowId > 0 {
+                    sql = """
+                        SELECT rowid, fromHeader, toHeader, ccHeader, labelIds FROM message
+                        WHERE rowid > ? ORDER BY rowid
+                        """
+                    args = [afterRowId]
+                } else {
+                    sql = """
+                        SELECT rowid, fromHeader, toHeader, ccHeader, labelIds FROM message
+                        ORDER BY rowid
+                        """
+                    args = []
+                }
+                var weights = base
+                var maxSeen: Int64 = 0
+                var count = 0
+                var batch: [ContactMiner.MessageHeaders] = []
+                batch.reserveCapacity(512)
+                func flush() {
+                    // Own addresses are kept in the map; `ranked` drops them.
+                    let seen = ContactMiner.merge(messages: batch, into: &weights,
+                                                  excluding: [])
+                    if seen > maxSeen { maxSeen = seen }
+                    batch.removeAll(keepingCapacity: true)
+                }
+                let cursor = try Row.fetchCursor(db, sql: sql, arguments: args)
+                while let row = try cursor.next() {
+                    batch.append(ContactMiner.MessageHeaders(
+                        rowid: row["rowid"],
+                        fromHeader: row["fromHeader"],
+                        toHeader: row["toHeader"],
+                        ccHeader: row["ccHeader"],
+                        labelIds: row["labelIds"]))
+                    count += 1
+                    if batch.count >= 512 { flush() }
+                }
+                if !batch.isEmpty { flush() }
+                return (weights, maxSeen, count)
+            }
+            // A failed read commits nothing — the old map and high-water mark
+            // stay, and the next pass retries. (Previously a failure published
+            // an empty list over a good one.)
+            guard let mined, !Task.isCancelled else { return }
+            // The steady state after every sync: no new rows since the last
+            // pass. Nothing to merge, so nothing to rank or publish.
+            if mined.rows == 0 && !full { return }
+            let ranked = ContactMiner.ranked(from: mined.weights, excluding: ownAddresses)
+            await MainActor.run { [weak self] in
+                guard let self, !self.isShuttingDown,
+                      generation == self.contactsRebuildGeneration else { return }
+                self.contactWeights = mined.weights
+                if mined.maxSeen > 0 {
+                    UserDefaults.standard.set(Int(mined.maxSeen),
+                                              forKey: Self.contactsHighWaterKey)
+                }
+                // Any re-rank already in flight ranked the old map.
+                self.contactsRankGeneration += 1
+                if ownAddresses == self.ownEmailAddresses {
+                    self.publishContacts(ranked)
+                } else {
+                    // Aliases or accounts changed while this pass ran. The map
+                    // is still right (own mail is filtered at ranking); only
+                    // the ranking is stale.
+                    self.rerankContacts()
+                }
+            }
+        }
+    }
+
+    /// Re-rank the in-memory weight map against the current own-address set,
+    /// off the main actor. Used when send-as aliases or accounts change: the
+    /// map itself is unaffected, so there is nothing to re-mine.
+    func rerankContacts() {
+        guard !isShuttingDown, !contactWeights.isEmpty else { return }
+        contactsRankGeneration += 1
+        let generation = contactsRankGeneration
+        let weights = contactWeights
+        let ownAddresses = ownEmailAddresses
+        // Pure CPU on a snapshot — no database access, so it needs no
+        // termination tracking.
+        Task.detached(priority: .utility) { [weak self] in
+            let ranked = ContactMiner.ranked(from: weights, excluding: ownAddresses)
+            await MainActor.run { [weak self] in
+                guard let self, !self.isShuttingDown,
+                      generation == self.contactsRankGeneration else { return }
+                self.publishContacts(ranked)
+            }
+        }
+    }
+
+    /// Assign only on change: `contacts` is observed by every address field,
+    /// and an incremental pass usually ranks to the same list.
+    private func publishContacts(_ ranked: [Contact]) {
+        if contacts != ranked { contacts = ranked }
+    }
+
+    /// Stop timers, cancel and await active database Tasks, flush a pending
+    /// undo-send, then close the shared DatabasePool. Called from
+    /// `applicationShouldTerminate` so process teardown cannot race SQLCipher
+    /// while a GRDB reader is still in `sqlcipher_page_hmac`.
+    ///
+    /// Re-entrant: a second call (double Cmd-Q, logout re-sending quit) awaits
+    /// the same in-flight task instead of returning immediately and letting
+    /// the delegate `reply(true)` while the pool is still open.
+    func prepareForTermination() async {
+        // Gate new DB work before the first suspension point so a MainActor
+        // hop cannot start rebuildContacts between here and executeTermination.
+        guard !hasCompletedTermination else { return }
+        termination = .stopping
+        await DatabaseLifecycle.singleFlight(slot: terminationSlot) { [self] in
+            await self.executeTermination()
+        }
+        termination = .finished
+    }
+
+    private func executeTermination() async {
+        // Stop the MCP loopback listener before any DB shutdown so in-flight
+        // tool handlers cannot race a closed SQLCipher pool.
+        stopMCPServer()
+
+        // Cancel and await the Ask AI turn for the same reason: its tool
+        // calls read and write the database.
+        await askAIController?.shutdown()
+
+        // Free the local model weights. Ollama would hold them for `keep_alive`
+        // after DreaMail is gone, which on a large model is gigabytes of memory
+        // no one can use. Each unload carries a short request timeout, so a
+        // stopped or wedged Ollama cannot delay quit.
+        await Ollama.unloadAllLoadedByDreaMail()
+
+        // Refuse new maintenance (VACUUM / idle checkpoint) immediately so a
+        // deferred startup tail cannot open a long write after we begin
+        // cancelling tracked tasks. The quit-path checkpoint below uses
+        // force: true to bypass that gate.
+        AppDatabase.shared.beginShutdown()
+        stopObservingActivityForPolling()
+        connectivity?.stop()
+        connectivity = nil
+        syncTimer?.invalidate()
+        syncTimer = nil
+        syncTimerInterval = nil
+        undoTimer?.invalidate()
+        undoTimer = nil
+        noticeTimer?.invalidate()
+        noticeTimer = nil
+        sendWindow?.timer.invalidate()
+        scheduledSendTimer?.invalidate()
+        scheduledSendTimer = nil
+
+        // Snapshot then clear so a late completion cannot re-schedule work.
+        // Only these tracked tasks are cancelled and awaited — anything
+        // untracked can still outlive the pool close.
+        let tasks = [
+            contactsRebuildTask,
+            threadReloadTask,
+            loadMoreTask,
+            chipReloadTask,
+            neighborPrefetchTask,
+            threadMutationReconcileTask,
+            startupTask,
+            syncTickTask,
+            dueSweepTask,
+            accountSignInTask,
+            serverSearchTask,
+            classificationTask,
+            photoLoadTask,
+        ].compactMap { $0 } + photoRefreshTasks.values.map(\.task)
+        photoRefreshTasks = [:]
+        photoLoadTask = nil
+        contactsRebuildTask = nil
+        threadReloadTask = nil
+        loadMoreTask = nil
+        chipReloadTask = nil
+        neighborPrefetchTask = nil
+        threadMutationReconcileTask = nil
+        startupTask = nil
+        syncTickTask = nil
+        dueSweepTask = nil
+        accountSignInTask?.cancel()
+
+        // Flush while the pool is still open (may write / send).
+        if pendingSend != nil {
+            await flushPendingSend()
+        }
+        // UI-first mutations persist on a serial tail. Do not close SQLCipher
+        // while the last optimistic action is still being committed.
+        _ = await threadMutationPersistenceTask?.value
+        threadMutationPersistenceTask = nil
+        // Queued inline-image writes are only a cache: dropped, and a write
+        // in progress is cancelled (rolled back) and awaited before the
+        // pool closes.
+        await inlineImageStore?.shutDown()
+        await remoteImageStore?.shutDown()
+
+        await DatabaseLifecycle.shutDown(
+            tasks: tasks,
+            interrupt: { AppDatabase.shared.interrupt() },
+            close: {
+                // Fold the WAL back into the database before releasing the
+                // pool, so the next launch opens a file that needs no
+                // recovery. Runs after every *tracked* background task has
+                // been cancelled and awaited, which is exactly the condition
+                // a TRUNCATE checkpoint needs to succeed. force: true —
+                // beginShutdown already closed the gate that refuses idle
+                // maintenance, but the quit path must still checkpoint.
+                // A deletion just before quitting: its attachment copies and
+                // notifications go now, not at the next launch.
+                AppDatabase.shared.drainDeletedMessages(force: true)
+                AppDatabase.shared.checkpoint(force: true)
+                AppDatabase.shared.close()
+            }
+        )
+    }
+
+    /// Top matches for an address-field token.
+    func contactSuggestions(for query: String) -> [Contact] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard q.count >= 1 else { return [] }
+        // Main-thread filter of the in-memory contacts list — if `search.contacts`
+        // shows up in perf logs while typing `/`, this is the jank source (not FTS).
+        // Call only from onChange / explicit refresh, never from a SwiftUI
+        // computed `body` path (that re-runs on every layout pass).
+        return PerfMetrics.measure(.searchContacts, meta: "qLen=\(q.count)") {
+            ContactMiner.suggestions(from: contacts, matching: q, limit: 6)
+        }
+    }
+
+    /// A few matching threads for the live search dropdown — FTS over cached
+    /// mail, newest first. Async so the per-keystroke lookup runs on a pool
+    /// reader instead of blocking the main thread while SQLCipher decrypts.
+    /// SQL lives in `ThreadTypeahead` (shared with unit tests).
+    func threadSuggestions(for query: String, limit: Int = 5) async -> [MailThread] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard q.count >= ThreadTypeahead.minimumQueryLength else { return [] }
+        return await PerfMetrics.measureAsync(.searchPreview, meta: "qLen=\(q.count)") {
+            (try? await db.read { db in
+                try ThreadTypeahead.fetch(db: db, query: q, limit: limit)
+            }) ?? []
+        }
+    }
+
+    /// Pin from `openThread`: only the reload generation that was in flight
+    /// (or last completed) when the user picked the hit may re-attach it.
+    /// A boolean "next reload" flag is wrong — if that reload is cancelled
+    /// (new query / view switch), a later unrelated reload would pin a
+    /// non-matching thread into its list.
+    @ObservationIgnored
+    private var preserveOpenThreadId: String?
+    @ObservationIgnored
+    private var preserveOpenThreadGeneration: Int?
+
+    /// Open a specific thread picked from the `/` search panel.
+    ///
+    /// The reading pane only renders when the id is present in `threads`
+    /// (see ContentView.detailPane). Typeahead hits are often outside the
+    /// current mailbox page, and `commitSearch` reloads asynchronously — so
+    /// we pin the thread into the list immediately rather than flipping to
+    /// All Mail (which used to race ContentView's `selectedView` onChange
+    /// and clear `selectedThreadId` right after we set it).
+    func openThread(_ thread: MailThread) {
+        threads = OpenFromSearch.ensuringVisible(opening: thread, in: threads)
+        selectThread(thread.id, intent: .explicitOpen)
+        // Bind pin to the current reload epoch (commitSearch already bumped
+        // this when the panel path commits a query first).
+        preserveOpenThreadId = thread.id
+        preserveOpenThreadGeneration = threadReloadGeneration
+    }
+
+    /// Keep the search results panel mounted briefly after the field blurs.
+    /// A click on a result resigns the search field first; if we drop
+    /// `searchActive` synchronously the panel is torn down before the row
+    /// Button receives the click. Token so a re-focus cancels a pending dismiss.
+    private var searchDismissGeneration = 0
+
+    func noteSearchFocused(_ focused: Bool) {
+        if focused {
+            searchDismissGeneration &+= 1
+            searchActive = true
+            return
+        }
+        let generation = searchDismissGeneration
+        Task { @MainActor in
+            // Yield so the current mouse-up / Button action can run while
+            // the panel is still in the hierarchy.
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard generation == searchDismissGeneration else { return }
+            searchActive = false
+        }
+    }
+
+    /// Drop the panel immediately (Esc, outside click, completed action).
+    func dismissSearchPanel() {
+        searchDismissGeneration &+= 1
+        searchActive = false
+    }
+
+    func client(for accountId: String) -> GmailClient {
+        if let c = clients[accountId] { return c }
+        let c = GmailClient.shared(accountEmail: accountId)
+        clients[accountId] = c
+        return c
+    }
+
+    /// One-time recompute of derived thread columns after the v2 migration.
+    private func rebuildMetadataIfNeeded() {
+        let key = "meta.rebuilt.v2"
+        // Read-only plaintext cache (F-02): the rebuild would fail and the
+        // marker below would still skip it on every later launch.
+        guard !UserDefaults.standard.bool(forKey: key), !accounts.isEmpty,
+              storageState.allowsWrites else { return }
+        Task {
+            for account in accounts {
+                let engine = engines[account.id] ?? SyncEngine(accountId: account.id)
+                engines[account.id] = engine
+                try? await engine.rebuildAllThreadMetadata()
+                // Drain now rather than leaving the rebuild for the next
+                // 60 s poll to report.
+                applyThreadContentChange(await engine.drainContentChange())
+            }
+            UserDefaults.standard.set(true, forKey: key)
+            reloadThreads()
+        }
+    }
+
+    // MARK: - Loading
+
+    /// UserDefaults key for the account rail's drag-reordered id list.
+    /// Local-only (like label order): reauth/reinsert paths never touch this,
+    /// so a token refresh or bundle-id migration can't scramble it.
+    private static let accountOrderDefaultsKey = "accountOrder"
+
+    /// Blocking reload. Kept for the paths that must see the new value before
+    /// they return: `init` (demo-mode detection reads `accounts` on the next
+    /// line) and the one-off user mutations (rename, add, remove) where a
+    /// deferred publish would show a stale name for a frame.
+    func reloadAccounts() {
+        _ = accountReloads.begin()
+        let snapshot = (try? db.read { try Self.fetchAccounts($0) }) ?? .empty
+        applyAccounts(snapshot)
+    }
+
+    /// Off-main reload for the post-sync tail, which runs once a minute
+    /// whether or not anything changed. A reload started after this one
+    /// (a setting just changed) wins: this older snapshot is dropped.
+    func reloadAccountsOffMain() async {
+        let ticket = accountReloads.begin()
+        let pool = db
+        let snapshot = (try? await pool.read { try Self.fetchAccounts($0) }) ?? .empty
+        guard accountReloads.isCurrent(ticket) else { return }
+        applyAccounts(snapshot)
+    }
+
+    struct AccountsSnapshot: Sendable {
+        var accounts: [Account]
+        var labels: [LabelRow]
+        static let empty = AccountsSnapshot(accounts: [], labels: [])
+    }
+
+    /// One reader acquisition for both tables instead of two.
+    nonisolated private static func fetchAccounts(
+        _ db: GRDB.Database
+    ) throws -> AccountsSnapshot {
+        AccountsSnapshot(
+            accounts: try Account.order(Column("id")).fetchAll(db),
+            // User order first (organizer drag), alphabetical among the unordered.
+            labels: try LabelRow.filter(Column("type") == "user")
+                .order(Column("sortOrder"), Column("name")).fetchAll(db))
+    }
+
+    private func applyAccounts(_ snapshot: AccountsSnapshot) {
+        let raw = snapshot.accounts
+        let persisted = UserDefaults.standard.stringArray(forKey: Self.accountOrderDefaultsKey) ?? []
+        let order = AccountOrder.reconciled(persisted: persisted, live: raw.map(\.id))
+        if order != persisted {
+            // Reconciliation dropped a removed account or appended a newly
+            // added one — persist the settled order so it's stable even if
+            // the user never drags again.
+            UserDefaults.standard.set(order, forKey: Self.accountOrderDefaultsKey)
+        }
+        let byId = Dictionary(uniqueKeysWithValues: raw.map { ($0.id, $0) })
+        // Strip lastSyncAt from the published rows: it is the one Account
+        // field that changes on every successful sync, and leaving it in
+        // the array views enumerate makes per-tick invalidation unavoidable
+        // no matter what the compare-before-assign guard says. Timestamps
+        // live in lastSyncByAccount instead.
+        var nextSync: [String: Date] = [:]
+        let nextAccounts: [Account] = order.compactMap { id in
+            guard var account = byId[id] else { return nil }
+            if let at = account.lastSyncAt {
+                nextSync[id] = at
+            }
+            account.lastSyncAt = nil
+            return account
+        }
+        let nextLabels = Dictionary(grouping: snapshot.labels, by: \.accountId)
+        // Under Observation, assigning an equal value still publishes a
+        // change notification. accounts (with lastSyncAt stripped),
+        // lastSyncByAccount, and labelsByAccount each get their own guard
+        // so an idle poll only republishes what actually changed.
+        // labelsByAccount's didSet rebuilds labelsById/labelsByName, and
+        // every ThreadListView row / FilterBar / sidebar reads those —
+        // so an unguarded assign on every poll tick forfeits the idle-sync
+        // early-out. Load-bearing, not a micro-opt.
+        if nextAccounts != accounts {
+            accounts = nextAccounts
+        }
+        if Set(nextAccounts.map(\.id)) != loadedPhotoAccountIds {
+            loadedPhotoAccountIds = Set(nextAccounts.map(\.id))
+            scheduleAccountPhotoLoad()
+        }
+        if nextSync != lastSyncByAccount {
+            lastSyncByAccount = nextSync
+        }
+        if nextLabels != labelsByAccount {
+            labelsByAccount = nextLabels
+        }
+        // Its own database read: `snapshot` may be the empty fallback of a
+        // failed read, which would make every account look removed.
+        sweepRemovedAccountResidueOnce()
+    }
+
+    func reloadSavedViews() {
+        savedViews = (try? db.read { try SavedView.order(Column("name")).fetchAll($0) }) ?? []
+    }
+
+    /// Chip toggles arrive in bursts (typing a sender, flipping several
+    /// filters); coalesce them into one reload instead of a full 300-thread
+    /// query per change. View switches keep calling reloadThreads() directly.
+    @ObservationIgnored
+    private var chipReloadTask: Task<Void, Never>?
+    /// In-flight list reload; a newer generation discards older results so
+    /// chip debounce + view switch races don't clobber fresher state.
+    @ObservationIgnored
+    private var threadReloadTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var threadReloadGeneration = 0
+
+    func reloadThreadsDebounced() {
+        guard !isShuttingDown else { return }
+        chipReloadTask?.cancel()
+        chipReloadTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled else { return }
+            // Chip toggles change the list identity — drop load-more depth.
+            self?.resetListWindow()
+            self?.reloadThreads()
+        }
+    }
+
+    /// Async thread-list reload. Captures filter inputs on the main actor,
+    /// reads off the critical path (threads + VIP hits + sidebar counts), then
+    /// applies only if this generation is still current. Does not clear
+    /// `threads` while loading (no flicker).
+    ///
+    /// Reuses `listWindowLimit` so load-older pages survive sync/star reloads
+    /// (view/search changes call `resetListWindow()` first).
+    func reloadThreads() {
+        guard !isShuttingDown else { return }
+        // Deliberately does *not* touch content revisions. This is a list
+        // query — it re-reads thread rows and says nothing about anyone's
+        // message rows. It used to bump a global content version here, which
+        // meant every trash/archive/mark-read (each schedules a reload)
+        // evicted all ten cached reading-pane payloads, neighbours included.
+        // Message-row writes report themselves via `applyThreadContentChange`.
+        // starNavAnchor is deliberately left alone: starring schedules a
+        // reconciliation reload ~140ms later, and the anchor must survive
+        // until the next ±1 move. Staleness is guarded lazily in moveSelection
+        // (wrong focus / missing target / multi-step) and on view change.
+        chipReloadTask?.cancel()   // a direct reload supersedes a pending debounced one
+        loadMoreTask?.cancel()
+        loadMoreTask = nil
+        threadReloadGeneration += 1
+        let generation = threadReloadGeneration
+        // Capture everything the query needs up front so the pool read never
+        // touches MainActor state mid-flight.
+        let view = selectedView
+        let search = committedSearch.trimmingCharacters(in: .whitespaces)
+        let chips = chips
+        let activeAccount = activeAccountId
+        if !readStateFilterActive { readStateKeepIds.removeAll() }
+        if !starStateFilterActive { starStateKeepIds.removeAll() }
+        let keepIds = Array(readStateKeepIds)
+        let starKeepIds = Array(starStateKeepIds)
+        let allLabels = labelsByAccount.values.flatMap { $0 }
+        let savedViewsSnapshot = savedViews
+        let activeVIP = activeVIPEmails
+        // Search is single-window; mailbox views keep expanded load-more depth.
+        // Probe limit = window + 1 so hasMore is exact (no phantom Load older).
+        let windowLimit = search.isEmpty
+            ? max(ThreadListPaging.pageSize, listWindowLimit)
+            : ThreadListPaging.searchWindowLimit
+        let fetchLimit = ThreadListPaging.probeLimit(pageSize: windowLimit)
+        let badgeAccount = DockBadge.account(for: Self.badgeScope, focused: activeAccount)
+        let badgeTicket = dockBadgeTicket(account: badgeAccount)
+        let accountUnreadEpoch = self.accountUnreadEpoch
+        // Primary badge tracks the inbox category hide set (Updates/Forums),
+        // not only the fixed promo/social tab split.
+        let inboxHideCategories = inboxBadgeHideCategories
+        // Priority candidate fetch (inbox only): snapshot settings on MainActor.
+        // Defaults match ThreadListView @AppStorage (starred / 7 days / 10).
+        let priorityMode: PrioritySplit.Mode = {
+            let raw = UserDefaults.standard.string(forKey: "priorityMode")
+            return PrioritySplit.Mode(rawValue: raw ?? "") ?? .starred
+        }()
+        let priorityWindowDays: Int = {
+            if UserDefaults.standard.object(forKey: "priorityWindowDays") == nil {
+                return 7
+            }
+            return UserDefaults.standard.integer(forKey: "priorityWindowDays")
+        }()
+        let priorityMaxCount: Int = {
+            if UserDefaults.standard.object(forKey: "priorityMaxCount") == nil {
+                return 10
+            }
+            return UserDefaults.standard.integer(forKey: "priorityMaxCount")
+        }()
+        let priorityHiddenCategories = chips.category.hide
+        let pool = db
+
+        threadReloadTask?.cancel()
+        threadReloadTask = Task { [weak self] in
+            struct ReloadPayload {
+                var threads: [MailThread]
+                var vipHits: Set<String>
+                var counts: [String: Int]
+                var badge: Int
+                var accountUnread: [String: Int]
+                var hasMore: Bool
+                /// Cursor from the unmerged page bottom — not the Priority-
+                /// merged list, so Load older cannot skip rows between the
+                /// true page end and an older starred candidate.
+                var nextCursor: ThreadListCursor?
+            }
+            let reloadKind = search.isEmpty ? "view" : "search"
+            let totalInterval = PerfMetrics.begin(.reloadTotal, meta: reloadKind)
+            let payload: ReloadPayload? = try? await pool.read { db -> ReloadPayload in
+                // Non-search: keep the filtered request so Priority candidates
+                // can re-use the same base+chips+account scope after the page fetch.
+                var listRequest: QueryInterfaceRequest<MailThread>?
+                var inboundSort = false
+                let result: [MailThread] = try PerfMetrics.measure(
+                    .reloadList, meta: "\(reloadKind) limit=\(windowLimit)"
+                ) {
+                    if !search.isEmpty {
+                        // The predicate builder lives in Store/ so hostless
+                        // tests run this exact SQL (SearchThreadQueryTests).
+                        let context = SearchThreadQuery.Context(
+                            labels: allLabels, keepIds: keepIds,
+                            starKeepIds: starKeepIds, accountId: activeAccount)
+                        return try SearchThreadQuery.fetch(
+                            search: search, db: db, context: context,
+                            limit: fetchLimit)
+                    } else {
+                        var q = MailStore.baseQuery(for: view, savedViews: savedViewsSnapshot,
+                                                    keepIds: keepIds, starKeepIds: starKeepIds)
+                        if chips.showArchived || chips.showSent {
+                            // Widen from inbox-only before layering the other chips.
+                            q = MailStore.widen(q, for: view, archived: chips.showArchived, sent: chips.showSent)
+                        }
+                        q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds)
+                        if let activeAccount { q = q.filter(Column("accountId") == activeAccount) }
+                        let inbound = MailStore.usesInboundSort(for: view)
+                        inboundSort = inbound
+                        listRequest = q
+                        return try q.order(sql: ThreadListQuery.orderSQL(inboundSort: inbound))
+                            .limit(fetchLimit).fetchAll(db)
+                    }
+                }
+                let (page, hasMore) = ThreadListPaging.splitPage(result, pageSize: windowLimit)
+                // Paging cursor from the unmerged page only — Priority merge
+                // can append older starred candidates that must not advance
+                // the Load-older watermark.
+                let nextCursor = ThreadListPaging.nextCursor(
+                    after: page, inboundSort: inboundSort)
+                // Inbox Priority: merge deterministic candidates so stars outside
+                // the page window still pin. hasMore stays on the original probe.
+                var listPage = page
+                if search.isEmpty, view == .inbox,
+                   priorityMode == .starred || priorityMode == .starredImportant,
+                   let base = listRequest,
+                   let candReq = PriorityCandidates.request(
+                       base, mode: priorityMode,
+                       hiddenCategories: priorityHiddenCategories,
+                       newerThan: PrioritySplit.cutoff(days: priorityWindowDays),
+                       maxCount: priorityMaxCount,
+                       inboundSort: inboundSort) {
+                    let candidates = try candReq.fetchAll(db)
+                    listPage = PriorityCandidates.merge(
+                        page: page, candidates: candidates, inboundSort: inboundSort)
+                }
+                let vipHits = try PerfMetrics.measure(.reloadVIP, meta: "n=\(listPage.count)") {
+                    try MailStore.computeVIPThreadIds(
+                        threads: listPage, activeVIP: activeVIP, db: db)
+                }
+                let fetched = try PerfMetrics.measure(.reloadCounts) {
+                    () throws -> (counts: [String: Int], badge: Int, accountUnread: [String: Int]) in
+                    let sidebar = try MailStore.fetchSidebarCounts(
+                        db: db, activeAccount: activeAccount, badgeAccount: badgeAccount,
+                        hideCategories: inboxHideCategories)
+                    let perAccount = try SidebarCounts.fetchUnreadByAccount(
+                        db: db, hideCategories: inboxHideCategories)
+                    return (sidebar.counts, sidebar.badge, perAccount)
+                }
+                let (counts, badge, accountUnread) = fetched
+                return ReloadPayload(threads: listPage, vipHits: vipHits,
+                                     counts: counts, badge: badge,
+                                     accountUnread: accountUnread, hasMore: hasMore,
+                                     nextCursor: nextCursor)
+            }
+            if let payload {
+                totalInterval.end(extraMeta: "n=\(payload.threads.count)")
+            } else {
+                totalInterval.end(extraMeta: "cancelled_or_error")
+            }
+            guard let payload, !Task.isCancelled else { return }
+
+            let applied = await MainActor.run { () -> Bool in
+                guard let self, generation == self.threadReloadGeneration else { return false }
+                // Generation-scoped pin: only the reload openThread paired with
+                // may re-attach the hit. Superseded reloads clear without pin.
+                let list: [MailThread]
+                switch OpenFromSearch.pinDecision(
+                    pendingThreadId: self.preserveOpenThreadId,
+                    pendingGeneration: self.preserveOpenThreadGeneration,
+                    completedGeneration: generation,
+                    currentSelectedId: self.selectedThreadId
+                ) {
+                case .apply(let threadId):
+                    self.preserveOpenThreadId = nil
+                    self.preserveOpenThreadGeneration = nil
+                    list = OpenFromSearch.mergingPinned(
+                        selectedId: threadId,
+                        previous: self.threads,
+                        reloaded: payload.threads)
+                case .clear:
+                    self.preserveOpenThreadId = nil
+                    self.preserveOpenThreadGeneration = nil
+                    list = payload.threads
+                case .ignore:
+                    list = payload.threads
+                }
+                // Every assignment below is guarded: an Observation setter
+                // publishes even when the value is equal, and a background
+                // poll that changed nothing would otherwise re-run the list's
+                // layout pass, the sidebar badges and the paging footer.
+                if list != self.threads { self.threads = list }
+                // Drop multi-select checks for rows that left the list.
+                if !self.checkedThreadIds.isEmpty {
+                    let visible = Set(list.map(\.id))
+                    let kept = self.checkedThreadIds.intersection(visible)
+                    if kept != self.checkedThreadIds { self.checkedThreadIds = kept }
+                    if let last = self.lastCheckedThreadId, !visible.contains(last) {
+                        self.lastCheckedThreadId = nil
+                    }
+                    if let anchor = self.shiftSelectAnchorId, !visible.contains(anchor) {
+                        self.shiftSelectAnchorId = nil
+                    }
+                }
+                // Keep expanded window across sync/star reloads; search never pages.
+                let hasMore = search.isEmpty ? payload.hasMore : false
+                let cursor = hasMore ? payload.nextCursor : nil
+                if search.isEmpty {
+                    let limit = max(self.listWindowLimit, list.count)
+                    if limit != self.listWindowLimit { self.listWindowLimit = limit }
+                }
+                if cursor != self.listCursor { self.listCursor = cursor }
+                if payload.vipHits != self.vipThreadIds { self.vipThreadIds = payload.vipHits }
+                // Local sidebar counts only: they use the same denorm filters as
+                // the visible lists (inbox/promotions/social exclude spam, and
+                // category tabs require inInbox). Gmail's CATEGORY_* label
+                // totals include spam + archived and would disagree with the list.
+                if payload.counts != self.unreadCounts { self.unreadCounts = payload.counts }
+                self.applyDockBadgeRecount(payload.badge, ticket: badgeTicket)
+                self.applyAccountUnreadRecount(payload.accountUnread, epoch: accountUnreadEpoch)
+                return true
+            }
+            // One-shot, and a pool read of its own — kept outside the
+            // MainActor block so it never blocks the list swap.
+            if applied { await self?.loadAICategories() }
+        }
+    }
+
+    /// Per-thread reading-pane content revisions.
+    ///
+    /// Sync is the only writer of message rows; every other mutation rewrites
+    /// the *thread* row and leaves cached bodies valid. Scoping invalidation
+    /// this way is what lets a warmed neighbour survive the trash/archive that
+    /// happens immediately before the user lands on it.
+    private var contentRevisions = ThreadContentRevisions()
+
+    /// Wake-up for the open reading pane: bumped whenever *some* thread's
+    /// content changed. The pane compares its own thread's revision before
+    /// doing any work — this token is never the identity, only the nudge.
+    private(set) var threadContentToken = 0
+
+    /// Cache identity for one thread's reading-pane payload.
+    func contentRevision(of threadId: String) -> ThreadContentRevision {
+        contentRevisions.revision(of: threadId)
+    }
+
+    /// Record message-row changes reported by a sync (or server search) and
+    /// wake the open reading pane. No-op when nothing moved.
+    func applyThreadContentChange(_ change: ThreadContentChange) {
+        // Payloads and painted views built before this change are
+        // unreachable by revision; release them now (mirror, repository,
+        // pre-render slots) instead of at eviction, so content that was
+        // just deleted does not stay decoded in memory.
+        guard let outcome = ThreadDetailInvalidation.apply(
+            change, revisions: &contentRevisions, mirror: &payloadMirror)
+        else { return }
+        let repository = threadDetailRepository
+        Task { await repository.discardStale(outcome.staleness) }
+        HTMLBodyNeighborPrerender.discard(threadIds: outcome.affectedThreadIds)
+        threadContentToken &+= 1
+    }
+
+    /// Whether the current list window may have older rows past the loaded depth.
+    var hasMoreThreads: Bool { listCursor != nil }
+    var isLoadingMore: Bool { loadMoreTask != nil }
+    /// Cursor after the last loaded thread (for `loadMoreThreads`).
+    private var listCursor: ThreadListCursor?
+    private var loadMoreTask: Task<Void, Never>?
+    /// Identifies the in-flight load-more so a cancelled task cannot nil a newer one.
+    private var loadMoreToken = UUID()
+    /// How many rows to re-fetch on reload so load-older survives star/sync.
+    var listWindowLimit = ThreadListPaging.pageSize
+
+    /// Call when the list identity changes (view, search, chips base).
+    private func resetListWindow() {
+        listWindowLimit = ThreadListPaging.pageSize
+        listCursor = nil
+        loadMoreTask?.cancel()
+        loadMoreTask = nil
+        loadMoreToken = UUID()
+    }
+
+    /// Append the next page of threads older than the current window.
+    /// No-op when `hasMoreThreads` is false, search is active, or a load is in flight.
+    func loadMoreThreads() {
+        guard !isShuttingDown else { return }
+        let search = committedSearch.trimmingCharacters(in: .whitespaces)
+        guard search.isEmpty, let cursor = listCursor, loadMoreTask == nil else { return }
+        let generation = threadReloadGeneration
+        let token = UUID()
+        loadMoreToken = token
+        let view = selectedView
+        let chips = chips
+        let activeAccount = activeAccountId
+        let keepIds = Array(readStateKeepIds)
+        let starKeepIds = Array(starStateKeepIds)
+        let savedViewsSnapshot = savedViews
+        let activeVIP = activeVIPEmails
+        let pool = db
+        loadMoreTask = Task { [weak self] in
+            defer {
+                Task { @MainActor in
+                    guard let self, self.loadMoreToken == token else { return }
+                    self.loadMoreTask = nil
+                }
+            }
+            let split: (page: [MailThread], hasMore: Bool)? = try? await PerfMetrics.measureAsync(
+                .pageLoadMore, meta: "probe"
+            ) {
+                try await pool.read { db -> (page: [MailThread], hasMore: Bool) in
+                    var q = MailStore.baseQuery(for: view, savedViews: savedViewsSnapshot,
+                                                keepIds: keepIds, starKeepIds: starKeepIds)
+                    if chips.showArchived || chips.showSent {
+                        q = MailStore.widen(q, for: view, archived: chips.showArchived, sent: chips.showSent)
+                    }
+                    q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds)
+                    if let activeAccount { q = q.filter(Column("accountId") == activeAccount) }
+                    let inbound = MailStore.usesInboundSort(for: view)
+                    q = q.filter(sql: ThreadListPaging.olderThanSQL(inboundSort: inbound),
+                                 arguments: [cursor.sortDate, cursor.sortDate, cursor.id])
+                    let rows = try q.order(sql: ThreadListQuery.orderSQL(inboundSort: inbound))
+                        .limit(ThreadListPaging.probeLimit()).fetchAll(db)
+                    return ThreadListPaging.splitPage(rows)
+                }
+            }
+            guard let split else { return }
+            guard !split.page.isEmpty else {
+                await MainActor.run {
+                    guard let self, generation == self.threadReloadGeneration else { return }
+                    self.listCursor = nil
+                }
+                return
+            }
+            let page = split.page
+            let vipHits = (try? await pool.read { db in
+                try MailStore.computeVIPThreadIds(threads: page, activeVIP: activeVIP, db: db)
+            }) ?? []
+            await MainActor.run {
+                guard let self,
+                      generation == self.threadReloadGeneration,
+                      !Task.isCancelled else { return }
+                // Dedupe if a concurrent reload already included some rows.
+                let existing = Set(self.threads.map(\.id))
+                let fresh = page.filter { !existing.contains($0.id) }
+                self.threads.append(contentsOf: fresh)
+                self.vipThreadIds.formUnion(vipHits)
+                self.listWindowLimit = max(self.listWindowLimit, self.threads.count)
+                // Cursor from this fetched page only — not self.threads, which
+                // may still hold older Priority-merged candidates past the
+                // true page bottom.
+                let inbound = MailStore.usesInboundSort(for: self.selectedView)
+                self.listCursor = split.hasMore ? ThreadListPaging.nextCursor(
+                    after: page, inboundSort: inbound) : nil
+            }
+        }
+    }
+
+    /// Inbox-style views sort by last *inbound* so own replies don't reshuffle.
+    nonisolated static func usesInboundSort(for view: MailboxView) -> Bool {
+        switch view {
+        case .inbox, .promotions, .social, .account: return true
+        default: return false
+        }
+    }
+
+    // MARK: - Server-side search
+
+    private var serverSearchTask: Task<Void, Never>?
+    var serverSearching: Bool { serverSearchTask != nil }
+
+    /// Local search only covers cached mail (within the sync window). This
+    /// pulls matching messages straight from Gmail so a search can reach older
+    /// mail, then reloads. Gmail's query syntax matches the app's operators, so
+    /// the raw search text is passed through as the query.
+    func searchAllGmail() {
+        let query = committedSearch.trimmingCharacters(in: .whitespaces)
+        guard !isShuttingDown, !query.isEmpty, !serverSearching else { return }
+        let progress = makeSyncStatusSink("Searching all mail…")
+        serverSearchTask = Task {
+            defer {
+                endSyncStatus(progress)
+                serverSearchTask = nil
+            }
+            _ = await pullServerSearchMatches(query: query)
+            guard !Task.isCancelled, !isShuttingDown else { return }
+            reloadThreads()
+            rebuildContacts()
+        }
+    }
+
+    /// Same path as the UI "Search all of Gmail" button: list matches on the
+    /// server, download any that aren't cached, re-derive threads. Returns
+    /// local thread ids in Gmail rank order (deduped across accounts).
+    ///
+    /// No-ops in demo mode. Per-account errors set `lastError` and continue so
+    /// one bad token doesn't hide hits from other accounts. Used by MCP
+    /// `search_threads` when the local FTS window has nothing for a query.
+    @discardableResult
+    func pullServerSearchMatches(query: String, limit: Int = 50) async -> [String] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Read-only plaintext cache (F-02): fetched matches could not be stored.
+        guard !isShuttingDown, !q.isEmpty, !demoMode,
+              storageState.allowsWrites else { return [] }
+        let targets = activeAccountId.map { [$0] } ?? accounts.map(\.id)
+        guard !targets.isEmpty else { return [] }
+
+        var ordered: [String] = []
+        var seen = Set<String>()
+        for accountId in targets {
+            guard !Task.isCancelled, !isShuttingDown else { break }
+            let engine = engines[accountId] ?? SyncEngine(accountId: accountId)
+            engines[accountId] = engine
+            do {
+                let result = try await engine.searchServer(query: q, limit: limit)
+                applyThreadContentChange(result.change)
+                for id in result.threadIds where seen.insert(id).inserted {
+                    ordered.append(id)
+                }
+            } catch {
+                if !Task.isCancelled { lastError = error.localizedDescription }
+            }
+        }
+        return Array(ordered.prefix(max(limit, 0)))
+    }
+
+    /// Layers the full FilterChips set onto a thread query. Shared by the live
+    /// filter bar and by saved views (so "Save as view" is lossless). Does NOT
+    /// apply the archived/sent *widening* (that's view-dependent) or account
+    /// scoping (applied by the caller).
+    /// `keepIds` are threads that must stay visible even if they no longer match
+    /// the read-state chip (e.g. a thread you just marked read under an
+    /// unread-only filter), so the row doesn't vanish under your cursor.
+    /// `starKeepIds` are the same idea for star-gated membership: just-unstarred
+    /// threads under category hide / starred-only filters.
+    // nonisolated: pure query builder — safe to call from DatabasePool.read.
+    nonisolated static func applyChips(_ query: QueryInterfaceRequest<MailThread>, _ chips: FilterChips,
+                           keepIds: [String] = [],
+                           starKeepIds: [String] = []) -> QueryInterfaceRequest<MailThread> {
+        var q = query
+        // Category-tab hide; starred (+ sticky keep) pins through (see CategoryHide).
+        q = CategoryHide.apply(q, hide: chips.category.hide, keepIds: starKeepIds)
+        if !chips.category.show.isEmpty {
+            // Contains any of the selected categories. Denorm for promo/social;
+            // labelIds LIKE for Updates/Forums (no denorm columns yet).
+            // Spam is never a category tab — keep SPAM out of promo/social chips.
+            var parts: [String] = []
+            var args: [any DatabaseValueConvertible] = []
+            var needsNotSpam = false
+            for cat in chips.category.show {
+                switch cat {
+                case "CATEGORY_PROMOTIONS":
+                    parts.append("inPromotions = 1")
+                    needsNotSpam = true
+                case "CATEGORY_SOCIAL":
+                    parts.append("inSocial = 1")
+                    needsNotSpam = true
+                default:
+                    parts.append("labelIds LIKE ?")
+                    args.append("%\(cat)%")
+                }
+            }
+            q = q.filter(sql: parts.joined(separator: " OR "),
+                         arguments: StatementArguments(args))
+            if needsNotSpam { q = q.filter(Column("inSpam") == false) }
+        }
+        if chips.unreadOnly { q = q.filter(Column("isUnread") == true || keepIds.contains(Column("id"))) }
+        if chips.readOnly { q = q.filter(Column("isUnread") == false || keepIds.contains(Column("id"))) }
+        if let labelId = chips.labelId {
+            if chips.labelExclude {
+                if labelId.hasPrefix("Label_") {
+                    q = q.filter(sql: """
+                        NOT EXISTS (SELECT 1 FROM thread_label
+                                    WHERE threadId = thread.id AND labelId = ?)
+                        """, arguments: [labelId])
+                } else {
+                    q = q.filter(!Column("labelIds").like("%\(labelId)%"))
+                }
+            } else {
+                q = filterThreads(q, matchingLabelIds: [labelId],
+                                  starKeepIds: starKeepIds)
+            }
+        }
+        if chips.hasAttachmentOnly { q = q.filter(Column("hasAttachment") == true) }
+        if chips.noAttachmentOnly { q = q.filter(Column("hasAttachment") == false) }
+        if !chips.senderContains.isEmpty {
+            let pattern = "%\(chips.senderContains)%"
+            let condition = "(fromDisplay LIKE ? OR participants LIKE ?)"
+            q = q.filter(sql: chips.senderExclude ? "NOT \(condition)" : condition,
+                         arguments: [pattern, pattern])
+        }
+        if let sender = chips.fromEmailContains, !sender.isEmpty {
+            // Prefer denorm fromEmail; fall back to message headers for empty rows.
+            q = q.filter(sql: """
+                (fromEmail LIKE ?
+                 OR (fromEmail = '' AND EXISTS (
+                        SELECT 1 FROM message
+                        WHERE message.threadId = thread.id AND message.fromHeader LIKE ?)))
+                """, arguments: ["%\(sender)%", "%\(sender)%"])
+        }
+        for (header, value) in [("toHeader", chips.toContains),
+                                ("ccHeader", chips.ccContains),
+                                ("bccHeader", chips.bccContains)] where !value.isEmpty {
+            q = q.filter(sql: """
+                EXISTS (SELECT 1 FROM message
+                        WHERE message.threadId = thread.id AND message.\(header) LIKE ?)
+                """, arguments: ["%\(value)%"])
+        }
+        if !chips.subjectContains.isEmpty {
+            q = q.filter(sql: "subject LIKE ?", arguments: ["%\(chips.subjectContains)%"])
+        }
+        if let window = chips.dateWindow {
+            let cutoff = Calendar.current.startOfDay(
+                for: Date().addingTimeInterval(Double(-(window.rawValue - 1)) * 86400))
+            q = q.filter(Column("lastDate") >= cutoff)
+        }
+        if chips.calendarOnly || chips.hideCalendar {
+            let invite = """
+                EXISTS (SELECT 1 FROM message
+                        JOIN attachment ON attachment.messageId = message.id
+                        WHERE message.threadId = thread.id
+                          AND (attachment.mimeType LIKE 'text/calendar%'
+                               OR attachment.filename LIKE '%.ics'))
+                """
+            if chips.calendarOnly { q = q.filter(sql: invite) }
+            if chips.hideCalendar { q = q.filter(sql: "NOT \(invite)") }
+        }
+        return q
+    }
+
+    nonisolated private static func baseQuery(for view: MailboxView, savedViews: [SavedView],
+                                  keepIds: [String] = [],
+                                  starKeepIds: [String] = []) -> QueryInterfaceRequest<MailThread> {
+        var q = MailThread.all()
+        let now = Date()
+        func notSnoozed(_ q: QueryInterfaceRequest<MailThread>) -> QueryInterfaceRequest<MailThread> {
+            ThreadListQuery.notSnoozed(q, now: now)
+        }
+        switch view {
+        // Inbox-style predicates live in ThreadListQuery so the sort-index
+        // test (ThreadListIndexTests) runs the same SQL.
+        case .inbox:
+            // Category filtering is handled by the Categories chip.
+            q = ThreadListQuery.inbox(now: now)
+        case .promotions:
+            q = ThreadListQuery.promotions()
+        case .social:
+            q = ThreadListQuery.social()
+        case .starred:
+            q = q.filter((Column("isStarred") == true || starKeepIds.contains(Column("id")))
+                         && Column("inTrash") == false)
+        case .snoozed:
+            q = ThreadListQuery.snoozed(now: now)
+        case .important:
+            q = ThreadListQuery.important()
+        case .spam:
+            q = ThreadListQuery.spam()
+        case .labels:
+            // Any user label via junction (Label_*); system labels never match.
+            q = q.filter(sql: """
+                inTrash = 0 AND EXISTS (
+                    SELECT 1 FROM thread_label WHERE thread_label.threadId = thread.id)
+                """)
+        case .reminders:
+            q = q.filter(Column("reminderAt") != nil)
+        case .drafts:
+            q = q.filter(Column("inDrafts") == true && Column("inTrash") == false)
+        case .scheduled:
+            // Scheduled sends aren't threads; ScheduledListView renders them.
+            q = q.none()
+        case .outbox:
+            // Offline drafts aren't threads; OutboxListView renders them.
+            q = q.none()
+        case .sent:
+            q = q.filter(Column("inSent") == true && Column("inTrash") == false)
+        case .allMail:
+            q = q.filter(Column("inTrash") == false)
+        case .trash:
+            q = q.filter(Column("inTrash") == true)
+        case .account(let a):
+            q = ThreadListQuery.accountInbox(a, now: now)
+        case .label(let a, let labelId, _):
+            q = q.filter(Column("accountId") == a)
+            q = filterThreads(q, matchingLabelIds: [labelId], starKeepIds: starKeepIds)
+        case .saved(let id, _):
+            guard let v = savedViews.first(where: { $0.id == id }) else { break }
+            q = q.filter(Column("inTrash") == false)
+            // Lossless path: a "Save as view" snapshot carries the full chip
+            // set as JSON. Apply the base (inbox unless archived) + account
+            // scope, then layer every chip dimension via the shared helper.
+            if let chips = v.chipsJSON.flatMap({ try? JSONDecoder().decode(FilterChips.self, from: $0) }) {
+                if !chips.showArchived { q = notSnoozed(q.filter(Column("inInbox") == true)) }
+                if let a = v.accountId { q = q.filter(Column("accountId") == a) }
+                if v.starredOnly {
+                    q = q.filter(Column("isStarred") == true
+                                 || starKeepIds.contains(Column("id")))
+                }
+                q = applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds)
+                break
+            }
+            // Legacy path: views built in the ViewEditor form (structured fields).
+            if !v.showArchived { q = notSnoozed(q.filter(Column("inInbox") == true)) }
+            if let a = v.accountId { q = q.filter(Column("accountId") == a) }
+            if let label = v.labelId {
+                q = filterThreads(q, matchingLabelIds: [label], starKeepIds: starKeepIds)
+            }
+            if v.unreadOnly { q = q.filter(Column("isUnread") == true || keepIds.contains(Column("id"))) }
+            if v.starredOnly {
+                q = q.filter(Column("isStarred") == true
+                             || starKeepIds.contains(Column("id")))
+            }
+            if v.hasAttachmentOnly { q = q.filter(Column("hasAttachment") == true) }
+            if !v.senderContains.isEmpty {
+                q = q.filter(Column("fromDisplay").like("%\(v.senderContains)%")
+                             || Column("participants").like("%\(v.senderContains)%"))
+            }
+            if v.excludePromotions {
+                q = CategoryHide.applyExcludePromotions(q, keepIds: starKeepIds)
+            }
+            if let cat = v.category {
+                switch cat {
+                case "CATEGORY_PROMOTIONS":
+                    q = q.filter(Column("inPromotions") == true && Column("inSpam") == false)
+                case "CATEGORY_SOCIAL":
+                    q = q.filter(Column("inSocial") == true && Column("inSpam") == false)
+                default: q = q.filter(Column("labelIds").like("%\(cat)%"))
+                }
+            }
+        }
+        return q
+    }
+
+    /// Match threads that have any of `labelIds`. User labels (`Label_*`) use
+    /// the `thread_label` junction; system / category labels keep LIKE / denorm.
+    /// `starKeepIds` widen the STARRED system-label case (just-unstarred stickiness).
+    nonisolated static func filterThreads(
+        _ q: QueryInterfaceRequest<MailThread>,
+        matchingLabelIds ids: [String],
+        starKeepIds: [String] = []
+    ) -> QueryInterfaceRequest<MailThread> {
+        guard !ids.isEmpty else { return q }
+        let user = ids.filter { $0.hasPrefix("Label_") }
+        let system = ids.filter { !$0.hasPrefix("Label_") }
+        var parts: [String] = []
+        var args: [any DatabaseValueConvertible] = []
+        if !user.isEmpty {
+            let ors = user.map { _ in
+                "EXISTS (SELECT 1 FROM thread_label WHERE threadId = thread.id AND labelId = ?)"
+            }.joined(separator: " OR ")
+            parts.append("(\(ors))")
+            args.append(contentsOf: user)
+        }
+        for s in system {
+            switch s {
+            case "STARRED":
+                if starKeepIds.isEmpty {
+                    parts.append("isStarred = 1")
+                } else {
+                    let placeholders = starKeepIds.map { _ in "?" }.joined(separator: ",")
+                    parts.append("(isStarred = 1 OR id IN (\(placeholders)))")
+                    args.append(contentsOf: starKeepIds)
+                }
+            case "INBOX": parts.append("inInbox = 1")
+            case "TRASH": parts.append("inTrash = 1")
+            case "SENT": parts.append("inSent = 1")
+            case "DRAFT": parts.append("inDrafts = 1")
+            case "SPAM": parts.append("inSpam = 1")
+            case "CATEGORY_PROMOTIONS": parts.append("inPromotions = 1")
+            case "CATEGORY_SOCIAL": parts.append("inSocial = 1")
+            default:
+                parts.append("labelIds LIKE ?")
+                args.append("%\(s)%")
+            }
+        }
+        guard !parts.isEmpty else { return q }
+        return q.filter(sql: "(\(parts.joined(separator: " OR ")))",
+                        arguments: StatementArguments(args))
+    }
+
+    nonisolated private static func widen(_ q: QueryInterfaceRequest<MailThread>, for view: MailboxView,
+                              archived: Bool, sent: Bool) -> QueryInterfaceRequest<MailThread> {
+        // Rebuild without the inbox constraint for views where it applies.
+        // "Show archived" widens to everything not trashed; "Show sent" alone
+        // widens to inbox-or-sent. (Category chips are layered on afterwards.)
+        func widened(_ w: QueryInterfaceRequest<MailThread>) -> QueryInterfaceRequest<MailThread> {
+            if archived { return w }
+            return w.filter(Column("inInbox") == true || Column("inSent") == true)
+        }
+        switch view {
+        case .inbox:
+            return widened(MailThread.filter(Column("inTrash") == false))
+        case .account(let a):
+            return widened(MailThread.filter(Column("accountId") == a && Column("inTrash") == false))
+        default:
+            return q
+        }
+    }
+
+    /// What the dock badge counts (see `DockBadge.Scope`).
+    typealias BadgeScope = DockBadge.Scope
+
+    static var badgeScope: BadgeScope {
+        get {
+            BadgeScope.stored(UserDefaults.standard.string(forKey: "badgeScope"))
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "badgeScope") }
+    }
+
+    /// Recompute the sidebar counts and dock badge (e.g. after the badge
+    /// scope changes in Settings).
+    func refreshBadge() { refreshCountsAndBadge() }
+
+    private func refreshCountsAndBadge() {
+        // Local counts (fallback + reminders, which Gmail doesn't know about).
+        // Single aggregate SQL — same helper used off-main in reloadThreads.
+        let activeAccount = activeAccountId
+        // The account the badge counts: nil = every account. "Focused"
+        // follows the sidebar (unified view = every account).
+        let badgeAccount = DockBadge.account(for: Self.badgeScope, focused: activeAccount)
+        let badgeTicket = dockBadgeTicket(account: badgeAccount)
+        let accountUnreadEpoch = self.accountUnreadEpoch
+        let hideCategories = inboxBadgeHideCategories
+        // Off-main: the aggregate is ~8 COUNTs, and on SQLCipher every page
+        // miss is an AES decrypt + HMAC. Kept as separate per-predicate
+        // COUNTs in one read (not a single SUM(CASE…)) so each still hits its
+        // v21/v22 partial index — see SidebarCountsIndexTests.
+        countsRefreshGeneration += 1
+        let generation = countsRefreshGeneration
+        // A list reload computes the same counts in its own read and
+        // publishes them; if one starts after this refresh, its numbers are
+        // at least as fresh, so this result must not land over them.
+        let reloadGeneration = threadReloadGeneration
+        let pool = db
+        Task { [weak self] in
+            guard let read = try? await pool.read({ db in
+                (try MailStore.fetchSidebarCounts(db: db, activeAccount: activeAccount,
+                                                  badgeAccount: badgeAccount,
+                                                  hideCategories: hideCategories),
+                 try SidebarCounts.fetchUnreadByAccount(db: db, hideCategories: hideCategories))
+            }) else { return }
+            let result = read.0
+            guard let self, !self.isShuttingDown,
+                  generation == self.countsRefreshGeneration,
+                  reloadGeneration == self.threadReloadGeneration else { return }
+            // Local counts only — same denorm filters as the visible lists
+            // (spam excluded; promotions/social require inInbox). Gmail
+            // CATEGORY_* label totals include spam/archived and would disagree
+            // with the list. Guarded: an Observation setter publishes even for
+            // an equal value and would re-render every sidebar badge.
+            if result.counts != self.unreadCounts { self.unreadCounts = result.counts }
+            self.applyDockBadgeRecount(result.badge, ticket: badgeTicket)
+            self.applyAccountUnreadRecount(read.1, epoch: accountUnreadEpoch)
+        }
+    }
+
+    /// Latest `refreshCountsAndBadge` wins: an older read still in flight
+    /// (e.g. two quick badge-scope changes) must not overwrite a newer one.
+    @ObservationIgnored private var countsRefreshGeneration = 0
+
+    /// The account the dock badge counts right now; nil = every account.
+    var dockBadgeAccount: String? {
+        DockBadge.account(for: Self.badgeScope, focused: activeAccountId)
+    }
+
+    /// Dock badge count and its scope. Recounts (`reloadThreads`,
+    /// `refreshBadge`) and local actions (`applyDockBadgeDelta`) all go
+    /// through it; only what it accepts is painted.
+    @ObservationIgnored private(set) var dockBadge = DockBadge.Counter()
+
+    /// Epoch and loaded flag of the per-account counts (see
+    /// `DockBadge.AccountCounts`). Not observed: it changes on every local
+    /// action, and only the counts below drive views.
+    @ObservationIgnored private var accountUnreadState = DockBadge.AccountCounts()
+
+    /// Unread per account for the avatar badges. Assigned only when it
+    /// changes: an Observation setter publishes even for an equal value.
+    private(set) var accountUnread: [String: Int] = [:]
+
+    /// Taken when a recount's read starts.
+    var accountUnreadEpoch: Int { accountUnreadState.epoch }
+
+    /// A database recount of the per-account counts.
+    func applyAccountUnreadRecount(_ counts: [String: Int], epoch: Int) {
+        guard accountUnreadState.applyRecount(counts, epoch: epoch) else { return }
+        publishAccountUnread()
+    }
+
+    /// The per-account change of one local action.
+    func applyAccountUnreadDelta(_ delta: [String: Int]) {
+        accountUnreadState.applyDelta(delta)
+        publishAccountUnread()
+    }
+
+    private func publishAccountUnread() {
+        let counts = accountUnreadState.counts
+        if counts != accountUnread { accountUnread = counts }
+    }
+
+    /// What macOS settings allow for the badge; shown in Settings.
+    private(set) var dockBadgeSystemStatus: DockBadge.SystemStatus = .unknown
+
+    /// Taken when a recount's read starts (see `DockBadge.Counter`).
+    func dockBadgeTicket(account: String?) -> DockBadge.Counter.Ticket {
+        dockBadge.ticket(account: account)
+    }
+
+    /// A database recount. Painted even when unchanged: a repaint is the
+    /// only retry if an earlier one was lost.
+    func applyDockBadgeRecount(_ count: Int, ticket: DockBadge.Counter.Ticket) {
+        guard dockBadge.applyRecount(count, ticket: ticket) else { return }
+        repaintDockBadge()
+    }
+
+    /// The summed delta of one local action (one or many threads).
+    func applyDockBadgeDelta(_ delta: Int) {
+        guard dockBadge.applyDelta(delta, account: dockBadgeAccount) else { return }
+        repaintDockBadge()
+    }
+
+    /// Paint the current count again (app activation, permission answered).
+    func repaintDockBadge() {
+        guard let count = dockBadge.count else { return }
+        Notifier.setBadge(count)
+    }
+
+    func refreshDockBadgeSystemStatus() {
+        Notifier.readBadgeStatus { [weak self] status in
+            guard let self, self.dockBadgeSystemStatus != status else { return }
+            self.dockBadgeSystemStatus = status
+        }
+    }
+
+    /// Sidebar counts + dock badge. Delegates to `SidebarCounts` (shared with
+    /// unit tests). Safe off MainActor.
+    ///
+    /// `hideCategories` is the inbox "do not contain" set so Updates/Forums
+    /// excluded from the list do not inflate the primary unread badge.
+    nonisolated static func fetchSidebarCounts(
+        db: Database,
+        activeAccount: String?,
+        badgeAccount: String?,
+        now: Date = Date(),
+        hideCategories: Set<String> = []
+    ) throws -> (counts: [String: Int], badge: Int) {
+        try SidebarCounts.fetch(db: db, activeAccount: activeAccount,
+                                badgeAccount: badgeAccount, now: now,
+                                hideCategories: hideCategories)
+    }
+
+    /// Inbox category hide used for the primary unread / dock badge.
+    /// Live chips when the user is on inbox (or a per-account inbox); otherwise
+    /// the persisted inbox pick so the badge still matches what Inbox shows.
+    var inboxBadgeHideCategories: Set<String> {
+        switch selectedView {
+        case .inbox, .account:
+            return chips.category.hide
+        default:
+            return FilterChips.initial(for: .inbox).category.hide
+        }
+    }
+
+    /// Full messages including bodies — used by compose / reply / forward.
+    func messages(inThread threadId: String) -> [Message] {
+        let fetched: [Message] = (try? db.read { db in
+            let headers = try Message
+                .filter(Column("threadId") == threadId)
+                .order(Column("date"))
+                .fetchAll(db)
+            return try Self.hydrateBodies(headers, db: db)
+        }) ?? []
+        return PendingDraftVisibility.visibleMessages(
+            fetched, suppressing: suppressedDraftMessageIds)
+    }
+
+    /// Headers + snippet only (empty body fields). Cheap open path for the
+    /// reading pane; hydrate bodies with `messageBody(id:)` on expand.
+    /// Quote-trail scans and HTML document assembly run inside the repository
+    /// actor so main-thread render only hands ready strings to WebKit.
+    func threadDetailPayload(threadId: String) async -> ThreadDetailLoad {
+        let suppressed = suppressedDraftMessageIds
+        let revision = contentRevisions.revision(of: threadId)
+        let fontScale = Self.readingPaneFontScale()
+        let load = await threadDetailRepository.payload(
+            threadId: threadId,
+            suppressingDrafts: suppressed,
+            revision: revision,
+            fontScale: fontScale)
+        payloadMirror.store(
+            load.payload, for: threadId,
+            revision: revision, current: contentRevisions.revision(of: threadId),
+            suppressing: suppressed)
+        return load
+    }
+
+    /// Payloads the repository already produced, held on the main actor.
+    ///
+    /// Sized for the neighbourhood the user is navigating: current, prev,
+    /// next, plus the one they just left (a `k` straight back).
+    private var payloadMirror = ThreadDetailMirror(capacity: 4)
+
+    /// System memory-pressure response (warning or critical), called from
+    /// the app delegate's dispatch source alongside the WebView pool drain.
+    /// Everything dropped here is a cache that refills on demand: the
+    /// reading-pane payloads (both the repository's LRU and this main-side
+    /// mirror) and SQLite's per-connection page caches, which on a large
+    /// SQLCipher mailbox are the biggest resident allocation after WebKit.
+    func releaseMemoryUnderPressure() {
+        payloadMirror.removeAll()
+        let repository = threadDetailRepository
+        Task { await repository.removeAll() }
+        // Never touch a pool that termination is closing. The "eventually"
+        // variant does not block the main thread waiting for busy readers.
+        guard !isShuttingDown else { return }
+        db.releaseMemoryEventually()
+    }
+
+    /// Synchronous reading-pane payload, or nil when the caller must await.
+    ///
+    /// The reading pane paints from this on the advance path. Going to the
+    /// repository instead costs a MainActor → actor → MainActor round-trip
+    /// whose return hop waits on the very SwiftUI work the delete just queued
+    /// — measured at 176–209 ms, and identical for cache hits and misses.
+    func warmThreadDetail(threadId: String) -> ThreadDetailPayload? {
+        payloadMirror.payload(
+            for: threadId,
+            revision: contentRevisions.revision(of: threadId),
+            suppressing: suppressedDraftMessageIds)
+    }
+
+    /// Keep a resolved `cid:` body with the cached payload of its thread, so
+    /// the next open of this conversation paints the images at once and
+    /// makes no attachment request. `revision` is the one captured when the
+    /// resolve started: a change that landed meanwhile (the resolver's own
+    /// re-fetch included) leaves no matching entry, so nothing is stored.
+    /// Both copies drop it with the payload; `CIDInlineCachePolicy` decides
+    /// what is worth keeping.
+    func rememberCIDInline(_ body: CIDInlinedBody, messageId: String,
+                           threadId: String, revision: ThreadContentRevision) {
+        let scale = Self.readingPaneFontScale()
+        payloadMirror.rememberCIDInline(
+            body, messageId: messageId, threadId: threadId, revision: revision,
+            fontScale: scale)
+        let repository = threadDetailRepository
+        Task {
+            await repository.rememberCIDInline(
+                body, messageId: messageId, threadId: threadId,
+                revision: revision, fontScale: scale)
+        }
+    }
+
+    /// Remember a body with remote images inlined on both payload copies.
+    func rememberRemoteInline(_ body: RemoteInlinedBody, messageId: String,
+                              threadId: String, revision: ThreadContentRevision) {
+        let scale = Self.readingPaneFontScale()
+        payloadMirror.rememberRemoteInline(
+            body, messageId: messageId, threadId: threadId, revision: revision,
+            fontScale: scale)
+        let repository = threadDetailRepository
+        Task {
+            await repository.rememberRemoteInline(
+                body, messageId: messageId, threadId: threadId,
+                revision: revision, fontScale: scale)
+        }
+    }
+
+    /// Off-main body hydration for an expanded reading-pane card, including
+    /// precomputed quote-trail + assembled HTML for the current font scale.
+    func messageBodyForReadingPane(id: String) async -> MessageBodyLoad? {
+        await threadDetailRepository.messageBody(
+            id: id, fontScale: Self.readingPaneFontScale())
+    }
+
+    func messageHeaders(inThread threadId: String) -> [Message] {
+        PerfMetrics.measure(.openHeaders) {
+            let fetched = (try? db.read { db in
+                try Message.fetchAll(
+                    db,
+                    sql: """
+                        SELECT id, accountId, gmailId, threadId, fromHeader, toHeader, ccHeader,
+                               bccHeader, subject, date, snippet,
+                               '' AS bodyText, NULL AS bodyHTML,
+                               messageIdHeader, referencesHeader, labelIds, isUnread, hasAttachment,
+                               senderAuth, replyToHeader
+                        FROM message
+                        WHERE threadId = ?
+                        ORDER BY date
+                        """,
+                    arguments: [threadId]
+                )
+            }) ?? []
+            return PendingDraftVisibility.visibleMessages(
+                fetched, suppressing: suppressedDraftMessageIds)
+        }
+    }
+
+    /// One message with full body fields (from `message_body` when present).
+    func messageBody(id: String) -> Message? {
+        PerfMetrics.measure(.openBody, meta: "single") {
+            (try? db.read { db -> Message? in
+                guard var msg = try Message.filter(Column("id") == id).fetchOne(db) else {
+                    return nil
+                }
+                if let body = try MessageBody.fetchOne(db, key: id) {
+                    msg.bodyText = body.bodyText
+                    msg.bodyHTML = body.bodyHTML
+                }
+                return msg
+            }) ?? nil
+        }
+    }
+
+    /// Load bodies for specific message ids, preserving the order of `ids`.
+    func messagesWithBodies(ids: [String]) -> [Message] {
+        guard !ids.isEmpty else { return [] }
+        return PerfMetrics.measure(.openBody, meta: "n=\(ids.count)") {
+            (try? db.read { db in
+                let fetched = try Message.filter(ids.contains(Column("id"))).fetchAll(db)
+                let hydrated = try Self.hydrateBodies(fetched, db: db)
+                let byId = Dictionary(uniqueKeysWithValues: hydrated.map { ($0.id, $0) })
+                return ids.compactMap { byId[$0] }
+            }) ?? []
+        }
+    }
+
+    nonisolated private static func hydrateBodies(_ messages: [Message], db: Database) throws -> [Message] {
+        guard !messages.isEmpty else { return [] }
+        let ids = messages.map(\.id)
+        let bodies = try MessageBody.filter(ids.contains(Column("messageId"))).fetchAll(db)
+        let byId = Dictionary(uniqueKeysWithValues: bodies.map { ($0.messageId, $0) })
+        return messages.map { msg in
+            var m = msg
+            if let b = byId[msg.id] {
+                m.bodyText = b.bodyText
+                m.bodyHTML = b.bodyHTML
+            }
+            return m
+        }
+    }
+
+    func attachments(for messageId: String) -> [AttachmentRow] {
+        (try? db.read {
+            try AttachmentRow.filter(Column("messageId") == messageId).fetchAll($0)
+        }) ?? []
+    }
+
+    // MARK: - Saved views
+
+    func saveView(_ view: SavedView) {
+        guard cacheAcceptsWrites() else { return }
+        var v = view
+        // If this is a lossless (chips-backed) view, fold any edits made to the
+        // ViewEditor's structured fields back into the JSON so chipsJSON stays
+        // authoritative and form edits still take effect.
+        if var chips = v.chipsJSON.flatMap({ try? JSONDecoder().decode(FilterChips.self, from: $0) }) {
+            chips.labelName = SavedViewFold.labelName(
+                current: chips.labelName, oldLabelId: chips.labelId, newLabelId: v.labelId)
+            chips.labelId = v.labelId
+            if v.unreadOnly { chips.read = .unread }
+            else if chips.unreadOnly { chips.read = .any }
+            chips.showArchived = v.showArchived
+            if v.hasAttachmentOnly { chips.attachments = .present }
+            else if chips.hasAttachmentOnly { chips.attachments = .any }
+            chips.senderContains = v.senderContains
+            // Both directions: the editor must be able to turn these OFF too.
+            let categories = SavedViewFold.categories(
+                show: chips.category.show, hide: chips.category.hide,
+                excludePromotions: v.excludePromotions, category: v.category)
+            chips.category.show = categories.show
+            chips.category.hide = categories.hide
+            v.chipsJSON = try? JSONEncoder().encode(chips)
+        }
+        try? db.write { db in
+            let toSave = v
+            try toSave.save(db)
+        }
+        reloadSavedViews()
+    }
+
+    /// "Split from Inbox": a new saved view holding all
+    /// mail whose From header matches `sender` (an address, or "@domain"),
+    /// then jump straight into it.
+    func splitFromInbox(matching sender: String, named name: String) {
+        var chips = FilterChips()
+        chips.fromEmailContains = sender
+        chips.showArchived = true   // the view is their full history, not inbox-only
+        var view = SavedView.empty()
+        view.name = name
+        view.showArchived = true    // saveView folds this back into the chips
+        view.chipsJSON = try? JSONEncoder().encode(chips)
+        saveView(view)
+        if let saved = savedViews.last(where: { $0.name == name }), let id = saved.id {
+            selectedView = .saved(id, name)
+        }
+        showNotice("New view: \(name)")
+    }
+
+    func deleteView(_ view: SavedView) {
+        guard let id = view.id, cacheAcceptsWrites() else { return }
+        try? db.write { db in _ = try SavedView.deleteOne(db, key: id) }
+        if case .saved(let selectedId, _) = selectedView, selectedId == id {
+            selectedView = .inbox
+        }
+        reloadSavedViews()
+    }
+
+
+    /// Interval the live timer was armed with, so a cadence change can be
+    /// detected without re-arming (and thereby restarting the countdown) on
+    /// every focus change.
+    @ObservationIgnored var syncTimerInterval: TimeInterval?
+    @ObservationIgnored var activityObservers: [NSObjectProtocol] = []
+    /// When a sync last began. Rate-limits the become-frontmost catch-up.
+    @ObservationIgnored var lastSyncAttemptedAt: Date?
+
+
+    /// In-flight `syncAll` only; tracked so termination can await pool access,
+    /// and consulted so a slow sync is not overlapped by the next timer fire.
+    @ObservationIgnored var syncTickTask: Task<Void, Never>?
+    /// Independent one-at-a-time guard for due reminders / snoozes / scheduled
+    /// sends. Kept separate from `syncTickTask` so a multi-minute initial
+    /// backfill cannot starve these cheap sweeps — they do not depend on
+    /// sync having completed.
+    @ObservationIgnored var dueSweepTask: Task<Void, Never>?
+
+    // MARK: - Keyboard shortcuts
+
+    /// Set only while `archiveOpenConversation(goToPrevious: true)` runs, so
+    /// the removal advance goes up (Gmail `[`) instead of down.
+    @ObservationIgnored var advancePrefersPrevious = false
+
+    /// The `g` / `*` sequence state and the key → action routing.
+    @ObservationIgnored private var keyRouter = ShortcutKeyRouter()
+
+    /// A `g` / `*` prefix is waiting for its second key. The key monitor
+    /// then sends the next key straight to `handleKey`, ahead of the fixed
+    /// Shift chords (`* u` typed with Shift still down must not mark unread).
+    var hasPendingShortcutPrefix: Bool { keyRouter.hasPendingPrefix() }
+
+    /// Set by ContentView: runs the commands whose effect depends on what
+    /// the window shows (`open`, `backToList`, `[` / `]`, `n` / `p`, `;` / `:`).
+    @ObservationIgnored var viewCommandHandler: ((ShortcutCommand) -> Void)?
+
+    /// `n` / `p` / `;` / `:` for the open conversation. ThreadDetailView acts
+    /// on each new request (a fresh id, so the same key twice runs twice).
+    struct ConversationKeyRequest: Equatable {
+        let id = UUID()
+        let threadId: String
+        let action: MessageNavigation.Action
+    }
+    private(set) var conversationKeyRequest: ConversationKeyRequest?
+    func requestConversationKey(_ action: MessageNavigation.Action) {
+        guard let threadId = openedThreadId else { return }
+        conversationKeyRequest = .init(threadId: threadId, action: action)
+    }
+
+    /// Returns true if the key was handled. Gmail-style single keys,
+    /// including the `g` then … (go to) and `*` then … (select) sequences.
+    func handleKey(_ chars: String) -> Bool {
+        let bindings = keyBindings
+        switch keyRouter.route(chars, command: { bindings.command(for: $0) }) {
+        case .armed, .swallowed:
+            return true
+        case .goTo(let view):
+            goTo(view)
+            return true
+        case .select(let selection):
+            checkVisibleThreads(selection)
+            return true
+        case .help:
+            showShortcutsHelp.toggle()
+            return true
+        case .command(let command):
+            perform(command)
+            return true
+        case .unhandled:
+            return false
+        }
+    }
+
+    /// Runs a rebindable single-key command. Kept separate from handleKey so
+    /// the key→command mapping is the only thing the registry owns.
+    func perform(_ command: ShortcutCommand) {
+        switch command {
+        case .archive:
+            if !checkedThreadIds.isEmpty { archiveChecked() }
+            else { selectedThread.map(archive) }
+        case .trash:
+            if !checkedThreadIds.isEmpty { trashChecked() }
+            else { selectedThread.map(trash) }
+        case .toggleStar:
+            if !checkedThreadIds.isEmpty { toggleStarChecked() }
+            else { selectedThread.map(toggleStar) }
+        case .toggleRead:
+            if !checkedThreadIds.isEmpty { toggleReadChecked() }
+            else if let t = selectedThread { setRead(t, read: t.isUnread) }
+        case .snooze:
+            if !checkedThreadIds.isEmpty { mailboxOverlay = .snoozeChecked }
+            else if let t = selectedThread { mailboxOverlay = .snoozeThread(t) }
+        case .markSpam:
+            if !checkedThreadIds.isEmpty { markSpamChecked() }
+            else if let t = selectedThread {
+                if t.inSpam { markNotSpam(t) } else { markSpam(t) }
+            }
+        case .next: moveSelection(1)
+        case .prev: moveSelection(-1)
+        case .toggleCheck: toggleCheckSelected()
+        case .reply: if let t = selectedThread,
+                        let msg = newestSentMessage(inThread: t.id) {
+                         openCompose(ComposeRequest(replyTo: msg))
+                     }
+        case .replyAll: if let t = selectedThread,
+                           let msg = newestSentMessage(inThread: t.id) {
+                            openCompose(ComposeRequest(replyTo: msg, replyAll: true))
+                        }
+        case .forward: if let t = selectedThread,
+                          let msg = newestSentMessage(inThread: t.id) {
+                           // Gmail `f`: forward the newest *sent* message only.
+                           // Use the thread ⋮ menu for "Forward all".
+                           openCompose(ComposeRequest(
+                               replyTo: msg, forward: true))
+                       }
+        case .label: if selectedThread != nil { openLabelPicker() }
+        case .undo: if let undo = undoAction { undo.undo() }
+        case .compose: openCompose(ComposeRequest(replyTo: nil))
+        case .mute: toggleMuteTargets()
+        case .markImportant: setImportantTargets(true)
+        case .markNotImportant: setImportantTargets(false)
+        case .moveTo: openMovePicker()
+        case .open, .backToList, .archiveNext, .archivePrevious,
+             .nextMessage, .previousMessage, .expandAll, .collapseAll:
+            viewCommandHandler?(command)
+        }
+    }
+
+    /// Gmail's `/`: move keyboard focus into the sidebar search field. Bumps a
+    /// token instead of holding focus state directly so a repeated `/` (after
+    /// the user clicked away) re-focuses.
+    func focusSearch() {
+        searchFocusToken &+= 1
+    }
+
+    // MARK: - Labels on threads
+
+    /// User labels available for a thread's account.
+    func userLabels(forAccount accountId: String) -> [LabelRow] {
+        labelsByAccount[accountId] ?? []
+    }
+
+    /// The picker's filtered list for a thread — shared by LabelPicker (rows)
+    /// and the window key monitor (space-to-toggle), so both always agree on
+    /// which label is highlighted. Matching is per whitespace token, using
+    /// locale-aware case/diacritic-insensitive comparison.
+    func labelPickerLabels(for thread: MailThread) -> [LabelRow] {
+        userLabels(forAccount: thread.accountId)
+            .filter { LabelSearch.matches($0.name, query: labelPicker.query) }
+    }
+
+    /// The "Create <query>" row's label name: the trimmed query, when it
+    /// wouldn't duplicate an existing label on the thread's account.
+    func labelPickerCreateName(for thread: MailThread) -> String? {
+        let name = labelPicker.query.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        let exists = userLabels(forAccount: thread.accountId)
+            .contains { $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+        return exists ? nil : name
+    }
+
+    /// Creates the label on the thread's account, then applies it. The new
+    /// label lands highlighted in the (re-emptied) picker list so the applied
+    /// checkmark is visible.
+    func createLabelAndApply(name: String, thread: MailThread) {
+        guard !demoMode else {
+            showNotice("Creating labels is disabled in the demo inbox")
+            return
+        }
+        let accountId = thread.accountId
+        let client = client(for: accountId)
+        // Move mode acts on the picker's targets as they were when the label
+        // was asked for, and only while that same picker is still open.
+        let mode = labelPicker.mode
+        let session = labelPicker.session
+        let moveIds = labelPicker.moveTargetIds
+        Task {
+            do {
+                let l = try await client.createLabel(name: name)
+                await MainActor.run {
+                    try? self.db.write { db in
+                        try LabelRow.created(l, accountId: accountId).save(db)
+                    }
+                    self.reloadAccounts()
+                    self.labelPicker.query = ""
+                    if let idx = self.userLabels(forAccount: accountId)
+                        .firstIndex(where: { $0.gmailLabelId == l.id }) {
+                        self.labelPicker.highlight = idx
+                    }
+                    switch mode {
+                    case .label: self.toggleLabel(thread, labelId: l.id)
+                    case .move:
+                        guard MovePickerRules.appliesCreatedLabel(
+                            pickerOpen: self.showLabelPicker,
+                            moveMode: self.labelPicker.mode == .move,
+                            currentSession: self.labelPicker.session,
+                            requestSession: session) else { return }
+                        self.moveThreads(ids: moveIds, toLabel: l.id, accountId: accountId)
+                    }
+                }
+            } catch {
+                await MainActor.run { self.lastError = error.localizedDescription }
+            }
+        }
+    }
+
+    /// When the query matches a label that only exists on a *different*
+    /// account, name it so the miss isn't silent (labels apply per account).
+    func labelPickerOtherAccountMatch(excluding accountId: String) -> LabelRow? {
+        guard !labelPicker.query.trimmingCharacters(in: .whitespaces).isEmpty,
+              accounts.count > 1 else { return nil }
+        let localNames = Set(userLabels(forAccount: accountId).map { $0.name.lowercased() })
+        return labelsByAccount
+            .filter { $0.key != accountId }
+            .values.flatMap { $0 }
+            .first { label in
+                !localNames.contains(label.name.lowercased())
+                    && LabelSearch.matches(label.name, query: labelPicker.query)
+            }
+    }
+
+    /// Rebuilds `labelsById` / `labelsByName` from `labelsByAccount`. Driven
+    /// by that property's `didSet`, so the indexes cannot drift from it.
+    private func rebuildLabelIndexes() {
+        var byId: [String: [String: LabelRow]] = [:]
+        var byName: [String: [String: LabelRow]] = [:]
+        for (accountId, rows) in labelsByAccount {
+            var ids: [String: LabelRow] = [:]
+            var names: [String: LabelRow] = [:]
+            ids.reserveCapacity(rows.count)
+            names.reserveCapacity(rows.count)
+            for row in rows {
+                ids[row.gmailLabelId] = row
+                // Ties keep the first in the account's sort order, matching
+                // the `first { … }` scans this replaced.
+                if names[row.name] == nil { names[row.name] = row }
+            }
+            byId[accountId] = ids
+            byName[accountId] = names
+        }
+        labelsById = byId
+        labelsByName = byName
+        labelTrees = labelsByAccount.mapValues(SidebarLabelTree.build)
+    }
+
+    func labelName(_ labelId: String, account accountId: String) -> String? {
+        labelsById[accountId]?[labelId]?.name
+    }
+
+    /// Name and display colors for a label in a single lookup — what a
+    /// thread row needs for each of its chips.
+    func labelChip(_ labelId: String, account accountId: String) -> ThreadRowLabelChip? {
+        guard let row = labelsById[accountId]?[labelId] else { return nil }
+        return ThreadRowLabelChip(name: row.name, colors: row.displayColors)
+    }
+
+    /// Display colors for a label within an account: the user's local pick,
+    /// else Gmail's label colors; `.none` (neutral grey) when it has neither.
+    /// Scoped by account so two accounts' same-named labels can differ.
+    func labelColors(_ name: String, account accountId: String) -> LabelColors {
+        labelsByName[accountId]?[name]?.displayColors ?? .none
+    }
+
+    /// Colors for a label filter that isn't scoped to one account (the Labels
+    /// chip in unified mode): any account's label with that name.
+    func labelColors(anyAccount name: String) -> LabelColors {
+        labelsByAccount.values.lazy.flatMap { $0 }.first { $0.name == name }?.displayColors ?? .none
+    }
+
+    /// Sets (or clears, with nil) a label's local color pick. Clearing it
+    /// shows Gmail's own label color again.
+    func setLabelColor(_ label: LabelRow, hex: String?) {
+        // Only the one column: the row passed in may be older than the
+        // stored one (a sync may have renamed it or changed Gmail's colors).
+        try? db.write { db in
+            try db.execute(sql: "UPDATE label SET color = ? WHERE id = ?",
+                           arguments: [hex, label.id])
+        }
+        reloadAccounts()
+    }
+
+    /// Sets (or removes, with nil) a user label's color on Gmail, so it
+    /// shows on the web and the phone too. Shown at once; put back if
+    /// Gmail refuses. A Mac-only color, when set, still wins on display.
+    func setGmailLabelColor(_ label: LabelRow, to color: GmailLabelColor?) {
+        guard !demoMode else {
+            showNotice("Changing label colors on Gmail is disabled in the demo inbox")
+            return
+        }
+        guard label.type == "user", !gmailLabelColorSaving.contains(label.id) else { return }
+        let client = client(for: label.accountId)
+        let pool = db
+        let id = label.id
+        let accountId = label.accountId
+        gmailLabelColorSaving.insert(id)
+        Task { @MainActor [weak self] in
+            var failure: Error?
+            do {
+                try await GmailLabelColorEdit.apply(color, labelRowId: id, db: pool,
+                                                    didStore: { self?.reloadAccounts() }) { labelId, color in
+                    try await client.patchLabelColor(id: labelId, color: color)
+                }
+            } catch {
+                failure = error
+            }
+            guard let self else { return }
+            self.gmailLabelColorSaving.remove(id)
+            self.reloadAccounts()
+            switch GmailLabelColorEdit.outcome(failure, accountKnown: self.isKnownAccount(accountId)) {
+            case .saved, .silent:
+                break
+            case .reauthorize:
+                self.requireReauthorization(for: accountId, interactive: true)
+            case .banner(let message):
+                self.lastError = message
+            }
+        }
+    }
+
+    /// Persists a drag-reorder of the account rail. The unified "all
+    /// inboxes" entry isn't part of `accounts` (it's a synthetic nil-account
+    /// row rendered separately in ContentView), so it's never touched here.
+    func reorderAccounts(from source: IndexSet, to destination: Int) {
+        let ids = AccountOrder.moved(accounts.map(\.id), from: source, to: destination)
+        UserDefaults.standard.set(ids, forKey: Self.accountOrderDefaultsKey)
+        let byId = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+        accounts = ids.compactMap { byId[$0] }
+    }
+
+    /// Persists a drag-reorder of one account's labels from the organizer.
+    func reorderLabels(account accountId: String, from source: IndexSet, to destination: Int) {
+        var labels = labelsByAccount[accountId] ?? []
+        labels.move(fromOffsets: source, toOffset: destination)
+        try? db.write { db in
+            for (idx, var row) in labels.enumerated() {
+                row.sortOrder = idx
+                try row.save(db)
+            }
+        }
+        reloadAccounts()
+    }
+
+    func toggleLabel(_ thread: MailThread, labelId: String) {
+        let has = thread.labels.contains(labelId)
+        mutateThread(thread, remote: .modify(add: has ? [] : [labelId],
+                                             remove: has ? [labelId] : [])) { t in
+            // applyLabelMutation seeds INBOX/STARRED from denorm flags and only
+            // rewrites tab categories when CATEGORY_* is the toggled id — so
+            // flipping a user label cannot re-hide a Primary thread under
+            // Promotions via the historical labelIds union.
+            if has {
+                t.applyLabelMutation(remove: [labelId])
+            } else {
+                t.applyLabelMutation(add: [labelId])
+            }
+        }
+    }
+
+    /// Superhuman-style default: whenever nothing is selected, highlight the
+    /// top visible row (without opening it) so ↩ opens it immediately.
+    /// `displayOrder` can be stale while the list is unmounted (thread focus)
+    /// — only trust it when the row is still listed. Routed through the
+    /// selection gateway with `.quiet` so the UI never opens it.
+    func autoSelectTopThread() {
+        guard selectedThreadId == nil,
+              let first = displayOrder.first,
+              threads.contains(where: { $0.id == first }) else { return }
+        selectThread(first, intent: .quiet)
+    }
+
+    /// Bumped when a click lands on the already-selected row. List(selection:)
+    /// fires no onChange then — and with the top row pre-highlighted, the very
+    /// first click in a mailbox is exactly that case — so ContentView listens
+    /// to this token and opens the selected conversation explicitly.
+    private(set) var openSelectedToken = 0
+    func requestOpenSelected() { openSelectedToken &+= 1 }
+
+    /// Thread ids in the order the list actually displays them (priority
+    /// section first, then grouped) — kept in sync by ThreadListView so
+    /// keyboard navigation matches what's on screen.
+    private(set) var displayOrder: [String] = []
+    /// Ids currently shown in the Priority section (inbox only). Used so
+    /// unstar can auto-advance within the section before the row re-partitions
+    /// into date groups. Empty when Priority is off or not on inbox.
+    private(set) var prioritySectionIds: [String] = []
+    /// O(1) id→row for `moveSelection` (the key-repeat hot path). Rebuilt with
+    /// displayOrder. Shift-click range select still scans linearly — it's cold.
+    private var displayOrderIndex: [String: Int] = [:]
+    /// Pre-star Down/Up neighbors after starring into Priority. Survives the
+    /// re-partition (`updateDisplayOrder`); consumed on the next ±1 move while
+    /// focus is still the starred thread. Cleared on other moves, view change,
+    /// reload, or lazy validation when selection drifts. See `StarNavAnchor`.
+    var starNavAnchor: StarNavAnchor.Anchor?
+    /// One-shot row id to pin the list viewport on after star re-partitions
+    /// the selected row into Priority. Pre-star neighbor that stays put
+    /// (`nextId ?? prevId`). Cleared with `starNavAnchor` and when the list
+    /// view consumes it. See `StarNavAnchor.holdId` / `shouldRestoreScrollHold`.
+    var starScrollHoldId: String?
+
+    /// Called by ThreadListView after regrouping. Rebuilds the index map so
+    /// key-repeat does not scan the array on every step.
+    /// Does not clear `starNavAnchor` — the re-partition is what the anchor
+    /// exists to survive.
+    ///
+    /// Only writes what changed: ThreadListView calls this from every layout
+    /// pass, and an unconditional write would publish `displayOrder` (and
+    /// rebuild the index map) even when regrouping produced the same order.
+    func updateDisplayOrder(_ order: [String],
+                            prioritySectionIds: [String] = []) {
+        if order != displayOrder {
+            displayOrder = order
+            displayOrderIndex = ThreadListNavigation.indexMap(for: order)
+        }
+        if prioritySectionIds != self.prioritySectionIds {
+            self.prioritySectionIds = prioritySectionIds
+        }
+    }
+
+    /// Take the pending star-scroll hold (if any). One-shot: clears store
+    /// state so the list view never mutates it ad hoc.
+    func consumeStarScrollHold() -> String? {
+        let id = starScrollHoldId
+        starScrollHoldId = nil
+        return id
+    }
+
+    /// Single selection gateway. Auto-advance changes opened content before
+    /// the removed row leaves `threads`, so the reading pane never renders an
+    /// empty intermediate state.
+    func selectThread(_ id: String?, intent: ThreadSelectionIntent) {
+        UITestBreadcrumbs.record(
+            "selectThread(\(id ?? "nil"), intent=\(intent.rawValue))")
+        let interval = PerfMetrics.begin(
+            .selectionFocus,
+            meta: "intent=\(intent.rawValue)")
+        if intent.opensDetailImmediately {
+            openDetail(id)
+        } else if NeighborPrefetch.warmsOnSelection(intent) {
+            // Warm the highlighted row and prev/next while the user is still
+            // browsing (or before the first open, for the auto-highlighted
+            // top row) so the eventual open lands on a cached payload. Same
+            // 90 ms cancel-on-next timer as openDetail — holding j/k does not
+            // thrash the DB.
+            scheduleNeighborPrefetch(openedId: id)
+        }
+        setSelectionFocus(id, intent: intent)
+        // Any non-shift-arrow selection change ends the shift+arrow gesture;
+        // extendSelection re-arms the anchor right after this call.
+        shiftSelectAnchorId = nil
+        interval.end(extraMeta: id == nil ? "cleared" : "selected")
+    }
+
+    /// Home/End and ⌘↑/⌘↓: jump list focus to the first or last loaded
+    /// conversation. Only ids already in the list — never pages more in.
+    func jumpSelection(toEnd: Bool) {
+        let order = selectionOrder
+        guard let target = toEnd ? order.last : order.first else { return }
+        selectThread(target, intent: .browse)
+    }
+
+    /// Shift+↑/↓: extend the multi-select checked range from the sticky
+    /// gesture anchor (Gmail/Finder-style), moving list focus with it.
+    func extendSelection(_ delta: Int) {
+        guard let result = ShiftArrowSelection.extend(
+            order: selectionOrder, checked: checkedThreadIds,
+            anchor: shiftSelectAnchorId, focus: selectedThreadId,
+            delta: delta) else { return }
+        checkedThreadIds = result.checked
+        // Keep shift-click continuity: the next shift-click ranges from the
+        // row this gesture ended on.
+        lastCheckedThreadId = result.focusId
+        selectThread(result.focusId, intent: .browse)
+        shiftSelectAnchorId = result.anchorId
+        applyThreadLongStarPinDrops(selectionIntent: nil)
+    }
+
+    func setSelectionFocus(_ id: String?, intent: ThreadSelectionIntent) {
+        if selectedThreadId == id {
+            // No SwiftUI onChange will consume this one-shot intent.
+            pendingSelectionIntent = nil
+        } else {
+            pendingSelectionIntent = intent
+            selectedThreadId = id
+        }
+    }
+
+    /// Every selection write records its intent in `setSelectionFocus` just
+    /// before `listFocus.id` changes, so a consume that finds nothing pending
+    /// is a spurious or coalesced extra onChange fire — not a user action.
+    /// Defaulting those to `.click` fabricated opens: on a compact-width
+    /// window, switching mailboxes opened the top conversation and replaced
+    /// the list (CI's 1000pt window hit this on every run — issue #3). A
+    /// real click whose intent was somehow already consumed still opens via
+    /// the same-row `openSelectedToken` path on the next click.
+    func consumeSelectionIntent() -> ThreadSelectionIntent {
+        defer { pendingSelectionIntent = nil }
+        return pendingSelectionIntent ?? .quiet
+    }
+
+    /// Mount detail content and schedule useful neighbor payloads. Public to
+    /// ContentView only for the settled end of a browse debounce.
+    func openDetail(_ id: String?) {
+        UITestBreadcrumbs.record(
+            "openDetail(\(id ?? "nil")) opened=\(openedThreadId ?? "nil")")
+        guard openedThreadId != id else { return }
+        PerfMetrics.measure(.navDetailOpen, meta: id == nil ? "close" : "open") {
+            openedThreadId = id
+            noteCachedImagesShown(threadId: id)
+            scheduleNeighborPrefetch(openedId: id)
+        }
+    }
+
+    /// The pane is about to show this conversation from its warmed payload:
+    /// mark the cached images it carries as used (least-recently-used
+    /// order). A cold open marks them in `inlineCIDImages` instead; the
+    /// prefetch never marks anything. At most one write a day per message.
+    private func noteCachedImagesShown(threadId: String?) {
+        guard let threadId, let store = inlineImageStore,
+              let warm = payloadMirror.payload(
+                  for: threadId,
+                  revision: contentRevisions.revision(of: threadId),
+                  suppressing: suppressedDraftMessageIds),
+              !warm.cidInlineByMessageId.isEmpty else { return }
+        let ids = Array(warm.cidInlineByMessageId.keys)
+        Task { await store.noteUsed(ids) }
+    }
+
+    /// The remote-image counterpart of `noteCachedImagesShown`, called by
+    /// the pane when a card shows a body whose remote images came from the
+    /// cache (a warmed payload). At most one write a day per message.
+    func noteCachedRemoteImagesShown(messageIds: [String]) {
+        guard let store = remoteImageStore, !messageIds.isEmpty else { return }
+        Task { await store.noteUsed(messageIds) }
+    }
+
+    /// Message ids of `payload` whose open would load remote images under
+    /// the current policy, without any click (the prefetch builds cached
+    /// bodies for these only; Spam never qualifies).
+    func remoteImageAutoLoadIds(in payload: ThreadDetailPayload, threadId: String) -> Set<String> {
+        let policy = RemoteImagePolicy.stored()
+        let vips = vipEmails
+        let inSpam = thread(withId: threadId)?.inSpam ?? false
+        return Set(payload.messages.filter {
+            RemoteImagePolicy.autoLoads(message: $0, threadInSpam: inSpam,
+                                        policy: policy, vipEmails: vips)
+        }.map(\.id))
+    }
+
+    func clearSelection() {
+        selectThread(nil, intent: .explicitOpen)
+    }
+
+    func moveSelection(_ delta: Int, intent: ThreadSelectionIntent = .browse) {
+        PerfMetrics.measure(.navFocus, meta: "δ=\(delta)") {
+            // After starring into Priority, prefer the pre-star list neighbor
+            // over the new Priority-section neighbor. One-shot: clear always.
+            if let anchor = starNavAnchor {
+                starNavAnchor = nil
+                // Viewport hold is independent of keyboard consume; drop it
+                // here so a later regroup cannot re-scroll after the user moves.
+                starScrollHoldId = nil
+                if let target = StarNavAnchor.targetId(in: anchor, delta: delta) {
+                    let order = displayOrder.isEmpty
+                        ? threads.map(\.id) : displayOrder
+                    let targetPresent: Bool = {
+                        if !displayOrder.isEmpty {
+                            return displayOrderIndex[target] != nil
+                        }
+                        return order.contains(target)
+                    }()
+                    if StarNavAnchor.applies(
+                        currentSelectedId: selectedThreadId,
+                        anchorFromId: anchor.fromId,
+                        delta: delta,
+                        targetPresent: targetPresent
+                    ) {
+                        selectThread(target, intent: intent)
+                        return
+                    }
+                }
+            }
+            let order = displayOrder.isEmpty ? threads.map(\.id) : displayOrder
+            let index = displayOrder.isEmpty ? [:] : displayOrderIndex
+            guard let next = ThreadListNavigation.move(
+                selected: selectedThreadId, delta: delta,
+                order: order, indexById: index) else { return }
+            selectThread(next, intent: intent)
+        }
+    }
+
+    /// Cache real reading-pane payloads for the focus row's neighbors.
+    /// Armed from both `openDetail` and browse-intent focus moves so prev/next
+    /// are warm before the user lands. The short delay + cancel-on-next keeps
+    /// held key-repeat from thrashing the repository.
+    private func scheduleNeighborPrefetch(openedId: String?) {
+        guard !isShuttingDown else { return }
+        neighborPrefetchTask?.cancel()
+        let order = displayOrder.isEmpty ? threads.map(\.id) : displayOrder
+        let repository = threadDetailRepository
+        let suppressed = suppressedDraftMessageIds
+        let fontScale = Self.readingPaneFontScale()
+        // Stamp each neighbour with its own revision now. A sync landing
+        // during the settle can only make this payload miss later — it can
+        // never install content the newer revision should have invalidated.
+        let targets = NeighborPrefetch.targets(
+            selected: openedId, openedId: openedThreadId, in: order
+        ).map {
+            (id: $0, revision: contentRevisions.revision(of: $0))
+        }
+        neighborPrefetchTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 90_000_000)
+            } catch {
+                return
+            }
+            for target in targets {
+                guard !Task.isCancelled else { return }
+                let load = await repository.payload(
+                    threadId: target.id, suppressingDrafts: suppressed,
+                    revision: target.revision,
+                    fontScale: fontScale)
+                guard !Task.isCancelled else { return }
+                // Images resolved before (this run or an earlier one) from
+                // the encrypted local cache, never from Gmail: the warmed
+                // conversation paints them in its first frame.
+                let images = await repository.warmCachedCIDBodies(
+                    threadId: target.id, revision: target.revision,
+                    fontScale: fontScale)
+                guard !Task.isCancelled, let self else { return }
+                var payload = load.payload
+                for (id, body) in images
+                where payload.messages.contains(where: { $0.id == id }) {
+                    payload.cidInlineByMessageId[id] = body
+                }
+                // Remote images likewise, from the encrypted cache only and
+                // only for messages whose open would load them anyway: no
+                // request to any sender for mail that is not open.
+                let allowed = self.remoteImageAutoLoadIds(in: payload, threadId: target.id)
+                let remote = await repository.warmCachedRemoteBodies(
+                    threadId: target.id, revision: target.revision,
+                    fontScale: fontScale, allowedMessageIds: allowed)
+                guard !Task.isCancelled else { return }
+                for (id, body) in remote
+                where payload.messages.contains(where: { $0.id == id }) {
+                    payload.remoteInlineByMessageId[id] = body
+                }
+                // Mirror onto the main actor. This is what makes the landing
+                // synchronous: without it the warmed payload still costs an
+                // actor round-trip at exactly the moment MainActor is busiest.
+                self.payloadMirror.store(
+                    payload, for: target.id,
+                    revision: target.revision,
+                    current: self.contentRevisions.revision(of: target.id),
+                    suppressing: suppressed)
+            }
+        }
+    }
+
+    /// `AppStorage("fontScale")` default is 1.0; UserDefaults yields 0 when unset.
+    nonisolated static func readingPaneFontScale() -> Double {
+        let stored = UserDefaults.standard.double(forKey: "fontScale")
+        return stored == 0 ? 1.0 : stored
+    }
+
+    static func snoozeDate(hour: Int, addDays: Int = 0) -> Date {
+        let cal = Calendar.current
+        let base = cal.date(byAdding: .day, value: addDays, to: Date())!
+        return cal.date(bySettingHour: hour, minute: 0, second: 0, of: base)!
+    }
+
+    /// When true, `mutateThread` skips `reloadThreads` so bulk loops can
+    /// apply many optimistic updates and reload once at the end.
+    var suppressThreadReload = false
+
+    struct SendWindow {
+        let message: PendingSend
+        let undo: UndoAction
+        let timer: Timer
+    }
+    var sendWindow: SendWindow?
+    var pendingSend: PendingSend? { sendWindow?.message }
+    static let undoSendWindow = ComposeDrafts.undoSendWindow
+    var scheduledSends: [ScheduledSend] = []
+    @ObservationIgnored
+    var scheduledSendTimer: Timer?
+    /// Due rows the last sweep had to keep, by row id (see
+    /// `ScheduledSendPolicy`). Observed: the Scheduled list labels rows
+    /// from it. In memory only — the first sweep after launch rebuilds it.
+    var scheduledSendHolds: [Int64: ScheduledSendPolicy.HoldState] = [:]
+    /// Row the due-sweep is sending right now.
+    @ObservationIgnored
+    var scheduledSendInFlightRowId: Int64?
+
+
+    // MARK: - Calendar invite RSVP
+
+    /// Send an iTIP METHOD:REPLY for a calendar invite attachment and
+    /// remember the local RSVP state. Mirrors Gmail's Accept /
+    /// Decline / Maybe without requiring a Calendar OAuth scope.
+    /// Returns whether the reply went out (or was queued to go out).
+    @discardableResult
+    func rsvpToInvite(_ invite: CalendarInvite,
+                      status: CalendarInvite.RSVP,
+                      message: Message) async -> Bool {
+        guard !demoMode else {
+            showNotice("RSVP is disabled in the demo inbox")
+            return false
+        }
+        // The card offers the buttons only then; checked again here because
+        // the To below comes from the untrusted ICS.
+        guard invite.isActionable else {
+            lastError = "This invite can't be answered."
+            return false
+        }
+        // Prefer a send-as address listed as ATTENDEE on the invite (the
+        // address the organizer's calendar already knows), then fall back to
+        // a To/Cc match, then the mailbox primary.
+        let identity = rsvpIdentity(for: message, invite: invite)
+        let fromEmail = identity.email
+        let displayName = identity.displayName
+        let organizer = invite.organizerEmail
+        let attachment = invite.replyAttachment(
+            status: status, attendeeEmail: fromEmail, attendeeName: displayName)
+        let subject = invite.replySubject(status: status)
+        let body = invite.replyBody(status: status, responderName: displayName.isEmpty
+                                    ? fromEmail : displayName)
+        do {
+            // Thread the RSVP into the invite conversation (Gmail does this).
+            try await send(
+                from: message.accountId,
+                fromEmail: fromEmail,
+                to: organizer,
+                cc: "",
+                subject: subject,
+                body: body,
+                replyTo: message,
+                attachments: [attachment]
+            )
+            // The reply went out; failing to remember it only leaves the
+            // buttons unselected.
+            let accountId = message.accountId, messageId = message.id
+            _ = try? await db.write { db in
+                try CalendarRSVPStore.record(
+                    db, status: status, invite: invite,
+                    accountId: accountId, messageId: messageId)
+            }
+            showNotice("\(status.subjectPrefix) — reply sent to \(organizer)")
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// The answers already sent for `invites` (see `CalendarRSVPStore.current`),
+    /// by `CalendarInvite.rsvpDefaultsKey`.
+    func storedRSVPs(for invites: [CalendarInvite],
+                     accountId: String) async -> [String: CalendarInvite.RSVP] {
+        let found = try? await db.read { db in
+            var map: [String: CalendarInvite.RSVP] = [:]
+            for invite in invites {
+                if let status = try CalendarRSVPStore.current(
+                    db, invite: invite, accountId: accountId) {
+                    map[CalendarInvite.rsvpDefaultsKey(
+                        accountId: accountId, uid: invite.uid,
+                        recurrenceIdLine: invite.recurrenceIdLine)] = status
+                }
+            }
+            return map
+        }
+        return found ?? [:]
+    }
+
+    /// Identity used on the RSVP (also shown on the invite card). Order:
+    /// 1. a send-as listed in the invite's ATTENDEE lines *and* on the
+    ///    message's Delivered-To / To / Cc (the ATTENDEE list alone is the
+    ///    ICS author's choice, so it can't pick which alias answers),
+    /// 2. the send-as the message was delivered to, then one on To / Cc,
+    /// 3. mailbox primary.
+    func rsvpIdentity(
+        for message: Message, invite: CalendarInvite
+    ) -> (email: String, displayName: String) {
+        let candidates = fromIdentities(forMailbox: message.accountId)
+        let attendeeSet = Set(invite.attendeeEmails.map { $0.lowercased() })
+        func emails(_ header: String) -> Set<String> {
+            var set = Set<String>()
+            for addr in MessageParser.splitAddresses(header) {
+                let e = MessageParser.emailAddress(addr).lowercased()
+                if !e.isEmpty { set.insert(e) }
+            }
+            return set
+        }
+        let delivered = emails(message.deliveredTo ?? "")
+        let headerEmails = delivered
+            .union(emails(message.toHeader))
+            .union(emails(message.ccHeader))
+        if let match = candidates.first(where: {
+            let e = $0.email.lowercased()
+            return attendeeSet.contains(e) && headerEmails.contains(e)
+        }) {
+            return (match.email, match.displayName)
+        }
+        if let match = candidates.first(where: { delivered.contains($0.email.lowercased()) })
+            ?? candidates.first(where: { headerEmails.contains($0.email.lowercased()) }) {
+            return (match.email, match.displayName)
+        }
+        if let primary = candidates.first(where: \.isPrimary) ?? candidates.first {
+            return (primary.email, primary.displayName)
+        }
+        return (message.accountId, accounts.first { $0.id == message.accountId }?.senderName ?? "")
+    }
+
+    // MARK: - Attachments
+
+    /// Downloads a message's attachments as sendable MIME parts — used to
+    /// carry the original files along on a forward, like Gmail does.
+    func loadAttachments(for message: Message) async throws -> [MIMEBuilder.Attachment] {
+        var out: [MIMEBuilder.Attachment] = []
+        for att in attachments(for: message.id) {
+            let data = try await downloadAttachment(att, message: message)
+            out.append(.init(filename: MessageParser.safeFilename(att.filename),
+                             mimeType: att.mimeType, data: data))
+        }
+        return out
+    }
+
+    /// Result of resolving `cid:` images for one reading-pane card.
+    struct CIDInlineResult: Sendable {
+        /// HTML with matched `cid:` rewritten to `data:` URIs. Session-only —
+        /// not written back to `message_body`, which would bloat SQLCipher.
+        /// (The one persisted exception: parse-time inlining of small
+        /// wire-borne blobs that have no attachmentId and so can't be fetched
+        /// later; see `CIDImageInliner.maxPersistedBlobBytes`.)
+        let html: String
+        /// Attachment rows after a possible full re-fetch (may gain `contentId`).
+        let attachments: [AttachmentRow]
+        /// True when the message was re-fetched from Gmail to recover Content-IDs
+        /// missing from a pre-v28 sync.
+        let didRefetch: Bool
+        /// Parsed message when re-fetched (body may already include parse-time
+        /// inlines); nil when only attachment downloads were needed.
+        let refreshedMessage: Message?
+    }
+
+    /// Rewrite HTML `cid:` images to `data:` URIs using attachment bytes.
+    ///
+    /// Local / not a tracking-pixel opt-in: Content-ID parts already arrived with
+    /// the message. When cached attachments lack `contentId` (synced before v28)
+    /// but the body still references `cid:`, re-fetches the full Gmail payload
+    /// once so Content-IDs land and the next open works offline for metadata.
+    func inlineCIDImages(message: Message, attachments: [AttachmentRow],
+                         html: String) async -> CIDInlineResult? {
+        guard CIDImageInliner.containsCIDReferences(html) else { return nil }
+        let refs = CIDImageInliner.referencedIDs(in: html)
+        guard !refs.isEmpty else { return nil }
+
+        var workingHTML = html
+        var workingAtts = attachments
+        var refreshed: Message?
+        var didRefetch = false
+
+        func mapByCID(_ rows: [AttachmentRow]) -> [String: AttachmentRow] {
+            var map: [String: AttachmentRow] = [:]
+            for att in rows {
+                guard let raw = att.contentId else { continue }
+                let key = CIDImageInliner.normalize(raw)
+                if !key.isEmpty { map[key] = att }
+            }
+            return map
+        }
+
+        var byCID = mapByCID(workingAtts)
+        let unresolved = refs.filter { byCID[$0] == nil }
+        if !unresolved.isEmpty {
+            if let pair = await refetchMessageFull(message) {
+                didRefetch = true
+                refreshed = pair.message
+                workingAtts = pair.attachments
+                byCID = mapByCID(workingAtts)
+                // Parse-time rewrite may already have inlined small blobs.
+                if let newHTML = pair.message.bodyHTML,
+                   !CIDImageInliner.containsCIDReferences(newHTML) {
+                    return CIDInlineResult(
+                        html: newHTML, attachments: workingAtts,
+                        didRefetch: true, refreshedMessage: pair.message)
+                }
+                if let newHTML = pair.message.bodyHTML {
+                    workingHTML = newHTML
+                }
+            }
+        }
+
+        // Persistent cache first (images resolved before, this run or an
+        // earlier one), Gmail only for what it does not hold. Only image/*
+        // parts — skip non-image Content-ID parts. (Don't consult
+        // sanitizeMIME here: its fallback is image/jpeg, so it would pass
+        // everything.) A part that fails to download stays unresolved; the
+        // other images can still load.
+        // Only a complete result for the body as stored (no re-fetch
+        // rewrote it meanwhile) is kept.
+        let outcome = await CIDPartResolver.resolveUsingCache(
+            messageId: message.id, accountId: message.accountId,
+            bodyHTML: workingHTML, references: refs, attachmentsByCID: byCID,
+            didRefetch: didRefetch, store: inlineImageStore
+        ) { [weak self] att in
+            guard let self else { throw CancellationError() }
+            return try await self.downloadAttachment(att, message: message)
+        }
+        let parts = outcome.parts.mapValues { (mimeType: $0.mimeType, data: $0.data) }
+        guard !parts.isEmpty else {
+            if didRefetch, let refreshed {
+                return CIDInlineResult(
+                    html: workingHTML, attachments: workingAtts,
+                    didRefetch: true, refreshedMessage: refreshed)
+            }
+            return nil
+        }
+        let rewritten = CIDImageInliner.rewrite(workingHTML, parts: parts)
+        return CIDInlineResult(
+            html: rewritten, attachments: workingAtts,
+            didRefetch: didRefetch, refreshedMessage: refreshed)
+    }
+
+    /// Full-format re-fetch + upsert so Content-IDs land on attachment rows
+    /// and missing file attachments are recovered. Re-derives the thread so
+    /// `hasAttachment` / paperclip denorm match the repaired message, and
+    /// patches the in-memory list row so the paperclip appears without a
+    /// full list reload.
+    private func refetchMessageFull(_ message: Message) async -> (message: Message, attachments: [AttachmentRow])? {
+        do {
+            let g = try await client(for: message.accountId)
+                .getMessage(id: message.gmailId, format: "full")
+            let (parsed, atts) = MessageParser.parse(g, accountId: message.accountId)
+            let pair: (thread: MailThread?, attachments: [AttachmentRow]) =
+                try await db.write { db in
+                    _ = try SyncEngine.upsertPending(
+                        db,
+                        items: [.init(message: parsed, attachments: atts, headersOnly: false)])
+                    try SyncEngine.deriveThreads(
+                        db, for: [parsed.threadId], accountId: message.accountId)
+                    let persisted = try AttachmentRow
+                        .filter(Column("messageId") == parsed.id)
+                        .order(Column("id"))
+                        .fetchAll(db)
+                    let thread = try MailThread.fetchOne(db, key: parsed.threadId)
+                    return (thread, AttachmentRow.readingPaneRows(
+                        parsed: atts, persisted: persisted))
+                }
+            let derivedThread = pair.thread
+            let attsWithIds = pair.attachments
+            applyThreadContentChange(.threads([parsed.threadId]))
+            // List paperclip reads `threads[].hasAttachment`. Content-revision
+            // wakes the reading pane only — patch the flag here so recovery
+            // that flips hasAttachment is visible without reloadThreads.
+            // Field-only patch: do not replace the whole row (would clobber
+            // concurrent star/unread/snooze optimistic state).
+            if let derivedThread,
+               let updated = ThreadListOptimistic.patchingHasAttachment(
+                   derivedThread.hasAttachment,
+                   threadId: derivedThread.id,
+                   in: threads) {
+                threads = updated
+            }
+            await threadDetailRepository.drop(threadId: parsed.threadId)
+            // `parsed` still carries body fields from MessageParser (upsert only
+            // clears on-row columns in the DB copy). Attachment rows come from
+            // SQLite so ForEach can tell a PDF from an image (parse ids are nil).
+            return (parsed, attsWithIds)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Result of an open-time full re-fetch that may recover missing attachments.
+    struct AttachmentRecoveryResult: Sendable {
+        let message: Message
+        let attachments: [AttachmentRow]
+    }
+
+    /// Re-fetch full payload when the reading pane has no attachment rows but
+    /// the message may still carry files on Gmail (stale cache). Returns nil
+    /// when policy says skip or the network call fails.
+    func recoverAttachmentsIfNeeded(
+        message: Message,
+        localAttachmentCount: Int
+    ) async -> AttachmentRecoveryResult? {
+        let repaired = SyncEngine.attachmentRepairCompleted(accountId: message.accountId)
+        guard SyncEngine.shouldRecoverAttachments(
+            hasAttachmentFlag: message.hasAttachment,
+            localAttachmentCount: localAttachmentCount,
+            accountRepairCompleted: repaired
+        ) else { return nil }
+        guard let pair = await refetchMessageFull(message) else { return nil }
+        return AttachmentRecoveryResult(message: pair.message, attachments: pair.attachments)
+    }
+
+    /// Bytes for one attachment (calendar ICS parse, single-file open).
+    /// Inline `text/calendar` parts (no Gmail attachmentId) are re-extracted
+    /// from a full message fetch — they have no getAttachment handle.
+    func downloadAttachment(_ attachment: AttachmentRow,
+                            message: Message) async throws -> Data {
+        if AttachmentRow.isInlineCalendarId(attachment.gmailAttachmentId) {
+            if let data = try await extractInlineCalendarData(message: message) {
+                return data
+            }
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return try await client(for: message.accountId)
+            .getAttachment(messageId: message.gmailId,
+                           attachmentId: attachment.gmailAttachmentId)
+    }
+
+    /// Pull the first inline `text/calendar` part off a full Gmail payload
+    /// (Outlook / Calendly style — no attachmentId on the wire).
+    private func extractInlineCalendarData(message: Message) async throws -> Data? {
+        let g = try await client(for: message.accountId)
+            .getMessage(id: message.gmailId, format: "full")
+        return MessageParser.inlineCalendarData(in: g)
+    }
+
+    /// Opens in the default app via a private temp file inside the sandbox
+    /// (macOS purges it; nothing is written to user folders). The file is
+    /// namespaced by message id (so same-named attachments never collide) and
+    /// tagged with the quarantine attribute so Gatekeeper still gates it.
+    /// Downloads an attachment into the per-message temp folder, reusing an
+    /// already-downloaded copy so open → Quick Look → open doesn't re-fetch.
+    private func attachmentTempURL(_ attachment: AttachmentRow, message: Message) async throws -> URL {
+        // Keyed by attachment row too, so two same-named attachments on one
+        // message can't serve each other's cached bytes.
+        let root = AttachmentCache.defaultRoot
+        let dir = AttachmentCache.messageDirectory(
+            root: root, accountId: message.accountId,
+            gmailMessageId: message.gmailId, attachmentRowId: attachment.id)
+        let url = dir.appendingPathComponent(MessageParser.safeFilename(attachment.filename))
+        let fm = FileManager.default
+        // A link anywhere in the tree would send the copy (and, at account
+        // removal, the cleanup) outside the cache. Refuse instead (F-04).
+        if fm.fileExists(atPath: dir.path), !AttachmentCache.isContained(dir, in: root) {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        if fm.fileExists(atPath: url.path) {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            if values.isRegularFile == true, values.isSymbolicLink != true {
+                // Re-assert owner-only: copies cached by an older build may
+                // still be 0644 inside a 0755 tree.
+                try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                Self.markQuarantined(url)
+                return url
+            }
+            try fm.removeItem(at: url)
+        }
+        let data = try await downloadAttachment(attachment, message: message)
+        // The account may have been removed while the download ran; writing
+        // now would recreate its folder after the cleanup (F-04).
+        guard AttachmentCache.mayStore(accountId: message.accountId,
+                                       liveAccounts: accounts.map(\.id)) else {
+            throw CancellationError()
+        }
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true,
+                               attributes: [.posixPermissions: 0o700])
+        guard AttachmentCache.isContained(dir, in: root) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        // createDirectory's attributes only apply to directories it creates;
+        // tighten any tree an older build left at 0755.
+        var ancestor = dir
+        for _ in 0..<3 {
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ancestor.path)
+            ancestor.deleteLastPathComponent()
+        }
+        try data.write(to: url, options: .atomic)
+        // Owner-only before the file leaves our hands. A same-user process
+        // could still swap bytes between this validation and LaunchServices'
+        // open (inherent temp-file race); user-only perms plus the quarantine
+        // tag re-applied on every open bound what that buys an attacker.
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let written = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard written.isRegularFile == true, written.isSymbolicLink != true else {
+            try? fm.removeItem(at: url)
+            throw CocoaError(.fileWriteUnknown)
+        }
+        Self.markQuarantined(url)
+        return url
+    }
+
+    /// Picks a non-existing destination so sender-controlled duplicate names
+    /// cannot overwrite each other or a file already present in the folder.
+    static func availableAttachmentURL(in directory: URL, filename: String) -> URL {
+        let fm = FileManager.default
+        let safe = MessageParser.safeFilename(filename)
+        let original = directory.appendingPathComponent(safe)
+        guard fm.fileExists(atPath: original.path) else { return original }
+        let ns = safe as NSString
+        let stem = ns.deletingPathExtension
+        let ext = ns.pathExtension
+        for index in 2...10_000 {
+            let candidateName = ext.isEmpty ? "\(stem) \(index)" : "\(stem) \(index).\(ext)"
+            let candidate = directory.appendingPathComponent(candidateName)
+            if !fm.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return directory.appendingPathComponent("\(UUID().uuidString)-\(safe)")
+    }
+
+    func openAttachment(_ attachment: AttachmentRow, message: Message) {
+        if MessageParser.isRiskyAttachmentFilename(attachment.filename) {
+            let alert = NSAlert()
+            alert.messageText = "Open potentially dangerous attachment?"
+            alert.informativeText =
+                "“\(MessageParser.safeFilename(attachment.filename))” looks like an app, script, or installer. Only open it if you trust the sender."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Open")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        Task {
+            do {
+                let url = try await attachmentTempURL(attachment, message: message)
+                NSWorkspace.shared.open(url)
+            } catch {
+                self.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Native Quick Look on an attachment (same sanitized, quarantined temp
+    /// copy the Open path uses — no separate download).
+    func quickLookAttachment(_ attachment: AttachmentRow, message: Message) {
+        Task {
+            do {
+                let url = try await attachmentTempURL(attachment, message: message)
+                QuickLookController.shared.show([url])
+            } catch {
+                self.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Tags a written-out attachment with `com.apple.quarantine`. The flags
+    /// deliberately omit the "user approved" bit, so an email attachment still
+    /// triggers Gatekeeper's "downloaded from the Internet" first-open warning
+    /// and any handling app's own web-content checks. Best-effort.
+    static func markQuarantined(_ url: URL) {
+        let stamp = String(format: "%08x", UInt32(truncatingIfNeeded: Int(Date().timeIntervalSince1970)))
+        let value = "0001;\(stamp);DreaMail;\(UUID().uuidString)"
+        value.withCString { cstr in
+            _ = setxattr(url.path, "com.apple.quarantine", cstr, strlen(cstr), 0, 0)
+        }
+    }
+
+    /// Save As… — the user picks the destination via the system save panel,
+    /// which is the only place outside the sandbox the app can write.
+    func saveAttachment(_ attachment: AttachmentRow, message: Message) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = MessageParser.safeFilename(attachment.filename)
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        Task {
+            do {
+                let data = try await downloadAttachment(attachment, message: message)
+                let values = try? destination.resourceValues(
+                    forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+                if values?.isSymbolicLink == true {
+                    throw CocoaError(.fileWriteNoPermission)
+                }
+                try data.write(to: destination, options: .atomic)
+                Self.markQuarantined(destination)
+                await MainActor.run {
+                    NSWorkspace.shared.activateFileViewerSelecting([destination])
+                }
+            } catch {
+                await MainActor.run { self.lastError = error.localizedDescription }
+            }
+        }
+    }
+
+    // MARK: - Snippets
+
+    /// Published, load-once cache of the snippets table. Every mutator below
+    /// (and the startup seed) refreshes it after writing, so compose's `/`
+    /// picker and Settings' table update live without a manual reload.
+    private(set) var allSnippets: [Snippet] = []
+
+    /// Every account's signatures and defaults (`SignatureStore`). Written
+    /// only by `MailStore+Signatures`.
+    var signatureBook: SignatureBook = .empty
+
+    private func reloadSnippets() {
+        allSnippets = (try? db.read { try Snippet.order(Column("name")).fetchAll($0) }) ?? []
+    }
+
+    func saveSnippet(name: String, body: String, movesToBcc: Bool = false,
+                     accountIds: [String] = []) {
+        guard cacheAcceptsWrites() else { return }
+        try? db.write { db in
+            var s = Snippet(id: nil, name: name, body: body, movesToBcc: movesToBcc)
+            s.accountIds = accountIds
+            try s.insert(db)
+        }
+        reloadSnippets()
+    }
+
+    func deleteSnippet(_ s: Snippet) {
+        guard cacheAcceptsWrites() else { return }
+        try? db.write { db in _ = try Snippet.deleteOne(db, key: s.id) }
+        reloadSnippets()
+    }
+
+    func updateSnippet(_ s: Snippet) {
+        guard cacheAcceptsWrites() else { return }
+        try? db.write { db in try s.update(db) }
+        reloadSnippets()
+    }
+
+    /// Imports snippets from DreaMail's JSON (an array or one object) or CSV
+    /// with name/body headers. Skips names that already exist so
+    /// re-importing is harmless.
+    /// `unknownAccountIds` counts scope emails that don't match a signed-in
+    /// account (typos hide the snippet until fixed).
+    func importSnippets(from url: URL) throws -> (added: Int, skipped: Int, unknownAccountIds: Int) {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let items = try SnippetImport.decode(Data(contentsOf: url))
+        let planned = SnippetImport.plan(items, existingNames: allSnippets.map(\.name))
+        let known = Set(accounts.map { $0.id.lowercased() })
+        var unknownAccountIds = 0
+        try db.write { db in
+            for item in planned {
+                var s = Snippet(id: nil, name: item.name.trimmingCharacters(in: .whitespaces),
+                                body: item.body, movesToBcc: item.movesToBcc ?? false)
+                let scope = item.accountIds ?? []
+                s.accountIds = scope
+                for email in scope {
+                    let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !e.isEmpty, !known.contains(e.lowercased()) {
+                        unknownAccountIds += 1
+                    }
+                }
+                try s.insert(db)
+            }
+        }
+        reloadSnippets()
+        return (planned.count, items.count - planned.count, unknownAccountIds)
+    }
+}

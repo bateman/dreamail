@@ -1,6 +1,6 @@
 # Security Policy
 
-MishMail is a local-first mail client that handles OAuth tokens and renders
+DreaMail is a local-first mail client that handles OAuth tokens and renders
 untrusted email. Security reports are taken seriously.
 
 ## Reporting a vulnerability
@@ -39,7 +39,7 @@ remote images of all of them at once.
 
 **Cached per message.** The first time a message is opened with its remote
 images allowed, it shows them exactly as before (WebKit loads them live),
-and MishMail's own client downloads each cacheable image of that message in
+and DreaMail's own client downloads each cacheable image of that message in
 the background and keeps it in the encrypted database with the message (see
 "What deleting means"). On that first open the sender therefore sees two
 requests per image: one from WebKit, one from the app's client, which is
@@ -160,7 +160,7 @@ salted hashes of the account and thread, whatever the setting.
 ## Google Calendar (off in this build)
 
 The Calendar integration is being designed and is compiled in only when the
-build sets `MISHMAIL_CALENDAR = YES` (empty in `Config/Signing.xcconfig`;
+build sets `DREAMAIL_CALENDAR = YES` (empty in `Config/Signing.xcconfig`;
 `make install` and `make release` take the tracked value). With it off:
 
 - **No new network destination.** Nothing reaches the Calendar API
@@ -177,7 +177,7 @@ it belongs to that same account.
 - **Scope (owner's decision, DEC-048):** `calendar.events` (read and change
   events on every calendar the user can access, shared ones included, so a
   conflict on a shared calendar can show its title), plus
-  `calendar.events.freebusy` and `calendar.calendarlist.readonly`. MishMail
+  `calendar.events.freebusy` and `calendar.calendarlist.readonly`. DreaMail
   changes an event only to write the user's own answer or to add an
   invitation the user chose to add.
 - **Stored:** only the grant and the calendars the user chose (the primary
@@ -196,7 +196,7 @@ it belongs to that same account.
 
 ## What deleting means
 
-When mail leaves MishMail's local cache (a message deleted or trashed and
+When mail leaves DreaMail's local cache (a message deleted or trashed and
 purged, local mail pruned, a draft discarded, a chat or summary cleared, an
 account removed, a cached inline or remote image evicted), this is what
 happens to it:
@@ -258,7 +258,7 @@ The limits, stated plainly:
 - **Storage hardware and APFS.** Overwriting a page or deleting a file does
   not guarantee that the old physical blocks are erased. APFS is
   copy-on-write and SSD controllers remap blocks (wear levelling), so old
-  blocks can remain on the device until reused. MishMail does not attempt
+  blocks can remain on the device until reused. DreaMail does not attempt
   "secure erase" loops, which cannot work there. Those blocks are protected
   only if FileVault is on; the database's blocks are also encrypted with the
   SQLCipher key, the attachment copies' and notifications' are not.
@@ -266,11 +266,11 @@ The limits, stated plainly:
   other backup of the app's container keep what the files held when they
   were taken. The database in them is encrypted under the key in the
   Keychain; attachment copies in the temporary folder are not.
-- **Copies outside MishMail's files.** Swap, crash reports and the system's
-  unified log can hold what the app had in memory or logged; MishMail logs
+- **Copies outside DreaMail's files.** Swap, crash reports and the system's
+  unified log can hold what the app had in memory or logged; DreaMail logs
   no mail content, and its diagnostic log redacts it, but it cannot reach
   what the operating system keeps. Quick Look thumbnails, and any file
-  handed to or saved by another app, are outside MishMail's reach.
+  handed to or saved by another app, are outside DreaMail's reach.
 - **Attachment copies of mail that is not deleted** stay in the temporary
   folder, unencrypted, until their message or account goes (or the system
   clears the temporary folder).
@@ -289,7 +289,7 @@ The limits, stated plainly:
 - **Recent searches** are kept apart from the mail and cleared only when an
   account is removed.
 - **A cache still waiting for encryption.** While a cache from before
-  encryption waits for its one-time conversion (another copy of MishMail
+  encryption waits for its one-time conversion (another copy of DreaMail
   holds it), the whole cache is unencrypted and read-only: nothing in it can
   be deleted until it is converted.
 - **Files kept on purpose.** When the cache cannot be opened and is reset,
