@@ -657,6 +657,65 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertEqual(image["altText"] as? String, "")
     }
 
+    /// Message content cannot steer the app's image script: named elements
+    /// that shadow `document.documentElement` / `document.querySelectorAll`
+    /// (and a form's `classList`) change neither the images-allowed decision
+    /// nor the census.
+    func testNamedElementsCannotSteerTheImageScripts() async throws {
+        let html = """
+        <img name="documentElement" class="\(HTMLBodyLayout.imagesAllowedClass)" src="cid:none@x">\
+        <img name="querySelectorAll" src="cid:none2@x">\
+        <img name="querySelector" src="cid:none3@x">\
+        <img name="createElement" src="cid:none4@x">\
+        <form><input name="classList"><input name="parentNode">\
+        <img id="blocked" src="https://images.example/hero.png" alt="x" width="300" height="100"></form>
+        """
+        let h = load(html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: false))
+        defer { h.close() }
+        try await wait { h.pane.domReady }
+        _ = await h.measure()
+        let script = """
+        (function(){
+          var root = Object.getOwnPropertyDescriptor(Document.prototype, 'documentElement').get.call(document);
+          var img = Document.prototype.getElementById.call(document, 'blocked');
+          var prev = img.previousElementSibling;
+          return JSON.stringify({
+            allowed: root.classList.contains('\(HTMLBodyLayout.imagesAllowedClass)'),
+            failed: img.classList.contains('\(HTMLBodyLayout.failedImageClass)'),
+            altShown: !!prev && prev.classList.contains('\(HTMLBodyLayout.altTextClass)'),
+            display: getComputedStyle(img).display
+          });
+        })()
+        """
+        var state: [String: Any] = [:]
+        let deadline = Date().addingTimeInterval(10)
+        repeat {
+            _ = await h.measure()
+            let result: Any? = await withCheckedContinuation { done in
+                h.webView.evaluateJavaScript(script) { value, _ in done.resume(returning: value) }
+            }
+            if let text = result as? String, let data = text.data(using: .utf8) {
+                state = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            }
+            if state["failed"] as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        } while Date() < deadline
+        XCTAssertEqual(state["allowed"] as? Bool, false, "\(state)")
+        XCTAssertEqual(state["failed"] as? Bool, true, "\(state)")
+        XCTAssertEqual(state["altShown"] as? Bool, false, "blocked keeps its placeholder: \(state)")
+        XCTAssertNotEqual(state["display"] as? String, "none")
+
+        let census: Any? = await withCheckedContinuation { done in
+            h.webView.evaluateJavaScript(HTMLBodyLayout.imageCensusJS) { value, _ in
+                done.resume(returning: value)
+            }
+        }
+        let parsed = try XCTUnwrap(RemoteImageCensus(scriptResult: census), "the census still runs")
+        XCTAssertFalse(parsed.allowed)
+        XCTAssertEqual(parsed.blocked, 1, "\(parsed.text)")
+        XCTAssertEqual(parsed.failed, 4, "the missing cid: parts: \(parsed.text)")
+    }
+
     /// With images blocked (Ask each time, Spam), a blocked image keeps the
     /// dashed blocked-image placeholder.
     func testBlockedImagesKeepTheirPlaceholder() async throws {

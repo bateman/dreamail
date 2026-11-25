@@ -95,23 +95,26 @@ enum HTMLBodyLayout {
     /// is never taken for a failed one; and counts the image loads the CSP
     /// refused (`img-src`, `<img>` and CSS images) for `imageCensusJS`.
     /// Counts and states only: no URL is kept.
-    static let imageEventsJS = """
-    (function(){
-      try {
-        window.__mmCSPImg = 0;
-        var mark = function(e){
-          var t = e && e.target;
-          if (t && t.tagName === 'IMG') t.__mmImgState = e.type;
-        };
-        document.addEventListener('load', mark, true);
-        document.addEventListener('error', mark, true);
-        document.addEventListener('securitypolicyviolation', function(e){
-          var d = String((e && (e.effectiveDirective || e.violatedDirective)) || '');
-          if (d.indexOf('img-src') === 0) window.__mmCSPImg = (window.__mmCSPImg || 0) + 1;
-        }, true);
-      } catch (e) {}
-    })();
-    """
+    static let imageEventsJS: String = {
+        """
+        (function(){
+          try {
+            \(safeDOMJS)
+            window.__mmCSPImg = 0;
+            var mark = function(e){
+              var t = e && e.target;
+              if (t instanceof HTMLImageElement) t.__mmImgState = e.type;
+            };
+            SAFE.listen('load', mark);
+            SAFE.listen('error', mark);
+            SAFE.listen('securitypolicyviolation', function(e){
+              var d = String((e && (e.effectiveDirective || e.violatedDirective)) || '');
+              if (d.indexOf('img-src') === 0) window.__mmCSPImg = (window.__mmCSPImg || 0) + 1;
+            });
+          } catch (e) {}
+        })();
+        """
+    }()
 
     /// Counts of the document's `<img>` elements by outcome, as JSON
     /// (`RemoteImageCensus`). Failed images are counted by the kind of URL
@@ -119,13 +122,14 @@ enum HTMLBodyLayout {
     static let imageCensusJS: String = {
         """
         (function(){
+          \(safeDOMJS)
           var out = {loaded:0, failed:0, blocked:0, pending:0, altShown:0,
                      remote:0, insecure:0, inline:0, unresolvable:0,
                      csp: (window.__mmCSPImg || 0)};
           var allowed = false;
-          try { allowed = document.documentElement.classList.contains('\(imagesAllowedClass)'); } catch (e) {}
+          try { allowed = SAFE.cls(SAFE.root()).contains('\(imagesAllowedClass)'); } catch (e) {}
           out.allowed = allowed;
-          var imgs = document.querySelectorAll('img');
+          var imgs = SAFE.all('img');
           for (var i = 0; i < imgs.length; i++) {
             var img = imgs[i];
             var src = String(img.currentSrc || img.getAttribute('src') || '').trim().toLowerCase();
@@ -136,7 +140,7 @@ enum HTMLBodyLayout {
             var inline = src.indexOf('data:') === 0 || src.indexOf('cid:') === 0;
             if (!allowed && !inline) { out.blocked++; continue; }
             out.failed++;
-            if (img.classList.contains('\(altShownImageClass)')) out.altShown++;
+            if (SAFE.cls(img).contains('\(altShownImageClass)')) out.altShown++;
             if (src.indexOf('https:') === 0) out.remote++;
             else if (src.indexOf('http:') === 0) out.insecure++;
             else if (inline) out.inline++;
@@ -146,6 +150,41 @@ enum HTMLBodyLayout {
         })()
         """
     }()
+
+    /// JS prologue for the app's image scripts: DOM access that message
+    /// content cannot steer. A named element (`<img name="documentElement">`,
+    /// `<form>` with `<input name="classList">`) shadows `document.x` or a
+    /// form's own properties, so these go through the prototypes' own
+    /// getters and methods instead.
+    static let safeDOMJS = """
+    var SAFE = (function(){
+      function getter(proto, name){
+        var d = Object.getOwnPropertyDescriptor(proto, name);
+        return d && d.get;
+      }
+      var rootGet = getter(Document.prototype, 'documentElement');
+      var classListGet = getter(Element.prototype, 'classList');
+      var parentElementGet = getter(Node.prototype, 'parentElement');
+      var parentNodeGet = getter(Node.prototype, 'parentNode');
+      var qs = Document.prototype.querySelector;
+      var qsa = Document.prototype.querySelectorAll;
+      var make = Document.prototype.createElement;
+      var listen = EventTarget.prototype.addEventListener;
+      return {
+        root: function(){
+          var r = rootGet.call(document);
+          return (r instanceof HTMLHtmlElement) ? r : null;
+        },
+        one: function(sel){ return qs.call(document, sel); },
+        all: function(sel){ return qsa.call(document, sel); },
+        make: function(tag){ return make.call(document, tag); },
+        cls: function(el){ return classListGet.call(el); },
+        parentElement: function(el){ return parentElementGet.call(el); },
+        parentNode: function(el){ return parentNodeGet.call(el); },
+        listen: function(type, fn){ listen.call(document, type, fn, true); }
+      };
+    })();
+    """
 
     static func isDOMReadyMessage(_ body: Any) -> Bool {
         (body as? String) == domReadyMessage
@@ -554,6 +593,7 @@ enum HTMLBodyLayout {
         let refVH = pinnedViewportHeight
         return """
         (function(){
+          \(safeDOMJS)
           var LAYOUT='\(layout)';
           var FAILED='\(failed)';
           var ALLOWED='\(allowedClass)';
@@ -673,7 +713,7 @@ enum HTMLBodyLayout {
              text alone, small, in place of the image, as text (textContent:
              never parsed as markup). Inside a link it stays the link. */
           function imagesAllowed(){
-            try { return document.documentElement.classList.contains(ALLOWED); } catch (e) { return false; }
+            try { return SAFE.cls(SAFE.root()).contains(ALLOWED); } catch (e) { return false; }
           }
           function altOf(img){
             var a = img.getAttribute('alt');
@@ -681,18 +721,19 @@ enum HTMLBodyLayout {
           }
           function showAlt(img, text){
             var span = img.__mmAlt;
-            if (!span || span.parentNode !== img.parentNode) {
-              span = document.createElement('span');
+            var parent = SAFE.parentNode(img);
+            if (!span || SAFE.parentNode(span) !== parent) {
+              span = SAFE.make('span');
               span.className = ALT_TEXT;
               /* Dark mode stamps every element once, at document end; this
                  span comes later: it takes its parent's stamp (the fill it
                  sits on; else the image's), so its text contrasts with it. */
-              var p = img.parentElement;
-              var from = p && (p.classList.contains(FG_LIGHT) || p.classList.contains(FG_DARK))
-                ? p : img;
-              if (from && from.classList.contains(FG_LIGHT)) span.classList.add(FG_LIGHT);
-              if (from && from.classList.contains(FG_DARK)) span.classList.add(FG_DARK);
-              if (img.parentNode) img.parentNode.insertBefore(span, img);
+              var p = SAFE.parentElement(img);
+              var pc = p ? SAFE.cls(p) : null;
+              var from = pc && (pc.contains(FG_LIGHT) || pc.contains(FG_DARK)) ? pc : SAFE.cls(img);
+              if (from.contains(FG_LIGHT)) span.classList.add(FG_LIGHT);
+              if (from.contains(FG_DARK)) span.classList.add(FG_DARK);
+              if (parent) Node.prototype.insertBefore.call(parent, span, img);
               img.__mmAlt = span;
             }
             if (span.textContent !== text) span.textContent = text;
@@ -701,7 +742,8 @@ enum HTMLBodyLayout {
           function hideAlt(img){
             var span = img.__mmAlt;
             if (span) {
-              if (span.parentNode) span.parentNode.removeChild(span);
+              var sp = SAFE.parentNode(span);
+              if (sp) Node.prototype.removeChild.call(sp, span);
               img.__mmAlt = null;
             }
             img.classList.remove(ALT_SHOWN);
@@ -760,7 +802,7 @@ enum HTMLBodyLayout {
           }
 
           function reflowPlaceholders(){
-            var imgs = document.querySelectorAll('img');
+            var imgs = SAFE.all('img');
             for (var i = 0; i < imgs.length; i++) applyImage(imgs[i]);
           }
 
@@ -1145,11 +1187,12 @@ enum HTMLBodyLayout {
              with them allowed a failed image without alt text is hidden
              (imageCSS); blocked, it keeps the blocked-image placeholder. */
           try {
-            var csp = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+            var csp = SAFE.one('meta[http-equiv="Content-Security-Policy"]');
             var allowsRemote = !!csp && /img-src[^;]*https:/.test(csp.getAttribute('content') || '');
-            if (document.documentElement) {
-              if (allowsRemote) document.documentElement.classList.add(ALLOWED);
-              else document.documentElement.classList.remove(ALLOWED);
+            var root = SAFE.root();
+            if (root) {
+              if (allowsRemote) SAFE.cls(root).add(ALLOWED);
+              else SAFE.cls(root).remove(ALLOWED);
             }
           } catch (e) {}
 
@@ -1161,7 +1204,7 @@ enum HTMLBodyLayout {
              and removed here before the new one is bound. */
           var previousOnImg = window.__mmOnImg;
           window.__mmOnImg = onImgEvent;
-          var imgs = document.querySelectorAll('img');
+          var imgs = SAFE.all('img');
           for (var i = 0; i < imgs.length; i++) {
             var img = imgs[i];
             applyImage(img);

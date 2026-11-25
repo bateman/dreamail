@@ -146,7 +146,7 @@ final class RemoteImageHTMLTests: XCTestCase {
             <picture><source srcset="https://img.example.com/w.webp"><img src="\(b)"></picture>\
             <table background="https://img.example.com/bg.jpg"><tr>\
             <td style="background-image:url('https://img.example.com/td.png');color:red">x</td>\
-            <td style="background:url(&quot;https://img.example.com/q.png&quot;)">y</td></tr></table>\
+            <td style="background:url(&quot;//img.example.com/q.png&quot;)">y</td></tr></table>\
             <style>.h{background:url(https://img.example.com/s.png)} .k{background:url("https://img.example.com/k.png")}</style>\
             <p>see http://example.com and //comment</p>
             """
@@ -154,6 +154,45 @@ final class RemoteImageHTMLTests: XCTestCase {
         XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: out), out, "idempotent")
         let plain = "<img src=\"\(a)\"><a href=\"http://x.example.com/\">x</a>"
         XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: plain), plain)
+    }
+
+    /// Where the scanner and WebKit disagree on markup (an SVG `<title>` is
+    /// raw text to the scanner, markup to WebKit), the rewrite still only
+    /// inserts `https:` before `//`: no attribute is re-serialised, no quote
+    /// is added or changed.
+    func testUpgradeOnlyEverInsertsTheScheme() {
+        let svgTitle = """
+            <svg><title><a href="https://a.example/" title="</title>\
+            <i style='background:url(//x.example/a);X'>">t</a></title></svg>
+            """
+        let out = RemoteImageHTML.upgradingInsecureImageURLs(in: svgTitle)
+        XCTAssertEqual(out, svgTitle.replacingOccurrences(of: "url(//x.example", with: "url(https://x.example"))
+
+        let hostile = [
+            svgTitle,
+            "<div style=\"background:url(//a.example/x)\" title='\"><img src=//b.example/y>'>",
+            "<td style='color:red;background:url(\"//a.example/q\")'>",
+            "<td style=\"background:url(&quot;//a.example/q&quot;)\">",
+            "<td style=background:url(//a.example/u)>x",
+            "<img src=\"//a.example/1\" srcset=\"//a.example/2 2x,//a.example/3 3x\" style=\"x:url(//a.example/4)\">",
+            "<style>a{background:url(//a.example/s)}</style><textarea><img src=//a.example/t></textarea>",
+            "<img src='//a.example/\"onerror=x'><img src=\"//a.example/'>\">",
+            "<!-- <img src=//a.example/c> --><img src=\" \n//a.example/n\">",
+            "<img src=//a.example/x <img src=//a.example/y>",
+        ]
+        for html in hostile {
+            let upgraded = RemoteImageHTML.upgradingInsecureImageURLs(in: html)
+            XCTAssertEqual(upgraded.utf8.count - html.utf8.count, 6 * (upgraded.components(separatedBy: "https://").count
+                                                                       - html.components(separatedBy: "https://").count),
+                           "only `https:` inserted: \(upgraded)")
+            XCTAssertEqual(upgraded.replacingOccurrences(of: "https://", with: "//"),
+                           html.replacingOccurrences(of: "https://", with: "//"),
+                           "reversing the inserted scheme gives the input back: \(upgraded)")
+        }
+        // An entity-encoded style value is left alone (the CSP upgrades
+        // what it can; `//` there stays unresolved rather than re-serialised).
+        let entity = "<td style=\"background:url(&quot;//a.example/q&quot;)\">"
+        XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: entity), entity)
     }
 
     /// Only the allowed variant is rewritten; the blocked one loads no

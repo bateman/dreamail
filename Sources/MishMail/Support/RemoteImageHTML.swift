@@ -409,7 +409,18 @@ enum RemoteImageHTML {
                 }
             }
         }
-        if let style = byName["style"], let raw = decoded(style) {
+        if state.upgrade, let style = byName["style"] {
+            // Never re-serialised here: the CSS is scanned over the
+            // document's own bytes and only `https:` is inserted, at document
+            // offsets. A value with an entity is left as it is (its bytes
+            // are not the CSS WebKit reads).
+            handled.insert("style")
+            if let range = style.value, !b[range].contains(0x26) {  // "&"
+                var inner = State(replacements: [:], budget: 0, upgrade: true)
+                scanCSS(b, range, inline: true, &inner)
+                state.edits += inner.edits
+            }
+        } else if let style = byName["style"], let raw = decoded(style) {
             handled.insert("style")
             let css = Array(raw.utf8)
             var inner = State(replacements: state.replacements, budget: state.budget,
@@ -597,8 +608,10 @@ enum RemoteImageHTML {
 
     // MARK: - CSS
 
-    /// Scans CSS in `range` of `b`. Inline: `b` is a decoded `style`
-    /// attribute (its edits are applied by the caller and re-encoded).
+    /// Scans CSS in `range` of `b`. Inline: a `style` attribute, either
+    /// decoded (`rewrite`: its edits are applied by the caller and
+    /// re-encoded) or, for `upgradingInsecureImageURLs`, the document's own
+    /// bytes of the value (edits at document offsets, never re-encoded).
     private static func scanCSS(_ b: [UInt8], _ range: Range<Int>, inline: Bool,
                                 _ state: inout State) {
         var i = range.lowerBound
