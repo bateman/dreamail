@@ -201,9 +201,9 @@ struct CalendarInviteCard: View {
     /// invite would otherwise make the user answer a third party unseen).
     ///
     /// With Google Calendar connected, the line follows the route the
-    /// buttons take (`CalendarRSVPRoute`): on the calendar, by e-mail, or
-    /// both. Until the calendar is checked the answer goes by e-mail, and
-    /// the line says so.
+    /// buttons take (`CalendarRSVPRoute`): the e-mail always, and the
+    /// calendar too when it holds this very event. Until the calendar is
+    /// checked the answer goes by e-mail only, and the line says so.
     @ViewBuilder
     private func replyRecipientNote(_ invite: CalendarInvite) -> some View {
         let sender = MessageParser.emailAddress(message.fromHeader)
@@ -377,7 +377,6 @@ struct CalendarInviteCard: View {
                           invite: CalendarInvite) -> String {
         let org = invite.organizerEmail.isEmpty ? "the organizer" : invite.organizerEmail
         switch answerRoute(invite) {
-        case .calendarOnly: return "\(status.buttonTitle) in Google Calendar"
         case .calendarAndEmail: return "\(status.buttonTitle) in Google Calendar and email \(org)"
         case .emailOnly, .notAnswerable: return "\(status.buttonTitle) and email \(org)"
         }
@@ -430,8 +429,11 @@ struct CalendarInviteCard: View {
                          invite: CalendarInvite) async {
         let key = rsvpKey(invite)
         defer { sending = nil }
-        await store.answerInvite(invite, status: status, message: message,
-                                 check: calendarChecks[key])
+        let outcome = await store.answerInvite(invite, status: status, message: message,
+                                               check: calendarChecks[key])
+        // Google no longer has the event: look again, so the line and the
+        // next answer follow what is really there.
+        if outcome?.eventGone == true { await checkCalendar(invite) }
         // Re-read stored state — only updates on success.
         if let stored = await store.storedRSVPs(
             for: [invite], accountId: message.accountId)[key] {
@@ -548,12 +550,14 @@ struct CalendarInviteCard: View {
     }
 
     /// "Conflicts with Standup (10:00–10:30)"; all-day events are named
-    /// softly. Titles stay on screen, never in a log.
+    /// softly. Titles come from the user's calendars (any visible one,
+    /// DEC-048), are made display-safe and stay on screen, never in a log.
     private func conflictText(_ result: CalendarAvailabilityResult) -> String {
         func name(_ busy: CalendarBusy) -> String {
             switch busy.source {
             case .event(_, _, let summary):
-                return (summary?.isEmpty == false ? summary : nil) ?? "Busy"
+                let safe = CalendarInvite.displaySafe(summary ?? "", limit: 80)
+                return safe.isEmpty ? "Busy" : safe
             case .freeBusy:
                 return "Busy"
             }
@@ -564,10 +568,10 @@ struct CalendarInviteCard: View {
             return "\(start)–\(end)"
         }
         var parts: [String] = []
-        let timed = result.conflicts.prefix(2).map { "\(name($0)) (\(time($0)))" }
+        let timed = result.conflicts.prefix(3).map { "\(name($0)) (\(time($0)))" }
         if !timed.isEmpty {
             var text = "Conflicts with " + timed.joined(separator: ", ")
-            if result.conflicts.count > 2 { text += " and \(result.conflicts.count - 2) more" }
+            if result.conflicts.count > 3 { text += " and \(result.conflicts.count - 3) more" }
             parts.append(text)
         }
         if let allDay = result.allDayConflicts.first {

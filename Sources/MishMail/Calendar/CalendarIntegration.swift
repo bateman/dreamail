@@ -58,13 +58,12 @@ struct CalendarInviteFindings: Equatable, Sendable {
 }
 
 /// The text under the RSVP buttons: where the answer goes, from whom.
-/// Pure, so each route's wording is tested.
+/// Pure, so each route's wording is tested. The e-mail always goes
+/// (`CalendarRSVPRoute`); the calendar only when it holds this very event.
 enum CalendarAnswerNote {
     static func text(route: CalendarRSVPRoute, accountId: String, from: String,
                      organizer: String) -> String {
         switch route {
-        case .calendarOnly:
-            return "Answer saved in Google Calendar (\(accountId)); \(organizer) sees it there. No e-mail is sent."
         case .calendarAndEmail:
             return "Answer saved in Google Calendar (\(accountId)), and reply from \(from) goes to \(organizer)"
         case .emailOnly, .notAnswerable:
@@ -79,7 +78,11 @@ enum CalendarAnswerNote {
 ///
 /// Stores nothing beyond `CalendarStore`'s rows (the grant and the chosen
 /// calendars): an invitation's event and availability stay in memory, so
-/// there is nothing more to delete with a message (DEC-019). Logs nothing.
+/// there is nothing more to delete with a message (DEC-019). Where each
+/// invitation's event is (or that it is on no calendar) is kept in memory
+/// for `locateCacheLifetime`, so reopening a message does not ask every
+/// chosen calendar again; a rate limit pauses the account's checks for as
+/// long as Google asks. Logs nothing.
 /// With the switch off every method refuses before any request, Keychain
 /// read or browser.
 @MainActor
@@ -118,11 +121,28 @@ final class CalendarIntegration {
 
     private let deps: Dependencies
     @ObservationIgnored private var tokenSources: [String: CalendarTokenSource] = [:]
+    /// Where an invitation's event is, nil for "on no calendar", by account
+    /// and message. Memory only, bounded, short-lived.
+    @ObservationIgnored private var located: [LocateKey: (event: CalendarInviteEventRecord?, at: Date)] = [:]
+    /// No Calendar request for the account before this time (rate limit).
+    @ObservationIgnored private var pausedUntil: [String: Date] = [:]
+    private let now: @MainActor () -> Date
+
+    private struct LocateKey: Hashable {
+        var accountId: String
+        var messageId: String
+    }
+
+    static let locateCacheLifetime: TimeInterval = 10 * 60
+    static let locateCacheLimit = 200
+    /// When Google says to slow down without saying for how long.
+    static let defaultPause: TimeInterval = 60
 
     var isEnabled: Bool { deps.enabled }
 
-    init(dependencies: Dependencies) {
+    init(dependencies: Dependencies, now: @escaping @MainActor () -> Date = { Date() }) {
         deps = dependencies
+        self.now = now
     }
 
     // MARK: Account
@@ -174,6 +194,7 @@ final class CalendarIntegration {
             }
         }
         needingConsent.remove(accountId)
+        forgetLocated(accountId)
         await load(accountId: accountId)
     }
 
@@ -187,6 +208,8 @@ final class CalendarIntegration {
         await tokenSources[accountId]?.invalidate()
         tokenSources[accountId] = nil
         needingConsent.remove(accountId)
+        forgetLocated(accountId)
+        pausedUntil[accountId] = nil
         grants[accountId] = nil
         chosen[accountId] = []
     }
@@ -209,6 +232,7 @@ final class CalendarIntegration {
         try await deps.database().write { db in
             try CalendarStore.setChosenCalendars(db, accountId: accountId, entries)
         }
+        forgetLocated(accountId)
         await load(accountId: accountId)
     }
 
@@ -226,13 +250,23 @@ final class CalendarIntegration {
         case .notConnected: return .notConnected
         case .needsConsent: return .needsConsent
         case .connected(let grant):
+            if let until = pausedUntil[accountId], until > now() {
+                return .failed(CalendarError.rateLimited(retryAfter: nil).errorDescription ?? "")
+            }
             let service = CalendarInviteService(client: client(accountId, grant), grant: grant)
             let calendars = chosen[accountId] ?? []
+            let key = LocateKey(accountId: accountId, messageId: messageId)
             do {
-                let event = grant.canReadEvents
-                    ? try await service.locate(facts, chosen: calendars, messageId: messageId,
-                                               accountId: accountId)
-                    : nil
+                let event: CalendarInviteEventRecord?
+                if let cached = located[key], now().timeIntervalSince(cached.at) < Self.locateCacheLifetime {
+                    event = cached.event
+                } else if grant.canReadEvents {
+                    event = try await service.locate(facts, chosen: calendars, messageId: messageId,
+                                                     accountId: accountId)
+                    remember(event, for: key)
+                } else {
+                    event = nil
+                }
                 let availability = try await service.availability(for: facts, chosen: calendars)
                 return .ready(CalendarInviteFindings(availability: availability, event: event,
                                                      grant: grant))
@@ -242,40 +276,41 @@ final class CalendarIntegration {
         }
     }
 
-    /// Writes the answer on the calendar where the route says so and
-    /// returns the route taken: the caller sends the e-mail reply when it
-    /// `sendsEmail`. When the calendar cannot take the answer (the user is
-    /// not a guest of that event, or it is gone) the answer goes by e-mail.
+    /// Writes the answer on the calendar where the route says so. Never
+    /// throws: the caller sends the e-mail reply whenever
+    /// `route.sendsEmail`, whatever the calendar write did.
     func respond(_ response: CalendarResponse, facts: CalendarInviteFacts,
-                 findings: CalendarInviteFindings?, accountId: String) async throws -> CalendarRSVPRoute {
+                 findings: CalendarInviteFindings?, messageId: String,
+                 accountId: String) async -> CalendarRSVPOutcome {
         guard deps.enabled, let findings, case .connected(let grant) = status(for: accountId) else {
-            return facts.isAnswerable ? .emailOnly : .notAnswerable
+            return CalendarRSVPOutcome(route: facts.isAnswerable ? .emailOnly : .notAnswerable,
+                                       calendarWritten: false, eventGone: false, calendarError: nil)
         }
         let service = CalendarInviteService(client: client(accountId, grant), grant: grant)
-        do {
-            return try await service.respond(response, facts: facts, event: findings.event)
-        } catch CalendarError.notAnAttendee {
-            return .emailOnly
-        } catch CalendarError.http(404, _) {
-            return .emailOnly
-        } catch {
-            noteFailure(error, accountId: accountId)
-            throw error
+        let outcome = await service.respond(response, facts: facts, event: findings.event)
+        if outcome.eventGone {
+            located[LocateKey(accountId: accountId, messageId: messageId)] = nil
         }
+        if let error = outcome.calendarError { noteFailure(error, accountId: accountId) }
+        return outcome
     }
 
-    /// "Add to calendar" on the primary calendar. Returns the findings with
-    /// the new event, so the card's route follows it.
+    /// "Add to calendar" on the primary calendar, with `attendeeEmail` (the
+    /// address the answer goes from) as the guest. Returns the findings
+    /// with the new event, so the card's route follows it.
     func addToCalendar(_ facts: CalendarInviteFacts, findings: CalendarInviteFindings,
-                       messageId: String, accountId: String) async throws -> CalendarInviteFindings {
+                       attendeeEmail: String, messageId: String,
+                       accountId: String) async throws -> CalendarInviteFindings {
         guard deps.enabled else { throw CalendarError.switchedOff }
         let grant = try usableGrant(accountId)
         guard findings.canAddToCalendar(facts) else { throw CalendarError.notGranted(.writeEvents) }
         let service = CalendarInviteService(client: client(accountId, grant), grant: grant)
         do {
             var updated = findings
-            updated.event = try await service.addToCalendar(facts, messageId: messageId,
-                                                            accountId: accountId)
+            let event = try await service.addToCalendar(facts, attendeeEmail: attendeeEmail,
+                                                        messageId: messageId, accountId: accountId)
+            updated.event = event
+            remember(event, for: LocateKey(accountId: accountId, messageId: messageId))
             return updated
         } catch {
             noteFailure(error, accountId: accountId)
@@ -307,11 +342,29 @@ final class CalendarIntegration {
                        transport: .gated(enabled: deps.enabled, deps.transport))
     }
 
+    private func remember(_ event: CalendarInviteEventRecord?, for key: LocateKey) {
+        let time = now()
+        located = located.filter { time.timeIntervalSince($0.value.at) < Self.locateCacheLifetime }
+        if located.count >= Self.locateCacheLimit,
+           let oldest = located.min(by: { $0.value.at < $1.value.at })?.key {
+            located[oldest] = nil
+        }
+        located[key] = (event, time)
+    }
+
+    private func forgetLocated(_ accountId: String) {
+        located = located.filter { $0.key.accountId != accountId }
+    }
+
     /// The card state for a failure; a refused grant is remembered so
-    /// Settings and the other cards offer to reconnect.
+    /// Settings and the other cards offer to reconnect, and a rate limit
+    /// pauses the account's checks.
     @discardableResult
     private func noteFailure(_ error: Error, accountId: String) -> CalendarInviteCheck {
-        Self.check(for: error, onRefusedGrant: { needingConsent.insert(accountId) })
+        if case .rateLimited(let retryAfter)? = error as? CalendarError {
+            pausedUntil[accountId] = now().addingTimeInterval(retryAfter ?? Self.defaultPause)
+        }
+        return Self.check(for: error, onRefusedGrant: { needingConsent.insert(accountId) })
     }
 
     /// Pure mapping from an error to what the card shows.

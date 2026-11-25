@@ -52,8 +52,8 @@ final class CalendarIntegrationTests: XCTestCase {
         let deleted: DeletedTokens
     }
 
-    private func harness(enabled: Bool = true,
-                         transport: CalendarTransport? = nil) throws -> Harness {
+    private func harness(enabled: Bool = true, transport: CalendarTransport? = nil,
+                         now: @escaping @MainActor () -> Date = { Date() }) throws -> Harness {
         let db = try DatabaseQueue()
         try AppDatabase.migrator.migrate(db)
         let account = self.account
@@ -73,7 +73,7 @@ final class CalendarIntegrationTests: XCTestCase {
             readRefreshToken: keychain.reader,
             refresh: { _ in ("access-not-real", 3600) },
             deleteRefreshToken: { deleted.add($0) })
-        return Harness(integration: CalendarIntegration(dependencies: deps), db: db, net: net,
+        return Harness(integration: CalendarIntegration(dependencies: deps, now: now), db: db, net: net,
                        keychain: keychain, steps: steps, deleted: deleted)
     }
 
@@ -85,16 +85,15 @@ final class CalendarIntegrationTests: XCTestCase {
                 db, accountId: account, scopes: CalendarScope.recommended.joined(separator: " "),
                 at: Date(), calendars: [GCalendarListEntry(
                     id: account, summary: "Me", timeZone: "Europe/Rome", primary: true,
-                    accessRole: "owner", selected: true)])
+                    accessRole: "owner")])
         }
     }
 
-    private func facts(googleCalendarICS: Bool = true) -> CalendarInviteFacts {
+    private func facts() -> CalendarInviteFacts {
         let start = ISO8601DateFormatter().date(from: "2026-12-01T10:00:00Z")!
         return CalendarInviteFacts(
             uid: googleUID, summary: "Review", organizerEmail: "org@x.com",
-            span: CalendarSpan(start: start, end: start.addingTimeInterval(3600), isAllDay: false),
-            organizerUsesGoogleCalendar: googleCalendarICS)
+            span: CalendarSpan(start: start, end: start.addingTimeInterval(3600), isAllDay: false))
     }
 
     private func count(_ h: Harness, _ table: String) throws -> Int {
@@ -121,9 +120,9 @@ final class CalendarIntegrationTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? CalendarError, .switchedOff)
         }
-        let route = try await h.integration.respond(.accepted, facts: facts(), findings: nil,
-                                                    accountId: account)
-        XCTAssertEqual(route, .emailOnly)
+        let outcome = await h.integration.respond(.accepted, facts: facts(), findings: nil,
+                                                  messageId: "m1", accountId: account)
+        XCTAssertEqual(outcome.route, .emailOnly)
         XCTAssertEqual(h.steps.calls, [], "no browser, no consent")
         XCTAssertEqual(h.net.requests.count, 0)
         XCTAssertEqual(h.keychain.reads, [])
@@ -181,7 +180,7 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertEqual(findings.event?.calendarId, "primary")
         XCTAssertEqual(findings.availability?.isFree, true, "the invitation is not its own conflict")
         XCTAssertEqual(findings.route(for: facts()),
-                       .calendarOnly(calendarId: "primary", eventId: "ev1"))
+                       .calendarAndEmail(calendarId: "primary", eventId: "ev1"))
         XCTAssertFalse(findings.canAddToCalendar(facts()))
         XCTAssertEqual(try count(h, "calendarInviteEvent"), 0, "the card keeps it in memory only")
     }
@@ -247,28 +246,27 @@ final class CalendarIntegrationTests: XCTestCase {
 
     // MARK: - Answering
 
-    func testAnswerOnTheCalendarSendsNoEmailAndAsksGoogleForNone() async throws {
+    func testAnswerOnTheCalendarAsksGoogleToEmailNobodyAndStillSendsTheEmail() async throws {
         let h = try harness()
         try connect(h)
         h.net.respond = { request, _ in
             if request.httpMethod == "GET", Fixture.query(request, "fields") == "attendees" {
                 return (200, #"{"attendees":[{"email":"a@x.com","self":true,"responseStatus":"needsAction"}]}"#, [:])
             }
-            if Fixture.query(request, "iCalUID") != nil || request.httpMethod == "GET" {
-                return (200, Fixture.inviteEventJSON, [:])
-            }
+            if request.httpMethod == "GET" { return (200, Fixture.inviteEventJSON, [:]) }
             return (200, "{}", [:])
         }
         let findings = await h.integration.check(facts(), messageId: "m1", accountId: account).findings
-        let route = try await h.integration.respond(.accepted, facts: facts(), findings: findings,
-                                                    accountId: account)
-        XCTAssertEqual(route, .calendarOnly(calendarId: "primary", eventId: "ev1"))
-        XCTAssertFalse(route.sendsEmail)
+        let outcome = await h.integration.respond(.accepted, facts: facts(), findings: findings,
+                                                  messageId: "m1", accountId: account)
+        XCTAssertEqual(outcome.route, .calendarAndEmail(calendarId: "primary", eventId: "ev1"))
+        XCTAssertTrue(outcome.calendarWritten)
+        XCTAssertTrue(outcome.route.sendsEmail, "the e-mail always goes (DEC-049)")
         let patch = try XCTUnwrap(h.net.requests.first { $0.httpMethod == "PATCH" })
         XCTAssertEqual(Fixture.query(patch, "sendUpdates"), "none")
     }
 
-    func testAnswerGoesByEmailWhenTheUserIsNotAGuestOfTheCalendarEvent() async throws {
+    func testAFailedCalendarWriteStillLetsTheEmailGo() async throws {
         let h = try harness()
         try connect(h)
         h.net.respond = { request, _ in
@@ -278,24 +276,80 @@ final class CalendarIntegrationTests: XCTestCase {
             return (200, Fixture.inviteEventJSON, [:])
         }
         let findings = await h.integration.check(facts(), messageId: "m1", accountId: account).findings
-        let route = try await h.integration.respond(.declined, facts: facts(), findings: findings,
-                                                    accountId: account)
-        XCTAssertEqual(route, .emailOnly)
+        let outcome = await h.integration.respond(.declined, facts: facts(), findings: findings,
+                                                  messageId: "m1", accountId: account)
+        XCTAssertFalse(outcome.calendarWritten)
+        XCTAssertEqual(outcome.calendarError, .notAnAttendee)
+        XCTAssertTrue(outcome.route.sendsEmail)
         XCTAssertNil(h.net.requests.first { $0.httpMethod == "PATCH" })
+    }
+
+    func testAGoneEventIsLookedUpAgain() async throws {
+        let h = try harness()
+        try connect(h)
+        h.net.respond = { request, _ in
+            if Fixture.query(request, "fields") == "attendees" { return (404, "{}", [:]) }
+            return (200, Fixture.inviteEventJSON, [:])
+        }
+        let findings = await h.integration.check(facts(), messageId: "m1", accountId: account).findings
+        let outcome = await h.integration.respond(.accepted, facts: facts(), findings: findings,
+                                                  messageId: "m1", accountId: account)
+        XCTAssertTrue(outcome.eventGone)
+        let before = h.net.requests.filter { Fixture.query($0, "iCalUID") != nil }.count
+        _ = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        let after = h.net.requests.filter { Fixture.query($0, "iCalUID") != nil }.count
+        XCTAssertEqual(after, before + 1, "the cached location was dropped")
     }
 
     func testWithoutACheckTheAnswerGoesByEmailAsBefore() async throws {
         let h = try harness()
         try connect(h)
-        let route = try await h.integration.respond(.accepted, facts: facts(), findings: nil,
-                                                    accountId: account)
-        XCTAssertEqual(route, .emailOnly)
+        let outcome = await h.integration.respond(.accepted, facts: facts(), findings: nil,
+                                                  messageId: "m1", accountId: account)
+        XCTAssertEqual(outcome.route, .emailOnly)
         var unanswerable = facts()
         unanswerable.isAnswerable = false
-        let none = try await h.integration.respond(.accepted, facts: unanswerable, findings: nil,
-                                                   accountId: account)
-        XCTAssertEqual(none, .notAnswerable)
+        let none = await h.integration.respond(.accepted, facts: unanswerable, findings: nil,
+                                               messageId: "m1", accountId: account)
+        XCTAssertEqual(none.route, .notAnswerable)
         XCTAssertEqual(h.net.requests.count, 0)
+    }
+
+    // MARK: - Fewer requests
+
+    /// An invitation on no calendar costs one lookup per chosen calendar;
+    /// opening it again within the cache lifetime asks nothing again.
+    func testWhereTheEventIsIsCachedInMemoryForAWhile() async throws {
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let h = try harness(now: { clock })
+        try connect(h)
+        h.net.respond = { _, _ in (200, #"{"items":[]}"#, [:]) }
+        func lookups() -> Int { h.net.requests.filter { Fixture.query($0, "iCalUID") != nil }.count }
+
+        _ = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        XCTAssertEqual(lookups(), 1)
+        _ = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        XCTAssertEqual(lookups(), 1, "a miss is remembered")
+        clock = clock.addingTimeInterval(CalendarIntegration.locateCacheLifetime + 1)
+        _ = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        XCTAssertEqual(lookups(), 2, "and forgotten after its lifetime")
+        XCTAssertEqual(try count(h, "calendarInviteEvent"), 0, "memory only")
+    }
+
+    func testARateLimitPausesTheAccountsChecks() async throws {
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let h = try harness(now: { clock })
+        try connect(h)
+        h.net.respond = { _, _ in (429, "{}", ["Retry-After": "30"]) }
+        let first = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        guard case .failed = first else { return XCTFail("\(first)") }
+        let sent = h.net.requests.count
+        let paused = await h.integration.check(facts(), messageId: "m2", accountId: account)
+        guard case .failed = paused else { return XCTFail("\(paused)") }
+        XCTAssertEqual(h.net.requests.count, sent, "nothing is sent while paused")
+        clock = clock.addingTimeInterval(31)
+        _ = await h.integration.check(facts(), messageId: "m2", accountId: account)
+        XCTAssertGreaterThan(h.net.requests.count, sent)
     }
 
     func testAddToCalendarImportsOnThePrimaryCalendar() async throws {
@@ -310,10 +364,13 @@ final class CalendarIntegrationTests: XCTestCase {
         let check = await h.integration.check(facts(), messageId: "m1", accountId: account)
         let findings = try XCTUnwrap(check.findings, "\(check)")
         let updated = try await h.integration.addToCalendar(facts(), findings: findings,
+                                                            attendeeEmail: "me@alias.com",
                                                             messageId: "m1", accountId: account)
         XCTAssertEqual(updated.event?.eventId, "new1")
         let post = try XCTUnwrap(h.net.requests.first { $0.httpMethod == "POST" })
         XCTAssertTrue(post.url!.path.hasSuffix("/calendars/primary/events/import"), post.url!.path)
+        let body = try XCTUnwrap(post.httpBody.flatMap { String(data: $0, encoding: .utf8) })
+        XCTAssertTrue(body.contains("me@alias.com"), "the guest is the answering address")
         XCTAssertEqual(try count(h, "calendarInviteEvent"), 0)
     }
 
@@ -323,12 +380,6 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertEqual(CalendarAnswerNote.text(route: .emailOnly, accountId: account,
                                                from: "me@alias.com", organizer: "org@x.com"),
                        "Reply from me@alias.com goes to org@x.com")
-        let calendarOnly = CalendarAnswerNote.text(
-            route: .calendarOnly(calendarId: "primary", eventId: "e"), accountId: account,
-            from: "me@alias.com", organizer: "org@x.com")
-        XCTAssertTrue(calendarOnly.contains("Google Calendar (a@x.com)"), calendarOnly)
-        XCTAssertTrue(calendarOnly.contains("No e-mail is sent"), calendarOnly)
-        XCTAssertFalse(calendarOnly.contains("me@alias.com"), "no e-mail goes from the alias")
         let both = CalendarAnswerNote.text(
             route: .calendarAndEmail(calendarId: "primary", eventId: "e"), accountId: account,
             from: "me@alias.com", organizer: "org@x.com")

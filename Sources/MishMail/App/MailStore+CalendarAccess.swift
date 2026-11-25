@@ -33,41 +33,34 @@ extension MailStore {
         }
     }
 
-    /// Accept / Decline / Maybe on an invitation card. With Calendar on and
-    /// checked, the answer is written on the calendar that holds the event,
-    /// and the e-mail reply goes only where the route says so
-    /// (`CalendarRSVPRoute`). Otherwise it is the e-mail reply, as before.
+    /// Accept / Decline / Maybe on an invitation card. The e-mail reply
+    /// always goes (#51's path, DEC-049). With Calendar on and checked, the
+    /// answer is first written on the calendar that holds this very event
+    /// (`CalendarRSVPRoute`); a failed calendar write never holds back the
+    /// e-mail. Returns the calendar outcome, nil when Calendar took no part.
+    @discardableResult
     func answerInvite(_ invite: CalendarInvite, status: CalendarInvite.RSVP,
-                      message: Message, check: CalendarInviteCheck?) async {
+                      message: Message, check: CalendarInviteCheck?) async -> CalendarRSVPOutcome? {
         guard calendarUIEnabled, invite.isActionable, let findings = check?.findings,
               let response = CalendarResponse(rawValue: status.rawValue.lowercased()) else {
             await rsvpToInvite(invite, status: status, message: message)
-            return
+            return nil
         }
-        let route: CalendarRSVPRoute
-        do {
-            route = try await CalendarIntegration.shared.respond(
-                response, facts: CalendarInviteFacts(invite), findings: findings,
-                accountId: message.accountId)
-        } catch {
-            // Nothing was sent: the user can try again.
-            lastError = Self.calendarErrorMessage(error)
-            return
-        }
-        switch route {
-        case .notAnswerable:
+        let outcome = await CalendarIntegration.shared.respond(
+            response, facts: CalendarInviteFacts(invite), findings: findings,
+            messageId: message.id, accountId: message.accountId)
+        guard outcome.route.sendsEmail else {
             lastError = "This invite can't be answered."
-        case .emailOnly, .calendarAndEmail:
-            await rsvpToInvite(invite, status: status, message: message)
-        case .calendarOnly:
-            let accountId = message.accountId, messageId = message.id
-            _ = try? await db.write { db in
-                try CalendarRSVPStore.record(
-                    db, status: status, invite: invite,
-                    accountId: accountId, messageId: messageId)
-            }
-            showNotice("\(status.subjectPrefix) — saved in Google Calendar")
+            return outcome
         }
+        let before = presentedError
+        await rsvpToInvite(invite, status: status, message: message)
+        // Only when the e-mail itself raised nothing: its error matters more.
+        if let error = outcome.calendarError, !outcome.eventGone, presentedError == before {
+            lastError = "The reply was e-mailed, but Google Calendar was not updated: "
+                + Self.calendarErrorMessage(error)
+        }
+        return outcome
     }
 
     /// "Add to calendar" on the invitation card. Returns the new findings,
@@ -76,8 +69,10 @@ extension MailStore {
                              findings: CalendarInviteFindings) async -> CalendarInviteFindings? {
         guard calendarUIEnabled else { return nil }
         do {
+            // The guest is the address the answer will go from.
             let updated = try await CalendarIntegration.shared.addToCalendar(
                 CalendarInviteFacts(invite), findings: findings,
+                attendeeEmail: rsvpIdentity(for: message, invite: invite).email,
                 messageId: message.id, accountId: message.accountId)
             showNotice("Added to Google Calendar")
             return updated
