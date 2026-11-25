@@ -186,6 +186,16 @@ final class BackfillDeriveWithLocalEditsTests: XCTestCase {
         XCTAssertEqual(t.snippet, "snippet-m2")
     }
 
+    /// A first sync cut short resumes from its kept id and replays history
+    /// from it before listing; the expired-history reconcile always starts
+    /// fresh, and so does a first sync with nothing kept.
+    func testABackfillResumesFromTheKeptHistoryId() {
+        XCTAssertEqual(SyncEngine.backfillStart(kept: "42", reconcile: false), .replay("42"))
+        XCTAssertEqual(SyncEngine.backfillStart(kept: nil, reconcile: false), .fresh)
+        XCTAssertEqual(SyncEngine.backfillStart(kept: "", reconcile: false), .fresh)
+        XCTAssertEqual(SyncEngine.backfillStart(kept: "42", reconcile: true), .fresh)
+    }
+
     func testTheFirstSyncHistoryIdGoesWithTheAccount() {
         let key = SyncEngine.firstSyncHistoryKey(accountId: "a@x.com")
         XCTAssertEqual(key, "backfill.startHistory.a@x.com")

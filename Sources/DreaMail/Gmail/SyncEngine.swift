@@ -140,6 +140,9 @@ actor SyncEngine {
                     forKey: WindowBackfill.listedKey(accountId: accountId))
                 UserDefaults.standard.set(false, forKey: "backfill.starred.\(accountId)")
             }
+            // No first sync runs while nothing is kept: a later window
+            // starts a fresh one.
+            UserDefaults.standard.removeObject(forKey: Self.firstSyncHistoryKey(accountId: accountId))
             try await db.write { [accountId] db in
                 try db.execute(
                     sql: "UPDATE account SET historyId = NULL, lastSyncAt = ? WHERE id = ?",
@@ -374,17 +377,31 @@ actor SyncEngine {
         // Read before listing: history from this id onward replays anything
         // that changes while the backfill runs. A first sync keeps the id of
         // its first attempt until it completes: a run cut short (quit,
-        // offline, quota) resumes without re-reading stored messages, and
-        // only history from that id replays the edits made meanwhile, here
-        // or on another device. An id that expired meanwhile takes the
-        // reconcile path at the next pass.
+        // offline, quota) resumes without re-reading stored messages. The
+        // resumed attempt first replays history from the kept id onto what
+        // is stored (edits made meanwhile, here or on another device), so a
+        // later page cannot re-derive a thread from labels that are out of
+        // date; then it keeps the id the replay reached.
         let startKey = Self.firstSyncHistoryKey(accountId: accountId)
-        let startHistory: String
-        if !reconcileCached, let kept = UserDefaults.standard.string(forKey: startKey) {
-            startHistory = kept
-        } else {
+        var startHistory: String
+        switch Self.backfillStart(
+            kept: UserDefaults.standard.string(forKey: startKey), reconcile: reconcileCached) {
+        case .fresh:
             startHistory = try await client.profile().historyId
             if !reconcileCached { UserDefaults.standard.set(startHistory, forKey: startKey) }
+        case .replay(let kept):
+            startHistory = kept
+            do {
+                // Slices advance the kept id, never `account.historyId`:
+                // that one marks the first sync complete.
+                startHistory = try await incrementalSync(since: kept, progress: progress) {
+                    UserDefaults.standard.set($0, forKey: startKey)
+                }
+                UserDefaults.standard.set(startHistory, forKey: startKey)
+            } catch GmailError.historyExpired {
+                // As before: the expired id is committed at the end and the
+                // next pass takes the reconcile path.
+            }
         }
         var inboxFetched = 0
         if !reconcileCached {
@@ -428,6 +445,20 @@ actor SyncEngine {
                 plan, skipping: batch.downloadedGmailIds, progress: progress)
         }
         return startHistory
+    }
+
+    enum BackfillStart: Equatable {
+        /// Read the current history id from the profile.
+        case fresh
+        /// A first sync cut short: replay history from the kept id first.
+        case replay(String)
+    }
+
+    /// How a full backfill starts. The history-expired reconcile always
+    /// starts fresh; a first sync resumes from its kept id. Pure — tested.
+    static func backfillStart(kept: String?, reconcile: Bool) -> BackfillStart {
+        guard !reconcile, let kept, !kept.isEmpty else { return .fresh }
+        return .replay(kept)
     }
 
     /// UserDefaults key of the history id a first sync started from, kept
@@ -1136,7 +1167,12 @@ actor SyncEngine {
     /// fits well inside Gmail's per-second budget even at 5 units a message.
     static let historySliceMessages = 100
 
-    private func incrementalSync(since historyId: String, progress: (@Sendable (String) -> Void)?) async throws -> String {
+    /// `commitSlice` records the id reached after each slice but the last;
+    /// by default `account.historyId`.
+    private func incrementalSync(
+        since historyId: String, progress: (@Sendable (String) -> Void)?,
+        commitSlice: ((String) async throws -> Void)? = nil
+    ) async throws -> String {
         var pageToken: String?
         var latest = historyId
         var items: [GHistoryList.Item] = []
@@ -1170,7 +1206,11 @@ actor SyncEngine {
                 throw GmailError.partialFetch(failedCount: failed)
             }
             if n + 1 < slices.count {
-                try await commitHistoryId(slice.lastRecordId)
+                if let commitSlice {
+                    try await commitSlice(slice.lastRecordId)
+                } else {
+                    try await commitHistoryId(slice.lastRecordId)
+                }
             }
         }
         return latest
@@ -1414,6 +1454,9 @@ actor SyncEngine {
     /// mail, untouched by an earlier archive or mark-read. Pure — unit-tested.
     static func applyingLocalEdits(_ edits: [LocalThreadEdits.Edit],
                                    to messages: [Message]) -> [Message] {
+        // shortcut: Gmail's internalDate against this Mac's clock, no margin.
+        // A skewed clock can misplace a message received within seconds of
+        // the edit; a margin would hide real replies arriving just after it.
         edits.reduce(messages) { current, edit in
             current.map { $0.date <= edit.at ? applyingLocalEdit(edit.change, to: $0) : $0 }
         }

@@ -143,6 +143,10 @@ extension MailStore {
             lastError = AccountLifecycle.removalWhileConnectingMessage
             return
         }
+        // Marked now, not after the sync is cancelled: a sign-in of this
+        // address in that window must already see the removal (it refuses
+        // a pending one). Idempotent; a failed purge clears it again.
+        AccountLifecycle.markRemovalPending(id)
         let pool = db
         // Stop the account's sync first: a pass still running would write
         // rows for an account that is being deleted. Drop the account from

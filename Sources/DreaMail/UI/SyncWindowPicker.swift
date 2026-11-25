@@ -25,9 +25,12 @@ struct SyncWindowPicker: View {
             Text("Nothing (remove from this Mac)").tag(SyncEngine.windowNothing)
         }
         .onChange(of: days) {
+            // A picker still on screen for an account just removed writes
+            // nothing for it (DEC-019).
+            guard store.isKnownAccount(accountId) else { return }
             UserDefaults.standard.set(days, forKey: "syncWindowDays.\(accountId)")
             // Older mail now downloaded is not new mail.
-            store.quietNewMailBacklog(accountId: accountId)
+            store.quietNewMailBacklog(accountId: accountId, restart: true)
             Task { await store.sync(accountId: accountId) }
         }
     }

@@ -513,7 +513,12 @@ extension MailStore {
     }
 
     /// The same for older mail a wider "Keep mail from" downloads.
-    func quietNewMailBacklog(accountId: String) {
+    /// `restart`: the window changed, so the cutoff is now, not the one an
+    /// earlier first sync kept (an account on "Nothing" never settles it).
+    func quietNewMailBacklog(accountId: String, restart: Bool = false) {
+        // DEC-019: nothing is written back for an account removed meanwhile.
+        guard isKnownAccount(accountId) else { return }
+        if restart { newMailNotifications.forgetBacklog(accountId: accountId) }
         newMailNotifications.quietBacklog(accountId: accountId, before: Date())
     }
 
