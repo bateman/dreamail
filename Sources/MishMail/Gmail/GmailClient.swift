@@ -97,6 +97,9 @@ struct GSendAs: Decodable, Hashable {
     /// "accepted" | "pending" | … — non-primary rows need accepted to send.
     let verificationStatus: String?
     let treatAsAlias: Bool?
+    /// The address's Gmail signature (HTML). Read only for "Import from
+    /// Gmail"; never logged or kept outside the signature it is copied to.
+    var signature: String? = nil
 }
 
 struct GHistoryList: Decodable {

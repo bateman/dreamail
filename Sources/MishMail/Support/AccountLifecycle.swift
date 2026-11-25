@@ -114,6 +114,8 @@ enum AccountLifecycle {
         try CalendarRSVPStore.forget(db, account: id)
         // Calendar grant and chosen calendars: same.
         try CalendarStore.forget(db, accountId: id)
+        // Signatures and their defaults: same.
+        try SignatureStore.forget(db, accountId: id)
         // The account's mail cascades with the account row.
         let messages = try Int.fetchOne(
             db, sql: "SELECT count(*) FROM message WHERE accountId = ?", arguments: [id]) ?? 0

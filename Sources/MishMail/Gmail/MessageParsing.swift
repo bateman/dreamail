@@ -883,7 +883,30 @@ enum ComposeQuote {
     /// Plain text: **per blank-line paragraph** `dir` (first strong char), so
     /// an English greeting + Hebrew body is not forced LTR for the whole
     /// message. Markdown blocks carry their own `dir` (no single outer wrap).
+    ///
+    /// A signature block (`ComposeSignature`) is rendered the same way and
+    /// wrapped in Gmail's `gmail_signature` div.
     static func authoredHeadHTML(_ userText: String) -> String {
+        guard !userText.isEmpty else { return "" }
+        guard let parts = ComposeSignature.split(userText) else {
+            return authoredTextHTML(userText)
+        }
+        let text = parts.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let signature = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
+        var out = text.isEmpty ? "" : authoredTextHTML(text) + "<div><br></div>"
+        out += ComposeSignature.htmlBlock(innerHTML: authoredTextHTML(signature))
+        return out
+    }
+
+    /// Where a quoted original starts in a compose body: a forwarded block
+    /// or a reply attribution line. Nil when the body has none.
+    static func quoteStart(in body: String) -> String.Index? {
+        (body.range(of: "\n" + ForwardComposer.marker)
+            ?? body.range(of: #"\n+On .+ wrote:\n"#, options: .regularExpression))?
+            .lowerBound
+    }
+
+    private static func authoredTextHTML(_ userText: String) -> String {
         guard !userText.isEmpty else { return "" }
         if Markdown.looksLikeMarkdown(userText) {
             return Markdown.toHTML(userText)
