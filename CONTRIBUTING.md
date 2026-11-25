@@ -33,7 +33,8 @@ files that neither the build nor a test reads: `docs/`, `reviews/`,
 So judge a commit on `main` by its own run (`gh run list --commit <sha>`):
 a docs-only commit after a red one has a green run.
 `make ui-test` is a separate CI job for launch, demo navigation, compose, and
-Settings. It takes about eleven minutes, so it runs only for a release:
+Settings. It runs as two parallel jobs of about eleven minutes each, so it
+runs only for a release:
 `make release` starts it and waits, and `make ui-test-ci` starts it by hand
 for a pushed branch. Run it for a change to the UI structure. Tests live in
 `Tests/DreaMailTests` and cover the non-UI core: message/MIME parsing, the

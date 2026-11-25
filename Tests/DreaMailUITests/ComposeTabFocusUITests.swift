@@ -14,6 +14,8 @@ final class ComposeTabFocusUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 // A saved accent must not change what this suite sees.
                                 "-accentColor", "",
@@ -77,10 +79,36 @@ final class ComposeTabFocusUITests: XCTestCase {
         XCTAssertEqual(subject.value as? String, expected)
     }
 
+    /// One launch for the four checks. Each opens a new compose with `c`;
+    /// Esc then saves and closes it (a first Esc may only close the contact
+    /// suggestions), so the next starts from the mailbox again.
+    func testRecipientFocusAndTab() {
+        let app = launchDemo()
+        let steps: [(String, (XCUIApplication) -> Void)] = [
+            ("Tab with a suggestion accepts and moves to Subject", stepTabWithSuggestionAcceptsAndMovesToSubject),
+            ("Tab with a plain address moves to Subject", stepTabWithPlainAddressMovesToSubject),
+            ("Comma-committed recipients keep To focused", stepCommaCommittedRecipientsKeepToFocused),
+            ("A clicked suggestion returns focus to the recipient draft", stepClickedSuggestionReturnsFocusToRecipientDraft),
+        ]
+        for (name, step) in steps {
+            XCTContext.runActivity(named: name) { _ in step(app) }
+            closeCompose(app, after: name)
+        }
+    }
+
+    private func closeCompose(_ app: XCUIApplication, after step: String) {
+        let compose = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier IN {'composeCard', 'composeInline'}")).firstMatch
+        for _ in 0..<3 where compose.exists {
+            app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+            _ = compose.waitForNonExistence(timeout: 2)
+        }
+        XCTAssertFalse(compose.exists, "Esc closes the compose after: \(step)")
+    }
+
     /// Tab while the contact autocomplete is showing: accept the pick AND
     /// move to the subject (Gmail behavior).
-    func testTabWithSuggestionAcceptsAndMovesToSubject() {
-        let app = launchDemo()
+    private func stepTabWithSuggestionAcceptsAndMovesToSubject(_ app: XCUIApplication) {
         let (to, subject) = openCompose(app)
 
         to.typeText("dana")   // matches dana@brightloop.io in the demo seed
@@ -97,8 +125,7 @@ final class ComposeTabFocusUITests: XCTestCase {
 
     /// Tab with a plain typed address (no matching contact): commit the chip
     /// and land on the subject without dropping focus.
-    func testTabWithPlainAddressMovesToSubject() {
-        let app = launchDemo()
+    private func stepTabWithPlainAddressMovesToSubject(_ app: XCUIApplication) {
         let (to, subject) = openCompose(app)
 
         to.typeText("nobody-matches-this@example.net")
@@ -115,8 +142,7 @@ final class ComposeTabFocusUITests: XCTestCase {
     /// Committing one recipient must leave the insertion point in To so the
     /// next address can be typed immediately. This is the normal multi-address
     /// flow: type an address, comma, then continue with the next address.
-    func testCommaCommittedRecipientsKeepToFocused() {
-        let app = launchDemo()
+    private func stepCommaCommittedRecipientsKeepToFocused(_ app: XCUIApplication) {
         let (to, _) = openCompose(app)
 
         for address in ["first@example.net", "second@example.net", "third@example.net"] {
@@ -135,8 +161,7 @@ final class ComposeTabFocusUITests: XCTestCase {
 
     /// A mouse-picked autocomplete suggestion should behave like Return: it
     /// commits the chip and leaves To ready for the next recipient.
-    func testClickedSuggestionReturnsFocusToRecipientDraft() {
-        let app = launchDemo()
+    private func stepClickedSuggestionReturnsFocusToRecipientDraft(_ app: XCUIApplication) {
         let (to, _) = openCompose(app)
 
         app.typeText("dana")

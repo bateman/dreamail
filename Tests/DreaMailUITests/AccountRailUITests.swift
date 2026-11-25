@@ -8,6 +8,8 @@ final class AccountRailUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
                                 "-threadOpenStyle", "readingPane"] + extra
@@ -23,10 +25,18 @@ final class AccountRailUITests: XCTestCase {
         root.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
-    /// One launch: the top band covers the three window buttons (sidebar
-    /// hidden, then shown), and the rail below it is 64 pt wide.
-    func testWindowButtonsLieInsideTheTopBandAndTheRailBelowIsNarrow() {
+    /// One launch for both; the band check first, before Settings opens.
+    func testRail() {
         let app = launch()
+        XCTContext.runActivity(named: "Window buttons lie inside the top band; the rail below is narrow") { _ in
+            stepWindowButtonsLieInsideTheTopBandAndTheRailBelowIsNarrow(app) }
+        XCTContext.runActivity(named: "The Appearance toggle hides and shows +") { _ in
+            stepAppearanceToggleHidesAndShowsTheAddEntry(app) }
+    }
+
+    /// The top band covers the three window buttons (sidebar hidden, then
+    /// shown), and the rail below it is 64 pt wide.
+    private func stepWindowButtonsLieInsideTheTopBandAndTheRailBelowIsNarrow(_ app: XCUIApplication) {
         let settings = element(app, "accountRail.settings")
         XCTAssertTrue(settings.waitForExistence(timeout: 10), "the rail is on screen")
         let window = app.windows.firstMatch
@@ -89,8 +99,7 @@ final class AccountRailUITests: XCTestCase {
         assertButtonsInBand("sidebar hidden again")
     }
 
-    func testAppearanceToggleHidesAndShowsTheAddEntry() {
-        let app = launch()
+    private func stepAppearanceToggleHidesAndShowsTheAddEntry(_ app: XCUIApplication) {
         let add = element(app, "accountRail.add")
         XCTAssertTrue(add.waitForExistence(timeout: 10), "+ is shown by default")
 

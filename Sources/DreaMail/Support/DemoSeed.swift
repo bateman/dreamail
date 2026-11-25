@@ -108,7 +108,7 @@ enum DemoSeed {
                 try SignatureStore.insert(database, accountId: account, name: "Short",
                                           body: "Alex · Example Studio")
 
-                for label in userLabels {
+                for label in labels(environment: ProcessInfo.processInfo.environment) {
                     let row = LabelRow(id: "\(account):\(label.id)", accountId: account,
                                        gmailLabelId: label.id, name: label.name, type: "user",
                                        color: nil, sortOrder: label.order,
@@ -181,7 +181,29 @@ enum DemoSeed {
 
     // MARK: - Fixture data
 
-    private struct DemoLabel { let id, name, color: String; let order: Int }
+    struct DemoLabel { let id, name, color: String; let order: Int }
+
+    /// The labels the demo seeds. `DREAMAIL_DEMO_LABELS=small` (UI tests
+    /// only) keeps just the ones the UI tests and the demo threads use, with
+    /// their ids, names and order: every accessibility snapshot of a ~70-row
+    /// sidebar is slow, and rows below the fold need scrolling. Without it
+    /// (`make run`, `make demo`, the label picker's and the sidebar label
+    /// tree's UI tests) the full list.
+    static func labels(environment: [String: String]) -> [DemoLabel] {
+        guard environment["DREAMAIL_DEMO_LABELS"] == "small" else { return userLabels }
+        return userLabels.filter { smallLabelIds.contains($0.id) }
+    }
+
+    /// The labels the demo threads carry, plus the nested Clients/… and
+    /// Vendors/… trees the sidebar tests open, and Travel, Family and
+    /// Friends: without them SidebarLabelTreeUITests' click on Vendors'
+    /// disclosure triangle did not open it (CI, November 2026).
+    static let smallLabelIds: Set<String> = [
+        "Label_work", "Label_research", "Label_personal", "Label_investment",
+        "Label_travel", "Label_family", "Label_friends",
+        "Label_clients", "Label_clients_acme", "Label_clients_northwind", "Label_clients_brightloop",
+        "Label_vendors", "Label_vendors_aws", "Label_vendors_stripe",
+    ]
 
     /// Deliberately long list with near-duplicate clusters so the "l" picker's
     /// type-to-filter (and scroll-past-the-fold) can be exercised in demo mode.

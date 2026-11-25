@@ -6,7 +6,8 @@ import XCTest
 /// thread row are drawn in the stored colour while their list is focused
 /// in the key window, with glyph and title in white or black as the
 /// contrast rule picks (`AccentPalette.onFill`): white on red, black on
-/// yellow. Unfocused and inactive-window selections stay the system grey.
+/// yellow. Unfocused and inactive-window selections stay
+/// the system grey.
 ///
 /// Reads the rendered pixels of window-only screenshots, like
 /// `SidebarIconTintUITests`: each check crops the row's leading strip,
@@ -34,8 +35,8 @@ final class AccentColorUITests: XCTestCase {
     }
 
     /// The real feature path: pick a swatch in Settings → Appearance, and
-    /// the main window's selected sidebar row is repainted without a
-    /// relaunch; Default brings the system highlight back. No `-accentColor`
+    /// the main window's selected sidebar and thread rows are repainted
+    /// without a relaunch; Default brings the system highlight back. No `-accentColor`
     /// argument here: the argument domain would hide what Settings writes.
     func testPickingASwatchInSettingsRepaintsTheSidebarLive() throws {
         let (app, main) = launch(accentArgument: nil)
@@ -52,6 +53,9 @@ final class AccentColorUITests: XCTestCase {
         try refocus(inbox, app: app, main: main)
         try assertRow(strip, in: main, is: .accent(Self.redSwatch), "sidebar, after picking Red")
         try assertNoSystemBlue(around: inbox, in: main, "sidebar, after picking Red")
+        // The thread list draws the same black ink on its selected row.
+        let selected = try focusThreadList(app: app, window: main, accent: Self.redSwatch)
+        try assertRow(selected, in: main, is: .accent(Self.redSwatch), "thread list, after picking Red")
 
         // Default again: the system highlight is back.
         try setAccent(app: app, swatch: nil)
@@ -67,6 +71,8 @@ final class AccentColorUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         // The reading pane hidden: moving the selection in the list only
         // highlights (the list stays on screen in a narrow window).
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",

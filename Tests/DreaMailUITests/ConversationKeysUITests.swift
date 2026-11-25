@@ -9,6 +9,8 @@ final class ConversationKeysUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
@@ -53,7 +55,29 @@ final class ConversationKeysUITests: XCTestCase {
         return frames.indices.max { frames[$0].height < frames[$1].height }
     }
 
+    /// One launch for both checks; each opens t2 afresh (see
+    /// `openConversation`).
+    func testMessageKeys() {
+        let app = launch()
+        XCTContext.runActivity(named: "p and n move the open message") { _ in
+            stepPreviousAndNextMessageMoveTheOpenMessage(app) }
+        XCTContext.runActivity(named: "; expands all, : collapses all") { _ in
+            stepExpandAllAndCollapseAll(app) }
+    }
+
+    /// Opens t2 with only its newest message open. When a conversation is
+    /// already open, t1 first: the pane is rebuilt per conversation, so t2
+    /// comes back with its default rows.
     private func openConversation(_ app: XCUIApplication) {
+        if !rows(app).isEmpty {
+            showList(app)
+            let other = app.descendants(matching: .any)
+                .matching(identifier: "threadRow.you@example.com:t1").firstMatch
+            XCTAssertTrue(other.waitForExistence(timeout: 10))
+            other.click()
+            wait("t1 replaces t2 in the pane") { rows(app).count != 4 }
+            showList(app)
+        }
         let row = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t2").firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
@@ -62,8 +86,14 @@ final class ConversationKeysUITests: XCTestCase {
         XCTAssertEqual(openIndex(app), 3)
     }
 
-    func testPreviousAndNextMessageMoveTheOpenMessage() {
-        let app = launch()
+    /// In the narrow default window the conversation replaces the list
+    /// (compact layout); its back button brings the list back.
+    private func showList(_ app: XCUIApplication) {
+        let back = app.buttons.matching(identifier: "compactBackButton").firstMatch
+        if back.exists { back.click() }
+    }
+
+    private func stepPreviousAndNextMessageMoveTheOpenMessage(_ app: XCUIApplication) {
         openConversation(app)
         app.typeKey("p", modifierFlags: [])
         wait("p opens the third message") { openIndex(app) == 2 && collapsedCount(app) == 3 }
@@ -75,8 +105,7 @@ final class ConversationKeysUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch.exists)
     }
 
-    func testExpandAllAndCollapseAll() {
-        let app = launch()
+    private func stepExpandAllAndCollapseAll(_ app: XCUIApplication) {
         openConversation(app)
         app.typeKey(";", modifierFlags: [])
         wait("; opens every message") { collapsedCount(app) == 0 }

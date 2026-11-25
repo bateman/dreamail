@@ -7,6 +7,39 @@ final class DemoSeedTests: XCTestCase {
         super.tearDown()
     }
 
+    /// `make run` and the label picker's UI tests keep the long list.
+    func testDefaultDemoKeepsTheFullLabelList() {
+        let full = DemoSeed.labels(environment: [:])
+        XCTAssertGreaterThan(full.count, 60, "the picker's filtering needs the long list")
+        XCTAssertEqual(DemoSeed.labels(environment: ["DREAMAIL_DEMO_LABELS": "full"]).map(\.id),
+                       full.map(\.id))
+    }
+
+    /// The UI tests' short list: the labels the demo threads carry and the
+    /// ones the tests name, with the ids, names and order of the full list.
+    func testSmallDemoKeepsTheLabelsTheThreadsAndTestsUse() throws {
+        let (pool, path) = try makeDatabase()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertTrue(DemoSeed.activate(pool))
+        let threadLabelIds = Set(try pool.read { try String.fetchAll($0, sql: "SELECT labelIds FROM message") }
+            .flatMap { $0.split(separator: " ").map(String.init) }
+            .filter { $0.hasPrefix("Label_") })
+        let full = DemoSeed.labels(environment: [:])
+        let small = DemoSeed.labels(environment: ["DREAMAIL_DEMO_LABELS": "small"])
+        XCTAssertEqual(Set(small.map(\.id)), DemoSeed.smallLabelIds,
+                       "every short-list id exists in the full list")
+        XCTAssertTrue(threadLabelIds.isSubset(of: DemoSeed.smallLabelIds),
+                      "a demo thread's label is missing: \(threadLabelIds.subtracting(DemoSeed.smallLabelIds))")
+        XCTAssertFalse(threadLabelIds.isEmpty)
+        for label in small {
+            let original = full.first { $0.id == label.id }
+            XCTAssertEqual(original?.name, label.name, label.id)
+            XCTAssertEqual(original?.order, label.order, label.id)
+        }
+        XCTAssertEqual(small.map(\.order), small.map(\.order).sorted())
+        XCTAssertEqual(small.first { $0.id == "Label_vendors_aws" }?.name, "Vendors/AWS")
+    }
+
     func testDemoCanStartWithoutAccounts() {
         XCTAssertTrue(DemoSeed.canActivate(accountIDs: []))
     }

@@ -161,16 +161,24 @@ jobs:
           key: dd-${{ runner.os }}-${{ steps.cache-key.outputs.xcode }}-${{ hashFiles('project.yml') }}-${{ github.sha }}
 
   ui-test:
-    name: UI smoke tests
-    # About eleven minutes, so not on every push or pull request. Runs when a
-    # release is published and on a manual run; `make release` starts a
-    # manual run on main and waits for it before it publishes, and
-    # `make ui-test-ci` starts one on any pushed branch.
+    # Two halves of the suite in parallel, each on its own runner (the
+    # Makefile's UI_SHARD has the split). `make release` and
+    # `make ui-test-ci` wait for the whole run, so they need both.
+    name: UI smoke tests (${{ matrix.shard }} of 2)
+    # Not on every push or pull request. Runs when a release is published
+    # and on a manual run; `make release` starts a manual run on main and
+    # waits for it before it publishes, and `make ui-test-ci` starts one on
+    # any pushed branch.
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
-    # About 25 minutes with setup as of November 2026 (main took 22 for the
-    # tests alone on 113c76c); the budget leaves room for a slow runner.
-    timeout-minutes: 35
+    strategy:
+      # One half failing must not cancel the other: both results count.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    # About eleven minutes each with the build (November 2026: the whole
+    # suite in one job took 22).
+    timeout-minutes: 20
     # Separate job so a UI hang or desktop hijack cannot hide unit-test results.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -182,6 +190,8 @@ jobs:
         run: bash .github/scripts/install-xcodegen.sh
 
       - name: Run UI smoke test
+        env:
+          UI_SHARD: ${{ matrix.shard }}
         run: |
           set -o pipefail
           make ui-test 2>&1 | tee "$RUNNER_TEMP/ui-tests.log"

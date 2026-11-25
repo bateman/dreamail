@@ -9,6 +9,8 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 // A saved accent must not change what this suite sees.
                                 "-accentColor", "",
@@ -23,16 +25,37 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
         return app
     }
 
-    func testSingleMessageConversationOpensFullyExpanded() {
+    /// One launch for both. The HTML check goes first, so t3 is still a
+    /// never-seen message, as on a fresh launch; t1 (plain text) after it.
+    func testOneMessageConversationsOpenFullyExpanded() {
         let app = launchReadingPane()
+        XCTContext.runActivity(named: "An HTML message fills the pane from the first frame") { _ in
+            stepHTMLMessageFillsThePaneFromTheFirstFrame(app) }
+        XCTContext.runActivity(named: "A one-message conversation opens fully expanded") { _ in
+            stepSingleMessageConversationOpensFullyExpanded(app) }
+    }
 
+    private func stepSingleMessageConversationOpensFullyExpanded(_ app: XCUIApplication) {
+        // The narrow default window shows t3 in place of the list (compact
+        // layout): its back button brings the list back.
+        let back = app.buttons.matching(identifier: "compactBackButton").firstMatch
+        if back.exists { back.click() }
         // Demo t1 is a single message from Dana (plain text, several lines).
         let demoThread = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
         XCTAssertTrue(demoThread.waitForExistence(timeout: 10))
         demoThread.click()
-        XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch
-            .waitForExistence(timeout: 5))
+        let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
+        XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        // t3 was open before: wait until the pane shows t1, so the checks
+        // below read t1's card. A selectable Text exposes its string as the
+        // value; the label is often empty.
+        let text = { (subject.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? subject.label }
+        let deadline = Date().addingTimeInterval(5)
+        while !text().contains("Design review"), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(text().contains("Design review"), "the pane must show t1: \(text())")
 
         // Expanded: the body is mounted, without any click on the card.
         let body = app.descendants(matching: .any)
@@ -63,8 +86,7 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
     /// 120 pt box for the whole WebKit load, then jumped to its length. The
     /// body must fill the pane from the first observation and only ever grow
     /// to its content (demo t3 is an HTML CI report taller than the window).
-    func testHTMLMessageFillsThePaneFromTheFirstFrame() {
-        let app = launchReadingPane()
+    private func stepHTMLMessageFillsThePaneFromTheFirstFrame(_ app: XCUIApplication) {
         let window = app.windows.firstMatch
 
         let row = app.descendants(matching: .any)

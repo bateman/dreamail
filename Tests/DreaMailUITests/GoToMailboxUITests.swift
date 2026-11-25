@@ -5,13 +5,13 @@ import XCTest
 /// `threadFocusMode` on every go-to; this covers the *event path* — the key
 /// has to reach `MailStore.handleKey` while the conversation fills the window.
 final class GoToMailboxUITests: XCTestCase {
-    /// Launches the demo in full-window style and opens a conversation with
-    /// the first responder parked on its selectable subject text.
-    private func openFullWindowConversation()
-        -> (app: XCUIApplication, row: XCUIElement, exitFocus: XCUIElement) {
+    /// Launches the demo in full-window style.
+    private func launchFullWindow() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 // A saved accent must not change what this suite sees.
                                 "-accentColor", "",
@@ -23,7 +23,13 @@ final class GoToMailboxUITests: XCTestCase {
 
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
         app.activate()
+        return app
+    }
 
+    /// Opens a conversation full-window with the first responder parked on
+    /// its selectable subject text.
+    private func openFullWindowConversation(_ app: XCUIApplication)
+        -> (row: XCUIElement, exitFocus: XCUIElement) {
         let demoThread = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
         XCTAssertTrue(demoThread.waitForExistence(timeout: 10))
@@ -40,7 +46,7 @@ final class GoToMailboxUITests: XCTestCase {
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
         XCTAssertTrue(subject.waitForExistence(timeout: 5))
         subject.click()
-        return (app, demoThread, exitFocus)
+        return (demoThread, exitFocus)
     }
 
     private func waitForDisappearance(_ element: XCUIElement) {
@@ -50,8 +56,18 @@ final class GoToMailboxUITests: XCTestCase {
         }
     }
 
-    func testGoToInboxExitsFullWindowConversation() {
-        let (app, demoThread, exitFocus) = openFullWindowConversation()
+    /// One full-window launch for `g i` and `u`: each opens the
+    /// conversation again from the list.
+    func testGoToInboxAndUExitFullWindowConversation() {
+        let app = launchFullWindow()
+        XCTContext.runActivity(named: "g i exits the full-window conversation") { _ in
+            stepGoToInboxExitsFullWindowConversation(app) }
+        XCTContext.runActivity(named: "u returns to the list") { _ in
+            stepUReturnsFromFullWindowConversationToTheList(app) }
+    }
+
+    private func stepGoToInboxExitsFullWindowConversation(_ app: XCUIApplication) {
+        let (demoThread, exitFocus) = openFullWindowConversation(app)
 
         app.typeKey("g", modifierFlags: [])
         app.typeKey("i", modifierFlags: [])
@@ -65,8 +81,8 @@ final class GoToMailboxUITests: XCTestCase {
 
     /// Gmail's `u` ("back to threadlist") is the default for that action;
     /// it used to be mark read / unread.
-    func testUReturnsFromFullWindowConversationToTheList() {
-        let (app, demoThread, exitFocus) = openFullWindowConversation()
+    private func stepUReturnsFromFullWindowConversationToTheList(_ app: XCUIApplication) {
+        let (demoThread, exitFocus) = openFullWindowConversation(app)
 
         app.typeKey("u", modifierFlags: [])
 
@@ -86,6 +102,8 @@ final class GoToMailboxUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 // A saved accent must not change what this suite sees.
                                 "-accentColor", "",

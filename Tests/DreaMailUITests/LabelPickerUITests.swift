@@ -14,6 +14,8 @@ final class LabelPickerUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // No DREAMAIL_DEMO_LABELS=small: the picker's filtering needs the
+        // demo's full, long label list.
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
@@ -60,7 +62,26 @@ final class LabelPickerUITests: XCTestCase {
 
     private func flipped(_ v: String) -> String { v == "on" ? "off" : "on" }
 
-    func testReturnAppliesAndCloses() {
+    /// One launch for the four checks: each works on its own labels
+    /// (Family, Travel, Friends, then Work and Research) and reads its
+    /// "before" state itself, so none depends on another's outcome. Each
+    /// ends with the picker open on its check; Esc closes it before the next.
+    func testReturnSpaceClicksAndEsc() {
+        let steps: [(String, () -> Void)] = [
+            ("Return applies and closes", stepReturnAppliesAndCloses),
+            ("Return after Space keeps the label on", stepReturnAfterSpaceKeepsTheLabelOn),
+            ("Return after a click keeps the label on", stepReturnAfterAClickKeepsTheLabelOn),
+            ("Clicks keep the picker open, Esc closes with both applied",
+             stepClicksKeepThePickerOpenAndEscClosesWithBothApplied),
+        ]
+        for (name, step) in steps {
+            XCTContext.runActivity(named: name) { _ in step() }
+            close()
+            XCTAssertTrue(search.waitForNonExistence(timeout: 5), "Esc closes the picker after: \(name)")
+        }
+    }
+
+    private func stepReturnAppliesAndCloses() {
         openPicker(filter: "Family")
         let before = value("Family")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
@@ -69,7 +90,7 @@ final class LabelPickerUITests: XCTestCase {
         wait(row("Family"), value: flipped(before), "Return toggled the highlighted label")
     }
 
-    func testReturnAfterSpaceKeepsTheLabelOn() {
+    private func stepReturnAfterSpaceKeepsTheLabelOn() {
         openPicker(filter: "Travel")
         let before = value("Travel")
         // Arrows mark the list as navigated, so Space toggles instead of typing.
@@ -84,7 +105,7 @@ final class LabelPickerUITests: XCTestCase {
         wait(row("Travel"), value: flipped(before), "Return after Space did not undo the pick")
     }
 
-    func testReturnAfterAClickKeepsTheLabelOn() {
+    private func stepReturnAfterAClickKeepsTheLabelOn() {
         openPicker(filter: "Friends")
         let before = value("Friends")
         row("Friends").click()
@@ -96,7 +117,7 @@ final class LabelPickerUITests: XCTestCase {
         wait(row("Friends"), value: flipped(before), "Return after a click did not undo it")
     }
 
-    func testClicksKeepThePickerOpenAndEscClosesWithBothApplied() {
+    private func stepClicksKeepThePickerOpenAndEscClosesWithBothApplied() {
         openPicker()
         XCTAssertTrue(row("Work").waitForExistence(timeout: 5))
         let work = value("Work"), research = value("Research")
