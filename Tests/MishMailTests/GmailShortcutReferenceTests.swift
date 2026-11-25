@@ -35,6 +35,14 @@ final class GmailShortcutReferenceTests: XCTestCase {
         .label: "l",           // Open "label as" menu
         .undo: "z",            // Undo last action
         .compose: "c",         // Compose
+        .mute: "m",            // Mute conversation
+        .markImportant: "+",   // Mark as important (`=` is an alias)
+        .markNotImportant: "-", // Mark as not important
+        .moveTo: "v",          // Open "move to" menu
+        .nextMessage: "n",     // Next message in an open conversation
+        .previousMessage: "p", // Previous message in an open conversation
+        .expandAll: ";",       // Expand entire conversation
+        .collapseAll: ":",     // Collapse entire conversation
         .toggleRead: nil,      // Gmail: Shift+I / Shift+U instead
     ]
 
@@ -67,7 +75,7 @@ final class GmailShortcutReferenceTests: XCTestCase {
     }
 
     func testBuiltInAliases() {
-        XCTAssertEqual(KeyBindings.aliases, ["h": .snooze])
+        XCTAssertEqual(KeyBindings.aliases, ["h": .snooze, "=": .markImportant])
         let kb = KeyBindings(defaults: defaults)
         // `[` / `]` are commands of their own (open conversation only), no
         // longer an alias of Archive.
@@ -82,6 +90,7 @@ final class GmailShortcutReferenceTests: XCTestCase {
         XCTAssertEqual(ShortcutSequences.goToTarget("l"), .labels)
         XCTAssertEqual(ShortcutSequences.goToTarget("b"), .snoozed)
         XCTAssertNil(ShortcutSequences.goToTarget("k"), "g k (Tasks) has no mailbox")
+        XCTAssertNil(ShortcutSequences.goToTarget("c"), "g c (Contacts) has no view")
     }
 
     func testSelectSequencesMatchGmail() {
@@ -147,5 +156,34 @@ final class GmailShortcutReferenceTests: XCTestCase {
         // Symbols keep their Shift form: `#` and `!` are distinct keys.
         XCTAssertEqual(kb.command(for: "#"), .trash)
         XCTAssertNil(kb.command(for: "3"))
+    }
+
+    // MARK: - Gmail keys added with the conversation actions
+
+    func testEqualsIsAnAliasOfMarkImportantUntilRebound() {
+        let kb = KeyBindings(defaults: defaults)
+        XCTAssertEqual(kb.command(for: "+"), .markImportant)
+        XCTAssertEqual(kb.command(for: "="), .markImportant)
+        XCTAssertEqual(kb.command(for: "-"), .markNotImportant)
+        XCTAssertEqual(kb.rebind(.archive, to: "="), .ok, "a rebind to the alias key wins")
+        XCTAssertEqual(kb.command(for: "="), .archive)
+    }
+
+    /// Every default (and alias) is typed on an Italian keyboard without
+    /// Option: a plain key, or Shift + a key.
+    func testEveryDefaultIsReachableOnAnItalianKeyboardWithoutOption() {
+        // macOS "Italian" layout, Option not held.
+        let plain = Set("abcdefghijklmnopqrstuvwxyz1234567890'ì\\èò+àù,.-<")
+        let shifted = Set("!\"£$%&/()=?^é*ç°§;:_>|")
+        let typeable = plain.union(shifted)
+        var keys = KeyBindings.catalog.compactMap(\.defaultKey)
+        keys += KeyBindings.aliases.keys
+        // `[`, `]` and `#` need Option on Italian keyboards: known, from
+        // the PR #17 defaults. Nothing new may add to the list.
+        let known: Set<String> = ["[", "]", "#"]
+        for key in keys where !known.contains(key) {
+            XCTAssertTrue(key.allSatisfy { typeable.contains($0) },
+                          "\(key) needs Option on an Italian keyboard")
+        }
     }
 }
