@@ -437,4 +437,4 @@ Aggiornato il 25 novembre 2026.
 | — | `ux/restore-window-size` | #65 | In lavorazione (livello basso rischio) |
 | — | `perf/remote-image-cache-regression` | #67 | Unito (livello basso rischio) |
 | — | `feature/openpgp-library-wiring` | #68 | In lavorazione (libreria v0.1.0, commit `adad8a1`) |
-| — | `docs/study-google-chat`, `docs/study-google-calendar`, `docs/study-rebranding-dreamail` | — | Studi in corso (solo documenti in `docs/studi/`) |
+| — | `docs/study-google-chat`, `docs/study-google-calendar`, `docs/study-rebranding-dreamail` | #69, #70, #71 | Uniti (studi in `docs/studi/`; domande aperte per il proprietario in fondo a ciascuno) |
