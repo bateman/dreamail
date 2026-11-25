@@ -137,7 +137,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
     /// body gets a height above the placeholder within about 2 s; the load
     /// counts as ended only at the bound, and no height is cached before it.
     func testRealCoordinatorMeasuresAMailWhoseImageHostNeverAnswers() async throws {
-        let host = SilentTLSHost()
+        let host = try SilentTLSHost()
         let port = try await host.start()
         defer { host.stop() }
 
