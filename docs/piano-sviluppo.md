@@ -292,6 +292,7 @@ Aggiornato il 25 novembre 2026.
 
 - ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme.
 - ☐ **C-40** Inviti di calendario (PR #51): invito da Google Calendar, da Outlook/Exchange e da Apple Calendar; Accetta, Forse, Rifiuta cambiano lo stato presso l'organizzatore; riga "Reply from … goes to …"; avviso arancione se l'organizzatore non è il mittente; evento spostato chiede di nuovo; occorrenza o serie annullata senza pulsanti; risposta da un alias. Passi completi nel corpo della PR #51.
+- ☐ **C-41** Colore delle label su Gmail (PR #48): MishMail → Organize Labels → clic sul pallino di una label utente → "Color on Gmail"; il colore compare subito e, entro un minuto, su Gmail web e telefono; dopo una sync non torna indietro; "No color on Gmail" toglie davvero il colore (non verificato: la documentazione non lo dice); senza rete torna il colore vecchio con un avviso; il colore solo-Mac resta prevalente. Passi completi nel corpo della PR #48.
 
 ## Ondata 3 — parità Gmail
 
@@ -305,7 +306,7 @@ Avviata dal proprietario il 25 novembre 2026, prima che il cancello fosse comple
 | Step | Contenuto | Branch | Migrazione riservata |
 |---|---|---|---|
 | 3A | Creazione e modifica dei filtri lato server | `feature/gmail-server-filters` | v56 |
-| 3B | Modifica dei colori delle label su Gmail | `feature/gmail-label-color-editing` | v57 |
+| 3B | Modifica dei colori delle label su Gmail. Unito (#48), migrazione non usata | `feature/gmail-label-color-editing` | v57 |
 | 3C | Verifica ICS/RSVP e analisi delle lacune. Unito (#51) | `feature/ics-rsvp-verification` | v59 |
 | 3D | Snooze: variante B scelta dal proprietario (DEC-041) | `feature/snooze-gmail-alignment` | v60 |
 | 3E | Azioni mancanti degli shortcut di Gmail | `feature/gmail-shortcut-actions` | v58 |
@@ -406,3 +407,4 @@ Aggiornato il 25 novembre 2026.
 | — | `ux/thread-row-hover-actions` | #52 | In lavorazione (livello basso rischio) |
 | — | `ci/skip-duplicate-runs` | #53 | Unito dal proprietario, fuori flusso |
 | 3C | `feature/ics-rsvp-verification` | #51 | Unito |
+| 3B | `feature/gmail-label-color-editing` | #48 | Unito |
