@@ -146,8 +146,10 @@ final class SidebarLabelMenuUITests: XCTestCase {
         choose.click()
         XCTAssertTrue(red.waitForExistence(timeout: 5))
         XCTAssertTrue(red.isSelected, "the parent's color went to Vendors/AWS")
-        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        XCTAssertTrue(waitForAbsence(red))
+        let done = element("labelColor.done", in: app)
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.click()
+        XCTAssertTrue(waitForAbsence(red), "Done closes the palette")
 
         // Remove asks first, and Cancel keeps the label (same launch: the UI
         // job has a time budget).
