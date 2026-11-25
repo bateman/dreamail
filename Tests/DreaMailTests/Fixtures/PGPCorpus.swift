@@ -12,9 +12,9 @@ import Foundation
 /// same signed bytes.
 enum PGPCorpus {
     /// base64("TEST ONLY - NOT OPENPGP DATA - DREAMAIL FIXTURE")
-    static let fakePayload = "VEVTVCBPTkxZIC0gTk9UIE9QRU5QR1AgREFUQSAtIE1JU0hNQUlMIEZJWFRVUkU="
+    static let fakePayload = "VEVTVCBPTkxZIC0gTk9UIE9QRU5QR1AgREFUQSAtIERSRUFNQUlMIEZJWFRVUkU="
     /// base64("TEST ONLY - NOT AN OPENPGP KEY - DREAMAIL FIXTURE")
-    static let fakeKeyPayload = "VEVTVCBPTkxZIC0gTk9UIEFOIE9QRU5QR1AgS0VZIC0gTUlTSE1BSUwgRklYVFVSRQ=="
+    static let fakeKeyPayload = "VEVTVCBPTkxZIC0gTk9UIEFOIE9QRU5QR1AgS0VZIC0gRFJFQU1BSUwgRklYVFVSRQ=="
 
     static let fakeSignature = """
         -----BEGIN PGP SIGNATURE-----

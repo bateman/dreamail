@@ -1,4 +1,4 @@
-# OSS Scanner build for DreaMail (https://github.com/ronboger/mishmail).
+# OSS Scanner build for DreaMail (https://github.com/bateman/dreamail).
 #
 # DreaMail is a macOS 14+ SwiftUI/AppKit application. It builds with
 # xcodebuild (project.yml -> XcodeGen -> DreaMail.xcodeproj), which exists

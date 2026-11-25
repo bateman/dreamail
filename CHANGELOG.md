@@ -1,14 +1,36 @@
 # Changelog
 
-All notable changes to MishMail are documented here. Format loosely follows
+All notable changes to DreaMail (called MishMail until November 2026) are
+documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); the project is pre-1.0, so
 minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **The app is now DreaMail.** The fork formerly called MishMail has a new
+  name and new identifiers: `/Applications/DreaMail.app`, bundle identifier
+  `io.github.bateman.DreaMail` (Debug: `io.github.bateman.DreaMail.debug`),
+  `dreamail://` links, `DREAMAIL_…` build switches and environment
+  variables, and "Ask AI" for the assistant (still off by default). macOS
+  treats it as a new app, and nothing is migrated. If you used a MishMail
+  build of this fork: install DreaMail (`make install`), paste your Google
+  client ID and secret again, sign in to each account and let it resync;
+  set the default mail app, notifications and signatures again; rename the
+  `MISHMAIL_…` switches in `Config/Local.xcconfig` to `DREAMAIL_…`. The old
+  data stays until you delete it by hand: the app at
+  `/Applications/MishMail.app`, the containers
+  `~/Library/Containers/io.github.bateman.MishMail` and
+  `~/Library/Containers/io.github.bateman.MishMail.debug`, the log
+  `~/Library/Logs/MishMailRelauncher.log`, and the Keychain items of the
+  services `io.github.bateman.MishMail`, `io.github.bateman.MishMail.debug`
+  and their `.openpgp` variants (commands in the README, "Coming from a
+  MishMail install of this fork"). The About panel no longer has a "Support"
+  link; it credits MishMail by Ron Boger, which DreaMail is derived from.
+  Nothing changes in Google Cloud Console.
+
 - **OpenPGP (off by default).** Signature check and decryption of PGP/MIME
   and cleartext-signed mail, with an indicator in the message header, and
-  Settings → OpenPGP keys, behind the `MISHMAIL_PGP` build switch (empty by
+  Settings → OpenPGP keys, behind the `DREAMAIL_PGP` build switch (empty by
   default). Public keys in the encrypted database, secret keys in the
   Keychain. A key is stored only after a confirmation that shows its
   fingerprint and every address it claims. The rPGP-based library from
@@ -38,7 +60,7 @@ minor versions may still change behavior.
   a failed image without alternative text now shows nothing, as in Gmail,
   instead of a blue "?" icon. Images with alternative text are unchanged.
 
-- **Signatures per account.** MishMail → Settings (⌘,) → Signatures: several
+- **Signatures per account.** DreaMail → Settings (⌘,) → Signatures: several
   signatures per account, a default for new messages and one for replies per
   sending address, and import of the signatures already set in Gmail. The
   compose window inserts the right one, replaces it when From changes, and
@@ -48,7 +70,7 @@ minor versions may still change behavior.
 - **Fixed: messages with slow or missing remote images.** A message whose
   remote images are slow or gone now opens at its full height at once, instead
   of a clipped box for up to 30 seconds. Images still loading are no longer
-  shown as failed, and MishMail's own copy of the images for later opens is
+  shown as failed, and DreaMail's own copy of the images for later opens is
   fetched only after the message view has finished loading.
 - **Notification details per account.** "Show sender and subject in
   notifications" is now chosen for each account in Settings → Accounts.
@@ -67,18 +89,18 @@ minor versions may still change behavior.
 - **Unread count on each profile photo.** The account rail shows each
   account's unread count as a badge in the top-right corner of its photo ("99+"
   above 99). The badges add up to the Dock badge when that counts all accounts.
-- **Google Calendar interface (off).** Behind the `MISHMAIL_CALENDAR` build
+- **Google Calendar interface (off).** Behind the `DREAMAIL_CALENDAR` build
   switch (empty by default): connect Calendar per account and choose the
   calendars that count (primary by default) in Settings → Accounts; on an
   invitation, see whether you are free, add it to your calendar, and have your
   answer saved there after the e-mail reply. Nothing changes in the app.
 - **Snooze aligned with Gmail.** Conversations snoozed in Gmail on the web or
   the phone now appear under Snoozed (Gmail still wakes them). Removing an
-  account first deletes its data, then puts its MishMail snoozes back in the
+  account first deletes its data, then puts its DreaMail snoozes back in the
   Gmail Inbox within ten seconds; what could not go back is reported. A
   conversation moved back to the Inbox elsewhere reappears at once; a snoozed
   conversation that is trashed or marked spam no longer comes back.
-- **Google Calendar groundwork (off).** Behind the `MISHMAIL_CALENDAR` build
+- **Google Calendar groundwork (off).** Behind the `DREAMAIL_CALENDAR` build
   switch (empty by default): a separate consent, availability next to an
   invitation, the answer also written on the calendar (the e-mail reply is
   always sent), add to calendar. Only the Calendar grant and the chosen
@@ -86,7 +108,7 @@ minor versions may still change behavior.
   in the app.
 - **OpenPGP groundwork (off).** Recognition of OpenPGP/MIME and inline
   messages, exact signed-byte extraction, and the security and rendering rules,
-  behind the `MISHMAIL_PGP` build switch (empty by default). No library, no
+  behind the `DREAMAIL_PGP` build switch (empty by default). No library, no
   interface and no change in behaviour yet.
 - **Gmail filters can be edited.** Filters can now be created, edited and
   deleted in Settings → Gmail filters, with an approximate preview of the
@@ -122,13 +144,13 @@ minor versions may still change behavior.
   you open with images allowed are now kept encrypted with the message, so
   later opens (also after a relaunch) usually show them without asking the
   sender. The first time you open such a message, the sender is asked twice for
-  each image (once by the message view, once by MishMail to keep a copy);
+  each image (once by the message view, once by DreaMail to keep a copy);
   images a sender makes uncacheable still load from the sender every time.
   Nothing is downloaded for mail you have not opened.
 - **Accent colour setting.** Settings ▸ Appearance ▸ Accent color picks the
   colour for selected rows (sidebar, Settings, message list; macOS 26 and
   later), buttons, links, badges and highlights, live in every window; Default
-  keeps MishMail's blue and the system selection colour. Text on the accent
+  keeps DreaMail's blue and the system selection colour. Text on the accent
   turns white or black to stay readable (4.5:1), and accent text on the app's
   backgrounds is darkened or lightened just enough to stay legible.
 - **Dock badge follows your actions and tells you when macOS hides it.**
@@ -173,7 +195,7 @@ minor versions may still change behavior.
   colour.
 - **Account photos.** The account switcher and the Accounts settings show each
   account's own Google profile photo instead of the initial disc. The photo
-  URL comes from the profile MishMail already reads (no new permission, no
+  URL comes from the profile DreaMail already reads (no new permission, no
   new sign-in); the image is fetched only from Google's photo hosts, without
   the account's token, at sign-in and then at most once a day, and kept
   downscaled in the encrypted database with the account. Removing the account
@@ -248,8 +270,8 @@ minor versions may still change behavior.
   entry above). Custom keys are kept; a new default that collides with one is
   left unbound.
 - **AI features and the local MCP server are off.** A build setting
-  (`MISHMAIL_AI_FEATURES`, empty in the tracked configuration) decides it, not
-  a preference. Off means no Ask Mish, summaries, AI drafting, suggested
+  (`DREAMAIL_AI_FEATURES`, empty in the tracked configuration) decides it, not
+  a preference. Off means no Ask AI, summaries, AI drafting, suggested
   replies or AI sorting, no request to any model provider or to Ollama, no
   stored provider credential read, and no MCP listener even if an earlier
   build had it enabled. Install and release builds take the setting from the
@@ -261,7 +283,7 @@ minor versions may still change behavior.
 - **Removing an account now removes everything of it.** Besides cached mail and
   the sign-in: opened attachment copies, saved views for the account, snippets
   available only to it, its sync and filter settings, its notifications, recent
-  searches, and Ask Mish chats that may contain its mail. The confirmation
+  searches, and Ask AI chats that may contain its mail. The confirmation
   lists all of this. If the removal fails nothing is deleted and you are told;
   a removal interrupted by a quit is finished at the next launch. The advice to
   remove and re-add an account to grant the filters permission is gone: signing
@@ -286,13 +308,13 @@ minor versions may still change behavior.
   The in-app updater does nothing unless a release channel is configured at
   build time, and stays off on any copy without a Team ID even then. An update
   must carry the installed app's bundle identifier.
-  `scripts/update-mishmail.sh` needs `--repo`, refuses anything not strictly
+  `scripts/update-dreamail.sh` needs `--repo`, refuses anything not strictly
   newer unless `--allow-downgrade` is passed, checks the signature against the
   installed app's identifier and Team ID, and downloads over HTTPS from that
   repository's releases only.
 - **An old unencrypted mail cache is never written to again.** When a legacy
   plaintext cache cannot be encrypted at launch (another copy is running, or
-  the file is busy), MishMail opens it read-only: sync, queued edits,
+  the file is busy), DreaMail opens it read-only: sync, queued edits,
   scheduled sends and draft saves pause, a strip that cannot be dismissed says
   so, and account or settings changes are refused with a notice. A cache too
   old to read without migrating shows "Finish encrypting your mail" instead of
@@ -317,7 +339,7 @@ minor versions may still change behavior.
   for the deferred scroll itself.
 - **Notion Mail is gone from the app.** The "Moving from Notion Mail" pane,
   its Cmd-K entry and the onboarding callout are removed. Snippet import reads
-  only MishMail's own format: a JSON array of objects (or one object) with
+  only DreaMail's own format: a JSON array of objects (or one object) with
   `name` and `body`, or CSV with `name` and `body` columns. It no longer
   unwraps `{"snippets": […]}` files, guesses other key or column names, or
   rewrites `{{First Name}}`-style variables. A newly imported `{{First Name}}`

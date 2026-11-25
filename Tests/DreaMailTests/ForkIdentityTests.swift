@@ -7,6 +7,11 @@ final class ForkIdentityTests: XCTestCase {
 
     /// Built in pieces so this file does not match its own scan.
     private static let upstreamPrefix = "dev." + "ronboger"
+    /// The fork's bundle id before the rename to DreaMail (DEC-065), and the
+    /// update-channel switch of that time: a leftover would key data on the
+    /// old identity, or leave a switch that the build no longer reads.
+    private static let formerForkID = "io.github.bateman." + "Mi" + "shMail"
+    private static let formerChannelSwitch = "MISH" + "MAIL_UPDATE_CHANNEL"
 
     // MARK: - Bundle identifiers
 
@@ -41,25 +46,47 @@ final class ForkIdentityTests: XCTestCase {
     /// subsystems, pasteboard names, container paths in scripts, launchd
     /// label) follows the fork's prefix.
     func testNoUpstreamBundleIdentifierLeftInCodeOrScripts() throws {
+        XCTAssertEqual(try Self.filesNaming(Self.upstreamPrefix), [],
+                       "upstream bundle id still referenced")
+    }
+
+    /// The same scan for the fork's own identifiers before the rename. The
+    /// lower-case form covers the launchd label and the container paths.
+    func testNoFormerForkIdentifierLeftInCodeOrScripts() throws {
+        XCTAssertEqual(try Self.filesNaming(Self.formerForkID, caseInsensitive: true), [],
+                       "former fork bundle id still referenced")
+        XCTAssertEqual(try Self.filesNaming(Self.formerChannelSwitch), [],
+                       "former update-channel switch still referenced")
+    }
+
+    /// Files under Sources, Tests, scripts and Config, plus the Makefile and
+    /// project.yml, whose name or text contains `needle`.
+    private static func filesNaming(_ needle: String,
+                                    caseInsensitive: Bool = false) throws -> [String] {
+        let options: String.CompareOptions = caseInsensitive ? [.caseInsensitive] : []
+        func names(_ text: String) -> Bool { text.range(of: needle, options: options) != nil }
         let root = Self.repoRoot
         var offenders: [String] = []
         for dir in ["Sources", "Tests", "scripts", "Config"] {
             let base = root.appendingPathComponent(dir)
             guard let walker = FileManager.default.enumerator(
-                at: base, includingPropertiesForKeys: [.isRegularFileKey]) else { continue }
+                at: base, includingPropertiesForKeys: [.isRegularFileKey]) else {
+                XCTFail("\(dir)/ not found under \(root.path)")
+                continue
+            }
             for case let url as URL in walker {
                 guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
                 else { continue }
                 let rel = String(url.path.dropFirst(root.path.count + 1))
-                if url.lastPathComponent.contains(Self.upstreamPrefix) { offenders.append(rel) }
+                if names(url.lastPathComponent) { offenders.append(rel) }
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-                if text.contains(Self.upstreamPrefix) { offenders.append(rel) }
+                if names(text) { offenders.append(rel) }
             }
         }
         for file in ["Makefile", "project.yml"] {
-            if try Self.repoFile(file).contains(Self.upstreamPrefix) { offenders.append(file) }
+            if names(try Self.repoFile(file)) { offenders.append(file) }
         }
-        XCTAssertEqual(offenders, [], "upstream bundle id still referenced")
+        return offenders
     }
 
     // MARK: - Update channel shipped by the tracked configuration

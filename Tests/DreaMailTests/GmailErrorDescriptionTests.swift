@@ -1,7 +1,7 @@
 import XCTest
 
 /// `GmailError.http`'s text reaches banners, compose errors and MCP / Ask
-/// Mish tool results; it must never carry the raw response body.
+/// AI tool results; it must never carry the raw response body.
 final class GmailErrorDescriptionTests: XCTestCase {
 
     private func text(_ code: Int, _ body: String) -> String {

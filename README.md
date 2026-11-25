@@ -21,8 +21,8 @@ silent auto-sort refusing cloud providers.
 - **Build from source (recommended):** clone the repository, install
   `xcodegen`, then run `make demo`. The Debug app opens an isolated demo inbox.
   `make run` opens the same app with your real account and needs stable signing.
-- **Binaries:** this fork publishes none; build from source. Upstream
-  development builds are on
+- **Binaries:** this fork publishes none; build from source. Development
+  builds of the upstream project, MishMail, are on
   [ronboger/mishmail's GitHub Releases](https://github.com/ronboger/mishmail/releases/latest)
   under the upstream bundle identifier, and this fork's builds
   (`io.github.bateman.DreaMail`) never update from them.
@@ -348,6 +348,36 @@ defaults domain and Keychain items:
 - Mail cache (SQLCipher-encrypted): `~/Library/Containers/io.github.bateman.DreaMail/Data/Library/Application Support/DreaMail/mail.sqlite`
 - OAuth refresh tokens, client secret, and the DB key: macOS Keychain (`io.github.bateman.DreaMail`)
 
+### Coming from a MishMail install of this fork
+
+Until November 2026 this fork was called MishMail, with bundle identifier
+`io.github.bateman.MishMail` (Debug: `io.github.bateman.MishMail.debug`).
+DreaMail is a new app to macOS: nothing is migrated, so install DreaMail,
+paste the Google client ID and secret again, sign in to each account and let
+it resync. Local-only data (signatures, saved views, VIPs, blocked senders,
+local drafts, scheduled sends) stays in the old container. Once DreaMail
+works, quit MishMail and remove what it left behind:
+
+```sh
+# The old app, and its mail cache, attachments, logs and preferences
+rm -rf /Applications/MishMail.app
+rm -rf ~/Library/Containers/io.github.bateman.MishMail ~/Library/Containers/io.github.bateman.MishMail.debug
+rm -f ~/Library/Logs/MishMailRelauncher.log
+# Old Google refresh tokens, client secret, database key and OpenPGP keys.
+# Each command deletes one item; repeat until it reports that none was found.
+security delete-generic-password -s io.github.bateman.MishMail
+security delete-generic-password -s io.github.bateman.MishMail.debug
+security delete-generic-password -s io.github.bateman.MishMail.openpgp
+security delete-generic-password -s io.github.bateman.MishMail.debug.openpgp
+```
+
+If you installed the daily-summary agent, unload it with
+`launchctl bootout gui/$(id -u)/io.github.bateman.mishmail-summarize` and
+delete `~/Library/LaunchAgents/io.github.bateman.mishmail-summarize.plist`.
+A `Config/Local.xcconfig` that still sets `MISHMAIL_…` switches is ignored:
+rename them to `DREAMAIL_…`. A notarization profile stored as
+`MishMail-notary` must be stored again as `DreaMail-notary`.
+
 ### Coming from an upstream (`dev.ronboger.MishMail`) install
 
 Nothing is migrated: the first launch of this fork starts fresh, so sign in
@@ -423,20 +453,8 @@ OAuth client and you want to keep the grant.
 
 See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
-## Support
-
-DreaMail is free and always will be — no accounts, no upsells, no telemetry. If
-it's earned a place in your day and you'd like to help keep it maintained, a tip
-is genuinely appreciated (but never expected):
-
-- **[GitHub Sponsors](https://github.com/sponsors/ronboger)** — one-time or
-  monthly, 0% platform fee.
-- **Ethereum** — `0x34fC989CF3eF410F7fa1D3B236DA42d88005e99B`
-
-Prefer to contribute code or a bug report instead? That's worth more than money —
-see [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## License
 
-[MIT](LICENSE) © 2026 Ron Boger. Depends on
+[MIT](LICENSE) © 2026 Ron Boger. DreaMail is derived from
+[MishMail](https://github.com/ronboger/mishmail) by Ron Boger. Depends on
 [GRDB.swift](https://github.com/duckduckgo/GRDB.swift) (SQLCipher build, MIT).

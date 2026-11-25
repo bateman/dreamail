@@ -49,27 +49,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The standard macOS About panel, with a clickable "Support DreaMail" line
-/// added to the credits. DreaMail is free; this is the only in-app nudge.
+/// The standard macOS About panel, with a short description and the credit
+/// to the project DreaMail derives from added to the credits.
 enum AboutPanel {
-    /// GitHub Sponsors is the primary link; the README lists Ko-fi / ETH too.
-    static let sponsorURL = URL(string: "https://github.com/sponsors/ronboger")!
-
     @MainActor
     static func show() {
         let credits = NSMutableAttributedString(
-            string: "A native, local-first Gmail client for macOS.\n\n",
+            string: "A native, local-first Gmail client for macOS.\n\n"
+                + "Based on MishMail by Ron Boger.",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: NSColor.secondaryLabelColor,
             ])
-        let link = NSAttributedString(
-            string: "Support DreaMail",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                .link: sponsorURL,
-            ])
-        credits.append(link)
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center

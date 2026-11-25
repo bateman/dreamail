@@ -140,7 +140,7 @@ everyone." This doc is about `make release`.
 
 ### Tier 1 — free Personal Team (the standard path here)
 
-**This is how every DreaMail release to date has shipped.** No paid Apple
+**This is how every upstream MishMail release to date has shipped.** No paid Apple
 Developer Program needed. `Config/Local.xcconfig`:
 
 ```
