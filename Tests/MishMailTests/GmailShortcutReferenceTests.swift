@@ -173,7 +173,7 @@ final class GmailShortcutReferenceTests: XCTestCase {
     /// Option: a plain key, or Shift + a key.
     func testEveryDefaultIsReachableOnAnItalianKeyboardWithoutOption() {
         // macOS "Italian" layout, Option not held.
-        let plain = Set("abcdefghijklmnopqrstuvwxyz1234567890'ì\èò+àù,.-<")
+        let plain = Set("abcdefghijklmnopqrstuvwxyz1234567890'ì\\èò+àù,.-<")
         let shifted = Set("!\"£$%&/()=?^é*ç°§;:_>|")
         let typeable = plain.union(shifted)
         var keys = KeyBindings.catalog.compactMap(\.defaultKey)
