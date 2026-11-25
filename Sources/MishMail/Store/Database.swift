@@ -2793,6 +2793,15 @@ final class AppDatabase: @unchecked Sendable {
         m.registerMigration("v54") { db in
             try InlineImageCache.createTable(db)
         }
+
+        // v55 (after v54, the inline-image cache): the persistent remote-image
+        // cache. The bytes of each https image of a message opened with remote
+        // images allowed, keyed by account, message and URL digest, so a later
+        // open shows them without asking the sender again. Cascades with its
+        // message and account (`RemoteImageCache`).
+        m.registerMigration("v55") { db in
+            try RemoteImageCache.createTable(db)
+        }
         return m
     }
 }
