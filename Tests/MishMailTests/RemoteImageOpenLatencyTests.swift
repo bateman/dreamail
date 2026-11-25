@@ -53,76 +53,149 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertNil(swapped.domReady(), "not committed yet")
     }
 
-    /// An image host that never answers (the longest timeout there is).
-    private final class DeadHost: NSObject, WKURLSchemeHandler {
+    /// An image host that answers only when told to (never, for a dead
+    /// host: the longest timeout there is).
+    private final class ImageHost: NSObject, WKURLSchemeHandler {
         private(set) var started = 0
         private var tasks: [any WKURLSchemeTask] = []
         func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
             started += 1
             tasks.append(urlSchemeTask)
         }
-        func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {}
+        func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
+            tasks.removeAll { $0 === urlSchemeTask }
+        }
+        /// A slow host finally answers every pending request with `data`.
+        func answer(_ data: Data) {
+            for task in tasks {
+                task.didReceive(URLResponse(url: task.request.url!, mimeType: "image/png",
+                                            expectedContentLength: data.count,
+                                            textEncodingName: nil))
+                task.didReceive(data)
+                task.didFinish()
+            }
+            tasks = []
+        }
     }
 
-    private final class Host: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    /// The reading pane's side of the web view, reduced to what the measure
+    /// needs: the DOM-ready signal, window load, and the height reports.
+    private final class Pane: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var domReady = false
         var finished = false
+        var heights: [CGFloat] = []
         func userContentController(_ controller: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
-            if HTMLBodyLayout.isDOMReadyMessage(message.body) { domReady = true }
+            if HTMLBodyLayout.isDOMReadyMessage(message.body) {
+                domReady = true
+            } else if let height = HTMLBodyLayout.measuredHeight(fromScriptResult: message.body) {
+                heights.append(height)
+            }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             finished = true
         }
     }
 
-    /// The reading pane's case: a mail whose image host is dead. Window load
-    /// never comes; the DOM-ready signal does, and the measure then gives the
-    /// body its height (the pending image keeps its authored box).
-    func testDeadImageHostDoesNotHoldTheMeasure() async throws {
-        let dead = DeadHost()
-        let host = Host()
+    private struct Harness {
+        let webView: WKWebView
+        let pane: Pane
+        let images: ImageHost
+        let window: NSWindow
+
+        func close() {
+            webView.configuration.userContentController.removeScriptMessageHandler(
+                forName: HTMLBodyLayout.heightHandlerName)
+            webView.removeFromSuperview()
+        }
+
+        /// The measure as the coordinator installs it at the end of the
+        /// DOM-ready grace.
+        func measure() async -> CGFloat? {
+            let result: Any? = await withCheckedContinuation { done in
+                webView.evaluateJavaScript(HTMLBodyLayout.installLayoutAndMeasureJS) { value, _ in
+                    done.resume(returning: value)
+                }
+            }
+            return HTMLBodyLayout.measuredHeight(fromScriptResult: result)
+        }
+    }
+
+    private func load(_ html: String) -> Harness {
+        let images = ImageHost()
+        let pane = Pane()
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.websiteDataStore = .nonPersistent()
-        config.setURLSchemeHandler(dead, forURLScheme: "mmdead")
+        config.setURLSchemeHandler(images, forURLScheme: "mmimg")
         config.userContentController.addUserScript(WKUserScript(
             source: HTMLBodyLayout.domReadyJS, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
-        config.userContentController.add(host, name: HTMLBodyLayout.heightHandlerName)
+        config.userContentController.add(pane, name: HTMLBodyLayout.heightHandlerName)
         let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 700, height: 900),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 120),
                                 configuration: config)
-        webView.navigationDelegate = host
+        webView.navigationDelegate = pane
         window.contentView?.addSubview(webView)
-        defer {
-            config.userContentController.removeScriptMessageHandler(
-                forName: HTMLBodyLayout.heightHandlerName)
-            webView.removeFromSuperview()
-        }
         let document = HTMLBodyDocument.assemble(
-            html: "<p>Policy documents</p><img src=\"/logo.png\" width=\"600\" height=\"300\"><p>Tail</p>",
-            cspMeta: "",
-            styleCSS: HTMLBodyDarkMode.injectedCSS(fontScale: 1.0))
-        webView.loadHTMLString(document, baseURL: URL(string: "mmdead://images.example/"))
+            html: html, cspMeta: "", styleCSS: HTMLBodyDarkMode.injectedCSS(fontScale: 1.0))
+        webView.loadHTMLString(document, baseURL: URL(string: "mmimg://images.example/"))
+        return Harness(webView: webView, pane: pane, images: images, window: window)
+    }
 
-        let deadline = Date().addingTimeInterval(10)
-        while !(host.domReady && dead.started > 0), Date() < deadline {
+    private func wait(seconds: TimeInterval = 10, until condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !condition(), Date() < deadline {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTAssertTrue(host.domReady, "the DOM-ready signal does not wait for images")
-        XCTAssertGreaterThan(dead.started, 0, "the image is requested and never answered")
-        XCTAssertFalse(host.finished, "window load waits for the dead host")
+    }
 
-        let result: Any? = await withCheckedContinuation { done in
-            webView.evaluateJavaScript(HTMLBodyLayout.installLayoutAndMeasureJS) { value, _ in
-                done.resume(returning: value)
-            }
-        }
-        let height = try XCTUnwrap(HTMLBodyLayout.measuredHeight(fromScriptResult: result))
+    /// A mail whose image host is dead. Window load never comes; the
+    /// DOM-ready signal does, and the measure then gives the body its height
+    /// (the pending image keeps its authored box).
+    func testDeadImageHostDoesNotHoldTheMeasure() async throws {
+        let h = load("<p>Policy documents</p><img src=\"/logo.png\" width=\"600\" height=\"300\"><p>Tail</p>")
+        defer { h.close() }
+        try await wait { h.pane.domReady && h.images.started > 0 }
+        XCTAssertTrue(h.pane.domReady, "the DOM-ready signal does not wait for images")
+        XCTAssertGreaterThan(h.images.started, 0, "the image is requested and never answered")
+        XCTAssertFalse(h.pane.finished, "window load waits for the dead host")
+        let measured = await h.measure()
+        let height = try XCTUnwrap(measured)
         XCTAssertGreaterThan(height, MessageBodyHeight.placeholder,
                              "measured to its content, not left at the placeholder")
-        XCTAssertFalse(host.finished)
+        XCTAssertFalse(h.pane.finished)
+    }
+
+    /// A slow host: measured before the image, then re-measured when it
+    /// arrives (load listener), so the body never keeps a stale height.
+    func testSlowImageHostReMeasuresWhenTheImageArrives() async throws {
+        let h = load("<p>Thank you for your purchase!</p><img src=\"/card.png\"><p>Total</p>")
+        defer { h.close() }
+        try await wait { h.pane.domReady && h.images.started > 0 }
+        XCTAssertFalse(h.pane.finished)
+        let first = await h.measure()
+        let before = try XCTUnwrap(first)
+        h.images.answer(RemoteImageFetchTests.image(width: 600, height: 900))
+        try await wait { (h.pane.heights.last ?? 0) > before + 600 }
+        XCTAssertGreaterThan(h.pane.heights.last ?? 0, before + 600,
+                             "the late image grows the body: \(before) → \(h.pane.heights)")
+        try await wait { h.pane.finished }
+        XCTAssertTrue(h.pane.finished)
+    }
+
+    /// A mail without images: DOM ready and window load both come, and the
+    /// measure is the same at either.
+    func testMailWithoutImagesMeasuresAtOnce() async throws {
+        let h = load("<p>Plain HTML mail</p><p>Second paragraph</p>")
+        defer { h.close() }
+        try await wait { h.pane.domReady && h.pane.finished }
+        XCTAssertTrue(h.pane.domReady)
+        XCTAssertTrue(h.pane.finished)
+        XCTAssertEqual(h.images.started, 0)
+        let measured = await h.measure()
+        let height = try XCTUnwrap(measured)
+        XCTAssertGreaterThanOrEqual(height, CGFloat(HTMLBodyLayout.minContentHeight))
     }
 
     // MARK: Background fetch after the web view's load
