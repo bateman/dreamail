@@ -61,9 +61,10 @@ extension MailStore {
                     arguments: [thread.id, thread.reminderAt])
             }
         }
-        // Generic text unless the user opted in to sender and subject (F-11).
+        // Generic text unless the thread's account opted in to sender and
+        // subject (F-11).
         for request in NotificationContent.reminders(
-            reminded, showDetails: NotificationContent.showsDetails()) {
+            reminded, detailAccounts: NotificationContent.detailAccounts(accounts)) {
             Notifier.notify(request)
         }
         if changed { reloadThreads() }

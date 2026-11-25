@@ -853,6 +853,10 @@ final class MailStore {
     /// Accounts currently mid-fetch — UI can show a spinner. Backed by a
     /// refcount so overlapping force+lazy loads don't drop the spinner early.
     private(set) var filtersLoading: Set<String> = []
+    /// The account Settings ▸ Gmail filters shows. In memory only, so a
+    /// removed account's address is not left behind; an id that is no
+    /// longer an account falls back to the first one.
+    var settingsFiltersAccount: String?
     private var filterLoadRefCounts: [String: Int] = [:]
     /// In-flight filter fetches; concurrent callers await the same task.
     /// Token lets a finishing load clear its slot without clobbering a newer one.
@@ -1179,6 +1183,16 @@ final class MailStore {
     func setAccountLabelColor(_ id: String, hex: String?) {
         try? db.write { db in
             try AccountLabelColor.set(db, accountId: id, hex: hex)
+        }
+        reloadAccounts()
+    }
+
+    /// Whether notifications about this account's mail show sender and
+    /// subject (`NotificationContent`). Local only; goes with the account.
+    func setNotificationDetails(_ id: String, _ on: Bool) {
+        try? db.write { db in
+            try db.execute(sql: "UPDATE account SET notificationDetails = ? WHERE id = ?",
+                           arguments: [on, id])
         }
         reloadAccounts()
     }

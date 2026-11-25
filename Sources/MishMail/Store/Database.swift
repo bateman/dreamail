@@ -13,6 +13,9 @@ struct Account: Codable, Identifiable, Hashable, FetchableRecord, PersistableRec
     var senderName: String = ""   // real name shown to recipients on outgoing mail
     /// Local color of the account label (the avatar ring), `#rrggbb`; nil = default (`AccountLabelColor`).
     var labelColor: String? = nil
+    /// Notifications about this account's mail show sender and subject
+    /// (`NotificationContent`). Off for a new account (generic by default).
+    var notificationDetails: Bool = false
 }
 
 struct MailThread: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
@@ -1829,7 +1832,11 @@ final class AppDatabase: @unchecked Sendable {
     }
 
     /// Static so tests can migrate an in-memory database.
-    static var migrator: DatabaseMigrator {
+    static var migrator: DatabaseMigrator { migrator(defaults: .standard) }
+
+    /// `defaults` holds the app-wide notification choice of earlier builds,
+    /// which v64 copies onto every existing account.
+    static func migrator(defaults: UserDefaults) -> DatabaseMigrator {
         var m = DatabaseMigrator()
         m.registerMigration("v1") { db in
             try db.create(table: "account") { t in
@@ -2838,6 +2845,21 @@ final class AppDatabase: @unchecked Sendable {
         // is off unless the build turns it on (`CalendarFeatures`).
         m.registerMigration("v61") { db in
             try CalendarStore.createTables(db)
+        }
+        // v64 (v62 and v63 belong to other open branches): "Show sender and
+        // subject in notifications" moves from one app-wide switch to each
+        // account. It lives on the account row, so it goes with the account.
+        // Every existing account takes the app-wide value once; a later
+        // account starts off. The old key is read, not removed: the demo
+        // and UI-test databases share the defaults domain and migrate on
+        // their own, and the real one must still find it.
+        m.registerMigration("v64") { db in
+            try db.alter(table: "account") { t in
+                t.add(column: "notificationDetails", .boolean).notNull().defaults(to: false)
+            }
+            if NotificationContent.legacyShowsDetails(defaults: defaults) {
+                try db.execute(sql: "UPDATE account SET notificationDetails = 1")
+            }
         }
         return m
     }

@@ -496,7 +496,8 @@ extension MailStore {
                     holds[rowId] = nil
                     Notifier.notify(NotificationContent.scheduledSent(
                         accountId: s.accountId, rowId: rowId, subject: s.subject,
-                        showDetails: NotificationContent.showsDetails()))
+                        showDetails: NotificationContent.detailAccounts(accounts)
+                            .contains(s.accountId)))
                     continue
                 } catch {
                     failure = error

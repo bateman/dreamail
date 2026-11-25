@@ -430,13 +430,14 @@ extension MailStore {
         let newThreads = (try? await pool.read { db in
             try MailThread.filter(fresh.contains(Column("id"))).order(Column("lastDate").desc).fetchAll(db)
         }) ?? []
-        // Generic text unless the user opted in to sender and subject (F-11).
+        // Generic text unless the thread's account opted in to sender and
+        // subject (F-11).
         let items = newThreads.map {
             NotificationContent.MailItem(accountId: $0.accountId, threadId: $0.id,
                                          sender: $0.fromDisplay, subject: $0.subject)
         }
         for request in NotificationContent.newMail(
-            items, showDetails: NotificationContent.showsDetails()) {
+            items, detailAccounts: NotificationContent.detailAccounts(accounts)) {
             Notifier.notify(request)
         }
     }

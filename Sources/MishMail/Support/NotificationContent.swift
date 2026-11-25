@@ -8,19 +8,31 @@ import Foundation
 /// encrypted cache, and macOS may show it on the lock screen. By default it
 /// therefore names no sender, subject or snippet: "New mail", "Follow-up
 /// reminder", "Scheduled message sent", or a count. Sender and subject come
-/// back only when the user turns on `showDetailsKey`. The snippet is never
-/// shown.
+/// back only for the accounts whose "Show sender and subject in
+/// notifications" is on (`Account.notificationDetails`, Settings ▸
+/// Accounts). The decision is made per account of the mail notified: a
+/// notification about one account's mail follows that account, and one that
+/// covers several accounts shows details only if all of them allow it. The
+/// snippet is never shown.
 ///
 /// Every identifier names the account(s) it is about, so removing an
 /// account can withdraw exactly its notifications (F-04). The system keeps
 /// identifiers in its notification database whatever the setting, so the
 /// account and the thread appear only as salted hashes.
 enum NotificationContent {
-    /// UserDefaults key, off by default.
-    static let showDetailsKey = "notifications.showSenderAndSubject"
+    /// UserDefaults key of the app-wide switch of earlier builds, off by
+    /// default. Read once, by migration v64, which copies it onto every
+    /// account then; nothing writes it any more.
+    static let legacyShowDetailsKey = "notifications.showSenderAndSubject"
 
-    static func showsDetails(defaults: UserDefaults = .standard) -> Bool {
-        defaults.bool(forKey: showDetailsKey)
+    static func legacyShowsDetails(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: legacyShowDetailsKey)
+    }
+
+    /// The ids of the accounts whose notifications may show sender and
+    /// subject.
+    static func detailAccounts(_ accounts: [Account]) -> Set<String> {
+        Set(accounts.filter(\.notificationDetails).map(\.id))
     }
 
     struct Request: Equatable {
@@ -40,55 +52,76 @@ enum NotificationContent {
     /// the rest. Same cap as before the setting existed.
     static let detailedMailLimit = 3
 
-    static func newMail(_ items: [MailItem], showDetails: Bool,
+    /// Mail of the accounts in `detailAccounts` is posted with sender and
+    /// subject, the rest generically. The two groups never share a
+    /// notification, so a count covers only accounts of one kind.
+    static func newMail(_ items: [MailItem], detailAccounts: Set<String>,
                         salt: String = identifierSalt) -> [Request] {
+        let (detailed, generic) = split(items, detailAccounts)
+        return detailedMail(detailed, salt: salt) + genericMail(generic, salt: salt)
+    }
+
+    private static func genericMail(_ items: [MailItem], salt: String) -> [Request] {
         guard !items.isEmpty else { return [] }
-        let batch = Request(
-            id: identifier(kind: .mail, accounts: items.map(\.accountId), key: "batch", salt: salt),
-            title: "\(items.count) new messages", body: "")
-        guard showDetails else {
-            guard items.count == 1, let only = items.first else { return [batch] }
+        guard items.count == 1, let only = items.first else {
             return [Request(
-                id: threadIdentifier(kind: .mail, item: only, salt: salt),
-                title: "New mail", body: "")]
+                id: identifier(kind: .mail, accounts: items.map(\.accountId), key: "batch",
+                               salt: salt),
+                title: "\(items.count) new messages", body: "")]
         }
+        return [Request(id: threadIdentifier(kind: .mail, item: only, salt: salt),
+                        title: "New mail", body: "")]
+    }
+
+    private static func detailedMail(_ items: [MailItem], salt: String) -> [Request] {
+        guard !items.isEmpty else { return [] }
         var requests = items.prefix(detailedMailLimit).map { item in
             Request(id: threadIdentifier(kind: .mail, item: item, salt: salt),
                     title: item.sender, body: subjectLine(item.subject))
         }
         if items.count > detailedMailLimit {
-            requests.append(Request(id: batch.id, title: "MishMail",
-                                    body: "\(items.count) new messages"))
+            requests.append(Request(
+                id: identifier(kind: .mail, accounts: items.map(\.accountId), key: "batch",
+                               salt: salt),
+                title: "MishMail", body: "\(items.count) new messages"))
         }
         return requests
     }
 
-    static func reminders(_ items: [MailItem], showDetails: Bool,
+    /// Same split as `newMail`.
+    static func reminders(_ items: [MailItem], detailAccounts: Set<String>,
                           salt: String = identifierSalt) -> [Request] {
-        guard !items.isEmpty else { return [] }
-        guard showDetails else {
-            guard items.count == 1, let only = items.first else {
-                return [Request(
-                    id: identifier(kind: .reminder, accounts: items.map(\.accountId),
-                                   key: "batch", salt: salt),
-                    title: "\(items.count) follow-up reminders", body: "")]
-            }
-            return [Request(
-                id: threadIdentifier(kind: .reminder, item: only, salt: salt),
-                title: "Follow-up reminder", body: "")]
-        }
-        return items.map { item in
+        let (detailed, generic) = split(items, detailAccounts)
+        let shown = detailed.map { item in
             Request(id: threadIdentifier(kind: .reminder, item: item, salt: salt),
                     title: "Follow up: \(item.sender)", body: subjectLine(item.subject))
         }
+        guard !generic.isEmpty else { return shown }
+        guard generic.count == 1, let only = generic.first else {
+            return shown + [Request(
+                id: identifier(kind: .reminder, accounts: generic.map(\.accountId),
+                               key: "batch", salt: salt),
+                title: "\(generic.count) follow-up reminders", body: "")]
+        }
+        return shown + [Request(
+            id: threadIdentifier(kind: .reminder, item: only, salt: salt),
+            title: "Follow-up reminder", body: "")]
     }
 
+    /// `showDetails`: the setting of the account that sent it.
     static func scheduledSent(accountId: String, rowId: Int64, subject: String,
                               showDetails: Bool, salt: String = identifierSalt) -> Request {
         Request(id: identifier(kind: .scheduled, accounts: [accountId], key: String(rowId),
                                salt: salt),
                 title: "Scheduled message sent",
                 body: showDetails ? subjectLine(subject) : "")
+    }
+
+    /// Items of accounts that allow details, then the others; order kept.
+    private static func split(_ items: [MailItem], _ detailAccounts: Set<String>)
+        -> (detailed: [MailItem], generic: [MailItem]) {
+        (items.filter { detailAccounts.contains($0.accountId) },
+         items.filter { !detailAccounts.contains($0.accountId) })
     }
 
     private static func subjectLine(_ subject: String) -> String {
