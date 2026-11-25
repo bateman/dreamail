@@ -19,7 +19,8 @@ silent auto-sort refusing cloud providers.
 ## Try MishMail
 
 - **Build from source (recommended):** clone the repository, install
-  `xcodegen`, then run `make run`. The Debug app opens an isolated demo inbox.
+  `xcodegen`, then run `make demo`. The Debug app opens an isolated demo inbox.
+  `make run` opens the same app with your real account and needs stable signing.
 - **Binaries:** this fork publishes none; build from source. Upstream
   development builds are on
   [ronboger/mishmail's GitHub Releases](https://github.com/ronboger/mishmail/releases/latest)
@@ -123,7 +124,8 @@ xcodebuild -project MishMail.xcodeproj -scheme MishMail -configuration Release b
 Or, with the included Makefile:
 
 ```sh
-make run      # build + open an isolated fictional inbox
+make run      # build + open the isolated Debug app with your real account
+make demo     # build + open the isolated fictional inbox (same as make run DEMO=1)
 make build    # generate + build without launching
 make test     # run the hostless unit tests
 make ui-test  # run the demo-inbox UI smoke test
@@ -132,8 +134,8 @@ make checks   # shellcheck + Python script tests + CI pin checks (no Xcode)
 ```
 
 You can also open `MishMail.xcodeproj` in Xcode. Configure the free Personal
-Team signing described below before running a real inbox; use `make run` for
-the no-signing, Keychain-free demo.
+Team signing described below before running a real inbox; use `make demo` (or
+`make run DEMO=1`) for the no-signing, Keychain-free demo.
 
 ### Signing
 
@@ -144,7 +146,7 @@ touches Keychain. Signing settings live in
 
 Do not use an ad-hoc build with a real inbox. Apple ties an ad-hoc app's
 identity to that exact build, so macOS asks for Keychain access again after the
-code changes. `make install` and `make run DEMO=0` therefore require a stable
+code changes. `make install` and `make run` (without `DEMO=1`) therefore require a stable
 local signing identity instead of silently installing an app that will
 re-prompt. Run `make signing-doctor` if the identity is missing.
 
