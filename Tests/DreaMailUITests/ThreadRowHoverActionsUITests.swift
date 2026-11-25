@@ -10,6 +10,8 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         // Exposes the row's buttons to the accessibility tree (off by default).
         app.launchEnvironment["DREAMAIL_UI_ROW_BUTTONS"] = "1"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
@@ -34,8 +36,25 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
             .matching(identifier: "rowAction.\(id)").firstMatch
     }
 
-    func testHoverShowsTheFourActionsInOrderAndKeepsTheRowHeight() {
+    /// One launch for the four checks. The two that only look come first;
+    /// then the unselected-row check (nothing open yet, t3 still read; it
+    /// marks t3 unread and trashes t4); archive last, on t3.
+    func testRowActions() {
         let app = launch()
+        let steps: [(String, (XCUIApplication) -> Void)] = [
+            ("The star is left of the sender and always there", stepStarIsLeftOfTheSenderAndAlwaysThere),
+            ("Hover shows the four actions in order and keeps the row height",
+             stepHoverShowsTheFourActionsInOrderAndKeepsTheRowHeight),
+            ("Actions on an unselected row leave the reading pane alone",
+             stepActionsOnAnUnselectedRowLeaveTheReadingPaneAlone),
+            ("Archive removes the row", stepArchiveRemovesTheRow),
+        ]
+        for (name, step) in steps {
+            XCTContext.runActivity(named: name) { _ in step(app) }
+        }
+    }
+
+    private func stepHoverShowsTheFourActionsInOrderAndKeepsTheRowHeight(_ app: XCUIApplication) {
         let row = row(app)
         XCTAssertTrue(row.waitForExistence(timeout: 10), "demo inbox should load")
         let before = row.frame.height
@@ -48,8 +67,7 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         XCTAssertEqual(row.frame.height, before, accuracy: 0.5, "hover must not change the row height")
     }
 
-    func testStarIsLeftOfTheSenderAndAlwaysThere() {
-        let app = launch()
+    private func stepStarIsLeftOfTheSenderAndAlwaysThere(_ app: XCUIApplication) {
         let row = row(app)
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         let star = row.descendants(matching: .button)
@@ -58,8 +76,7 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         XCTAssertLessThan(star.frame.maxX, row.frame.minX + row.frame.width / 2)
     }
 
-    func testArchiveRemovesTheRow() {
-        let app = launch()
+    private func stepArchiveRemovesTheRow(_ app: XCUIApplication) {
         let row = row(app)
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.hover()
@@ -71,8 +88,7 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
 
     /// A click on a button of a row that is not the selected one acts on that
     /// row only: the reading pane stays as it was (here: closed).
-    func testActionsOnAnUnselectedRowLeaveTheReadingPaneAlone() {
-        let app = launch()
+    private func stepActionsOnAnUnselectedRowLeaveTheReadingPaneAlone(_ app: XCUIApplication) {
         let read = row(app, "t3")      // read, and not the open conversation
         let other = row(app, "t4")     // read too
         XCTAssertTrue(read.waitForExistence(timeout: 10), "demo inbox should load")

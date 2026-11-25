@@ -267,12 +267,22 @@ ui-test-ci:
 # is published. Locally the gate is `make test`. To run the UI suite here
 # anyway (and surrender the desktop while it runs):
 # UI_TEST_LOCAL=1 make ui-test
+#
+# CI runs the suite in two halves, as two parallel jobs: UI_SHARD=1 runs the
+# classes in UI_SHARD_1 (the slow ones, about half the time), UI_SHARD=2
+# every other class, so a new or renamed class lands in the second half and
+# never falls out of both. No UI_SHARD: the whole suite.
+UI_SHARD_1 = ThreadListSectionSpacingUITests ThreadMessageRowsUITests \
+	AccentColorUITests SidebarIconTintUITests DreaMailSmokeTests
+UI_SHARD_FLAGS = $(if $(filter 1,$(UI_SHARD)),$(UI_SHARD_1:%=-only-testing:DreaMailUITests/%)) \
+	$(if $(filter 2,$(UI_SHARD)),$(UI_SHARD_1:%=-skip-testing:DreaMailUITests/%))
 ui-test: gen
 	@if [ "$$CI" != "true" ] && [ "$(UI_TEST_LOCAL)" != "1" ]; then \
 		echo "ui-test is CI-only: XCUITest takes over the desktop while it runs."; \
 		echo "Run it on GitHub with: make ui-test-ci. To run locally anyway: UI_TEST_LOCAL=1 make ui-test"; \
 		exit 1; \
 	fi
+	@case "$(UI_SHARD)" in ""|1|2) ;; *) echo "UI_SHARD must be 1, 2 or unset, not '$(UI_SHARD)'"; exit 1;; esac
 	# XCUITest cannot attach deterministically when another Debug build with the
 	# same bundle id is already open (for example from a different worktree).
 	-pkill -f "DreaMail Debug" 2>/dev/null || true
@@ -280,7 +290,7 @@ ui-test: gen
 	# the smoke test asserts default-launch geometry, so start clean.
 	-defaults delete io.github.bateman.DreaMail.debug 2>/dev/null || true
 	xcodebuild test -project $(PROJECT) -scheme DreaMailUITests \
-		-destination '$(DESTINATION)' -derivedDataPath $(DD)
+		-destination '$(DESTINATION)' -derivedDataPath $(DD) $(UI_SHARD_FLAGS)
 
 # The throwaway test app (Debug identity, isolated data).
 build: gen

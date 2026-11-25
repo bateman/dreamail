@@ -9,6 +9,8 @@ final class OpenPGPSettingsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
                                 // As if a build with OpenPGP on had left it open.

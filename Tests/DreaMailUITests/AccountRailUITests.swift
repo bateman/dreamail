@@ -7,6 +7,8 @@ final class AccountRailUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
                                 "-threadOpenStyle", "readingPane"] + extra
@@ -22,8 +24,16 @@ final class AccountRailUITests: XCTestCase {
         root.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
-    func testWindowButtonsLieEntirelyOverTheRail() {
+    /// One launch for both; the window check first, before Settings opens.
+    func testRail() {
         let app = launch()
+        XCTContext.runActivity(named: "Window buttons lie entirely over the rail") { _ in
+            stepWindowButtonsLieEntirelyOverTheRail(app) }
+        XCTContext.runActivity(named: "The Appearance toggle hides and shows +") { _ in
+            stepAppearanceToggleHidesAndShowsTheAddEntry(app) }
+    }
+
+    private func stepWindowButtonsLieEntirelyOverTheRail(_ app: XCUIApplication) {
         let settings = element(app, "accountRail.settings")
         XCTAssertTrue(settings.waitForExistence(timeout: 10), "the rail is on screen")
         let window = app.windows.firstMatch
@@ -42,8 +52,7 @@ final class AccountRailUITests: XCTestCase {
                                     "a visible margin right of the green button")
     }
 
-    func testAppearanceToggleHidesAndShowsTheAddEntry() {
-        let app = launch()
+    private func stepAppearanceToggleHidesAndShowsTheAddEntry(_ app: XCUIApplication) {
         let add = element(app, "accountRail.add")
         XCTAssertTrue(add.waitForExistence(timeout: 10), "+ is shown by default")
 

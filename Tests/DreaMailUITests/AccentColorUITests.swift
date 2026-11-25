@@ -6,7 +6,8 @@ import XCTest
 /// thread row are drawn in the stored colour while their list is focused
 /// in the key window, with glyph and title in white or black as the
 /// contrast rule picks (`AccentPalette.onFill`): white on red, black on
-/// yellow. Unfocused and inactive-window selections stay the system grey.
+/// the red swatch #eb5757. Unfocused and inactive-window selections stay
+/// the system grey.
 ///
 /// Reads the rendered pixels of window-only screenshots, like
 /// `SidebarIconTintUITests`: each check crops the row's leading strip,
@@ -23,15 +24,14 @@ final class AccentColorUITests: XCTestCase {
     }
 
     private static let red = Accent(hex: "#d0201a", rgb: (208, 32, 26), ink: (255, 255, 255))
-    private static let yellow = Accent(hex: "#ffcc00", rgb: (255, 204, 0), ink: (0, 0, 0))
 
     func testRedAccentPaintsSelectionsWithWhiteInk() throws {
         try checkSelections(Self.red)
     }
 
-    func testYellowAccentPaintsSelectionsWithBlackInk() throws {
-        try checkSelections(Self.yellow)
-    }
+    // No yellow launch: black ink is rendered by the Settings test below
+    // (the #eb5757 swatch), and black on #ffcc00 is the rule's business,
+    // checked by AccentColorTests.testSelectionInkOnRedIsWhiteAndOnYellowIsBlack.
 
     /// The real feature path: pick a swatch in Settings → Appearance, and
     /// the main window's selected sidebar row is repainted without a
@@ -67,6 +67,8 @@ final class AccentColorUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         // The reading pane hidden: moving the selection in the list only
         // highlights (the list stays on screen in a narrow window).
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",

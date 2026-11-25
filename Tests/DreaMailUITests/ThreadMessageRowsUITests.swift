@@ -10,6 +10,8 @@ final class ThreadMessageRowsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 // A saved accent must not change what this suite sees.
                                 "-accentColor", "",
@@ -80,11 +82,36 @@ final class ThreadMessageRowsUITests: XCTestCase {
             .click()
     }
 
+    /// One launch for the four checks. The first opens t2 for the first
+    /// time; every later one opens it afresh (t1 first: the pane is rebuilt
+    /// per conversation, so t2 comes back with only its newest message open).
+    func testMessageRowsLayout() {
+        let app = launchReadingPane()
+        let steps: [(String, (XCUIApplication) -> Void)] = [
+            ("Newest row opens unclipped at the pane top", stepNewestRowOpensUnclippedAtThePaneTop),
+            ("Collapsed rows are even and split by a hairline", stepCollapsedRowsAreEvenAndSplitByAHairline),
+            ("A click near the top edge of a collapsed row opens it", stepClickNearTheTopEdgeOfACollapsedRowOpensIt),
+            ("Opening a row keeps its header in place", stepOpeningARowKeepsItsHeaderInPlace),
+        ]
+        for (name, step) in steps {
+            XCTContext.runActivity(named: name) { _ in step(app) }
+        }
+    }
+
+    /// Opens another conversation, then t2 again with its default rows.
+    private func reopenConversation(_ app: XCUIApplication) {
+        let other = app.descendants(matching: .any)
+            .matching(identifier: "threadRow.you@example.com:t1").firstMatch
+        XCTAssertTrue(other.waitForExistence(timeout: 10))
+        other.click()
+        _ = settled("messageRowFrame", in: app) { $0.count != 4 }
+        openConversation(app)
+    }
+
     /// Opening the conversation scrolls its newest message to the top of
     /// the pane: the whole row must be visible, with its top padding, not
     /// clipped by the pane's edge.
-    func testNewestRowOpensUnclippedAtThePaneTop() {
-        let app = launchReadingPane()
+    private func stepNewestRowOpensUnclippedAtThePaneTop(_ app: XCUIApplication) {
         let row = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t2").firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
@@ -104,9 +131,8 @@ final class ThreadMessageRowsUITests: XCTestCase {
                                     "the newest row's header must keep its top padding")
     }
 
-    func testClickNearTheTopEdgeOfACollapsedRowOpensIt() {
-        let app = launchReadingPane()
-        openConversation(app)
+    private func stepClickNearTheTopEdgeOfACollapsedRowOpensIt(_ app: XCUIApplication) {
+        reopenConversation(app)
         let rows = settled("messageRowFrame", in: app) { $0.count == 4 }
         guard rows.count == 4 else { return }
         let target = rows[1]
@@ -118,9 +144,8 @@ final class ThreadMessageRowsUITests: XCTestCase {
                              "a click on the row's top edge must open it")
     }
 
-    func testCollapsedRowsAreEvenAndSplitByAHairline() {
-        let app = launchReadingPane()
-        openConversation(app)
+    private func stepCollapsedRowsAreEvenAndSplitByAHairline(_ app: XCUIApplication) {
+        reopenConversation(app)
 
         let rows = settled("messageRowFrame", in: app) { $0.count == 4 }
         guard rows.count == 4 else { return }
@@ -149,9 +174,8 @@ final class ThreadMessageRowsUITests: XCTestCase {
         XCTAssertGreaterThan(rows[3].height, heights.max()! + 40, detail)
     }
 
-    func testOpeningARowKeepsItsHeaderInPlace() {
-        let app = launchReadingPane()
-        openConversation(app)
+    private func stepOpeningARowKeepsItsHeaderInPlace(_ app: XCUIApplication) {
+        reopenConversation(app)
 
         let rows = settled("messageRowFrame", in: app) { $0.count == 4 }
         guard rows.count == 4 else { return }

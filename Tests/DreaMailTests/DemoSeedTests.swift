@@ -7,6 +7,33 @@ final class DemoSeedTests: XCTestCase {
         super.tearDown()
     }
 
+    /// `make run` and the label picker's UI tests keep the long list.
+    func testDefaultDemoKeepsTheFullLabelList() {
+        let full = DemoSeed.labels(environment: [:])
+        XCTAssertGreaterThan(full.count, 60, "the picker's filtering needs the long list")
+        XCTAssertEqual(DemoSeed.labels(environment: ["DREAMAIL_DEMO_LABELS": "full"]).map(\.id),
+                       full.map(\.id))
+    }
+
+    /// The UI tests' short list: the labels the demo threads carry and the
+    /// ones the tests name, with the ids, names and order of the full list.
+    func testSmallDemoKeepsTheLabelsTheThreadsAndTestsUse() {
+        let full = DemoSeed.labels(environment: [:])
+        let small = DemoSeed.labels(environment: ["DREAMAIL_DEMO_LABELS": "small"])
+        XCTAssertEqual(Set(small.map(\.id)), DemoSeed.smallLabelIds,
+                       "every short-list id exists in the full list")
+        XCTAssertTrue(DemoSeed.threadLabelIds.isSubset(of: DemoSeed.smallLabelIds),
+                      "a demo thread's label is missing: \(DemoSeed.threadLabelIds.subtracting(DemoSeed.smallLabelIds))")
+        XCTAssertFalse(DemoSeed.threadLabelIds.isEmpty)
+        for label in small {
+            let original = full.first { $0.id == label.id }
+            XCTAssertEqual(original?.name, label.name, label.id)
+            XCTAssertEqual(original?.order, label.order, label.id)
+        }
+        XCTAssertEqual(small.map(\.order), small.map(\.order).sorted())
+        XCTAssertEqual(small.first { $0.id == "Label_vendors_aws" }?.name, "Vendors/AWS")
+    }
+
     func testDemoCanStartWithoutAccounts() {
         XCTAssertTrue(DemoSeed.canActivate(accountIDs: []))
     }

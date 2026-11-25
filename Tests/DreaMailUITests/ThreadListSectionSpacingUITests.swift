@@ -9,6 +9,8 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 // A saved accent must not change what this suite sees.
                                 "-accentColor", "",
@@ -133,27 +135,34 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         assertCompactSectionBreaks(launch(readingPane: false))
     }
 
-    func testSectionBreakIsShorterThanARowBesideTheReadingPane() {
-        assertCompactSectionBreaks(launch(readingPane: true))
-    }
-
-    func testSectionBreakStaysCompactAtALargerFontScale() {
-        let base = medianRowHeight(settledLayout(launch(readingPane: true)).rows)
-        let app = launch(readingPane: true, fontScale: 1.6)
-        let scaled = medianRowHeight(settledLayout(app).rows)
-        // The setting must take effect, or this test checks scale 1 twice.
-        XCTAssertGreaterThan(scaled, 1.15 * base,
-                             "font scale 1.6 did not reach the list (rows \(base) → \(scaled) pt)")
-        assertCompactSectionBreaks(app)
+    /// One reading-pane launch for the inbox and the Labels view, then a
+    /// second at font scale 1.6 compared with the first launch's rows.
+    func testSectionBreaksBesideTheReadingPane() {
+        let app = launch(readingPane: true)
+        var inbox: RowSpacing?
+        var base: CGFloat = 0
+        XCTContext.runActivity(named: "A section break is shorter than a row beside the reading pane") { _ in
+            // Every demo label holds one conversation, so no two rows share
+            // a section in the Labels view: its row spacing comes from here.
+            inbox = assertCompactSectionBreaks(app)
+            base = medianRowHeight(settledLayout(app).rows)
+        }
+        XCTContext.runActivity(named: "Label pill headers fit the break") { _ in
+            labelPillHeadersFitTheBreak(app, inbox: inbox)
+        }
+        XCTContext.runActivity(named: "A section break stays compact at a larger font scale") { _ in
+            let scaledApp = launch(readingPane: true, fontScale: 1.6)
+            let scaled = medianRowHeight(settledLayout(scaledApp).rows)
+            // The setting must take effect, or this test checks scale 1 twice.
+            XCTAssertGreaterThan(scaled, 1.15 * base,
+                                 "font scale 1.6 did not reach the list (rows \(base) → \(scaled) pt)")
+            assertCompactSectionBreaks(scaledApp)
+        }
     }
 
     /// Labels view: each header is the label's coloured pill, taller than a
     /// plain title. It must fit the break too.
-    func testLabelPillHeadersFitTheBreak() {
-        let app = launch(readingPane: true)
-        // Every demo label holds one conversation, so no two rows share a
-        // section there: take the row spacing from the inbox first.
-        let inbox = assertCompactSectionBreaks(app)
+    private func labelPillHeadersFitTheBreak(_ app: XCUIApplication, inbox: RowSpacing?) {
         // The all-labels view left the sidebar (it lists the labels
         // themselves now); it stays on Go ▸ Labels and `g l`.
         let go = app.menuBars.menuBarItems["Go"]

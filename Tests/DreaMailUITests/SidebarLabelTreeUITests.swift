@@ -10,6 +10,8 @@ final class SidebarLabelTreeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
+        // The short label list: a ~70-row sidebar makes every query slow.
+        app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
@@ -41,8 +43,24 @@ final class SidebarLabelTreeUITests: XCTestCase {
         return !element.exists
     }
 
-    func testSystemViewsAndMoreRow() {
+    /// One launch for the four checks, in an order where each finds the
+    /// state it starts from: More and every parent label closed after the
+    /// first two, the inbox still listed for the label view, and the
+    /// Categories check (which leaves More open) last.
+    func testSidebarTree() {
         let app = launch()
+        let steps: [(String, (XCUIApplication) -> Void)] = [
+            ("System views and the More row", stepSystemViewsAndMoreRow),
+            ("A parent label collapses its sublabels", stepParentLabelCollapsesItsSublabels),
+            ("A label row opens its view", stepLabelRowOpensItsView),
+            ("Closed Categories hides the open category", stepClosedCategoriesHidesTheOpenCategory),
+        ]
+        for (name, step) in steps {
+            XCTContext.runActivity(named: name) { _ in step(app) }
+        }
+    }
+
+    private func stepSystemViewsAndMoreRow(_ app: XCUIApplication) {
         for id in ["inbox", "starred", "snoozed", "important", "sent", "drafts",
                    "allMail", "trash"] {
             XCTAssertTrue(element("sidebar.\(id)", in: app).waitForExistence(timeout: 5),
@@ -62,8 +80,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(spam), "Less closes it again")
     }
 
-    func testLabelRowOpensItsView() {
-        let app = launch()
+    private func stepLabelRowOpensItsView(_ app: XCUIApplication) {
         let unlabelled = element("threadRow.\(account):t3", in: app)
         XCTAssertTrue(unlabelled.waitForExistence(timeout: 10))
         let research = element("sidebar.label.\(account).Label_research", in: app)
@@ -75,8 +92,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
                       "the Research view lists its thread")
     }
 
-    func testParentLabelCollapsesItsSublabels() {
-        let app = launch()
+    private func stepParentLabelCollapsesItsSublabels(_ app: XCUIApplication) {
         let parent = element("sidebar.label.\(account).Label_vendors", in: app)
         XCTAssertTrue(parent.waitForExistence(timeout: 5))
         let child = element("sidebar.label.\(account).Label_vendors_aws", in: app)
@@ -92,8 +108,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(child), "closing it hides AWS again")
     }
 
-    func testClosedCategoriesHidesTheOpenCategory() {
-        let app = launch()
+    private func stepClosedCategoriesHidesTheOpenCategory(_ app: XCUIApplication) {
         let more = element("sidebar.more", in: app)
         XCTAssertTrue(more.waitForExistence(timeout: 5))
         more.click()
