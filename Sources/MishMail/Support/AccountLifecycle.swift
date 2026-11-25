@@ -110,6 +110,8 @@ enum AccountLifecycle {
         // Cached remote images: same (they cascade with the account and its
         // messages).
         try RemoteImageCache.forget(db, account: id)
+        // Answers sent to calendar invites: same.
+        try CalendarRSVPStore.forget(db, account: id)
         // Calendar grant, chosen calendars, invitation events: same.
         try CalendarStore.forget(db, accountId: id)
         // The account's mail cascades with the account row.
@@ -217,6 +219,7 @@ enum AccountLifecycle {
         try db.execute(sql: "DELETE FROM threadAI WHERE threadId NOT IN (SELECT id FROM thread)")
         try InlineImageCache.purgeOrphans(db)
         try RemoteImageCache.purgeOrphans(db)
+        try CalendarRSVPStore.purgeOrphans(db)
         try db.execute(sql: """
             DELETE FROM chatConversation
             WHERE id IN (SELECT conversationId FROM chatConversationAccount

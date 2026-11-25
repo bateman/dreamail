@@ -16,9 +16,13 @@ final class CalendarInvitePlanTests: XCTestCase {
             isSingleOccurrence: single, organizerUsesGoogleCalendar: google)
     }
 
-    private func located(_ calendarId: String = "primary") -> CalendarInviteEventRecord {
+    /// As `locate` records a Google-hosted event: Google's organizer, a
+    /// Google-issued UID.
+    private func located(_ calendarId: String = "primary", hostedByGoogle: Bool = true,
+                         organizer: String? = "Org@y.com") -> CalendarInviteEventRecord {
         CalendarInviteEventRecord(messageId: "a@x.com:m1", accountId: "a@x.com", calendarId: calendarId,
                                   eventId: "ev1", iCalUID: "uid-1@google.com", selfResponse: "needsAction",
+                                  organizerEmail: organizer, hostedByGoogle: hostedByGoogle,
                                   checkedAt: Date())
     }
 
@@ -73,6 +77,39 @@ final class CalendarInvitePlanTests: XCTestCase {
         XCTAssertFalse(CalendarRSVPRoute.calendarOnly(calendarId: "p", eventId: "e").sendsEmail)
         XCTAssertTrue(CalendarRSVPRoute.calendarAndEmail(calendarId: "p", eventId: "e").sendsEmail)
         XCTAssertTrue(CalendarRSVPRoute.emailOnly.sendsEmail)
+        XCTAssertFalse(CalendarRSVPRoute.notAnswerable.sendsEmail)
+        var cancelled = google
+        cancelled.isAnswerable = false
+        XCTAssertEqual(CalendarRSVPRoute.route(for: cancelled, event: located(), canWrite: true),
+                       .notAnswerable, "what the parser refuses to answer stays unanswered")
+    }
+
+    /// PRODID is written by the sender. A forged "Google Calendar" PRODID
+    /// must not drop the e-mail unless Google's own record agrees.
+    func testForgedProdIDDoesNotSuppressTheEmail() {
+        let claimsGoogle = facts(google: true)
+        XCTAssertEqual(CalendarRSVPRoute.route(for: claimsGoogle, event: located(hostedByGoogle: false),
+                                               canWrite: true),
+                       .calendarAndEmail(calendarId: "primary", eventId: "ev1"),
+                       "an Outlook event (UID not issued by Google) keeps the e-mail")
+        XCTAssertEqual(CalendarRSVPRoute.route(for: claimsGoogle, event: located(organizer: "else@z.com"),
+                                               canWrite: true),
+                       .calendarAndEmail(calendarId: "primary", eventId: "ev1"),
+                       "Google's organizer differs from the ICS one")
+        XCTAssertEqual(CalendarRSVPRoute.route(for: claimsGoogle, event: located(organizer: nil), canWrite: true),
+                       .calendarAndEmail(calendarId: "primary", eventId: "ev1"))
+        XCTAssertEqual(CalendarRSVPRoute.route(for: facts(google: false), event: located(), canWrite: true),
+                       .calendarAndEmail(calendarId: "primary", eventId: "ev1"),
+                       "no Google PRODID: e-mail even for a Google-hosted event")
+    }
+
+    func testGoogleIssuedUIDs() {
+        XCTAssertTrue(CalendarInviteEventRecord.isGoogleIssuedUID("7kq2abc@google.com"))
+        XCTAssertTrue(CalendarInviteEventRecord.isGoogleIssuedUID("7KQ2ABC@GOOGLE.COM"))
+        XCTAssertFalse(CalendarInviteEventRecord.isGoogleIssuedUID("@google.com"))
+        XCTAssertFalse(CalendarInviteEventRecord.isGoogleIssuedUID("040000008200E00074C5B7101A82E008"))
+        XCTAssertFalse(CalendarInviteEventRecord.isGoogleIssuedUID("x@google.com.evil.example"))
+        XCTAssertFalse(CalendarInviteEventRecord.isGoogleIssuedUID("x@notgoogle.com"))
     }
 
     func testRespondWritesTheAnswerWithNoGoogleNotification() async throws {
@@ -117,6 +154,19 @@ final class CalendarInvitePlanTests: XCTestCase {
         XCTAssertEqual(record?.calendarId, "team@group")
         XCTAssertEqual(record?.eventId, "series", "a series is answered on its master event")
         XCTAssertEqual(record?.selfResponse, "tentative")
+        XCTAssertEqual(record?.hostedByGoogle, false, "no Google-issued UID in Google's record")
+    }
+
+    func testLocateRecordsGooglesOwnOrganizerAndUID() async throws {
+        let net = CalendarStubTransport()
+        net.respond = { _, _ in
+            (200, #"{"items":[{"id":"ev9","iCalUID":"9xk@google.com","organizer":{"email":"org@y.com"}}]}"#, [:])
+        }
+        let record = try await service(net).locate(facts(), chosen: [], messageId: "m", accountId: "a@x.com")
+        XCTAssertEqual(record?.hostedByGoogle, true)
+        XCTAssertEqual(record?.organizerEmail, "org@y.com")
+        XCTAssertEqual(CalendarRSVPRoute.route(for: facts(google: true), event: record, canWrite: true),
+                       .calendarOnly(calendarId: "primary", eventId: "ev9"))
     }
 
     func testLocateSkipsACalendarItCannotReadAndReturnsNilWhenAbsent() async throws {
@@ -206,6 +256,9 @@ final class CalendarInvitePlanTests: XCTestCase {
         var noTime = facts()
         noTime.span = nil
         XCTAssertFalse(CalendarInvitePlan.canAddToCalendar(noTime, event: nil, canWrite: true))
+        var cancelled = facts()
+        cancelled.isAnswerable = false
+        XCTAssertFalse(CalendarInvitePlan.canAddToCalendar(cancelled, event: nil, canWrite: true))
     }
 
     func testAddToCalendarImportsIntoThePrimaryCalendar() async throws {

@@ -208,6 +208,10 @@ struct GEventAttendee: Decodable, Equatable, Sendable {
     }
 }
 
+struct GEventOrganizer: Decodable, Equatable, Sendable {
+    let email: String?
+}
+
 struct GCalendarEvent: Decodable, Equatable, Sendable {
     let id: String
     /// "confirmed" | "tentative" | "cancelled".
@@ -221,11 +225,14 @@ struct GCalendarEvent: Decodable, Equatable, Sendable {
     let transparency: String?
     let attendees: [GEventAttendee]?
     let updated: String?
+    /// As Google has it, not as the invitation's ICS claims.
+    let organizer: GEventOrganizer?
 
     init(id: String, status: String? = "confirmed", summary: String? = nil,
          iCalUID: String? = nil, recurringEventId: String? = nil,
          start: GEventDateTime?, end: GEventDateTime?, transparency: String? = nil,
-         attendees: [GEventAttendee]? = nil, updated: String? = nil) {
+         attendees: [GEventAttendee]? = nil, updated: String? = nil,
+         organizer: GEventOrganizer? = nil) {
         self.id = id
         self.status = status
         self.summary = summary
@@ -236,6 +243,7 @@ struct GCalendarEvent: Decodable, Equatable, Sendable {
         self.transparency = transparency
         self.attendees = attendees
         self.updated = updated
+        self.organizer = organizer
     }
 
     /// The authenticated user's own answer, when they are a guest.

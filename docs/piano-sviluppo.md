@@ -291,6 +291,7 @@ Aggiornato il 25 novembre 2026.
 ### Aggiunti dalle PR unite dopo il 25 novembre 2026
 
 - ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme.
+- ☐ **C-40** Inviti di calendario (PR #51): invito da Google Calendar, da Outlook/Exchange e da Apple Calendar; Accetta, Forse, Rifiuta cambiano lo stato presso l'organizzatore; riga "Reply from … goes to …"; avviso arancione se l'organizzatore non è il mittente; evento spostato chiede di nuovo; occorrenza o serie annullata senza pulsanti; risposta da un alias. Passi completi nel corpo della PR #51.
 
 ## Ondata 3 — parità Gmail
 
@@ -305,7 +306,7 @@ Avviata dal proprietario il 25 novembre 2026, prima che il cancello fosse comple
 |---|---|---|---|
 | 3A | Creazione e modifica dei filtri lato server | `feature/gmail-server-filters` | v56 |
 | 3B | Modifica dei colori delle label su Gmail | `feature/gmail-label-color-editing` | v57 |
-| 3C | Verifica ICS/RSVP e analisi delle lacune | `feature/ics-rsvp-verification` | v59 |
+| 3C | Verifica ICS/RSVP e analisi delle lacune. Unito (#51) | `feature/ics-rsvp-verification` | v59 |
 | 3D | Snooze: variante B scelta dal proprietario (DEC-041) | `feature/snooze-gmail-alignment` | v60 |
 | 3E | Azioni mancanti degli shortcut di Gmail | `feature/gmail-shortcut-actions` | v58 |
 
@@ -316,7 +317,7 @@ Avviata dal proprietario il 25 novembre 2026, in parallelo all'ondata 3. Ogni st
 | Step | Contenuto | Branch | Migrazione riservata | Stato della decisione |
 |---|---|---|---|---|
 | 4A | Google Calendar | `feature/google-calendar-integration` | v61 | Perimetro B scelto (DEC-042) |
-| 4B | PGP | `feature/openpgp-support` | v62 | Perimetro B scelto (DEC-045); libreria non ancora approvata |
+| 4B | PGP | `feature/openpgp-support` | v62 | Perimetro B scelto (DEC-045); libreria: rPGP approvata, previa verifica che non esista una soluzione già pronta (DEC-047) |
 
 Google Calendar, perimetro B: disponibilità e conflitti accanto a un invito, risposta scritta direttamente sul calendario, "aggiungi al calendario". Richiede un secondo consenso Google separato, solo per Calendar; l'accesso a Gmail non cambia. Confermato dal proprietario: risposta solo sul calendario per gli eventi già presenti in Google Calendar ed e-mail per gli altri; calendari per i conflitti scelti dall'utente, con il principale come predefinito. Predefiniti adottati in assenza di indicazioni, ribaltabili: nessuna notifica degli eventi; in locale solo gli eventi degli inviti.
 
@@ -325,7 +326,7 @@ Google Calendar, lavoro futuro (non avviato):
 - Perimetro C: agenda del giorno con sincronizzazione incrementale e promemoria (4–6 settimane dalla base di B; più dati personali in locale, notifiche).
 - Perimetro D: creazione di eventi da un messaggio (oltre 6 settimane dalla base di B).
 
-PGP, perimetro B: verifica delle firme, decifratura, import manuale delle chiavi. Predefiniti adottati, ribaltabili: chiavi private nel Keychain solo su questo Mac e protette da passphrase; nessuna copia su disco del testo decifrato; testo decifrato fuori dall'indice di ricerca. Libreria proposta: rPGP (Rust), da integrare con una PR separata che richiede il sì esplicito del proprietario, perché porta Rust nella catena di build.
+PGP, perimetro B: verifica delle firme, decifratura, import manuale delle chiavi. Predefiniti adottati, ribaltabili: chiavi private nel Keychain solo su questo Mac e protette da passphrase; nessuna copia su disco del testo decifrato; testo decifrato fuori dall'indice di ricerca. Libreria proposta: rPGP (Rust), da integrare con una PR separata. Il proprietario ha detto sì, a condizione che si verifichi prima che non esista una soluzione già pronta all'uso, ad esempio in Swift (DEC-047).
 
 PGP, lavoro futuro (non avviato):
 
@@ -403,3 +404,5 @@ Aggiornato il 25 novembre 2026.
 | 3A–3E | vedi "Ondata 3" | — | In lavorazione dal 25 novembre 2026 |
 | 4A–4B | vedi "Ondata 4" | — | In lavorazione dal 25 novembre 2026 |
 | — | `ux/thread-row-hover-actions` | #52 | In lavorazione (livello basso rischio) |
+| — | `ci/skip-duplicate-runs` | #53 | Unito dal proprietario, fuori flusso |
+| 3C | `feature/ics-rsvp-verification` | #51 | Unito |

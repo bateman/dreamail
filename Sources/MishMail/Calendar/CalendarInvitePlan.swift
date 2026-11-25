@@ -11,13 +11,17 @@ struct CalendarInviteFacts: Equatable, Sendable {
     var span: CalendarSpan?
     /// A reply to one occurrence of a series (`RECURRENCE-ID`).
     var isSingleOccurrence: Bool
-    /// The ICS was produced by Google Calendar (`PRODID`), so the organizer
-    /// keeps the event in Google Calendar and sees an answer written there.
+    /// The ICS says it was produced by Google Calendar (`PRODID`). Written
+    /// by the sender, so only a hint: it never suppresses the e-mail alone
+    /// (`CalendarRSVPRoute`).
     var organizerUsesGoogleCalendar: Bool
+    /// The parser offers an answer at all (`CalendarInvite.isActionable`:
+    /// a request, not cancelled, a valid organizer, a safe reply).
+    var isAnswerable: Bool
 
     init(uid: String, summary: String = "", location: String = "", organizerEmail: String = "",
          span: CalendarSpan?, isSingleOccurrence: Bool = false,
-         organizerUsesGoogleCalendar: Bool = false) {
+         organizerUsesGoogleCalendar: Bool = false, isAnswerable: Bool = true) {
         self.uid = uid
         self.summary = summary
         self.location = location
@@ -25,6 +29,7 @@ struct CalendarInviteFacts: Equatable, Sendable {
         self.span = span
         self.isSingleOccurrence = isSingleOccurrence
         self.organizerUsesGoogleCalendar = organizerUsesGoogleCalendar
+        self.isAnswerable = isAnswerable
     }
 
     init(_ invite: CalendarInvite) {
@@ -38,7 +43,8 @@ struct CalendarInviteFacts: Equatable, Sendable {
         self.init(uid: invite.uid, summary: invite.summary, location: invite.location,
                   organizerEmail: invite.organizerEmail, span: span,
                   isSingleOccurrence: invite.recurrenceIdLine != nil,
-                  organizerUsesGoogleCalendar: Self.isGoogleCalendarICS(invite.sourceICS))
+                  organizerUsesGoogleCalendar: Self.isGoogleCalendarICS(invite.sourceICS),
+                  isAnswerable: invite.isActionable)
     }
 
     /// `PRODID:-//Google Inc//Google Calendar 70.9054//EN`, as Google
@@ -59,9 +65,11 @@ struct CalendarInviteFacts: Equatable, Sendable {
 /// on the calendar for events already in Google Calendar, by e-mail for the
 /// others).
 enum CalendarRSVPRoute: Equatable, Sendable {
-    /// The event is in the user's Google Calendar and the organizer uses
-    /// Google Calendar: the answer written there reaches the organizer's
-    /// event; no e-mail.
+    /// The invitation offers no answer (`CalendarInvite.isActionable`).
+    case notAnswerable
+    /// The event is in the user's Google Calendar, Google itself created it
+    /// and Google's organizer is the invitation's: the answer written there
+    /// reaches the organizer's event; no e-mail.
     case calendarOnly(calendarId: String, eventId: String)
     /// The event is in Google Calendar but the organizer does not use it:
     /// write the answer there (so the user's calendar is right) and send
@@ -76,29 +84,39 @@ enum CalendarRSVPRoute: Equatable, Sendable {
     /// What Google is asked to e-mail when the answer is written.
     static let sendUpdates = CalendarSendUpdates.none
 
+    /// The e-mail is left out only when Google's own record agrees with the
+    /// ICS: PRODID is written by the sender, so a forged one (say, a copy of
+    /// an Outlook invitation claiming Google Calendar) still gets the e-mail.
     static func route(for facts: CalendarInviteFacts,
                       event: CalendarInviteEventRecord?,
                       canWrite: Bool) -> CalendarRSVPRoute {
+        guard facts.isAnswerable else { return .notAnswerable }
         guard canWrite, !facts.isSingleOccurrence, let event,
               event.iCalUID == facts.uid else { return .emailOnly }
-        return facts.organizerUsesGoogleCalendar
+        let organizerMatches = event.organizerEmail.map {
+            !$0.isEmpty && $0.caseInsensitiveCompare(facts.organizerEmail) == .orderedSame
+        } ?? false
+        return facts.organizerUsesGoogleCalendar && event.hostedByGoogle && organizerMatches
             ? .calendarOnly(calendarId: event.calendarId, eventId: event.eventId)
             : .calendarAndEmail(calendarId: event.calendarId, eventId: event.eventId)
     }
 
     var sendsEmail: Bool {
-        if case .calendarOnly = self { return false }
-        return true
+        switch self {
+        case .calendarAndEmail, .emailOnly: return true
+        case .calendarOnly, .notAnswerable: return false
+        }
     }
 }
 
 enum CalendarInvitePlan {
-    /// "Add to calendar" is offered for an invitation that is not in the
-    /// user's Google Calendar, has a real time and is not one occurrence of
-    /// a series (which needs the series first).
+    /// "Add to calendar" is offered for an answerable invitation that is not
+    /// in the user's Google Calendar, has a real time and is not one
+    /// occurrence of a series (which needs the series first).
     static func canAddToCalendar(_ facts: CalendarInviteFacts, event: CalendarInviteEventRecord?,
                                  canWrite: Bool) -> Bool {
-        canWrite && event == nil && facts.span != nil && !facts.isSingleOccurrence && !facts.uid.isEmpty
+        canWrite && facts.isAnswerable && event == nil && facts.span != nil && !facts.isSingleOccurrence
+            && !facts.uid.isEmpty
     }
 
     /// The `events.import` body: the invitation's UID, title, place, time
@@ -194,9 +212,9 @@ struct CalendarInviteService: Sendable {
             }
             // A series comes back as its master event; a single event as itself.
             if let event = found.first(where: { $0.recurringEventId == nil }) ?? found.first {
-                return CalendarInviteEventRecord(
-                    messageId: messageId, accountId: accountId, calendarId: id, eventId: event.id,
-                    iCalUID: facts.uid, selfResponse: event.selfResponse, checkedAt: now)
+                return CalendarInviteEventRecord(messageId: messageId, accountId: accountId,
+                                                 calendarId: id, event: event, iCalUID: facts.uid,
+                                                 checkedAt: now)
             }
         }
         return nil
@@ -211,7 +229,7 @@ struct CalendarInviteService: Sendable {
         case .calendarOnly(let calendarId, let eventId), .calendarAndEmail(let calendarId, let eventId):
             try await client.respond(calendarId: calendarId, eventId: eventId, response: response,
                                      sendUpdates: CalendarRSVPRoute.sendUpdates)
-        case .emailOnly:
+        case .emailOnly, .notAnswerable:
             break
         }
         return route
@@ -222,8 +240,8 @@ struct CalendarInviteService: Sendable {
                        zone: TimeZone = .current, now: Date = Date()) async throws -> CalendarInviteEventRecord {
         let event = try await client.importEvent(calendarId: "primary", facts: facts, zone: zone)
         return CalendarInviteEventRecord(messageId: messageId, accountId: accountId,
-                                         calendarId: "primary", eventId: event.id, iCalUID: facts.uid,
-                                         selfResponse: event.selfResponse, checkedAt: now)
+                                         calendarId: "primary", event: event, iCalUID: facts.uid,
+                                         checkedAt: now)
     }
 
     /// Errors that concern one calendar (gone, no access to its events), not

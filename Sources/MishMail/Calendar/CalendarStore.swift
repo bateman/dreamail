@@ -57,7 +57,42 @@ struct CalendarInviteEventRecord: Codable, FetchableRecord, PersistableRecord, E
     var iCalUID: String
     /// "needsAction" | "accepted" | "declined" | "tentative", as Google has it.
     var selfResponse: String?
+    /// The organizer as Google Calendar has it.
+    var organizerEmail: String?
+    /// Google Calendar itself created the event (its iCalUID is one Google
+    /// issues, `…@google.com`): the organizer keeps it in Google Calendar.
+    /// Read from Google, never from the invitation's ICS, which the sender
+    /// writes.
+    var hostedByGoogle: Bool
     var checkedAt: Date
+
+    init(messageId: String, accountId: String, calendarId: String, eventId: String,
+         iCalUID: String, selfResponse: String?, organizerEmail: String? = nil,
+         hostedByGoogle: Bool = false, checkedAt: Date) {
+        self.messageId = messageId
+        self.accountId = accountId
+        self.calendarId = calendarId
+        self.eventId = eventId
+        self.iCalUID = iCalUID
+        self.selfResponse = selfResponse
+        self.organizerEmail = organizerEmail
+        self.hostedByGoogle = hostedByGoogle
+        self.checkedAt = checkedAt
+    }
+
+    init(messageId: String, accountId: String, calendarId: String, event: GCalendarEvent,
+         iCalUID: String, checkedAt: Date) {
+        self.init(messageId: messageId, accountId: accountId, calendarId: calendarId,
+                  eventId: event.id, iCalUID: iCalUID, selfResponse: event.selfResponse,
+                  organizerEmail: event.organizer?.email,
+                  hostedByGoogle: Self.isGoogleIssuedUID(event.iCalUID ?? ""),
+                  checkedAt: checkedAt)
+    }
+
+    static func isGoogleIssuedUID(_ uid: String) -> Bool {
+        let lower = uid.lowercased()
+        return lower.hasSuffix("@google.com") && lower.count > "@google.com".count
+    }
 }
 
 /// The Calendar tables (migration v61) and their writes. Everything
@@ -95,6 +130,8 @@ enum CalendarStore {
             t.column("eventId", .text).notNull()
             t.column("iCalUID", .text).notNull()
             t.column("selfResponse", .text)
+            t.column("organizerEmail", .text)
+            t.column("hostedByGoogle", .boolean).notNull().defaults(to: false)
             t.column("checkedAt", .datetime).notNull()
         }
     }
