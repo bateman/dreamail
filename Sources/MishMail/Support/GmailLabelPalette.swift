@@ -1,0 +1,61 @@
+import Foundation
+
+/// A label color Gmail accepts: a background and a text color, both from
+/// Gmail's fixed set (`GmailLabelPalette.allowedHex`). `labels.patch`
+/// refuses any other value, so there is no way to build one outside it.
+struct GmailLabelColor: Equatable, Hashable, Sendable {
+    /// `#rrggbb`, lowercase.
+    let background: String
+    /// `#rrggbb`, lowercase.
+    let text: String
+
+    /// nil unless both colors are in Gmail's set (case and `#` are
+    /// normalized; anything else is refused).
+    init?(background: String?, text: String?) {
+        guard let bg = LabelRGB.normalizedHex(background),
+              let fg = LabelRGB.normalizedHex(text),
+              GmailLabelPalette.allowed.contains(bg),
+              GmailLabelPalette.allowed.contains(fg) else { return nil }
+        self.background = bg
+        self.text = fg
+    }
+
+    var colors: LabelColors { LabelColors(background: background, text: text) }
+}
+
+/// Gmail's label colors, as listed for `color.backgroundColor` and
+/// `color.textColor` in the Gmail API reference (users.labels, the two
+/// lists are identical). Frozen here: the API rejects anything else.
+enum GmailLabelPalette {
+    /// The 102 values the API accepts, in the reference's order.
+    static let allowedHex: [String] = [
+        "#000000", "#434343", "#666666", "#999999", "#cccccc", "#efefef", "#f3f3f3", "#ffffff",
+        "#fb4c2f", "#ffad47", "#fad165", "#16a766", "#43d692", "#4a86e8", "#a479e2", "#f691b3",
+        "#f6c5be", "#ffe6c7", "#fef1d1", "#b9e4d0", "#c6f3de", "#c9daf8", "#e4d7f5", "#fcdee8",
+        "#efa093", "#ffd6a2", "#fce8b3", "#89d3b2", "#a0eac9", "#a4c2f4", "#d0bcf1", "#fbc8d9",
+        "#e66550", "#ffbc6b", "#fcda83", "#44b984", "#68dfa9", "#6d9eeb", "#b694e8", "#f7a7c0",
+        "#cc3a21", "#eaa041", "#f2c960", "#149e60", "#3dc789", "#3c78d8", "#8e63ce", "#e07798",
+        "#ac2b16", "#cf8933", "#d5ae49", "#0b804b", "#2a9c68", "#285bac", "#653e9b", "#b65775",
+        "#822111", "#a46a21", "#aa8831", "#076239", "#1a764d", "#1c4587", "#41236d", "#83334c",
+        "#464646", "#e7e7e7", "#0d3472", "#b6cff5", "#0d3b44", "#98d7e4", "#3d188e", "#e3d7ff",
+        "#711a36", "#fbd3e0", "#8a1c0a", "#f2b2a8", "#7a2e0b", "#ffc8af", "#7a4706", "#ffdeb5",
+        "#594c05", "#fbe983", "#684e07", "#fdedc1", "#0b4f30", "#b3efd3", "#04502e", "#a2dcc1",
+        "#c2c2c2", "#4986e7", "#2da2bb", "#b99aff", "#994a64", "#f691b2", "#ff7537", "#ffad46",
+        "#662e37", "#ebdbde", "#cca6ac", "#094228", "#42d692", "#16a765",
+    ]
+
+    static let allowed: Set<String> = Set(allowedHex)
+
+    /// Columns of the picker grid: one hue per column.
+    static let columns = 8
+
+    /// What the organizer offers: the first 64 values (a grey row, then
+    /// seven rows of eight hues, the grid Gmail's own picker shows), each
+    /// with black or white text, whichever contrasts more. Both are in the
+    /// set, and one of the two always reaches 4.5:1 (WCAG AA).
+    static let swatches: [GmailLabelColor] = allowedHex.prefix(64).map { hex in
+        let fill = LabelRGB(hexString: hex)!
+        let text = fill.contrast(with: .black) >= fill.contrast(with: .white) ? "#000000" : "#ffffff"
+        return GmailLabelColor(background: hex, text: text)!
+    }
+}
