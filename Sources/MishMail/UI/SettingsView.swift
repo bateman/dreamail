@@ -408,6 +408,9 @@ struct AccountsSettings: View {
                             }
                         }
                         SyncWindowPicker(accountId: account.id)
+                        if store.calendarUIEnabled {
+                            CalendarAccountSettings(accountId: account.id)
+                        }
                     }
                 }
                 Section {

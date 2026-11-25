@@ -73,6 +73,17 @@ final class CalendarClientTests: XCTestCase {
         XCTAssertEqual(query(net.requests[1])["pageToken"], "n")
     }
 
+    /// Opening a message must not page through thousands of events: the
+    /// availability read stops at its cap and says it is partial.
+    func testAvailabilityReadStopsAtItsPageCap() async throws {
+        let net = CalendarStubTransport()
+        net.respond = { _, _ in (200, #"{"items":[{"id":"e"}],"nextPageToken":"more"}"#, [:]) }
+        let result = try await client(net).events(calendarId: "primary", in: window)
+        XCTAssertEqual(net.requests.count, CalendarClient.availabilityMaxPages)
+        XCTAssertTrue(result.truncated)
+        XCTAssertEqual(result.events.count, CalendarClient.availabilityMaxPages)
+    }
+
     func testUIDLookupIsCappedAndCancelledEventsAreDropped() async throws {
         let net = CalendarStubTransport()
         net.respond = { _, _ in (200, #"{"items":[{"id":"e1","status":"cancelled"},{"id":"e2"}]}"#, [:]) }

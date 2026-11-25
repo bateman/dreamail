@@ -93,6 +93,9 @@ extension MailStore {
         forgetAccountPhoto(id)
         // DEC-019: the account's Gmail filters leave memory with it.
         filterCache.forget(account: id)
+        // Same for the Google Calendar integration's memory of it (again
+        // after the purge, below).
+        forgetCalendar(accountId: id)
         leaveScope(ofRemovedAccount: id)
         PendingLabelColorEdits.shared.forgetAccount(id)
         Task { @MainActor [weak self] in
@@ -129,6 +132,10 @@ extension MailStore {
             // After the Keychain delete: the next token request finds no
             // refresh token and fails, instead of reusing the cached one.
             await GmailClient.shared(accountEmail: id).forgetAccessToken()
+            // And again for Calendar, now that its rows and token are gone:
+            // a check that reloaded them between the first forget and the
+            // purge leaves nothing behind.
+            self?.forgetCalendar(accountId: id)
             // The purge zeroed the account's rows in their pages
             // (secure_delete); fold those pages out of the WAL and truncate it
             // now rather than in a few seconds. A reader holding the log makes
