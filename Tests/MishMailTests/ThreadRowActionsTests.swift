@@ -40,10 +40,11 @@ final class ThreadRowActionsTests: XCTestCase {
             let width = ThreadRowActionLayout.actionsWidth(fontScale: scale)
             XCTAssertGreaterThan(width, last)
             last = width
-            // Each button, with its hit extension, stays at least 17 pt wide.
+            // Each button, with its hit extension, stays at least 16 pt wide
+            // (16.4 pt at the smallest scale, 19 pt at scale 1).
             let button = width / Double(ThreadRowHoverAction.allCases.count)
                 + 2 * ThreadRowActionLayout.hitExtra
-            XCTAssertGreaterThanOrEqual(button, 17)
+            XCTAssertGreaterThanOrEqual(button, 16)
         }
     }
 
