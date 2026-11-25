@@ -6,6 +6,14 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Safer calendar invites.** A hostile or malformed invite can no longer slow
+  the app down, and a reply goes only to the single organizer, who is always
+  shown together with the identity you answer from. The reply is rebuilt from
+  checked fields and never copies lines the sender wrote. Updated invites ask
+  again and never show an answer given to another organizer; repeating events
+  and received replies are labelled. Answers are stored in the encrypted
+  database and deleted with their message; answers given before this change are
+  forgotten, so those invites show their buttons unselected again.
 - **Fewer duplicate CI runs.** A change that touches only documentation
   (`docs/`, `reviews/`, `.claude/`, `CHANGELOG.md`, `CLAUDE.md`) no longer
   runs the macOS build and tests, on its pull request into `main` or on
