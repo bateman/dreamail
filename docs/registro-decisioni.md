@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.25
+Versione: 0.26
 Ultimo aggiornamento: 25 novembre 2026
 Stato: documento in evoluzione
 
