@@ -253,6 +253,29 @@ Avviata dal proprietario il 25 novembre 2026, prima che il cancello fosse comple
 
 Entrambi richiedono una decisione di design prima di essere divisi in step: scope e nuovo consenso per Calendar; libreria, chiavi, bozze e ricerca per PGP.
 
+## Lavori in sospeso
+
+Aggiornato il 25 novembre 2026.
+
+### Seguiti offerti, nessuno deciso
+
+- Label prima dell'oggetto come in Gmail.
+- Comando "Svuota cache immagini" nelle impostazioni.
+- Avviso nell'app per chi non aveva mai impostato "Load remote images".
+- Immagini remote con una sola richiesta al mittente (2–3 giorni).
+- Conferma prima di un'azione di massa dopo `* a`.
+- Struttura della barra laterale come Gmail.
+- Selettore della lingua per messaggio.
+- Avatar nel selettore del mittente.
+
+### Rimandato dal proprietario
+
+- Dependabot per Swift e Python, SwiftLint e CodeQL, misura della copertura, hook git versionati.
+
+### Prima di distribuire l'app ad altri
+
+- Riprogettare la regola di fiducia dell'updater, note di licenza di GRDB e SQLCipher, firma e notarizzazione.
+
 ## Stato
 
 | Step | Branch | PR | Stato |
