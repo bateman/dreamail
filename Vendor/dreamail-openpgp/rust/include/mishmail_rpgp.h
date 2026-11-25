@@ -1,6 +1,6 @@
-// C interface of Vendor/rpgp-ffi (MishMail's OpenPGP engine over rPGP).
-// Hand-written to match src/lib.rs; RPGPBindingsTests checks the JSON
-// contract, and the symbol list is checked by scripts/build-rpgp-xcframework.sh.
+// C interface of the dreamail-openpgp library (MishMail's OpenPGP engine over rPGP).
+// Hand-written to match src/lib.rs; MishMail's RPGPEngineTests check the JSON
+// contract, and the symbol list is checked by scripts/build-xcframework.sh.
 #ifndef MISHMAIL_RPGP_H
 #define MISHMAIL_RPGP_H
 

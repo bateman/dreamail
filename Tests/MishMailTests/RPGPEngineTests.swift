@@ -1,7 +1,7 @@
 import XCTest
 
 /// `RPGPEngine` against canned library answers: the JSON contract of
-/// `Vendor/rpgp-ffi` and how it maps onto the engine types (step 4B).
+/// the dreamail-openpgp library and how it maps onto the engine types (step 4B).
 /// The library itself is tested by its own Rust tests.
 final class RPGPEngineTests: XCTestCase {
 

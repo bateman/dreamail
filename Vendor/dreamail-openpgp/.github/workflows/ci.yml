@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: read-only token for every job.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Engine tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The compiler comes from rust-toolchain.toml; the runner image ships rustup.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      # THIRD_PARTY_LICENSES.md must match Cargo.lock, and every linked crate
+      # must have a licence text (or be acknowledged in licenses/README.md).
+      - name: Check third-party licences
+        run: python3 ../scripts/third_party_licenses.py --check
+
+      - name: Shellcheck the build script
+        run: shellcheck ../scripts/build-xcframework.sh

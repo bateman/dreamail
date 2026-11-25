@@ -3,7 +3,7 @@ import Foundation
 import MishMailRPGP
 #endif
 
-/// `OpenPGPEngine` over the rPGP library (`Vendor/rpgp-ffi`, step 4B,
+/// `OpenPGPEngine` over rPGP, through the dreamail-openpgp package (step 4B,
 /// scope B: verify, decrypt, read keys).
 ///
 /// Split in two so the part that can be wrong is tested without the
@@ -102,7 +102,7 @@ struct RPGPRawReply: Sendable, Equatable {
     let data: Data
 }
 
-/// The library's JSON answer (see `Vendor/rpgp-ffi/src/lib.rs`).
+/// The library's JSON answer (see `rust/src/lib.rs` in dreamail-openpgp).
 struct RPGPReply: Decodable, Equatable {
     struct Key: Decodable, Equatable {
         let fingerprint: String
