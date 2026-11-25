@@ -99,7 +99,7 @@ enum SignatureHTML {
                                           options: .regularExpression)
         for tag in droppedWhole.subtracting(["link", "meta", "input", "base"]) {
             s = s.replacingOccurrences(
-                of: "<\\(tag)\\b[^>]*>[\\s\\S]*?</\\(tag)\\s*>", with: " ",
+                of: "<\(tag)\\b[^>]*>[\\s\\S]*?</\(tag)\\s*>", with: " ",
                 options: [.regularExpression, .caseInsensitive])
         }
         guard let re = try? NSRegularExpression(pattern: #"</?([A-Za-z][A-Za-z0-9:_-]*)\b[^>]*>"#)
