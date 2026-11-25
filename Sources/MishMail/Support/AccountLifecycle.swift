@@ -107,6 +107,9 @@ enum AccountLifecycle {
         // Cached inline images: same (they cascade with the account, its
         // messages and attachment rows).
         try InlineImageCache.forget(db, account: id)
+        // Cached remote images: same (they cascade with the account and its
+        // messages).
+        try RemoteImageCache.forget(db, account: id)
         // The account's mail cascades with the account row.
         let messages = try Int.fetchOne(
             db, sql: "SELECT count(*) FROM message WHERE accountId = ?", arguments: [id]) ?? 0
@@ -213,6 +216,7 @@ enum AccountLifecycle {
         }
         try db.execute(sql: "DELETE FROM threadAI WHERE threadId NOT IN (SELECT id FROM thread)")
         try InlineImageCache.purgeOrphans(db)
+        try RemoteImageCache.purgeOrphans(db)
         try db.execute(sql: """
             DELETE FROM chatConversation
             WHERE id IN (SELECT conversationId FROM chatConversationAccount
