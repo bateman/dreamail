@@ -30,12 +30,75 @@ Especially interesting:
 Remote HTTPS images load by default when a message is opened (Settings →
 Appearance → Load remote images: Always; Ask each time and VIP senders are
 stricter). Mail in Spam and conversations that were not opened (including
-neighbour pre-render) never load them without a click. With images allowed,
-these risks remain:
+neighbour pre-render) never load them without a click.
 
-- **Open tracking.** The sender's servers learn when the message was opened,
-  the IP address (approximate location and network) and client details
-  (WebKit User-Agent, language). Moving to a message in the list with the
+**Cached per message.** The first time a message is opened with its remote
+images allowed, it shows them exactly as before (WebKit loads them live),
+and MishMail's own client downloads each cacheable image of that message in
+the background and keeps it in the encrypted database with the message (see
+"What deleting means"). On that first open the sender therefore sees two
+requests per image: one from WebKit, one from the app's client, which is
+distinguishable from WebKit (WebKit downloads in its own process and the
+app cannot read those bytes). What later opens do depends on whether every
+cacheable image of the message is settled, that is stored, or refused and
+remembered as refused:
+
+- **All settled:** later opens, after a relaunch too, show the message from
+  the cache with no request for the stored images. Images the app refused
+  (an empty or 204 answer, SVG, an oversized image, an image past the
+  message's 2.5 MiB, a server error other than a temporary one) are
+  remembered with the message as refused (their URL digest only) and load
+  live from WebKit on every open, as do images in positions the app does not
+  rewrite (`<picture>`, `image-set()`, CSS escapes, a 41st image).
+- **Not all settled** (an image failed for a network reason: offline, a
+  timeout, DNS, a 5xx, 408 or 429 answer): the message opens entirely live
+  again, so WebKit asks the sender for every image again, and the app's
+  client tries the missing ones again, on every open until they settle.
+
+This reduces repeat requests for ordinary images; it is not a defence
+against tracking: a sender can keep an image uncacheable, or keep a message
+from settling, and is then asked on every open.
+Nothing is downloaded for mail that is not open, nor for a message whose
+images the policy blocks (Ask each time without a click, non-VIP senders,
+Spam): the cache never overrides the decision, and the neighbour pre-render
+and prefetch only read what is already cached. The app's client:
+
+- requests `https:` URLs only, on the default port, with a fixed `Accept`,
+  `Accept-Language` and WebKit-shaped `User-Agent`, and no cookies, cache,
+  credentials or `Referer`;
+- follows at most 3 redirects, each re-checked against the same rules;
+- refuses `localhost`, `.local`/`.internal`/single-label names, literal
+  private, loopback, link-local, CGNAT or unique-local addresses, and names
+  whose DNS answer includes one. Not caught: a DNS answer that changes
+  between that check and the connection, and a system proxy or PAC file,
+  which resolves and connects for the app, so the check does not govern the
+  destination there;
+- keeps at most 2 MiB per image (enforced while streaming), 2.5 MiB and 40
+  images per message, at most 6 requests at a time app-wide, raster images
+  only (JPEG, PNG, GIF, WebP; animated GIF stored as served), never SVG.
+- checks the leading bytes against those four formats before anything else,
+  then lets ImageIO read the image's header (no pixel decode) in the app
+  process. This is new attack surface in the app process for those four
+  parsers' header code; every other format is rejected before ImageIO sees
+  it. Decoding stays WebKit's, as before.
+
+What is cached: `<img>` images (with a `srcset`, the one candidate the app
+picks, kept with its density so Retina sharpness and size do not change;
+otherwise `src`), `background` attributes, and CSS `url()` images in `style`
+attributes and `<style>` blocks. What still loads live from WebKit when
+allowed, exactly as before: `<picture>` sources, `<video poster>`,
+`<input type=image>`, SVG `<image>`, `image-set()`, CSS written with
+escapes, images beyond the caps, anything the client refuses (remembered
+with the message, never asked again by the app) and anything it could not
+fetch for a network reason (asked again on the next open). A URL is stored
+only as its SHA-256, for images and refusals alike.
+
+With images allowed, these risks remain:
+
+- **Open tracking.** The sender's servers learn when the message was first
+  opened (later opens of a cached message send nothing), the IP address
+  (approximate location and network) and client details (a WebKit-shaped
+  User-Agent; WebKit's own for images that still load live). Moving to a message in the list with the
   reading pane showing, and auto-advance after archive or delete, count as
   opening it. Holding an arrow key opens only the row where the key stops.
 - **What loads.** Everything the CSP `img-src data: cid: https:` admits:
@@ -49,7 +112,11 @@ these risks remain:
   not cross messages or app runs.
 - **Private-network requests.** An image URL can point at an HTTPS host on
   the local network; WebKit sends a blind GET (no response is readable by the
-  message, but the request itself happens).
+  message, but the request itself happens). The app's own client refuses
+  such hosts, so those images are left to WebKit as before.
+- **Decoding and storing attacker-served bytes.** Cached images are the
+  sender's bytes, stored as served after an ImageIO header check (no
+  re-encoding), and decoded by WebKit on every open, as before.
 - **Decoding attacker-served images** happens without a click, so an image
   decoder bug in macOS is reachable by opening the message.
 - **Spam is the only gate.** Gmail's phishing and suspicious-sender warnings
@@ -71,7 +138,8 @@ month (SEC-004–007, all fixed) lives in
 
 When mail leaves MishMail's local cache (a message deleted or trashed and
 purged, local mail pruned, a draft discarded, a chat or summary cleared, an
-account removed, a cached inline image evicted), this is what happens to it:
+account removed, a cached inline or remote image evicted), this is what
+happens to it:
 
 - **The database file: overwritten.** SQLite's `secure_delete` is on for
   every connection (SQLCipher also forces it on every keyed connection), so a
@@ -80,7 +148,7 @@ account removed, a cached inline image evicted), this is what happens to it:
   in batches (`auto_vacuum = INCREMENTAL`).
 - **Cached inline images: inside the database, deleted with their mail.**
   The images a message's HTML embeds as `cid:` parts (raster images only,
-  never SVG; not remote images, which are never cached) are kept in the
+  never SVG) are kept in the
   encrypted database once they have been downloaded, so the conversation
   opens with them later, after a relaunch too. Each image is tied to its
   message, attachment part and account, and to the exact body it was
@@ -94,6 +162,20 @@ account removed, a cached inline image evicted), this is what happens to it:
   database (no on-disk HTTP cache, no temporary file); the same image
   opened as an attachment or in Quick Look is a copy in the temporary
   folder, as described below.
+- **Cached remote images: inside the database, deleted with their mail.**
+  The https images of a message opened with remote images allowed (see
+  "Remote images") are kept in the encrypted database, one copy per message
+  (the same image in two messages is stored twice, so nothing is shared
+  across messages or accounts), keyed by the SHA-256 of the URL, never the
+  URL itself; so are the refusal markers (the digest of an image the app
+  will not fetch again for that message). They go with their message (deletion, local prune, thread
+  deletion, through the cascading deletes) and with their account (removal
+  also deletes them by name), under the same overwrite and log truncation.
+  This cache holds at most 200 MiB of its own (apart from the inline images'
+  200 MiB) and 2.5 MiB per message; beyond that the least recently used
+  messages' images are deleted. Nothing is written outside the database (no
+  HTTP cache, no temporary file); the app's client uses an ephemeral session
+  with no disk cache.
 - **The full-text index: overwritten.** FTS5's `secure-delete` removes a
   deleted message's terms from the index at delete time. A bulk delete
   rebuilds the index from the remaining messages instead, which leaves no

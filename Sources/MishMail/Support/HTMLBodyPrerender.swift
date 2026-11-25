@@ -7,9 +7,10 @@ import WebKit
 /// After the open thread's body settles, previous/next newest-message HTML is
 /// loaded into parked views (JS-off, remote images always blocked — see
 /// `HTMLBodyPrerenderPolicy`). Up/down navigation can then claim a painted
-/// view instead of starting a cold `loadHTMLString`. An open that allows
-/// remote images uses a different pool key and will not reuse a blocked
-/// pre-render.
+/// view instead of starting a cold `loadHTMLString`. An open that loads
+/// remote images live uses a different pool key and will not reuse a blocked
+/// pre-render; one whose images all come from the encrypted cache
+/// (`RemoteImageRendering`) loads blocked and does.
 ///
 /// Cancelled when the user navigates before work starts or completes. Oversized
 /// bodies (`HTMLBodyRenderPolicy.requiresExplicitLoad`) are skipped.
@@ -51,9 +52,11 @@ enum HTMLBodyNeighborPrerender {
     /// Remote images are always blocked for neighbor pre-render (see
     /// `HTMLBodyPrerenderPolicy`) so focus-past-a-row never fires tracking
     /// pixels for mail the user never opened. `opensWithRemoteImages` (the
-    /// caller's image decision for that message) skips a neighbour whose
-    /// open would use the allowed variant: its blocked paint could never be
-    /// claimed.
+    /// caller's image decision for that message) picks the document the open
+    /// would show: for a message whose open loads remote images, the body
+    /// with all its cacheable images from the encrypted cache, never one
+    /// that needs the network (skipped: its blocked paint could never be
+    /// claimed).
     static func schedule(
         openedThreadId: String,
         displayOrder: [String],
@@ -87,17 +90,30 @@ enum HTMLBodyNeighborPrerender {
                 guard gen == generation, !Task.isCancelled else { return }
                 guard let message = ForwardComposer.newestSentMessage(
                     in: payload.messages) else { continue }
-                guard HTMLBodyPrerenderSelection.paintsNeighbor(
-                    opensWithRemoteImages: opensWithRemoteImages(threadId, message))
-                else { continue }
                 // A body whose `cid:` images were already resolved opens
                 // with the inlined HTML (content id suffixed ":cid"), so
                 // paint that one or the open could never claim this view.
-                let inlined = payload.cidInlineByMessageId[message.id]?.html
-                guard let candidate = HTMLBodyPrerenderSelection.candidate(
-                    messageId: message.id,
-                    bodyHTML: inlined ?? message.bodyHTML,
-                    cidInlined: inlined != nil) else { continue }
+                let inlined = payload.cidInlineByMessageId[message.id]
+                // Remote images: a body whose cacheable images are all in the
+                // encrypted cache is painted with them inlined, under the
+                // blocked CSP: the document its open shows
+                // (`RemoteImageRendering.prerender`). An open that loads
+                // images live is skipped, as before.
+                guard let plan = RemoteImageRendering.prerender(
+                    opensWithRemoteImages: opensWithRemoteImages(threadId, message),
+                    remoteBody: payload.remoteInlineByMessageId[message.id]) else { continue }
+                let selected: HTMLBodyPrerenderSelection.Candidate?
+                if case .remote(let body) = plan {
+                    // Gated on the pre-inline sizes in its prep, as the card.
+                    selected = HTMLBodyPrerenderSelection.candidate(
+                        messageId: message.id, remoteBody: body)
+                } else {
+                    selected = HTMLBodyPrerenderSelection.candidate(
+                        messageId: message.id,
+                        bodyHTML: inlined?.html ?? message.bodyHTML,
+                        cidInlined: inlined != nil)
+                }
+                guard let candidate = selected else { continue }
 
                 let key = HTMLBodyLoadKey(
                     contentID: candidate.contentID,
