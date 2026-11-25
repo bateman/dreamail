@@ -63,6 +63,23 @@ final class SnoozeReleaseTests: XCTestCase {
         XCTAssertEqual(SnoozeRelease.timeoutNanoseconds, 10_000_000_000)
     }
 
+    /// A call that ignores cancellation (like the shared token refresh)
+    /// must not hold the removal past the deadline.
+    func testDeadlineHoldsWhenACallIgnoresCancellation() async {
+        let start = Date()
+        let left = await SnoozeRelease.release(
+            ["stuck", "t2"], reachable: true, timeoutNanoseconds: 200_000_000
+        ) { _ in
+            // Not cancellable: resumes only when the queue fires.
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { c.resume() }
+            }
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2,
+                          "release must return at the deadline, not when the call ends")
+        XCTAssertEqual(left, 2)
+    }
+
     func testKnownOfflineSendsNothing() async {
         let calls = Calls()
         let left = await SnoozeRelease.release(["t1", "t2"], reachable: false) { await calls.add($0) }

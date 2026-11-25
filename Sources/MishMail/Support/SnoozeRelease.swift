@@ -19,36 +19,59 @@ enum SnoozeRelease {
     /// limit, server error) stops the run, since every later call would fail
     /// the same way. Returns how many were not put back. `reachable` false
     /// (known offline) sends nothing.
+    ///
+    /// The deadline does not rely on cancellation: the calls run in an
+    /// unstructured task that is cancelled and then abandoned when time is
+    /// up. A wait that ignores cancellation (the shared token refresh in
+    /// `GmailClient.validToken` awaits a task not tied to its caller) can
+    /// therefore not hold the removal. What finishes after the deadline is
+    /// counted as not put back.
     static func release(_ gmailThreadIds: [String], reachable: Bool,
                         timeoutNanoseconds: UInt64 = timeoutNanoseconds,
                         addInbox: @escaping @Sendable (String) async throws -> Void) async -> Int {
         guard !gmailThreadIds.isEmpty else { return 0 }
         guard reachable else { return gmailThreadIds.count }
         let handled = Counter()
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
+        let first = FirstOf()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            let work = Task {
                 for id in gmailThreadIds {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled { break }
                     do {
                         try await addInbox(id)
                     } catch {
-                        if Task.isCancelled { return }
-                        guard MessageFetchFailureKind.classify(error) == .notFound else { return }
+                        if Task.isCancelled { break }
+                        guard MessageFetchFailureKind.classify(error) == .notFound else { break }
                     }
                     await handled.add()
                 }
+                await first.finish(done)
             }
-            group.addTask { try? await Task.sleep(nanoseconds: timeoutNanoseconds) }
-            // Whichever ends first ends the release.
-            await group.next()
-            group.cancelAll()
+            Task {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                work.cancel()
+                await first.finish(done)
+            }
         }
-        return gmailThreadIds.count - (await handled.value)
+        return gmailThreadIds.count - (await handled.freeze())
     }
 
     private actor Counter {
-        private(set) var value = 0
-        func add() { value += 1 }
+        private var value = 0
+        private var frozen = false
+        /// Calls that land after the deadline are not counted.
+        func add() { if !frozen { value += 1 } }
+        func freeze() -> Int { frozen = true; return value }
+    }
+
+    /// Resumes the release once, for whichever of work and deadline ends first.
+    private actor FirstOf {
+        private var finished = false
+        func finish(_ done: CheckedContinuation<Void, Never>) {
+            guard !finished else { return }
+            finished = true
+            done.resume()
+        }
     }
 
     /// What the user is told after the removal when some could not be put
