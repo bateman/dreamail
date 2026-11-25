@@ -49,6 +49,31 @@ jobs:
       - name: Shellcheck the shell scripts
         run: make shellcheck
 
+  # The OpenPGP engine's C ABI over rPGP (Vendor/rpgp-ffi, step 4B). Its
+  # own tests, with keys generated at test time; the compiler comes from
+  # rust-toolchain.toml and every crate from Cargo.lock (--locked). The
+  # runner image ships rustup. The macOS xcframework is not built here.
+  rpgp-engine:
+    name: OpenPGP engine (Rust)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: Vendor/rpgp-ffi
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
   test:
     name: Unit tests & build
     runs-on: macos-26
