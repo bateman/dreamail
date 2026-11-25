@@ -44,6 +44,7 @@ struct SettingsView: View {
 
     @AppStorage("settingsPane") private var pane: Pane = .accounts
     @ObservedObject private var updates = UpdateChecker.shared
+    @Environment(\.mailAccent) private var accent
 
     var body: some View {
         HStack(spacing: 0) {
@@ -90,10 +91,12 @@ struct SettingsView: View {
             .listItemTint(.monochrome)
             if p == .updates, updates.available != nil {
                 Spacer()
-                Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+                Circle().fill(.accentForegroundOrSystem).frame(width: 7, height: 7)
             }
         }
         .accessibilityIdentifier("settings.pane.\(p.rawValue)")
+        // The selection capsule in the custom accent (`AccentSelectionBackground`).
+        .listRowBackground(AccentSelectionBackground.sidebar(selected: pane == p, accent: accent))
         .tag(p)
     }
 
@@ -1122,6 +1125,13 @@ struct AppearanceSettings: View {
                 }
 
                 Section {
+                    AccentColorSetting()
+                } footer: {
+                    Text("Default keeps MishMail's blue, and your Mac's accent colour for selected rows. A colour you pick is used for buttons, links, badges and highlights, and on macOS 26 and later for selected rows too; text on it turns white or black to stay readable.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section {
                     Picker("Opening a conversation", selection: $threadOpenStyleRaw) {
                         Text("Fills the window").tag(ThreadOpenStyle.fullWindow.rawValue)
                         Text("Shows in a reading pane").tag(ThreadOpenStyle.readingPane.rawValue)
@@ -1414,7 +1424,7 @@ private struct VIPManager: View {
                                     Spacer()
                                 }
                                 .padding(.horizontal, 8).padding(.vertical, 5)
-                                .background(idx == highlighted ? Color.mailAccent.opacity(0.18) : .clear)
+                                .background(.accentFill.opacity(idx == highlighted ? 0.18 : 0))
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -1516,7 +1526,7 @@ private struct VIPManager: View {
                     }
                     .overlay(RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(style: StrokeStyle(lineWidth: dropTargeted ? 2 : 1, dash: [5, 3]))
-                        .foregroundStyle(dropTargeted ? Color.mailAccent : Color(nsColor: .separatorColor)))
+                        .foregroundStyle(dropTargeted ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(Color(nsColor: .separatorColor))))
                     .onDrop(of: ["public.file-url"], isTargeted: $dropTargeted) { handleDrop($0) }
                 HStack {
                     Text(pasteText.isEmpty ? " "
@@ -2690,5 +2700,80 @@ private struct MCPSettingsSection: View {
         }
         store.mcpPreferredPort = n
         portText = "\(store.mcpPreferredPort)"
+    }
+}
+
+/// Settings → Appearance → Accent color: the system colour well, the
+/// label palette's swatches and "Default". Writes the preference only; the
+/// window roots provide it (`mailAccentRoot`).
+struct AccentColorSetting: View {
+    @AppStorage(AccentPreference.storageKey) private var raw = ""
+    @Environment(\.colorScheme) private var colorScheme
+    /// A colour-well pick not yet written: dragging in the colour panel
+    /// sends a pick per tick, and every window re-renders on each write.
+    @State private var pending: String?
+
+    /// How long a colour-well pick settles before it is saved.
+    private static let settle: Duration = .milliseconds(200)
+
+    var body: some View {
+        let custom = AccentPreference.custom(raw: pending ?? raw)
+        // What the well shows: the custom colour, or the default blue.
+        let shown = custom ?? AccentPalette.defaultAccent(.init(colorScheme))
+        HStack {
+            Text("Accent color")
+            Spacer()
+            Text(custom == nil ? "Default" : shown.hexString)
+                .font(.system(size: 11).monospaced())
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("accentColorValue")
+            ColorPicker("Accent color", selection: Binding(
+                get: { Color(shown) },
+                set: { color in
+                    // Opening the well echoes the shown colour back: that
+                    // must not turn Default into a pick of the blue.
+                    if let hex = PickedColor.pickedHex(color, shown: shown.hexString) {
+                        pending = AccentPreference.storedValue(hex)
+                    }
+                }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .accessibilityIdentifier("accentColorPicker")
+        }
+        .task(id: pending) {
+            guard let pick = pending else { return }
+            try? await Task.sleep(for: Self.settle)
+            guard !Task.isCancelled else { return }
+            save(pick)
+        }
+        // The shared colour panel would otherwise stay open, still bound
+        // to this row, after the pane or the window goes away. A pick still
+        // settling is saved first.
+        .onDisappear {
+            if let pick = pending { save(pick) }
+            PickedColor.closeSharedPanel()
+        }
+        HStack(spacing: 5) {
+            ForEach(AccentPreference.presets, id: \.hex) { swatch in
+                ColorSwatch(name: swatch.name, hex: swatch.hex,
+                            selected: custom != nil
+                                && custom?.hexString == LabelRGB.normalizedHex(swatch.hex),
+                            accessibilityID: "accentSwatch.\(swatch.name)") {
+                    save(AccentPreference.storedValue(swatch.hex))
+                }
+            }
+            Spacer(minLength: 4)
+            Button("Default") { save("") }
+                .controlSize(.small)
+                .disabled(custom == nil)
+                .help("Use MishMail's blue and the system selection colour")
+                .accessibilityLabel("Default accent color")
+                .accessibilityIdentifier("accentColorDefault")
+        }
+    }
+
+    private func save(_ value: String) {
+        pending = nil
+        raw = value
     }
 }

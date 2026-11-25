@@ -21,6 +21,7 @@ private final class ChipKeyboardState {
 /// - Backspace with a selection deletes it.
 /// - Cmd+C copies `Name <email>` (Cmd+X cuts).
 struct TokenAddressField: View {
+    @Environment(\.mailAccent) private var accent
     @Environment(MailStore.self) var store
     let label: String
     @Binding var tokens: [String]
@@ -178,7 +179,7 @@ struct TokenAddressField: View {
                                 Spacer()
                             }
                             .padding(.horizontal, 8).padding(.vertical, 5)
-                            .background(idx == highlighted ? Color.mailAccent.opacity(0.18) : .clear)
+                            .background(.accentFill.opacity(idx == highlighted ? 0.18 : 0))
                             .contentShape(Rectangle())
                         }
                         .accessibilityIdentifier("addressSuggestion.\(label).\(contact.email)")
@@ -222,7 +223,7 @@ struct TokenAddressField: View {
             } label: {
                 Text(displayName(token))
                     .font(.system(size: 12))
-                    .foregroundStyle(isSelected ? Color.white : Color.primary)
+                    .foregroundStyle(isSelected ? accent.onFill : Color.primary)
                     .padding(.leading, 8)
                     .padding(.vertical, 3)
                     .padding(.trailing, 3)
@@ -246,7 +247,7 @@ struct TokenAddressField: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.secondary)
+            .foregroundStyle(isSelected ? accent.onFill.opacity(0.9) : Color.secondary)
             .help("Remove")
         }
         .background(
@@ -267,7 +268,7 @@ struct TokenAddressField: View {
     }
 
     private func chipFill(isSelected: Bool, isHovered: Bool) -> Color {
-        if isSelected { return Color.mailAccent }
+        if isSelected { return accent.fill }
         return Color.secondary.opacity(isHovered ? 0.22 : 0.14)
     }
 

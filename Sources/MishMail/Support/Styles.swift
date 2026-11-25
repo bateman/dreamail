@@ -117,7 +117,7 @@ struct PillSwitchStyle: ToggleStyle {
                 configuration.label
                 Spacer(minLength: 12)
                 Capsule()
-                    .fill(configuration.isOn ? Color.mailAccent : Color.secondary.opacity(0.3))
+                    .fill(configuration.isOn ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(Color.secondary.opacity(0.3)))
                     .frame(width: 36, height: 21)
                     .overlay(alignment: configuration.isOn ? .trailing : .leading) {
                         Circle()
@@ -180,7 +180,7 @@ struct SearchField: View {
         .overlay {
             if emphasized {
                 RoundedRectangle(cornerRadius: compact ? PMRadius.xs + 1 : PMRadius.sm)
-                    .strokeBorder(Color.mailAccent.opacity(0.7), lineWidth: 1.5)
+                    .strokeBorder(.accentForeground.opacity(0.7), lineWidth: 1.5)
             }
         }
         .animation(.easeOut(duration: 0.08), value: emphasized)
@@ -210,14 +210,14 @@ struct RoundedCheckStyle: ToggleStyle {
                 // Visible box stays 18×18. The whole row is the hit target via
                 // contentShape below — no layout-inflating frame on the box.
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(configuration.isOn ? Color.mailAccent : Color.secondary.opacity(0.18))
+                    .fill(configuration.isOn ? AnyShapeStyle(.accentFill) : AnyShapeStyle(Color.secondary.opacity(0.18)))
                     .frame(width: 18, height: 18)
                     .overlay {
                         // Keep the check in the tree so enter/exit can animate
                         // (opacity + scale only — blur is costly for list rows).
                         Image(systemName: "checkmark")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.onAccentFill)
                             .opacity(configuration.isOn ? 1 : 0)
                             .scaleEffect(configuration.isOn ? 1 : 0.25)
                     }

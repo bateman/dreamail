@@ -284,10 +284,10 @@ struct ThreadDetailView: View {
                                 Spacer(minLength: 8)
                                 Text("Continue")
                                     .font(.system(size: 12.5 * fontScale, weight: .medium))
-                                    .foregroundStyle(Color.mailAccent)
+                                    .foregroundStyle(.accentText)
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 10 * fontScale, weight: .semibold))
-                                    .foregroundStyle(Color.mailAccent)
+                                    .foregroundStyle(.accentForeground)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 9)
@@ -1362,7 +1362,7 @@ struct ThreadDetailView: View {
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 11 * fontScale))
-                                .foregroundStyle(.tint)
+                                .foregroundStyle(.accentForeground)
                             Text(text)
                                 .font(.system(size: 12.5 * fontScale))
                                 .textSelection(.enabled)
@@ -1392,7 +1392,7 @@ struct ThreadDetailView: View {
                         .foregroundStyle(.secondary)
                     }
                     .padding(10)
-                    .background(Color.mailAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: PMRadius.md))
+                    .background(.accentFill.opacity(0.08), in: RoundedRectangle(cornerRadius: PMRadius.md))
                     .accessibilityIdentifier("thread.summary")
                 } else {
                     HStack(spacing: 8) {
@@ -2533,7 +2533,7 @@ struct MessageCard: View {
                                     .font(.system(size: 12, weight: .medium))
                             }
                             .padding(.horizontal, 10).padding(.vertical, 8)
-                            .background(Color.mailAccent.opacity(0.15),
+                            .background(.accentFill.opacity(0.15),
                                         in: RoundedRectangle(cornerRadius: 8))
                             .contentShape(RoundedRectangle(cornerRadius: 8))
                         }
@@ -2966,18 +2966,19 @@ struct MessageCard: View {
 
 /// A plain-text message body. Web links and addresses in it are clickable
 /// (`PlainTextLinks`): only http, https and mailto, and a link always shows
-/// its own destination. Link runs carry the accent blue themselves; `.tint`
+/// its own destination. Link runs carry the accent's text colour themselves; `.tint`
 /// alone does not color them while text selection is on.
 private struct PlainTextBody: View {
     let text: String
     let fontScale: Double
+    @Environment(\.mailAccent) private var accent
 
     var body: some View {
-        Text(PlainTextLinks.attributed(text))
+        Text(PlainTextLinks.attributed(text, accent: accent))
             .font(.system(size: 14.5 * fontScale))
             .lineSpacing(4)
             .textSelection(.enabled)
-            .tint(Color.mailAccent)
+            .tint(accent.text)
             .accessibilityIdentifier("messageBody")
             .environment(\.openURL, OpenURLAction { url in
                 // Hand the link to the system, as the HTML body does; never

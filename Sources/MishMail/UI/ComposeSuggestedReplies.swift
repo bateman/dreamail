@@ -40,7 +40,7 @@ struct SuggestedRepliesStrip: View {
         HStack(spacing: 5) {
             Image(systemName: "sparkles")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.mailAccent)
+                .foregroundStyle(.accentForeground)
             Text("Suggested replies")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)

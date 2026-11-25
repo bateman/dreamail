@@ -80,6 +80,9 @@ final class MailboxIconTests: XCTestCase {
     // MARK: - Colour that carries information stays
 
     /// Gmail shows a starred conversation's star in yellow in the list.
+    /// `inked` keeps it yellow everywhere except on a selection painted in
+    /// a custom accent, where a yellow star could vanish (a yellow accent):
+    /// there it takes the selection ink like the rest of the row.
     func testStarredThreadRowKeepsItsYellowStar() throws {
         // Compared with whitespace collapsed, so re-indenting the row does
         // not break the guard.
@@ -90,7 +93,15 @@ final class MailboxIconTests: XCTestCase {
         XCTAssertTrue(squash(text).contains(squash("""
             if thread.isStarred {
                 Image(systemName: "star.fill")
-                    .font(.system(size: 12 * fontScale)).foregroundStyle(.yellow)
+                    .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.yellow))
+            """)))
+        // `inked` returns the colour it is given unless the row is the
+        // painted selection.
+        XCTAssertTrue(squash(text).contains(squash("""
+            guard let ink else { return normal }
+            """)))
+        XCTAssertTrue(squash(text).contains(squash("""
+            model.isFocused ? SelectionInk.color(prominence: prominence, accent: accent) : nil
             """)))
     }
 

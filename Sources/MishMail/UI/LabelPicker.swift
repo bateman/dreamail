@@ -65,7 +65,7 @@ struct LabelPicker: View {
                                     let applied = thread.labels.contains(label.gmailLabelId)
                                     HStack(spacing: 8) {
                                         Image(systemName: applied ? "checkmark.square.fill" : "square")
-                                            .foregroundStyle(applied ? Color.mailAccent : .secondary)
+                                            .foregroundStyle(applied ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
                                         LabelDot(colors: store.labelColors(label.name, account: label.accountId),
                                                  size: 8)
                                         Text(LabelSearch.highlighted(label.name, query: picker.query))
@@ -73,7 +73,7 @@ struct LabelPicker: View {
                                         Spacer()
                                     }
                                     .padding(.horizontal, 12).padding(.vertical, 6)
-                                    .background(idx == highlighted ? Color.mailAccent.opacity(0.18) : .clear)
+                                    .background(.accentFill.opacity(idx == highlighted ? 0.18 : 0))
                                     .contentShape(Rectangle())
                                     .onTapGesture { store.toggleLabel(thread, labelId: label.gmailLabelId) }
                                     .onHover { if $0 { picker.highlight = idx } }
@@ -82,12 +82,12 @@ struct LabelPicker: View {
                                 if let createName {
                                     HStack(spacing: 8) {
                                         Image(systemName: "plus.circle")
-                                            .foregroundStyle(highlighted == labels.count ? Color.mailAccent : .secondary)
+                                            .foregroundStyle(highlighted == labels.count ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
                                         Text("Create “\(createName)”").font(.system(size: 13))
                                         Spacer()
                                     }
                                     .padding(.horizontal, 12).padding(.vertical, 6)
-                                    .background(highlighted == labels.count ? Color.mailAccent.opacity(0.18) : .clear)
+                                    .background(.accentFill.opacity(highlighted == labels.count ? 0.18 : 0))
                                     .contentShape(Rectangle())
                                     .onTapGesture { store.createLabelAndApply(name: createName, thread: thread) }
                                     .onHover { if $0 { picker.highlight = labels.count } }
