@@ -89,13 +89,22 @@ enum HTMLBodyLayout {
     /// one image that never completes can hold back.
     static let loadBound: TimeInterval = 5
 
-    /// App-injected user script at document start: counts the document's
-    /// image loads the CSP refused (`img-src`, `<img>` and CSS images), for
-    /// `imageCensusJS`. A count only: no URL is kept.
-    static let cspImageViolationsJS = """
+    /// App-injected user script at document start: records each image's own
+    /// `load` / `error` event on the element (`__mmImgState`), so a loaded
+    /// image without an intrinsic size (an SVG can report `naturalWidth` 0)
+    /// is never taken for a failed one; and counts the image loads the CSP
+    /// refused (`img-src`, `<img>` and CSS images) for `imageCensusJS`.
+    /// Counts and states only: no URL is kept.
+    static let imageEventsJS = """
     (function(){
       try {
         window.__mmCSPImg = 0;
+        var mark = function(e){
+          var t = e && e.target;
+          if (t && t.tagName === 'IMG') t.__mmImgState = e.type;
+        };
+        document.addEventListener('load', mark, true);
+        document.addEventListener('error', mark, true);
         document.addEventListener('securitypolicyviolation', function(e){
           var d = String((e && (e.effectiveDirective || e.violatedDirective)) || '');
           if (d.indexOf('img-src') === 0) window.__mmCSPImg = (window.__mmCSPImg || 0) + 1;
@@ -122,7 +131,8 @@ enum HTMLBodyLayout {
             var src = String(img.currentSrc || img.getAttribute('src') || '').trim().toLowerCase();
             if (!src && !img.getAttribute('srcset')) continue;
             if (!img.complete) { out.pending++; continue; }
-            if (img.naturalWidth > 0) { out.loaded++; continue; }
+            var state = img.__mmImgState;
+            if (state === 'load' || (state !== 'error' && img.naturalWidth > 0)) { out.loaded++; continue; }
             var inline = src.indexOf('data:') === 0 || src.indexOf('cid:') === 0;
             if (!allowed && !inline) { out.blocked++; continue; }
             out.failed++;
@@ -549,6 +559,8 @@ enum HTMLBodyLayout {
           var ALLOWED='\(allowedClass)';
           var ALT_TEXT='\(altText)';
           var ALT_SHOWN='\(altShown)';
+          var FG_LIGHT='\(HTMLBodyDarkMode.fgOnLightClass)';
+          var FG_DARK='\(HTMLBodyDarkMode.fgOnDarkClass)';
           var NEUTRAL='\(neutral)';
           var MAX_W=\(maxW);
           var MAX_H=\(maxH);
@@ -659,8 +671,7 @@ enum HTMLBodyLayout {
 
           /* Gmail-like failed image with alt text (images allowed): the alt
              text alone, small, in place of the image, as text (textContent:
-             never parsed as markup). Inside a link it stays the link. An
-             inline background colour the author gave the image is kept. */
+             never parsed as markup). Inside a link it stays the link. */
           function imagesAllowed(){
             try { return document.documentElement.classList.contains(ALLOWED); } catch (e) { return false; }
           }
@@ -673,8 +684,14 @@ enum HTMLBodyLayout {
             if (!span || span.parentNode !== img.parentNode) {
               span = document.createElement('span');
               span.className = ALT_TEXT;
-              var bg = img.style.getPropertyValue('background-color');
-              if (bg) span.style.setProperty('background-color', bg);
+              /* Dark mode stamps every element once, at document end; this
+                 span comes later: it takes its parent's stamp (the fill it
+                 sits on; else the image's), so its text contrasts with it. */
+              var p = img.parentElement;
+              var from = p && (p.classList.contains(FG_LIGHT) || p.classList.contains(FG_DARK))
+                ? p : img;
+              if (from && from.classList.contains(FG_LIGHT)) span.classList.add(FG_LIGHT);
+              if (from && from.classList.contains(FG_DARK)) span.classList.add(FG_DARK);
               if (img.parentNode) img.parentNode.insertBefore(span, img);
               img.__mmAlt = span;
             }
@@ -690,8 +707,18 @@ enum HTMLBodyLayout {
             img.classList.remove(ALT_SHOWN);
           }
 
+          /* Loaded: its own load event (`imageEventsJS`), else, without a
+             recorded event (a view without that script), a natural size. */
+          function isLoaded(img){
+            if (!img.complete) return false;
+            var state = img.__mmImgState;
+            if (state === 'load') return true;
+            if (state === 'error') return false;
+            return img.naturalWidth > 0;
+          }
+
           function applyImage(img){
-            if (img.complete && img.naturalWidth > 0) {
+            if (isLoaded(img)) {
               hideAlt(img);
               clearLayout(img);
               return;
@@ -1077,7 +1104,7 @@ enum HTMLBodyLayout {
             /* Only real geometry changes should unfreeze. Blocked/error images
                already have placeholders applied — clearing freeze on every
                error restarts the measure→frame loop and can oscillate. */
-            if (img && img.complete && img.naturalWidth > 0) {
+            if (img && isLoaded(img)) {
               window.__mmFrozenH = 0;
               window.__mmFeedbackHits = 0;
               window.__mmFeedbackBase = 0;

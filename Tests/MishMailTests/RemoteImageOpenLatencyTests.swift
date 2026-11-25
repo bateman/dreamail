@@ -282,7 +282,10 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
                   altText: hasAlt ? alt.textContent : '',
                   altElements: hasAlt ? alt.children.length : 0,
                   altHeight: hasAlt ? Math.round(alt.getBoundingClientRect().height) : 0,
-                  altInLink: hasAlt && !!alt.closest('a')
+                  altInLink: hasAlt && !!alt.closest('a'),
+                  altClass: hasAlt ? alt.className : '',
+                  altColor: hasAlt ? getComputedStyle(alt).color : '',
+                  complete: img.complete
                 };
               }
               return JSON.stringify({
@@ -311,7 +314,8 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
     }
 
     private func load(_ html: String, cspMeta: String = "",
-                      immediate: [String: (status: Int, mime: String, body: Data)] = [:]) -> Harness {
+                      immediate: [String: (status: Int, mime: String, body: Data)] = [:],
+                      dark: Bool = false) -> Harness {
         let images = ImageHost()
         images.immediate = immediate
         let pane = Pane()
@@ -320,6 +324,13 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         config.websiteDataStore = .nonPersistent()
         config.setURLSchemeHandler(images, forURLScheme: "mmimg")
         config.userContentController.addUserScript(WKUserScript(
+            source: HTMLBodyLayout.imageEventsJS, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        if dark {
+            config.userContentController.addUserScript(WKUserScript(
+                source: HTMLBodyDarkMode.applyContrastJS, injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true))
+        }
+        config.userContentController.addUserScript(WKUserScript(
             source: HTMLBodyLayout.domReadyJS, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         config.userContentController.add(pane, name: HTMLBodyLayout.heightHandlerName)
         let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 700, height: 900),
@@ -327,6 +338,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 120),
                                 configuration: config)
         webView.navigationDelegate = pane
+        if dark { webView.appearance = NSAppearance(named: .darkAqua) }
         window.contentView?.addSubview(webView)
         let document = HTMLBodyDocument.assemble(
             html: html, cspMeta: cspMeta, styleCSS: HTMLBodyDarkMode.injectedCSS(fontScale: 1.0))
@@ -361,13 +373,18 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
     /// R3: an image still loading keeps its box but is not painted as
     /// failed; once its load fails it is.
     func testPendingImagesAreNotPaintedAsFailed() async throws {
-        let h = load("<p>Receipt</p><img src=\"/card.png\" width=\"300\" height=\"200\">")
+        let h = load("<p>Receipt</p><img id=\"card\" src=\"/card.png\" alt=\"x\" width=\"300\" height=\"200\">",
+                     cspMeta: allowedCSPWithTestScheme)
         defer { h.close() }
         try await wait { h.pane.domReady && h.images.started > 0 }
         _ = await h.measure()
         let pending = await h.className()
         XCTAssertTrue(pending.contains(HTMLBodyLayout.layoutImageClass), pending)
         XCTAssertFalse(pending.contains(HTMLBodyLayout.failedImageClass), pending)
+        let pendingStates = try await h.imageStates()
+        XCTAssertEqual(pendingStates.images["card"]?["altText"] as? String, "",
+                       "still loading: no alt text in its place")
+        XCTAssertNotEqual(pendingStates.images["card"]?["display"] as? String, "none")
         h.images.fail()
         var after = ""
         let deadline = Date().addingTimeInterval(10)
@@ -504,11 +521,10 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertFalse(census.text.contains("example"), census.text)
     }
 
-    /// `http:` and `//host/…` images, as Gmail shows them: upgraded to
-    /// https, never loaded over http. The scanner rewrites what it sees in
-    /// the allowed document (`//` has no base to resolve against);
-    /// `upgrade-insecure-requests` in the allowed CSP upgrades the rest (here
-    /// a scheme the scanner cannot read, behind an entity). Each listener
+    /// `http:` and `//host/…` images, as Gmail shows them: requested over
+    /// https, never over http. The scanner gives `//` URLs the https scheme
+    /// in the allowed document (they have no base to resolve against);
+    /// `upgrade-insecure-requests` in the allowed CSP upgrades `http:`. Each listener
     /// accepting a connection proves an https request: plain http to it is
     /// refused by the CSP before any connection. The blocked variant asks
     /// neither.
@@ -535,7 +551,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         }
         let allowedView = open("""
             <img src="//127.0.0.1:\(scannedPort)/a.png" width="10" height="10">\
-            <img src="&#104;ttp://127.0.0.1:\(upgradedPort)/b.png" width="10" height="10">
+            <img src="http://127.0.0.1:\(upgradedPort)/b.png" width="10" height="10">
             """, allow: true)
         let blockedView = open(
             "<img src=\"http://127.0.0.1:\(blockedPort)/c.png\" width=\"10\" height=\"10\">",
@@ -551,12 +567,102 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertEqual(blocked.accepted, 0, "images blocked: nothing is asked")
     }
 
+    /// Records the navigations the document asks for, and allows none but
+    /// the synthetic initial load (as the reading pane's coordinator).
+    private final class LinkRecorder: NSObject, WKNavigationDelegate {
+        var requested: [URL] = []
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            let url = navigationAction.request.url
+            if url == nil || url?.scheme == "about" {
+                decisionHandler(.allow)
+                return
+            }
+            if let url { requested.append(url) }
+            decisionHandler(.cancel)
+        }
+    }
+
+    /// `upgrade-insecure-requests` upgrades image requests, not links: a
+    /// click on an `http:` link reaches the app as that `http:` URL.
+    func testLinksAreNotUpgraded() async throws {
+        let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 700, height: 900),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        let recorder = LinkRecorder()
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 400),
+                                configuration: HTMLWebViewPool.makeConfiguration())
+        webView.navigationDelegate = recorder
+        window.contentView?.addSubview(webView)
+        defer { webView.removeFromSuperview() }
+        let document = HTMLBodyDocument.assemble(
+            html: "<a id=\"l\" href=\"http://www.example.com/page?a=1\">Read</a>",
+            cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: true),
+            styleCSS: HTMLBodyDarkMode.injectedCSS(fontScale: 1))
+        webView.loadHTMLString(document, baseURL: nil)
+        try await wait { !webView.isLoading }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            webView.evaluateJavaScript("document.getElementById('l').click(); 1") { _, _ in
+                done.resume()
+            }
+        }
+        try await wait { !recorder.requested.isEmpty }
+        XCTAssertEqual(recorder.requested.map(\.absoluteString), ["http://www.example.com/page?a=1"])
+    }
+
+    /// Dark mode stamps every element once, at document end; the alt text
+    /// comes later and must take the stamp of the fill it sits on, so it is
+    /// dark text on a white newsletter card, not light grey on white.
+    func testAltTextContrastsWithItsCardInDarkMode() async throws {
+        let html = """
+        <table style="background-color:#ffffff" width="600"><tr><td>\
+        <img id="logo" src="mmimg://images.example/gone.png" alt="Logo" width="300" height="100">\
+        </td></tr></table>
+        """
+        let h = load(html, cspMeta: allowedCSPWithTestScheme,
+                     immediate: ["/gone.png": (404, "text/plain", Data())], dark: true)
+        defer { h.close() }
+        try await wait { h.pane.domReady }
+        _ = await h.measure()
+        let states = try await waitForFailures(h, ids: ["logo"])
+        let logo = try XCTUnwrap(states.images["logo"])
+        XCTAssertEqual(logo["altText"] as? String, "Logo")
+        let altClass = try XCTUnwrap(logo["altClass"] as? String)
+        XCTAssertTrue(altClass.contains(HTMLBodyDarkMode.fgOnLightClass), altClass)
+        XCTAssertEqual(logo["altColor"] as? String, "rgb(34, 34, 34)", "dark text on the white card")
+    }
+
+    /// A loaded image is never taken for a failed one, even when it has no
+    /// intrinsic size (an SVG with only a viewBox can report naturalWidth 0):
+    /// its own load event decides.
+    func testLoadedImageWithoutIntrinsicSizeIsNotFailed() async throws {
+        let svg = "data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27"
+            + "%20viewBox%3D%270%200%2010%2010%27%3E%3Crect%20width%3D%2710%27%20height%3D%2710%27%2F%3E%3C%2Fsvg%3E"
+        let h = load("<p>Chart</p><img id=\"svg\" src=\"\(svg)\" alt=\"Chart\"><p>Tail</p>",
+                     cspMeta: allowedCSPWithTestScheme)
+        defer { h.close() }
+        try await wait { h.pane.domReady }
+        var states = try await h.imageStates()
+        let deadline = Date().addingTimeInterval(5)
+        while states.images["svg"]?["complete"] as? Bool != true, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            states = try await h.imageStates()
+        }
+        _ = await h.measure()
+        states = try await h.imageStates()
+        let image = try XCTUnwrap(states.images["svg"])
+        XCTAssertEqual(image["complete"] as? Bool, true)
+        XCTAssertEqual(image["failed"] as? Bool, false, "\(image)")
+        XCTAssertNotEqual(image["display"] as? String, "none", "\(image)")
+        XCTAssertEqual(image["altText"] as? String, "")
+    }
+
     /// With images blocked (Ask each time, Spam), a blocked image keeps the
     /// dashed blocked-image placeholder.
     func testBlockedImagesKeepTheirPlaceholder() async throws {
         let html = """
         <p>Newsletter</p>
-        <img id="blocked" src="https://images.example/hero.png" width="300" height="100">
+        <img id="blocked" src="https://images.example/hero.png" alt="x" width="300" height="100">
         """
         let h = load(html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: false))
         defer { h.close() }
@@ -568,6 +674,8 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertEqual(image["failed"] as? Bool, true, "\(image)")
         XCTAssertEqual(image["visibility"] as? String, "visible", "the placeholder is shown")
         XCTAssertEqual(image["width"] as? Int, 300)
+        XCTAssertEqual(image["altText"] as? String, "", "blocked on purpose: no alt text in its place")
+        XCTAssertNotEqual(image["display"] as? String, "none")
     }
 
     /// A slow host: measured before the image, then re-measured when it

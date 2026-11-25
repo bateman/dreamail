@@ -44,11 +44,11 @@ enum HTMLBodyDocument {
     /// this is also the fail-closed path used when WebKit's remote-image
     /// content rule cannot be prepared.
     ///
-    /// With the allowed CSP, `http:` and protocol-relative image URLs are
-    /// upgraded to `https:` first (`RemoteImageHTML.upgradingInsecureImageURLs`):
-    /// the CSP never admits `http:`, and `//host/…` has no base to resolve
-    /// against (`about:blank`). The blocked variant loads no remote image,
-    /// so it is not scanned.
+    /// With the allowed CSP, protocol-relative image URLs get the `https:`
+    /// scheme first (`RemoteImageHTML.upgradingInsecureImageURLs`): `//host/…`
+    /// has no base to resolve against (`about:blank`). `http:` ones are
+    /// upgraded by that CSP's `upgrade-insecure-requests`. The blocked
+    /// variant loads no remote image, so it is not scanned.
     static func trustedWrapper(html: String, cspMeta: String, styleCSS: String) -> String {
         let styleTag = "<style>\n\(styleCSS)\n</style>"
         let body = HTMLBodyCSP.allowsRemoteImages(cspMeta)

@@ -29,9 +29,10 @@ import Foundation
 /// `https:` URL they are upgraded to (`normalizedHTTPSURL`): Gmail shows
 /// them (through its proxy), the CSP never admits `http:`, and the
 /// document's base is `about:blank`, against which `//host/…` resolves to
-/// nothing. `upgradingInsecureImageURLs` rewrites them in the document the
-/// web view loads with remote images allowed; `upgrade-insecure-requests`
-/// in that CSP covers what the scanner does not see (redirects to `http:`).
+/// nothing. `upgradingInsecureImageURLs` gives `//` URLs the `https:`
+/// scheme in the document the web view loads with remote images allowed;
+/// `upgrade-insecure-requests` in that CSP upgrades every `http:` request
+/// (redirects to `http:` included).
 ///
 /// `needsNetwork` on the result says whether anything in the rewritten
 /// document could still make the web view fetch a remote image; when it is
@@ -99,40 +100,36 @@ enum RemoteImageHTML {
         return url.absoluteString
     }
 
-    /// `html` with every `http:` and protocol-relative image URL the scanner
-    /// sees (`<img src/srcset>`, `<picture><source srcset>`, `background`,
-    /// CSS `url()` in `style` attributes and `<style>`) rewritten to
-    /// `https:`. Only the scheme changes: `http:` becomes `https:`, `//`
-    /// gets `https:` in front; nothing else in the value is touched, so no
-    /// value can grow past its quotes. Links, `xmlns` and every other
-    /// attribute stay as they are. Returns `html` itself when there is
-    /// nothing to upgrade.
+    /// `html` with every protocol-relative (`//host/…`) image URL the
+    /// scanner sees (`<img src/srcset>`, `<picture><source srcset>`,
+    /// `background`, CSS `url()` in `style` attributes and `<style>`) given
+    /// the `https:` scheme: against the `about:blank` base it would resolve
+    /// to nothing. Only `https:` is inserted in front; nothing else in the
+    /// value is touched, so no value can grow past its quotes. `http:` URLs
+    /// are left to `upgrade-insecure-requests` in the allowed CSP, which
+    /// also drops port 80 as `normalizedHTTPSURL` does. Links, `xmlns` and
+    /// every other attribute stay as they are. Returns `html` itself when
+    /// there is nothing to change.
     static func upgradingInsecureImageURLs(in html: String) -> String {
         let bytes = Array(html.utf8)
-        guard mayHaveInsecureURL(bytes) else { return html }
+        guard mayHaveProtocolRelativeURL(bytes) else { return html }
         var state = State(replacements: [:], budget: 0, upgrade: true)
         scanDocument(bytes, &state)
         guard !state.edits.isEmpty else { return html }
         return String(decoding: applying(state.edits, to: bytes), as: UTF8.self)
     }
 
-    /// Cheap pre-check: an `http:` anywhere, or `//` right after a quote,
-    /// `=`, `(`, `,`, `;` (an entity-encoded quote) or a space: where a
-    /// protocol-relative URL can start.
-    private static func mayHaveInsecureURL(_ b: [UInt8]) -> Bool {
+    /// Cheap pre-check: `//` right after a quote, `=`, `(`, `,`, `;` (an
+    /// entity-encoded quote) or a space, where a protocol-relative URL can
+    /// start. Most mail has none, and is then not scanned at all.
+    private static func mayHaveProtocolRelativeURL(_ b: [UInt8]) -> Bool {
         let n = b.count
-        var i = 0
+        var i = 1
         while i + 1 < n {
-            let c = b[i]
-            if c == 0x2F, b[i + 1] == 0x2F, i > 0 {  // "//"
+            if b[i] == 0x2F, b[i + 1] == 0x2F {
                 let p = b[i - 1]
                 if p == 0x22 || p == 0x27 || p == 0x3D || p == 0x28 || p == 0x2C || p == 0x3B
                     || isSpace(p) {
-                    return true
-                }
-            } else if c == 0x3A, i >= 4 {  // ":" after "http"
-                if toLower(b[i - 4]) == 0x68, toLower(b[i - 3]) == 0x74,
-                   toLower(b[i - 2]) == 0x74, toLower(b[i - 1]) == 0x70 {
                     return true
                 }
             }
@@ -141,18 +138,14 @@ enum RemoteImageHTML {
         return false
     }
 
-    /// The edit that upgrades the URL starting at the first non-space byte
-    /// of `range`, if it is `http:` or `//`.
+    /// The edit that gives the URL starting at the first non-space byte of
+    /// `range` the `https:` scheme, if it is protocol-relative (`//`).
     private static func upgradeEdit(_ b: [UInt8], _ range: Range<Int>) -> Edit? {
         var i = range.lowerBound
         while i < range.upperBound, isSpace(b[i]) { i += 1 }
         let left = range.upperBound - i
         if left >= 2, b[i] == 0x2F, b[i + 1] == 0x2F {
             return Edit(range: i..<i, bytes: Array("https:".utf8))
-        }
-        if left >= 5, toLower(b[i]) == 0x68, toLower(b[i + 1]) == 0x74, toLower(b[i + 2]) == 0x74,
-           toLower(b[i + 3]) == 0x70, b[i + 4] == 0x3A {
-            return Edit(range: i..<(i + 5), bytes: Array("https:".utf8))
         }
         return nil
     }
@@ -214,7 +207,7 @@ enum RemoteImageHTML {
         /// the rewritten size whatever the number of occurrences: one cached
         /// image referenced ten thousand times is inlined only while it fits.
         var budget: Int
-        /// `upgradingInsecureImageURLs`: record scheme upgrades, no data.
+        /// `upgradingInsecureImageURLs`: record `//` → `https://`, no data.
         var upgrade = false
 
         mutating func found(_ url: String) {

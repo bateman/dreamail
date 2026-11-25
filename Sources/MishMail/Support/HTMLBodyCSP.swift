@@ -10,11 +10,11 @@ enum HTMLBodyCSP {
     ///   `default-src 'none'` covers them (defense in depth across WebKit revisions).
     /// - Remote images, when opted in, are HTTPS-only — no cleartext tracking pixels.
     /// - With them opted in, `upgrade-insecure-requests` turns every `http:`
-    ///   request the document makes (an image the scanner did not rewrite, a
-    ///   redirect from https to http) into its `https:` form before the
-    ///   `img-src` check, as Gmail shows such images through its https proxy.
-    ///   Plain `http:` is never admitted; links are not navigations this
-    ///   document performs (the app opens them), so they are unchanged.
+    ///   request the document makes (an `http:` image, a redirect from https
+    ///   to http) into its `https:` form before the `img-src` check, as Gmail
+    ///   shows such images through its https proxy. Plain `http:` is never
+    ///   admitted. Links are unchanged: the upgrade covers only navigations
+    ///   to the document's own origin, and the app opens links itself.
     static func metaTag(allowRemoteImages: Bool) -> String {
         allowRemoteImages ? allowedMetaTag : blockedMetaTag
     }
