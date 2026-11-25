@@ -18,10 +18,10 @@ enum PGPBodyNotice: Sendable, Equatable {
     case unavailable, noSecretKey, passphraseRequired, notIntegrityProtected
     /// Above the engine's size limit.
     case tooLarge
-    /// The engine reported an unsupported or unreadable format (GnuPG's own
-    /// OCB packet comes back as malformed today). Unauthenticated: anyone
-    /// on the path can produce it by editing unprotected octets, so it reads
-    /// exactly like a failed integrity check, apart from the detail line.
+    /// The engine reported an unsupported or unreadable format (`malformed`
+    /// or `unsupported`). Unauthenticated: anyone on the path can produce
+    /// it by editing unprotected octets, so it reads exactly like a failed
+    /// integrity check, apart from the detail line.
     case unsupportedFormat
     /// Decrypted or signed, but there is no text part to show.
     case noReadableText

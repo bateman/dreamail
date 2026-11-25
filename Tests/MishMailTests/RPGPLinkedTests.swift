@@ -95,6 +95,10 @@ final class RPGPLinkedTests: XCTestCase {
             try run(unlock("") + ["--armor", "--trust-model", "always", "--recipient", fpr, "--encrypt"]
                         + (signer.map { ["--sign", "--local-user", $0] } ?? []), input: data)
         }
+        func dearmor(_ data: Data) throws -> Data { try run(["--dearmor"], input: data) }
+        func listPackets(_ data: Data) throws -> String {
+            String(decoding: try run(unlock("") + ["--list-packets"], input: data), as: UTF8.self)
+        }
     }
 
     private var gnupg: GnuPG!
@@ -257,31 +261,74 @@ final class RPGPLinkedTests: XCTestCase {
         XCTAssertEqual(decrypted.plaintext, Data("secret".utf8))
     }
 
-    /// Whether the pinned library reads GnuPG's own OCB packet (type 20,
-    /// not in RFC 9580). The pin bump that adds it flips this, and the test
-    /// below then expects the plaintext.
-    private static let pinnedLibraryReadsGnuPGOCB = false
+    /// GnuPG wrote its own OCB packet (type 20), not SEIPD (type 18). By
+    /// tag: GnuPG versions name the packet differently ("aead" in 2.4.4,
+    /// "ocb" later).
+    private func assertGnuPGOCB(_ message: Data, file: StaticString = #filePath, line: UInt = #line) throws {
+        let packets = try gnupg.listPackets(message)
+        XCTAssertTrue(packets.contains(" tag=20 "), packets, file: file, line: line)
+        XCTAssertFalse(packets.contains(" tag=18 "), packets, file: file, line: line)
+    }
 
-    /// Today: an error, never plaintext, shown as an unsupported format
-    /// rather than a damaged message.
+    /// GnuPG's own OCB packet (type 20, not in RFC 9580), which GnuPG 2.4
+    /// sends by default to keys it generated, decrypts since library v0.1.1.
+    /// Edited or truncated, it is an error, never plaintext, and reads like
+    /// any other failed decryption.
     func testAGnuPGOCBMessage() async throws {
         let bob = try gnupg.makeKey("Bob <bob@example.org>", gnupgAEAD: true)
         let (engine, _, _, _) = try makeEngine()
         _ = try await engine.importSecretKeys(try gnupg.secretKey(bob))
         let message = try gnupg.encrypt(Data("secret".utf8), to: bob, signedBy: nil)
-        do {
-            let decrypted = try await engine.decrypt(message)
-            XCTAssertTrue(Self.pinnedLibraryReadsGnuPGOCB,
-                          "decrypted \(decrypted.plaintext.count) bytes the pinned library should refuse")
-            XCTAssertEqual(decrypted.plaintext, Data("secret".utf8))
-        } catch {
-            XCTAssertFalse(Self.pinnedLibraryReadsGnuPGOCB, "\(error)")
-            let failure = try XCTUnwrap(error as? PGPEngineError)
-            let security = PGPMessageSecurity(encryption: .failed(failure), signature: .unsigned,
-                                              fromHeader: "Alice <alice@example.org>")
-            XCTAssertEqual(PGPDisplay.body(for: security, indicator: PGPSecurityRules.indicator(for: security)),
-                           .notice(.unsupportedFormat))
+        try assertGnuPGOCB(message)
+        let decrypted = try await engine.decrypt(message)
+        XCTAssertEqual(decrypted.plaintext, Data("secret".utf8))
+
+        // The packet ends with the last chunk's tag, then the final tag
+        // (16 bytes each); the last ciphertext byte is just before them.
+        let binary = try gnupg.dearmor(message)
+        var ciphertext = binary
+        ciphertext[ciphertext.count - 33] ^= 0x01
+        var finalTag = binary
+        finalTag[finalTag.count - 1] ^= 0x01
+        let edited: [(String, Data, PGPEngineError?)] = [
+            ("ciphertext", ciphertext, .notIntegrityProtected),
+            ("final tag", finalTag, .notIntegrityProtected),
+            ("truncated", Data(binary.dropLast(16)), nil),
+        ]
+        for (name, bytes, expected) in edited {
+            do {
+                let out = try await engine.decrypt(bytes)
+                XCTFail("\(name): decrypted \(out.plaintext.count) bytes of an edited message")
+            } catch {
+                let failure = try XCTUnwrap(error as? PGPEngineError, "\(name): \(error)")
+                if let expected { XCTAssertEqual(failure, expected, name) }
+                let security = PGPMessageSecurity(encryption: .failed(failure), signature: .unsigned,
+                                                  fromHeader: "Alice <alice@example.org>")
+                let body = PGPDisplay.body(for: security, indicator: PGPSecurityRules.indicator(for: security))
+                guard case .notice(let notice) = body else { return XCTFail("\(name): \(body)") }
+                XCTAssertEqual(notice.text, "This message could not be decrypted.", name)
+            }
         }
+    }
+
+    /// The round trip above with both keys at GnuPG 2.4's default
+    /// preferences, so GnuPG writes its OCB packet, signed inside.
+    func testRoundTripWithGnuPGDefaultPreferences() async throws {
+        let alice = try gnupg.makeKey("Alice Example <alice@example.org>", gnupgAEAD: true)
+        let bob = try gnupg.makeKey("Bob <bob@example.org>", gnupgAEAD: true)
+        let (engine, _, _, _) = try makeEngine()
+        _ = try await engine.importKeys(try gnupg.publicKey(alice))
+        _ = try await engine.importSecretKeys(try gnupg.secretKey(bob))
+        let body = Data("Content-Type: text/plain\r\n\r\nThe plan\r\n".utf8)
+        let message = try gnupg.encrypt(body, to: bob, signedBy: alice)
+        try assertGnuPGOCB(message)
+
+        let decrypted = try await engine.decrypt(message)
+        XCTAssertEqual(decrypted.plaintext, body)
+        guard decrypted.signatures.count == 1, case .good(let signer) = decrypted.signatures.first else {
+            return XCTFail("\(decrypted.signatures)")
+        }
+        XCTAssertEqual(signer.key.fingerprint, alice)
     }
 
     func testTheLibraryRefusesJunk() async throws {

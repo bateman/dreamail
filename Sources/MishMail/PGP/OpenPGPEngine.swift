@@ -35,7 +35,8 @@ protocol OpenPGPEngine: Sendable {
     /// signature inside it.
     ///
     /// Contract: plaintext is returned only when the engine verified an
-    /// integrity check (SEIPD v1 MDC or v2 AEAD) before releasing it.
+    /// integrity check (SEIPD v1 MDC, v2 AEAD, or GnuPG OCB) before
+    /// releasing it.
     /// Otherwise it throws `.notIntegrityProtected` and no plaintext leaves
     /// the engine (EFAIL), so a caller has nothing it could show or log.
     func decrypt(_ message: Data) async throws -> PGPDecryptionResult
