@@ -151,36 +151,35 @@ struct SidebarLabelRow: View {
         let unread = store.unreadCounts[SidebarCounts.labelKey(
             accountId: node.accountId, labelId: node.gmailLabelId)] ?? 0
         Label {
-            Text(node.displayName)
-                .fontWeight(selected || unread > 0 ? .semibold : .regular)
-                .lineLimit(1)
-                .mailRowTitleStyle()
+            // "⋮" sits in the title, at its end: the row stays the plain
+            // sidebar Label (no frame or overlay around it, which made the
+            // sidebar's rows taller and its outline rows unfindable).
+            HStack(spacing: 4) {
+                Text(node.displayName)
+                    .fontWeight(selected || unread > 0 ? .semibold : .regular)
+                    .lineLimit(1)
+                    .mailRowTitleStyle()
+                if showsMenuButton(selected) {
+                    Spacer(minLength: 4)
+                    LabelMenuButton(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
+                }
+            }
         } icon: {
             SidebarLabelTag(colors: node.colors)
         }
         .listItemTint(.monochrome)
-        // While "⋮" shows: the full width up to the count, so it sits right
-        // before it. At rest no width is imposed. One structure in both
-        // states (a parameter, not a branch), so hovering does not rebuild
-        // the row and lose the hover.
-        .frame(maxWidth: showsMenuButton(selected) ? .infinity : nil, alignment: .leading)
         // Gmail's "⋮" takes the count's place on hover; on the open label it
         // is drawn beside the count, which stays.
         .modifier(SidebarCount(count: hidesCount ? 0 : unread,
                                painted: accent.paintsSelection))
         .help(node.fullName)
         .accessibilityIdentifier("sidebar.label.\(node.accountId).\(node.gmailLabelId)")
-        // The row's tap opens the label. It is attached here, under the
-        // "⋮" overlay, so a click on "⋮" can never also open (or reopen)
-        // the label: the overlay is not part of the view the tap watches.
+        // The row's tap opens the label. "⋮" is a menu button: its click
+        // opens the menu (AppKit takes the mouse down) and the UI test
+        // checks it does not also reopen the label.
         .simultaneousGesture(
             TapGesture().onEnded { store.goTo(view) },
             including: reselect ? .gesture : .subviews)
-        .overlay(alignment: .trailing) {
-            if showsMenuButton(selected) {
-                LabelMenuButton(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
-            }
-        }
         .onHover { hovering = $0 }
         .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
         .contextMenu {

@@ -11,6 +11,11 @@ struct LabelMenuState {
     var coloring: LabelRow?
     var failure: LabelEditFailure?
     var inFlight: Set<String> = []
+
+    /// A sheet or alert of the menu is on screen.
+    var presentsDialog: Bool {
+        editing != nil || coloring != nil || removing != nil || failure != nil
+    }
 }
 
 /// A label edit that did not fully land, said in an alert with a retry.

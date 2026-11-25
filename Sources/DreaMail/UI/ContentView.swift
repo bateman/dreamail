@@ -1096,6 +1096,9 @@ private extension ContentView {
             guard let store else { return event }
             // Settings is capturing a key for rebinding — don't run shortcuts.
             if store.keyBindings.capturing { return event }
+            // A label menu dialog is up (Edit, colour, Remove, failure):
+            // its keys, Esc included, belong to it.
+            if store.labelMenu.presentsDialog { return event }
             // Quick Look panel is up: every key (Esc, space, arrows) belongs
             // to the panel — the Esc ladder below must not close the reading
             // pane underneath it. `event.window is QLPreviewPanel` misses the
