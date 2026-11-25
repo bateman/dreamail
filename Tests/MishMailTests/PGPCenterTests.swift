@@ -65,6 +65,13 @@ final class PGPCenterTests: XCTestCase {
         }
         center.unlock(accountId: "a@x.com", passphrase: "pw")
         XCTAssertNil(center.passphrases.passphrase(accountId: "a@x.com"))
+        do {
+            try await center.delete(FakeOpenPGPEngine.alice.key, accountId: "a@x.com")
+            XCTFail("expected a refusal")
+        } catch {
+            XCTAssertEqual(error as? PGPEngineError, .unavailable)
+        }
+        XCTAssertFalse(center.isCandidate(message(), attachments: signatureAttachment))
         XCTAssertEqual(engine.calls, [])
     }
 
@@ -226,5 +233,87 @@ final class PGPCenterTests: XCTestCase {
         let reading = try XCTUnwrap(center.readings["a@x.com:m1"])
         XCTAssertEqual(reading.indicator.reason, .signerIsNotSender)
         XCTAssertEqual(reading.body, .original)
+    }
+
+    // MARK: - Review round 1 (ponytail)
+
+    /// P2: no raw message (offline, a Gmail error): no verdict, remote
+    /// content still blocked, and a new try at the next open.
+    func testAFailedFetchIsUncheckableAndRetried() async throws {
+        let engine = FakeOpenPGPEngine()
+        engine.detachedResults[PGPCorpus.signedPartCanonical] = [.good(signer: FakeOpenPGPEngine.alice)]
+        let center = try makeCenter(enabled: true, engine: engine)
+        var attempts = 0
+        let failing: (String) async throws -> Data = { _ in
+            attempts += 1
+            throw URLError(.notConnectedToInternet)
+        }
+        await center.check(message(), attachments: signatureAttachment, fetchRaw: failing)
+        XCTAssertNil(center.readings["a@x.com:m1"])
+        XCTAssertTrue(center.uncheckable.contains("a@x.com:m1"))
+        XCTAssertTrue(center.blocksRemoteContent(message(), candidate: true))
+        await center.check(message(), attachments: signatureAttachment, fetchRaw: failing)
+        XCTAssertEqual(attempts, 2, "tried again")
+
+        await center.check(message(), attachments: signatureAttachment,
+                           fetchRaw: RawSource(PGPCorpus.crlf(PGPCorpus.signedSimple())).fetch)
+        XCTAssertFalse(center.uncheckable.contains("a@x.com:m1"))
+        XCTAssertNotNil(center.readings["a@x.com:m1"])
+    }
+
+    /// An engine whose keys cannot be read (a locked Keychain).
+    private struct LockedKeysEngine: OpenPGPEngine {
+        let error = KeychainError.status(-25308)
+        func verifyDetached(signedData: Data, signature: Data) async throws -> [PGPSignatureResult] { throw error }
+        func verifyCleartext(_ message: Data) async throws -> PGPCleartextResult { throw error }
+        func decrypt(_ message: Data) async throws -> PGPDecryptionResult { throw error }
+        func inspectKeys(_ data: Data) async throws -> [PGPKeySummary] { throw error }
+        func importKeys(_ data: Data) async throws -> [PGPKeySummary] { throw error }
+        func importSecretKeys(_ data: Data) async throws -> [PGPKeySummary] { throw error }
+        func keys() async throws -> [PGPKeySummary] { throw error }
+        func deleteKey(_ key: PGPKeyReference) async throws { throw error }
+    }
+
+    /// P1: unreadable keys are not the engine's verdict: nothing is cached
+    /// as damaged, and the next open tries again.
+    func testUnreadableKeysAreNotADamagedMessage() async throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        let center = PGPCenter(database: q, enabled: true, secrets: MemorySecretKeys(),
+                               makeEngine: { _ in LockedKeysEngine() })
+        let encrypted = [AttachmentRow(id: nil, messageId: "a@x.com:m1", gmailAttachmentId: "x",
+                                       filename: "encrypted.asc", mimeType: "application/octet-stream",
+                                       size: 1)]
+        for (raw, attachments) in [(PGPCorpus.signedSimple(), signatureAttachment),
+                                   (PGPCorpus.encrypted, encrypted)] {
+            let source = RawSource(PGPCorpus.crlf(raw))
+            await center.check(message(), attachments: attachments, fetchRaw: source.fetch)
+            XCTAssertNil(center.readings["a@x.com:m1"])
+            XCTAssertTrue(center.uncheckable.contains("a@x.com:m1"))
+            await center.check(message(), attachments: attachments, fetchRaw: source.fetch)
+            XCTAssertEqual(source.requests.count, 2, "tried again")
+        }
+    }
+
+    /// P3: the body scan runs once per message, not on every render.
+    func testCandidateScanIsMemoised() throws {
+        let center = try makeCenter(enabled: true)
+        XCTAssertTrue(center.isCandidate(message(), attachments: signatureAttachment))
+        XCTAssertFalse(center.isCandidate(message("m2", body: "plain"), attachments: []))
+        XCTAssertTrue(center.isCandidate(message("m3", body: "-----BEGIN PGP SIGNED MESSAGE-----"), attachments: []))
+    }
+
+    /// P7: dropping readings for a key change bumps the generation the
+    /// cards check again on; eviction does not.
+    func testGenerationMovesOnlyWhenReadingsAreDroppedOnPurpose() async throws {
+        let engine = FakeOpenPGPEngine()
+        engine.importable = [FakeOpenPGPEngine.alice]
+        let center = try makeCenter(enabled: true, engine: engine)
+        let before = center.generation
+        await center.check(message(), attachments: signatureAttachment,
+                           fetchRaw: RawSource(PGPCorpus.crlf(PGPCorpus.signedSimple())).fetch)
+        XCTAssertEqual(center.generation, before)
+        _ = try await center.importKeys(Data("k".utf8), accountId: "a@x.com", secret: false)
+        XCTAssertNotEqual(center.generation, before)
     }
 }

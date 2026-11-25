@@ -50,6 +50,15 @@ final class PGPCenter {
     /// Messages checked and found to carry no signed or encrypted OpenPGP
     /// structure (a key attachment, say): shown as any other message.
     private(set) var plain: Set<String> = []
+    /// Messages that could not be checked just now (the raw message could
+    /// not be fetched, the keys could not be read): a neutral "can't check"
+    /// indicator, remote content still blocked, and another try at the next
+    /// open. Never cached as a verdict.
+    private(set) var uncheckable: Set<String> = []
+    /// Bumped when readings are dropped because keys, a passphrase or the
+    /// lock state changed: open cards check again. Not on eviction, so a
+    /// pane with more candidates than the cache holds cannot loop.
+    private(set) var generation = 0
     /// Bumped whenever an account's keys change, so Settings reloads.
     private(set) var keysRevision = 0
     /// The last passphrase tried for an account was wrong.
@@ -64,9 +73,13 @@ final class PGPCenter {
     private let defaults: UserDefaults
     private let observers = ObserverTokens()
 
-    /// At most this many readings are kept; the oldest go first.
-    private static let maxReadings = 64
+    /// At most this many readings are kept; the oldest go first. Each
+    /// holds at most `PGPDisplay.maxShownBytes` of text.
+    private static let maxReadings = 256
     @ObservationIgnored private var order: [String] = []
+    /// `isCandidate` per message, so the body scan runs once, not on every
+    /// render of the card.
+    @ObservationIgnored private var candidates: [String: Bool] = [:]
 
     /// `secrets` and `makeEngine` are for tests; the app uses the Keychain
     /// and this build's engine.
@@ -103,6 +116,19 @@ final class PGPCenter {
         wrongPassphrase = []
         readings = [:]
         order = []
+        generation &+= 1
+    }
+
+    /// Whether `message` may carry OpenPGP (`PGPDisplay.isCandidate`),
+    /// scanned once per message and body. False with the switch off.
+    func isCandidate(_ message: Message, attachments: [AttachmentRow]) -> Bool {
+        guard enabled else { return false }
+        let key = "\(message.id)|\(message.bodyText.utf8.count)|\(attachments.count)"
+        if let known = candidates[key] { return known }
+        if candidates.count > 4096 { candidates = [:] }
+        let found = PGPDisplay.isCandidate(bodyText: message.bodyText, attachments: attachments, enabled: true)
+        candidates[key] = found
+        return found
     }
 
     func engine(accountId: String) -> any OpenPGPEngine {
@@ -119,21 +145,34 @@ final class PGPCenter {
     /// (`GmailClient.getRawMessage`).
     func check(_ message: Message, attachments: [AttachmentRow],
                fetchRaw: (String) async throws -> Data, decryptPart: Bool = false) async {
-        guard enabled, PGPDisplay.isCandidate(bodyText: message.bodyText, attachments: attachments,
-                                              enabled: enabled) else { return }
+        guard enabled, isCandidate(message, attachments: attachments) else { return }
         guard decryptPart || (readings[message.id] == nil && !plain.contains(message.id)),
               !inFlight.contains(message.id) else { return }
         inFlight.insert(message.id)
         defer { inFlight.remove(message.id) }
-        guard let raw = try? await fetchRaw(message.gmailId) else { return }
+        guard let raw = try? await fetchRaw(message.gmailId) else {
+            uncheckable.insert(message.id)
+            return
+        }
         let engine = engine(accountId: message.accountId)
         let checked = await PGPInspection.security(ofRaw: raw, engine: engine, enabled: enabled,
                                                    decryptPartOnRequest: decryptPart)
         guard !Task.isCancelled else { return }
         guard let security = checked else {
+            uncheckable.remove(message.id)
             plain.insert(message.id)
             return
         }
+        // The keys could not be read: no verdict, try again later.
+        if case .failed(.keysUnavailable) = security.encryption {
+            uncheckable.insert(message.id)
+            return
+        }
+        if case .notChecked(.keysUnavailable) = security.signature {
+            uncheckable.insert(message.id)
+            return
+        }
+        uncheckable.remove(message.id)
         let displayedFrom = message.fromHeader
         let reading = await Task.detached(priority: .userInitiated) {
             Reading.build(security, displayedFrom: displayedFrom)
@@ -228,13 +267,15 @@ final class PGPCenter {
 
     /// Message ids are `<account>:<gmailId>`.
     private func forgetReadings(where matches: (_ owner: (accountId: String, id: String)) -> Bool) {
-        let gone = Set(readings.keys).union(plain).filter { id in
+        let gone = Set(readings.keys).union(plain).union(uncheckable).filter { id in
             let account = id.split(separator: ":", maxSplits: 1).first.map(String.init) ?? ""
             return matches((account, id))
         }
         for id in gone { readings[id] = nil }
         plain.subtract(gone)
+        uncheckable.subtract(gone)
         order.removeAll { gone.contains($0) }
+        generation &+= 1
     }
 
     /// DEC-019, outside the database: the secret keys of a removed account,
@@ -251,8 +292,10 @@ final class PGPCenter {
     /// deleted. A database that cannot be read sweeps nothing.
     nonisolated static func sweepSecretKeys(database: any DatabaseWriter,
                                             secrets: any PGPSecretKeyStorage = KeychainPGPSecretKeys()) async {
-        guard let keep = try? await database.read({ try PGPKeyTable.secretKeyOwners($0) }) else { return }
-        try? secrets.deleteAll(except: keep)
+        _ = try? await PGPSecretKeyLock.shared.run {
+            let keep = try await database.read { try PGPKeyTable.secretKeyOwners($0) }
+            try secrets.deleteAll(except: keep)
+        }
     }
 }
 

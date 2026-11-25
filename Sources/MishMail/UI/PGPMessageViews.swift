@@ -88,6 +88,20 @@ private struct PGPDetailsView: View {
     }
 }
 
+/// A message that may be OpenPGP but could not be checked just now (no raw
+/// message, unreadable keys): neutral, and remote content stays blocked.
+struct PGPUncheckableIndicator: View {
+    var body: some View {
+        let text = PGPBodyNotice.cannotCheckNow.text
+        Image(systemName: "questionmark.circle")
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .help(text)
+            .accessibilityLabel(text)
+            .accessibilityIdentifier("messagePGPUncheckable")
+    }
+}
+
 /// What replaces the body of an OpenPGP message: the decrypted or signed
 /// text (plain text, never HTML), or a notice. A locked key asks for its
 /// passphrase here; it is kept in memory for this session only.
@@ -103,6 +117,9 @@ struct PGPBodyReplacement: View {
         case .original:
             EmptyView()
         case .text(let text):
+            // Plain on purpose: decrypted or signed text is not scanned for
+            // links, so nothing in it becomes something to click (or a
+            // request that could carry it out).
             Text(text)
                 .font(.system(size: 14.5 * fontScale))
                 .lineSpacing(4)

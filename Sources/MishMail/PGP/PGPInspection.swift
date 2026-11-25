@@ -117,7 +117,9 @@ enum PGPInspection {
         return node
     }
 
+    /// Anything that is not the engine's own answer (the Keychain, the
+    /// database) says nothing about the message.
     private static func engineError(_ error: Error) -> PGPEngineError {
-        (error as? PGPEngineError) ?? .malformed
+        (error as? PGPEngineError) ?? .keysUnavailable
     }
 }

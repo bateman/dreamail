@@ -281,6 +281,10 @@ struct DatabasePGPKeyStore: PGPKeyStore {
     /// not stored. The certificate row must exist (`RPGPEngine` adds it
     /// first).
     func addSecretKeys(_ keys: [PGPArmoredKey]) async throws {
+        try await PGPSecretKeyLock.shared.run { try await self.addSecretKeysLocked(keys) }
+    }
+
+    private func addSecretKeysLocked(_ keys: [PGPArmoredKey]) async throws {
         // What each item held before this call, so a failure puts exactly
         // that back (nil: there was none).
         var before: [(PGPSecretKeyOwner, Data?)] = []
@@ -325,6 +329,10 @@ struct DatabasePGPKeyStore: PGPKeyStore {
     /// that refuses the delete fails the call with the key still listed, so
     /// the user can try again; nothing is left that the list does not show.
     func remove(_ key: PGPKeyReference) async throws {
+        try await PGPSecretKeyLock.shared.run { try await self.removeLocked(key) }
+    }
+
+    private func removeLocked(_ key: PGPKeyReference) async throws {
         try secrets.deleteSecretKey(of: owner(key))
         let account = accountId
         try await database.write { db in
@@ -332,5 +340,39 @@ struct DatabasePGPKeyStore: PGPKeyStore {
                                             && Column("fingerprint") == key.fingerprint).deleteAll(db)
         }
         passphrases.forget(accountId: accountId)
+    }
+}
+
+/// One secret-key change at a time, process-wide: an import, a delete and
+/// the launch sweep never interleave, so the sweep (which deletes Keychain
+/// items no row lists) cannot catch an import between its Keychain write
+/// and its flag.
+actor PGPSecretKeyLock {
+    static let shared = PGPSecretKeyLock()
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func run<T>(_ body: @Sendable () async throws -> T) async throws -> T {
+        await acquire()
+        do {
+            let value = try await body()
+            release()
+            return value
+        } catch {
+            release()
+            throw error
+        }
+    }
+
+    private func acquire() async {
+        guard busy else {
+            busy = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    private func release() {
+        if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() }
     }
 }

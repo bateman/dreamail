@@ -27,6 +27,8 @@ enum PGPBodyNotice: Sendable, Equatable {
     case noReadableText
     /// More text than the view shows (`PGPDisplay.maxShownBytes`).
     case tooLongToShow
+    /// The keys could not be read just now; checked again at the next open.
+    case cannotCheckNow
 
     /// The headline. Every failure an attacker could cause says the same:
     /// nothing reads as more harmless than a failed integrity check (no
@@ -45,13 +47,15 @@ enum PGPBodyNotice: Sendable, Equatable {
             return "This message has no text to show."
         case .tooLongToShow:
             return "This message is too long to show here."
+        case .cannotCheckNow:
+            return "MishMail can’t check this message right now. It will try again when you open it."
         }
     }
 
     /// The technical reason, shown smaller under the headline.
     var detail: String? {
         switch self {
-        case .unavailable, .noSecretKey, .passphraseRequired, .noReadableText, .tooLongToShow: return nil
+        case .unavailable, .noSecretKey, .passphraseRequired, .noReadableText, .tooLongToShow, .cannotCheckNow: return nil
         case .notIntegrityProtected:
             return "Integrity check failed or missing: the encrypted data may have been changed, so nothing of it is shown."
         case .tooLarge: return "The encrypted data is larger than the decryption limit."
@@ -150,6 +154,9 @@ enum PGPDisplay {
             case .notIntegrityProtected: return .notice(.notIntegrityProtected)
             case .malformed, .unsupported: return .notice(.unsupportedFormat)
             case .tooLarge: return .notice(.tooLarge)
+            // Never cached as a reading (`PGPCenter.check`); here only for
+            // completeness.
+            case .keysUnavailable: return .notice(.cannotCheckNow)
             }
         case .decrypted(let result, let whole):
             guard whole, indicator.render.decryptedContent == .inline else { return .original }

@@ -265,6 +265,7 @@ struct PGPKeySettings: View {
         case .tooLarge?: return "That file is too large (at most 1 MB and 50 keys)."
         case .unavailable?: return "This version of MishMail has no OpenPGP support."
         case .passphraseRequired?, .notIntegrityProtected?: return "That didn’t work."
+        case .keysUnavailable?: return "Your keys can’t be read right now. Unlock your Mac and try again."
         case nil: return error.localizedDescription
         }
     }

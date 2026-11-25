@@ -137,6 +137,10 @@ enum PGPEngineError: Error, Sendable, Equatable {
     /// Not OpenPGP data, or damaged.
     case malformed
     case unsupported
+    /// Not the engine's verdict: the keys could not be read (a locked or
+    /// refused Keychain, a database error). Nothing is known about the
+    /// message; it is checked again later.
+    case keysUnavailable
 }
 
 /// The engine of a build without an OpenPGP library: every call refuses.

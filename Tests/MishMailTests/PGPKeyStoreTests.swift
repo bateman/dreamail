@@ -245,6 +245,14 @@ final class PGPKeyStoreTests: XCTestCase {
         }
     }
 
+    /// P6: not behind `#if`: the app's engine is rPGP, so the linked suite
+    /// cannot vanish silently if the package stops linking.
+    func testTheBuildsEngineIsTheLinkedLibrary() throws {
+        let store = DatabasePGPKeyStore(accountId: a, database: try DatabaseQueue(),
+                                        secrets: MemorySecretKeys(), passphrases: PGPPassphrases())
+        XCTAssertTrue(PGPEngines.engine(store: store) is RPGPEngine)
+    }
+
     func testPassphrasesArePerAccountAndForgotten() {
         let passphrases = PGPPassphrases()
         passphrases.set(Data("one".utf8), accountId: a)

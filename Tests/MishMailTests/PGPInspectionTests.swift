@@ -243,7 +243,7 @@ final class PGPInspectionTests: XCTestCase {
         // Gated where they start: the message card's candidate check and the
         // Settings pane read the switch; the views draw only what
         // `PGPCenter` produced.
-        XCTAssertTrue(users["ThreadDetailView.swift"]?.contains("enabled: PGPFeatures.isEnabled") ?? false)
+        XCTAssertTrue(users["ThreadDetailView.swift"]?.contains("PGPFeatures.isEnabled && store.openPGP.isCandidate") ?? false)
         XCTAssertEqual(users["SettingsView.swift"]?.components(separatedBy: "PGPFeatures.isEnabled").count, 3)
         XCTAssertTrue(users["MailStore.swift"]?.contains("PGPCenter(database: AppDatabase.shared.dbPool)") ?? false,
                       "the app's center takes the build's switch")

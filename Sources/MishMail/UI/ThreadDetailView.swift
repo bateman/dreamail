@@ -1955,9 +1955,6 @@ struct MessageCard: View {
     private let hasQuotedTrail: Bool
     /// Pre-assembled WebKit documents (nil when scale mismatched or absent).
     private let htmlDocuments: MessageHTMLDocuments?
-    /// May carry OpenPGP (`PGPDisplay.isCandidate`); always false with the
-    /// build switch off.
-    private let pgpCandidate: Bool
 
     /// Fallback NSCache for cards opened without a repository prep (e.g. rare
     /// main-thread-only paths). Primary path is `bodyPrep` from the actor.
@@ -2037,8 +2034,6 @@ struct MessageCard: View {
         self.onBodySettled = onBodySettled
         self.onUnsubscribe = onUnsubscribe
         self.onNeedUnsubscribeHeaders = onNeedUnsubscribeHeaders
-        self.pgpCandidate = PGPDisplay.isCandidate(bodyText: message.bodyText, attachments: attachments,
-                                                   enabled: PGPFeatures.isEnabled)
         let hasBody = !ThreadDetailView.needsBodyLoad(message)
         // CID-inlined HTML already embeds image bytes; prefer its prep over
         // the repository prep (which still has unresolved `cid:`). The parent
@@ -2316,9 +2311,17 @@ struct MessageCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if let reading = pgpReading {
                 PGPIndicatorButton(reading: reading, onDecryptPart: { checkPGP(decryptPart: true) })
+            } else if pgpCandidate, store.openPGP.uncheckable.contains(message.id) {
+                PGPUncheckableIndicator()
             }
             headerActions
         }
+    }
+
+    /// May carry OpenPGP: scanned once per message by `PGPCenter`, never in
+    /// `init`. Always false with the build switch off.
+    private var pgpCandidate: Bool {
+        PGPFeatures.isEnabled && store.openPGP.isCandidate(message, attachments: attachments)
     }
 
     /// The engine's verdict on this message, once checked (`PGPCenter`).
@@ -2431,9 +2434,10 @@ struct MessageCard: View {
                 }
                 .padding(.horizontal, metrics.bodyInset)
                 .padding(.bottom, metrics.verticalPadding)
-                // OpenPGP: checked once when opened, and again after the
-                // keys or the passphrase change (the reading is dropped).
-                .task(id: "\(message.id)|\(pgpReading == nil)") {
+                // OpenPGP: checked when opened (again at each open while it
+                // could not be checked), and after the keys, a passphrase or
+                // the lock state change (`generation`).
+                .task(id: "\(message.id)|\(store.openPGP.generation)") {
                     if pgpReading == nil { checkPGP() }
                 }
             }

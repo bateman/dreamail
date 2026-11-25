@@ -628,10 +628,13 @@ actor GmailClient {
     func getRawMessage(id: String) async throws -> Data {
         struct Raw: Decodable { let raw: String }
         let data = try await requestData("GET", "/messages/\(id)", query: ["format": "raw"])
-        guard let raw = try? JSONDecoder().decode(Raw.self, from: data),
-              let bytes = MessageParser.decodeBase64URLData(raw.raw) else {
-            throw GmailError.http(0, "The message could not be read.")
-        }
+        // Up to ~47 MB of JSON and base64: decoded off the actor, like
+        // `decodeMessageOffActor`.
+        let bytes = await Task.detached(priority: .userInitiated) { () -> Data? in
+            guard let raw = try? JSONDecoder().decode(Raw.self, from: data) else { return nil }
+            return MessageParser.decodeBase64URLData(raw.raw)
+        }.value
+        guard let bytes else { throw GmailError.http(0, "The message could not be read.") }
         return bytes
     }
 
