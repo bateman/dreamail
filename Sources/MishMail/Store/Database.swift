@@ -1837,6 +1837,8 @@ final class AppDatabase: @unchecked Sendable {
     /// `defaults` holds the app-wide notification choice of earlier builds,
     /// which v64 copies onto every existing account.
     static func migrator(defaults: UserDefaults) -> DatabaseMigrator {
+        // Read here: migration closures are @Sendable, UserDefaults is not.
+        let legacyNotificationDetails = NotificationContent.legacyShowsDetails(defaults: defaults)
         var m = DatabaseMigrator()
         m.registerMigration("v1") { db in
             try db.create(table: "account") { t in
@@ -2857,7 +2859,7 @@ final class AppDatabase: @unchecked Sendable {
             try db.alter(table: "account") { t in
                 t.add(column: "notificationDetails", .boolean).notNull().defaults(to: false)
             }
-            if NotificationContent.legacyShowsDetails(defaults: defaults) {
+            if legacyNotificationDetails {
                 try db.execute(sql: "UPDATE account SET notificationDetails = 1")
             }
         }
