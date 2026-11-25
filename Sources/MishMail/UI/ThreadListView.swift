@@ -125,8 +125,8 @@ struct ThreadListView: View {
         case .trash:
             return ("Trash is empty", "trash", "Deleted conversations will appear here.")
         case .spam:
-            return ("Hooray, no spam here!", "exclamationmark.octagon",
-                    "Conversations marked as spam will appear here.")
+            return ("No spam on this Mac", "exclamationmark.octagon",
+                    "Spam received since this account was added appears here. Older spam stays on Gmail.")
         case .important:
             return ("No important conversations", "flag",
                     "Conversations Gmail marks as important will appear here.")

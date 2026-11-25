@@ -69,23 +69,22 @@ enum SidebarLabelTree {
                 roots.append(row)
             }
         }
-        func node(_ row: LabelRow, depth: Int) -> SidebarLabelNode {
-            let display: String
+        // A parent's name is a proper prefix of its child's, so names grow
+        // strictly along a path and the recursion cannot cycle.
+        func node(_ row: LabelRow) -> SidebarLabelNode {
+            var display = row.name
             if let p = parentName[row.id] {
-                display = String(row.name.dropFirst(p.count + 1))
-            } else {
-                display = row.name
+                let rest = String(row.name.dropFirst(p.count + 1))
+                // `a/` under `a`: nothing after the slash, keep the full name.
+                if !rest.isEmpty { display = rest }
             }
-            // Names cannot repeat along one path, so depth is bounded by the
-            // number of rows; the guard only defends against a cycle bug.
-            let kids = depth > rows.count ? [] : (childrenOf[row.id] ?? [])
             return SidebarLabelNode(
                 id: row.id, accountId: row.accountId, gmailLabelId: row.gmailLabelId,
                 fullName: row.name, displayName: display, colors: row.displayColors,
                 visibility: .init(raw: row.listVisibility),
-                children: sorted(kids).map { node($0, depth: depth + 1) })
+                children: sorted(childrenOf[row.id] ?? []).map(node))
         }
-        return sorted(roots).map { node($0, depth: 0) }
+        return sorted(roots).map(node)
     }
 
     /// The longest existing label whose name is a proper `/`-prefix of
@@ -127,6 +126,21 @@ enum SidebarLabelTree {
             if let m = parts.more { more.append(m) }
         }
         return (listed, more)
+    }
+
+    /// The label with `labelId` behind the labels' "More" row, without its
+    /// sublabels: what the sidebar keeps visible while "More" is closed and
+    /// that label is open (as the system "More" does).
+    static func find(_ labelId: String, in nodes: [SidebarLabelNode]) -> SidebarLabelNode? {
+        for node in nodes {
+            if node.gmailLabelId == labelId {
+                var leaf = node
+                leaf.children = []
+                return leaf
+            }
+            if let hit = find(labelId, in: node.children) { return hit }
+        }
+        return nil
     }
 
     private static func split(_ node: SidebarLabelNode,
@@ -223,13 +237,32 @@ enum SidebarDisclosure {
 
 /// The name Gmail's "New label" dialog creates.
 enum NewLabelName {
-    /// `parent/name` when nested, else `name`; trimmed. nil when the name is
-    /// empty once trimmed.
+    /// `parent/name` when nested, else `name`; trimmed of spaces and of
+    /// slashes at either end (a leading or trailing `/` would make an empty
+    /// level). nil when nothing is left.
     static func full(name: String, parent: String?) -> String? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = name.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines
+            .union(CharacterSet(charactersIn: "/")))
         guard !trimmed.isEmpty else { return nil }
         guard let parent, !parent.isEmpty else { return trimmed }
         return "\(parent)/\(trimmed)"
+    }
+
+    enum Check: Equatable {
+        case ok(String)
+        case empty
+        case duplicate
+        /// The parent is not one of this account's labels (for example
+        /// still the one picked on another account): never create it,
+        /// it would carry one account's label name into another.
+        case unknownParent
+    }
+
+    /// What the dialog may create on the account whose labels are `rows`.
+    static func check(name: String, nest: Bool, parent: String, rows: [LabelRow]) -> Check {
+        if nest, !rows.contains(where: { $0.name == parent }) { return .unknownParent }
+        guard let full = full(name: name, parent: nest ? parent : nil) else { return .empty }
+        return exists(full, in: rows) ? .duplicate : .ok(full)
     }
 
     /// Whether an account already has a label of that name. Gmail refuses a

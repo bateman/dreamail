@@ -1809,11 +1809,6 @@ struct Sidebar: View {
     @State private var disclosure = SidebarDisclosureModel()
     @State private var newLabel: NewLabelRequest?
 
-    /// The views behind Gmail's "More" row.
-    private let moreViews: Set<MailboxView> = [
-        .scheduled, .outbox, .reminders, .spam, .promotions, .social,
-    ]
-
     private var confirmingViewDeleteShown: Binding<Bool> {
         Binding(
             get: { viewToDelete != nil },
@@ -1874,12 +1869,20 @@ struct Sidebar: View {
                     sidebarItem(.drafts, badge: store.unreadCounts["drafts"])
                     sidebarItem(.allMail)
                     sidebarItem(.trash)
+                    // Mail waiting to go out and due reminders never hide
+                    // behind "More" (Gmail lists its Outbox the same way).
+                    if outboxShown {
+                        sidebarItem(.outbox, badge: moreBadge(.outbox))
+                    }
+                    if remindersDue {
+                        sidebarItem(.reminders, badge: moreBadge(.reminders))
+                    }
                     SidebarMoreToggle(open: disclosure.moreOpen, identifier: "sidebar.more") {
                         disclosure.moreOpen.toggle()
                     }
                     if disclosure.moreOpen {
                         moreItems
-                    } else if moreViews.contains(store.selectedView) {
+                    } else if isBehindMore(store.selectedView) {
                         // Closed "More": the open view stays visible.
                         sidebarItem(store.selectedView, badge: moreBadge(store.selectedView))
                     }
@@ -2010,11 +2013,9 @@ struct Sidebar: View {
         if !store.scheduledSends.isEmpty || store.selectedView == .scheduled {
             sidebarItem(.scheduled, badge: moreBadge(.scheduled))
         }
-        // Drafts kept locally while offline; gone once uploaded.
-        if !store.localDrafts.isEmpty || store.selectedView == .outbox {
-            sidebarItem(.outbox, badge: moreBadge(.outbox))
+        if !remindersDue {
+            sidebarItem(.reminders, badge: moreBadge(.reminders))
         }
-        sidebarItem(.reminders, badge: moreBadge(.reminders))
         sidebarItem(.spam, badge: moreBadge(.spam))
         DisclosureGroup(isExpanded: disclosureBinding(\.categoriesOpen)) {
             sidebarItem(.promotions, badge: moreBadge(.promotions))
@@ -2026,6 +2027,30 @@ struct Sidebar: View {
                 Image(systemName: "tag.square").mailIconStyle(selected: false)
             }
             .accessibilityIdentifier("sidebar.categories")
+        }
+        // Closed "Categories": the open category stays visible.
+        if !disclosure.categoriesOpen,
+           store.selectedView == .promotions || store.selectedView == .social {
+            sidebarItem(store.selectedView, badge: moreBadge(store.selectedView))
+        }
+    }
+
+    /// Drafts kept locally while offline; gone once uploaded.
+    private var outboxShown: Bool {
+        !store.localDrafts.isEmpty || store.selectedView == .outbox
+    }
+
+    /// Reminders that are due: their count is above zero.
+    private var remindersDue: Bool {
+        (store.unreadCounts["reminders"] ?? 0) > 0
+    }
+
+    /// Whether `view` only appears inside the "More" row right now.
+    private func isBehindMore(_ view: MailboxView) -> Bool {
+        switch view {
+        case .scheduled, .spam, .promotions, .social: return true
+        case .reminders: return !remindersDue
+        default: return false
         }
     }
 

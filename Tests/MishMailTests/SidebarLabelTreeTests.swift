@@ -52,6 +52,21 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(tree[0].children[0].fullName, "a/b/c")
     }
 
+    /// `a/` under `a`: nothing after the slash, so the row keeps its name
+    /// instead of an empty one.
+    func testTrailingSlashKeepsTheFullName() {
+        let tree = SidebarLabelTree.build([row("L1", "a"), row("L2", "a/")])
+        XCTAssertEqual(shape(tree), ["a [a/]"])
+    }
+
+    func testFindReturnsTheLabelWithoutSublabels() {
+        let tree = SidebarLabelTree.build([row("L1", "a"), row("L2", "a/b"), row("L3", "a/b/c")])
+        let hit = SidebarLabelTree.find("L2", in: tree)
+        XCTAssertEqual(hit?.fullName, "a/b")
+        XCTAssertEqual(hit?.children.count, 0)
+        XCTAssertNil(SidebarLabelTree.find("L9", in: tree))
+    }
+
     func testEmptyPathPartsAreNotParents() {
         let tree = SidebarLabelTree.build([row("L1", "/lead"), row("L2", "a//b"), row("L3", "a")])
         // "a//b": its prefix "a/" is not a label; "a" is.
@@ -197,6 +212,27 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(NewLabelName.full(name: "fastweb", parent: ""), "fastweb")
         XCTAssertTrue(NewLabelName.exists("Mail/Fastweb", in: [row("L1", "mail/fastweb")]))
         XCTAssertFalse(NewLabelName.exists("mail", in: [row("L1", "mail/fastweb")]))
+        XCTAssertEqual(NewLabelName.full(name: "/x/", parent: "mail"), "mail/x")
+        XCTAssertNil(NewLabelName.full(name: " / ", parent: "mail"))
+    }
+
+    /// A parent picked on one account must never be created on another:
+    /// the dialog's check refuses a parent that is not the account's own.
+    func testNewLabelParentMustBelongToTheAccount() {
+        let accountA = [row("L1", "private-a", account: a)]
+        let accountB = [row("L2", "work", account: b)]
+        XCTAssertEqual(NewLabelName.check(name: "x", nest: true, parent: "private-a", rows: accountB),
+                       .unknownParent)
+        XCTAssertEqual(NewLabelName.check(name: "x", nest: true, parent: "private-a", rows: accountA),
+                       .ok("private-a/x"))
+        XCTAssertEqual(NewLabelName.check(name: "x", nest: true, parent: "", rows: accountB),
+                       .unknownParent)
+        // Not nesting: the stale parent is ignored.
+        XCTAssertEqual(NewLabelName.check(name: "x", nest: false, parent: "private-a", rows: accountB),
+                       .ok("x"))
+        XCTAssertEqual(NewLabelName.check(name: "Work", nest: false, parent: "", rows: accountB),
+                       .duplicate)
+        XCTAssertEqual(NewLabelName.check(name: "  ", nest: false, parent: "", rows: accountB), .empty)
     }
 
     // MARK: Database
@@ -288,13 +324,8 @@ final class SidebarLabelTreeTests: XCTestCase {
                 ("", StatementArguments()), ("thread.accountId = ? AND ", [self.a]),
             ]
             for (scope, args) in scopes {
-                let detail = try self.plan(db, """
-                    SELECT thread.accountId AS accountId, thread_label.labelId AS labelId,
-                           COUNT(*) AS n
-                    FROM thread JOIN thread_label ON thread_label.threadId = thread.id
-                    WHERE \(scope)(\(SidebarCounts.labelUnreadSQL))
-                    GROUP BY thread.accountId, thread_label.labelId
-                    """, args)
+                let detail = try self.plan(
+                    db, SidebarCounts.labelUnreadQuery(scoped: !scope.isEmpty), args)
                 XCTAssertTrue(detail.contains("thread_unread_live"), detail)
                 XCTAssertTrue(detail.contains("thread_label USING COVERING INDEX"), detail)
             }
@@ -363,5 +394,35 @@ final class SidebarLabelTreeTests: XCTestCase {
         let list = try JSONDecoder().decode(GLabelList.self, from: json)
         XCTAssertEqual(list.labels?.first?.labelListVisibility, "labelShowIfUnread")
         XCTAssertNil(list.labels?.last?.labelListVisibility)
+    }
+}
+
+/// v65 (this branch) registers after v63 and v64; v62 is still to land on
+/// `main`. A database that already ran every other migration must still get
+/// v65, and one without v65's column must not break label reads.
+final class SidebarMigrationOrderTests: XCTestCase {
+    func testV65RunsOnADatabaseThatAlreadyHasTheOthers() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        // Make it the database of a build without v65.
+        try q.write { db in
+            try db.execute(sql: "DROP INDEX thread_unread_live")
+            try db.execute(sql: "DROP INDEX thread_unread_spam")
+            try db.alter(table: "label") { t in t.drop(column: "listVisibility") }
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'v65'")
+        }
+        try q.read { db in
+            let applied = try AppDatabase.migrator.appliedIdentifiers(db)
+            XCTAssertTrue(applied.contains("v64"))
+            XCTAssertFalse(applied.contains("v65"))
+        }
+        try AppDatabase.migrator.migrate(q)
+        try q.read { db in
+            XCTAssertTrue(try AppDatabase.migrator.appliedIdentifiers(db).contains("v65"))
+            XCTAssertTrue(try db.columns(in: "label").contains { $0.name == "listVisibility" })
+            XCTAssertTrue(try db.indexes(on: "thread").contains { $0.name == "thread_unread_live" })
+            XCTAssertTrue(try db.indexes(on: "thread").contains { $0.name == "thread_unread_spam" })
+            XCTAssertTrue(try AppDatabase.migrator.hasCompletedMigrations(db))
+        }
     }
 }

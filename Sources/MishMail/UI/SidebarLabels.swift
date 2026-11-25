@@ -85,8 +85,21 @@ struct SidebarLabelTreeView: View {
                 ForEach(parts.more) { node in
                     SidebarLabelNodeView(node: node, disclosure: disclosure, onNewLabel: onNewLabel)
                 }
+            } else if let selected = selectedBehindMore(parts) {
+                // Closed "More": the open label stays visible.
+                SidebarLabelRow(node: selected, onNewLabel: onNewLabel)
             }
         }
+    }
+
+    /// The open label of this account when only the "More" list holds it.
+    private func selectedBehindMore(
+        _ parts: (listed: [SidebarLabelNode], more: [SidebarLabelNode])
+    ) -> SidebarLabelNode? {
+        guard case .label(let account, let labelId, _) = store.selectedView,
+              account == accountId,
+              SidebarLabelTree.find(labelId, in: parts.listed) == nil else { return nil }
+        return SidebarLabelTree.find(labelId, in: parts.more)
     }
 
     private func unread(for node: SidebarLabelNode) -> Int {
@@ -242,11 +255,11 @@ struct NewLabelSheet: View {
     @State private var parent = ""
     @State private var accountId = ""
     @State private var saving = false
+    @State private var failure: String?
 
     var body: some View {
         let rows = store.userLabels(forAccount: accountId)
-        let full = NewLabelName.full(name: name, parent: nest ? parent : nil)
-        let duplicate = full.map { NewLabelName.exists($0, in: rows) } ?? false
+        let check = NewLabelName.check(name: name, nest: nest, parent: parent, rows: rows)
         VStack(alignment: .leading, spacing: 12) {
             Text("New label").font(.headline)
             if request.accountId == nil && store.accounts.count > 1 {
@@ -268,9 +281,14 @@ struct NewLabelSheet: View {
             }
             .labelsHidden()
             .disabled(!nest || rows.isEmpty)
-            if duplicate {
+            if check == .duplicate {
                 Text("A label with this name already exists.")
                     .font(.caption).foregroundStyle(.red)
+            }
+            if let failure {
+                Text(failure)
+                    .font(.caption).foregroundStyle(.red)
+                    .accessibilityIdentifier("newLabel.error")
             }
             HStack {
                 Spacer()
@@ -278,16 +296,16 @@ struct NewLabelSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Button("Create") {
                     saving = true
+                    failure = nil
                     Task {
-                        let ok = await store.createLabel(
+                        failure = await store.createLabel(
                             name: name, parent: nest ? parent : nil, accountId: accountId)
                         saving = false
-                        if ok { dismiss() }
+                        if failure == nil { dismiss() }
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(full == nil || duplicate || saving || accountId.isEmpty
-                          || (nest && parent.isEmpty))
+                .disabled(!Self.canCreate(check) || saving || accountId.isEmpty)
                 .accessibilityIdentifier("newLabel.create")
             }
         }
@@ -299,8 +317,27 @@ struct NewLabelSheet: View {
                 nest = true
                 parent = p
             } else {
-                parent = store.userLabels(forAccount: accountId).first?.name ?? ""
+                resetParent()
             }
         }
+        // Another account: its own labels only. A parent picked on the
+        // previous account must never be sent to this one.
+        .onChange(of: accountId) { old, _ in
+            // The first value comes from onAppear, which set the parent.
+            guard !old.isEmpty else { return }
+            failure = nil
+            resetParent()
+        }
+    }
+
+    private func resetParent() {
+        let rows = store.userLabels(forAccount: accountId)
+        parent = rows.first?.name ?? ""
+        if rows.isEmpty { nest = false }
+    }
+
+    private static func canCreate(_ check: NewLabelName.Check) -> Bool {
+        if case .ok = check { return true }
+        return false
     }
 }

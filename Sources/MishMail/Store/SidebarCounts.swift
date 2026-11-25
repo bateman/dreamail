@@ -99,14 +99,8 @@ enum SidebarCounts {
     /// looks each thread up in `thread_label` by its primary key. Keyed by
     /// `labelKey`; a label with no unread mail is absent.
     static func fetchLabelUnread(db: Database, account: String?) throws -> [String: Int] {
-        let scope = account == nil ? "" : "thread.accountId = ? AND "
-        let rows = try Row.fetchAll(db, sql: """
-            SELECT thread.accountId AS accountId, thread_label.labelId AS labelId,
-                   COUNT(*) AS n
-            FROM thread JOIN thread_label ON thread_label.threadId = thread.id
-            WHERE \(scope)(\(labelUnreadSQL))
-            GROUP BY thread.accountId, thread_label.labelId
-            """, arguments: StatementArguments(account.map { [$0] } ?? []))
+        let rows = try Row.fetchAll(db, sql: labelUnreadQuery(scoped: account != nil),
+                                    arguments: StatementArguments(account.map { [$0] } ?? []))
         var out: [String: Int] = [:]
         for row in rows {
             let accountId: String = row["accountId"]
@@ -115,6 +109,19 @@ enum SidebarCounts {
             out[labelKey(accountId: accountId, labelId: labelId)] = n
         }
         return out
+    }
+
+    /// The grouped query behind `fetchLabelUnread` (and its index-plan
+    /// test). `scoped` binds one account id.
+    static func labelUnreadQuery(scoped: Bool) -> String {
+        let scope = scoped ? "thread.accountId = ? AND " : ""
+        return """
+            SELECT thread.accountId AS accountId, thread_label.labelId AS labelId,
+                   COUNT(*) AS n
+            FROM thread JOIN thread_label ON thread_label.threadId = thread.id
+            WHERE \(scope)(\(labelUnreadSQL))
+            GROUP BY thread.accountId, thread_label.labelId
+            """
     }
 
     /// Matches the `thread_unread_live` partial index exactly, so SQLite

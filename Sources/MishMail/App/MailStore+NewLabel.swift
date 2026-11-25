@@ -16,24 +16,35 @@ extension MailStore {
     /// Gmail's "New label" dialog (the "+" next to the sidebar's Labels):
     /// creates `name`, nested under `parent` when one is given (Gmail's
     /// "Nest label under"), on `accountId`. Nothing is applied to any
-    /// conversation. Returns false, with the reason in `lastError`, when
-    /// Gmail refuses.
-    @discardableResult
-    func createLabel(name: String, parent: String?, accountId: String) async -> Bool {
-        guard !demoMode else {
-            showNotice("Creating labels is disabled in the demo inbox")
-            return false
+    /// conversation. Returns nil on success, else the reason, for the
+    /// dialog to show.
+    func createLabel(name: String, parent: String?, accountId: String) async -> String? {
+        guard !demoMode else { return "Creating labels is disabled in the demo inbox." }
+        // Checked again here, not only in the dialog: the parent must be one
+        // of this account's own labels.
+        let rows = userLabels(forAccount: accountId)
+        let full: String
+        switch NewLabelName.check(name: name, nest: parent != nil, parent: parent ?? "", rows: rows) {
+        case .ok(let value): full = value
+        case .empty: return "Enter a label name."
+        case .duplicate: return "A label with this name already exists."
+        case .unknownParent: return "Choose a label of this account to nest it under."
         }
-        guard let fullName = NewLabelName.full(name: name, parent: parent) else { return false }
+        let created: GLabel
         do {
-            let l = try await client(for: accountId).createLabel(name: fullName)
-            let row = LabelRow.created(l, accountId: accountId)
-            _ = try? await db.write { db in try row.save(db) }
-            reloadAccounts()
-            return true
+            created = try await client(for: accountId).createLabel(name: full)
         } catch {
-            lastError = error.localizedDescription
-            return false
+            return error.localizedDescription
         }
+        let row = LabelRow.created(created, accountId: accountId)
+        do {
+            try await db.write { db in try row.save(db) }
+        } catch {
+            // Created on Gmail all the same: the next sync brings it in.
+            reloadAccounts()
+            return "The label was created on Gmail but could not be saved on this Mac yet. It appears after the next sync."
+        }
+        reloadAccounts()
+        return nil
     }
 }
