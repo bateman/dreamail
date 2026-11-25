@@ -304,6 +304,8 @@ final class ThreadDerivationTests: XCTestCase {
         let now = Date()
         let base = try XCTUnwrap(derive([msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "")]))
         try q.write { db in
+            try Account(id: self.account, displayName: "P", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
             for (id, trash, spam, until) in [
                 ("due", false, false, now.addingTimeInterval(-60)),
                 ("future", false, false, now.addingTimeInterval(60)),
