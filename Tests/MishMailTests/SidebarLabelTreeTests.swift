@@ -205,6 +205,16 @@ final class SidebarLabelTreeTests: XCTestCase {
 
     // MARK: New label
 
+    /// Switching account leaves another account's label for the Inbox.
+    func testLabelViewFollowsTheAccountSwitch() {
+        let labelOfA = MailboxView.label(account: a, labelId: "Label_1", name: "x")
+        XCTAssertEqual(SidebarScope.view(labelOfA, afterSwitchingTo: b), .inbox)
+        XCTAssertEqual(SidebarScope.view(labelOfA, afterSwitchingTo: a), labelOfA)
+        XCTAssertEqual(SidebarScope.view(labelOfA, afterSwitchingTo: nil), labelOfA,
+                       "all accounts in scope: the label still has its mail")
+        XCTAssertEqual(SidebarScope.view(.starred, afterSwitchingTo: b), .starred)
+    }
+
     func testNewLabelName() {
         XCTAssertNil(NewLabelName.full(name: "  ", parent: nil))
         XCTAssertEqual(NewLabelName.full(name: " fastweb ", parent: nil), "fastweb")
@@ -399,7 +409,7 @@ final class SidebarLabelTreeTests: XCTestCase {
 
 /// v65 (this branch) registers after v63 and v64; v62 is still to land on
 /// `main`. A database that already ran every other migration must still get
-/// v65, and one without v65's column must not break label reads.
+/// v65.
 final class SidebarMigrationOrderTests: XCTestCase {
     func testV65RunsOnADatabaseThatAlreadyHasTheOthers() throws {
         let q = try DatabaseQueue()

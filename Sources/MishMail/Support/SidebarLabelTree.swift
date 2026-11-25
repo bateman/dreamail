@@ -235,6 +235,17 @@ enum SidebarDisclosure {
     }
 }
 
+/// The selected view once the account in scope changes.
+enum SidebarScope {
+    /// A label view of another account than `account` falls back to the
+    /// Inbox (its list would be empty, still titled with the old label).
+    /// Every other view, and any view once all accounts are in scope, stays.
+    static func view(_ view: MailboxView, afterSwitchingTo account: String?) -> MailboxView {
+        guard let account, case .label(let owner, _, _) = view, owner != account else { return view }
+        return .inbox
+    }
+}
+
 /// The name Gmail's "New label" dialog creates.
 enum NewLabelName {
     /// `parent/name` when nested, else `name`; trimmed of spaces and of

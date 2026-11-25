@@ -1554,6 +1554,10 @@ struct ComposeRequest: Identifiable {
 
     func setActiveAccount(_ id: String?) {
         activeAccountId = id
+        // A label belongs to one account: switching to another leaves it
+        // for that account's Inbox, as Gmail does.
+        let next = SidebarScope.view(selectedView, afterSwitchingTo: id)
+        if next != selectedView { selectedView = next }
         clearSelection()
         clearCheckedThreads()
         readStateKeepIds.removeAll()

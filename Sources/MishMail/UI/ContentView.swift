@@ -1876,12 +1876,12 @@ struct Sidebar: View {
                     sidebarItem(.drafts, badge: store.unreadCounts["drafts"])
                     sidebarItem(.allMail)
                     sidebarItem(.trash)
-                    // Mail waiting to go out and due reminders never hide
+                    // Mail waiting to go out and reminders never hide
                     // behind "More" (Gmail lists its Outbox the same way).
                     if outboxShown {
                         sidebarItem(.outbox, badge: moreBadge(.outbox))
                     }
-                    if remindersDue {
+                    if hasReminders {
                         sidebarItem(.reminders, badge: moreBadge(.reminders))
                     }
                     SidebarMoreToggle(open: disclosure.moreOpen, identifier: "sidebar.more") {
@@ -2005,7 +2005,7 @@ struct Sidebar: View {
         if !store.scheduledSends.isEmpty || store.selectedView == .scheduled {
             sidebarItem(.scheduled, badge: moreBadge(.scheduled))
         }
-        if !remindersDue {
+        if !hasReminders {
             sidebarItem(.reminders, badge: moreBadge(.reminders))
         }
         sidebarItem(.spam, badge: moreBadge(.spam))
@@ -2032,8 +2032,8 @@ struct Sidebar: View {
         !store.localDrafts.isEmpty || store.selectedView == .outbox
     }
 
-    /// Reminders that are due: their count is above zero.
-    private var remindersDue: Bool {
+    /// Any conversation with a reminder (the Reminders count).
+    private var hasReminders: Bool {
         (store.unreadCounts["reminders"] ?? 0) > 0
     }
 
@@ -2041,7 +2041,7 @@ struct Sidebar: View {
     private func isBehindMore(_ view: MailboxView) -> Bool {
         switch view {
         case .scheduled, .spam, .promotions, .social: return true
-        case .reminders: return !remindersDue
+        case .reminders: return !hasReminders
         default: return false
         }
     }

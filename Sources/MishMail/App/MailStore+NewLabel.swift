@@ -41,8 +41,11 @@ extension MailStore {
             try await db.write { db in try row.save(db) }
         } catch {
             // Created on Gmail all the same: the next sync brings it in.
+            // Close the dialog (a second Create would be refused by Gmail)
+            // and say so.
             reloadAccounts()
-            return "The label was created on Gmail but could not be saved on this Mac yet. It appears after the next sync."
+            showNotice("The label was created on Gmail. It appears here after the next sync.")
+            return nil
         }
         reloadAccounts()
         return nil
