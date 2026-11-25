@@ -48,6 +48,9 @@ struct GLabel: Decodable {
     /// Where Gmail lists the label: `labelShow`, `labelShowIfUnread` or
     /// `labelHide`. Mirrored into `LabelRow.listVisibility`.
     var labelListVisibility: String? = nil
+    /// Whether Gmail shows the label's chip on conversations in the message
+    /// list: `show` or `hide`. Mirrored into `LabelRow.messageListVisibility`.
+    var messageListVisibility: String? = nil
 }
 
 struct GLabelList: Decodable { let labels: [GLabel]? }
@@ -455,13 +458,33 @@ actor GmailClient {
         return list.labels ?? []
     }
 
-    /// Creates a user label (409 if the name already exists).
-    func createLabel(name: String) async throws -> GLabel {
-        try await request("POST", "/labels", jsonBody: [
+    /// Creates a user label (409 if the name already exists), with a Gmail
+    /// color when one is given (a sublabel takes its parent's).
+    func createLabel(name: String, color: GmailLabelColor? = nil) async throws -> GLabel {
+        var body: [String: Any] = [
             "name": name,
             "labelListVisibility": "labelShow",
             "messageListVisibility": "show",
-        ])
+        ]
+        if let color { body.merge(Self.labelColorPatchBody(color)) { $1 } }
+        return try await request("POST", "/labels", jsonBody: body)
+    }
+
+    /// `labels.patch` with the fields of `patch` only (name, the two
+    /// visibilities). The answer is the label as Gmail now has it.
+    func patchLabel(id: String, _ patch: GmailLabelPatch) async throws -> GLabel {
+        try await request("PATCH", "/labels/\(Self.pathSegment(id))", jsonBody: patch.body)
+    }
+
+    /// `labels.delete`: the label goes, its conversations stay (they only
+    /// lose it). Gmail deletes this one label, not its sublabels. A label
+    /// already gone (404) counts as deleted.
+    func deleteLabel(id: String) async throws {
+        do {
+            try await requestVoid("DELETE", "/labels/\(Self.pathSegment(id))")
+        } catch GmailError.http(404, _) {
+            return
+        }
     }
 
     /// Sets a user label's color on Gmail (`labels.patch`, gmail.modify
@@ -666,7 +689,7 @@ actor GmailClient {
     nonisolated static func quotaCost(method: String, path: String, format: String = "full") -> Int {
         if path == "/history" { return 2 }
         if path == "/labels" && method == "POST" { return 5 }
-        if path.hasPrefix("/labels/") && method == "PATCH" { return 5 }
+        if path.hasPrefix("/labels/") && (method == "PATCH" || method == "DELETE") { return 5 }
         if path.hasPrefix("/settings/filters") && method != "GET" { return 5 }
         if path == "/messages" { return 5 }
         if path == "/messages/send" { return 100 }

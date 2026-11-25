@@ -1983,6 +1983,7 @@ struct Sidebar: View {
         .sheet(item: $newLabel) { request in
             NewLabelSheet(request: request)
         }
+        .modifier(LabelMenuPresentation())
         .confirmationDialog(
             "Delete saved view?",
             isPresented: confirmingViewDeleteShown,

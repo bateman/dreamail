@@ -649,6 +649,13 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// `labelShow`, Gmail's default. Drives where the sidebar shows the label
     /// (`SidebarLabelTree`).
     var listVisibility: String? = nil
+    /// Gmail's `messageListVisibility` (`show`, `hide`), refreshed on every
+    /// label sync (v66). nil reads as `show`. A hidden label's chip is left
+    /// off the rows of the message list, as in Gmail.
+    var messageListVisibility: String? = nil
+
+    /// Whether conversation rows show this label's chip.
+    var showsInMessageList: Bool { messageListVisibility != "hide" }
 
     /// The colors a label is drawn with: the local pick when there is one
     /// (its text color is then chosen for contrast), else Gmail's pair.
@@ -2906,6 +2913,14 @@ final class AppDatabase: @unchecked Sendable {
                 ON thread(accountId)
                 WHERE isUnread = 1 AND inSpam = 1
                 """)
+        }
+        // v66 (after v65; registered last): Gmail's per-label message list
+        // visibility, written from the sidebar's label menu and mirrored on
+        // every label sync. No value reads as Gmail's default, `show`.
+        m.registerMigration("v66") { db in
+            try db.alter(table: "label") { t in
+                t.add(column: "messageListVisibility", .text)
+            }
         }
         return m
     }

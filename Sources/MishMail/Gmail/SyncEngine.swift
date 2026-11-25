@@ -312,7 +312,8 @@ actor SyncEngine {
                                sortOrder: existing?.sortOrder ?? LabelRow.unsorted,
                                gmailBackgroundColor: gmailColors.background,
                                gmailTextColor: gmailColors.text,
-                               listVisibility: l.labelListVisibility)
+                               listVisibility: l.labelListVisibility,
+                               messageListVisibility: l.messageListVisibility)
             // Runs every pass, and labels almost never change between
             // passes — write only rows that differ from the stored one.
             if row != existing { try row.save(db) }

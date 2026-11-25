@@ -139,6 +139,8 @@ struct SidebarLabelRow: View {
     @Environment(\.mailAccent) private var accent
     let node: SidebarLabelNode
     let onNewLabel: (NewLabelRequest) -> Void
+    @State private var hovering = false
+    @State private var pickingColor = false
 
     var body: some View {
         let view = MailboxView.label(account: node.accountId, labelId: node.gmailLabelId,
@@ -157,21 +159,35 @@ struct SidebarLabelRow: View {
             SidebarLabelTag(colors: node.colors)
         }
         .listItemTint(.monochrome)
-        .modifier(SidebarCount(count: unread, painted: accent.paintsSelection))
+        // Gmail's "⋮" takes the count's place on hover and on the open label.
+        .modifier(SidebarCount(count: showsMenuButton(selected) ? 0 : unread,
+                               painted: accent.paintsSelection))
         .help(node.fullName)
         .accessibilityIdentifier("sidebar.label.\(node.accountId).\(node.gmailLabelId)")
+        .overlay(alignment: .trailing) {
+            if showsMenuButton(selected) {
+                LabelMenuButton(node: node, onNewLabel: onNewLabel) { pickingColor = true }
+            }
+        }
+        .onHover { hovering = $0 }
+        .popover(isPresented: $pickingColor, arrowEdge: .trailing) {
+            if let row = store.labelRow(node) {
+                LabelColorPalette(label: row) { pickingColor = false }
+            }
+        }
         .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
         .contextMenu {
-            Button("Add Sublabel…") {
-                onNewLabel(NewLabelRequest(accountId: node.accountId, parent: node.fullName))
-            }
-            Button("Organize Labels…") { store.showLabelOrganizer = true }
+            LabelMenuItems(node: node, onNewLabel: onNewLabel) { pickingColor = true }
         }
         .simultaneousGesture(
             TapGesture().onEnded { store.goTo(view) },
             including: reselect ? .gesture : .subviews)
         .tag(view)
     }
+}
+
+extension SidebarLabelRow {
+    fileprivate func showsMenuButton(_ selected: Bool) -> Bool { hovering || selected || pickingColor }
 }
 
 /// Gmail's label glyph: a tag filled with the label's color (the Mac-only

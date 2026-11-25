@@ -226,6 +226,12 @@ enum SidebarDisclosure {
         if ids.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(ids.sorted(), forKey: key) }
     }
 
+    /// A removed label leaves nothing behind (DEC-019).
+    static func forget(_ labelId: String, accountId: String,
+                       _ defaults: UserDefaults = .standard) {
+        setLabel(labelId, accountId: accountId, expanded: false, defaults)
+    }
+
     static func flag(_ key: String, _ defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: key)
     }

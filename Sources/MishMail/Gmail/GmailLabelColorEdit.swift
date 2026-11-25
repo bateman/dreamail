@@ -179,7 +179,7 @@ enum GmailLabelColorEdit {
         if confirmed != wanted { throw Failure.notApplied }
     }
 
-    private static func store(_ db: Database, _ colors: LabelColors, id: String) throws {
+    static func store(_ db: Database, _ colors: LabelColors, id: String) throws {
         try db.execute(sql: "UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ? WHERE id = ?",
                        arguments: [colors.background, colors.text, id])
     }
