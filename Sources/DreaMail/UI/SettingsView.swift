@@ -87,7 +87,9 @@ struct SettingsView: View {
         }
         .frame(width: 800, height: 520)
         .onAppear {
-            if !OAuthConfig.isConfigured { pane = .googleAPI }
+            // The demo inbox needs no Google client: a pane asked for (compose's
+            // "Manage signatures") stays.
+            if !OAuthConfig.isConfigured, !store.demoMode { pane = .googleAPI }
         }
     }
 

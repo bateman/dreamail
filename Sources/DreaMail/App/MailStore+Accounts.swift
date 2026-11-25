@@ -112,6 +112,7 @@ extension MailStore {
             }
             guard !Task.isCancelled, !self.isShuttingDown else { return }
             await self.refreshSendIdentities(accountId: accountId)
+            await self.refreshGmailSignatures(accountId: accountId, force: true)
             // Own addresses are filtered at rank time. The new primary is
             // already in `ownEmailAddresses` before send-as returns, so
             // setSendIdentities sees no change and would not re-rank.
@@ -150,6 +151,7 @@ extension MailStore {
         accounts.removeAll { $0.id == id }
         forgetAccountPhoto(id)
         forgetSignatureSettingsAccount(id)
+        signatureSync[id] = nil
         // OpenPGP passphrase and results of the account leave memory.
         openPGP.forget(accountId: id)
         // DEC-019: the account's Gmail filters leave memory with it.
