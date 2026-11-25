@@ -55,6 +55,15 @@ struct MainWindowFrame: NSViewRepresentable {
     private final class Anchor: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            // TEMP-PROBE (remove before final head)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let w = self?.window else { return }
+                let keys = UserDefaults.standard.dictionaryRepresentation()
+                    .filter { $0.key.hasPrefix("NSWindow Frame") }
+                UITestBreadcrumbs.record(
+                    "PROBE autosaveName='\(w.frameAutosaveName)' frame=\(w.frame) keys=\(keys)")
+            }
+            if ProcessInfo.processInfo.environment["MISHMAIL_FRAME_PROBE_ONLY"] == "1" { return }
             guard let window, !MainWindowFrame.ignoresSavedFrame,
                   window.frameAutosaveName.isEmpty else { return }
             // After SwiftUI's first layout, so its default size can't win.
