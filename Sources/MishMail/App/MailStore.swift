@@ -80,7 +80,7 @@ final class MailStore {
     /// so a successful poll tick does not reassign the array views enumerate.
     /// Every successful `syncNow` stamps `Account.lastSyncAt`, and leaving that
     /// field on the row type would make `if nextAccounts != accounts` always
-    /// fail — republishing the sidebar, account switcher, Accounts settings,
+    /// fail — republishing the sidebar, account rail, Accounts settings,
     /// and FilterBar on every tick forever.
     private(set) var lastSyncByAccount: [String: Date] = [:]
     /// From identities (primary + Gmail send-as) across all linked accounts.
@@ -2645,7 +2645,7 @@ struct ComposeRequest: Identifiable {
 
     // MARK: - Loading
 
-    /// UserDefaults key for the account switcher's drag-reordered id list.
+    /// UserDefaults key for the account rail's drag-reordered id list.
     /// Local-only (like label order): reauth/reinsert paths never touch this,
     /// so a token refresh or bundle-id migration can't scramble it.
     private static let accountOrderDefaultsKey = "accountOrder"
@@ -4197,7 +4197,7 @@ struct ComposeRequest: Identifiable {
         }
     }
 
-    /// Persists a drag-reorder of the account switcher. The unified "all
+    /// Persists a drag-reorder of the account rail. The unified "all
     /// inboxes" entry isn't part of `accounts` (it's a synthetic nil-account
     /// row rendered separately in ContentView), so it's never touched here.
     func reorderAccounts(from source: IndexSet, to destination: Int) {

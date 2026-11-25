@@ -3,7 +3,7 @@ import XCTest
 /// "Edit Account Labels…" offers a label color per account (system color
 /// picker, organizer swatches, Default) with a preview of the ringed
 /// avatar, always enabled, and a pick survives Save and reopening. The
-/// switcher shows the label as the account's title. Demo inbox only: its
+/// rail names the account avatar by its label. Demo inbox only: its
 /// one account carries a "Personal" label and sends as "Alex Rivera".
 final class AccountLabelColorUITests: XCTestCase {
     private let account = "you@example.com"
@@ -25,30 +25,17 @@ final class AccountLabelColorUITests: XCTestCase {
         app.activate()
         XCTAssertTrue(element(app, "threadRow.\(account):t3").waitForExistence(timeout: 10),
                       "demo inbox should load")
-        // Sidebar starts collapsed; → reveals it (as in SidebarNavUITests).
-        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
+        // Choose the account in the rail (always visible): its tooltip and
+        // VoiceOver name is the label, not the sender name.
+        let avatar = element(app, "accountRail.account.\(account)")
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5), "account avatar in the rail")
+        avatar.click()
+        XCTAssertTrue(avatar.label.contains("Personal"),
+                      "the avatar's name is the label: \(avatar.label)")
+        XCTAssertFalse(avatar.label.contains("Alex Rivera"),
+                       "the avatar does not show the sender name: \(avatar.label)")
 
-        // Choose the account: the switcher header's title is its label.
-        let switcher = element(app, "accountSwitcher")
-        XCTAssertTrue(switcher.waitForExistence(timeout: 5), "account switcher in the sidebar")
-        switcher.click()
-        let row = inPopover(app, "Personal")
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "the account row is in the switcher")
-        row.click()
-        XCTAssertTrue(app.popovers.firstMatch.waitForNonExistence(timeout: 5),
-                      "choosing an account closes the switcher")
-        XCTAssertTrue(switcher.label.contains("Personal"),
-                      "the header's title is the label: \(switcher.label)")
-        XCTAssertFalse(switcher.label.contains("Alex Rivera"),
-                       "the header does not show the sender name: \(switcher.label)")
-
-        openEditor(app) {
-            // The switcher row's title is the label, not the sender name.
-            XCTAssertTrue(self.inPopover(app, "Personal").waitForExistence(timeout: 5),
-                          "the account row is titled with its label")
-            XCTAssertFalse(self.inPopover(app, "Alex Rivera").exists,
-                           "the sender name is not shown in the switcher")
-        }
+        openEditor(app)
         let picker = element(app, "accountLabelColorPicker.\(account)")
         XCTAssertTrue(picker.waitForExistence(timeout: 5), "the editor has a color picker")
         XCTAssertTrue(element(app, "accountLabelColorPreview.\(account)").exists,
@@ -95,22 +82,13 @@ final class AccountLabelColorUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
-    /// Any element in the switcher popover whose label mentions `text`.
-    private func inPopover(_ app: XCUIApplication, _ text: String) -> XCUIElement {
-        app.popovers.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@", text))
-            .firstMatch
-    }
-
-    /// Opens the switcher popover, runs `inPopover` while it is open, then
-    /// chooses "Edit Account Labels…".
-    private func openEditor(_ app: XCUIApplication, inPopover: () -> Void = {}) {
-        let switcher = element(app, "accountSwitcher")
-        XCTAssertTrue(switcher.waitForExistence(timeout: 5), "account switcher in the sidebar")
-        switcher.click()
-        inPopover()
-        let edit = element(app, "editAccountLabels")
-        XCTAssertTrue(edit.waitForExistence(timeout: 5), "switcher offers Edit Account Labels…")
+    /// Opens "Edit Account Labels…" from the account avatar's context menu.
+    private func openEditor(_ app: XCUIApplication) {
+        let avatar = element(app, "accountRail.account.\(account)")
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5), "account avatar in the rail")
+        avatar.rightClick()
+        let edit = app.menuItems["Edit Account Labels…"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "context menu offers Edit Account Labels…")
         edit.click()
     }
 }
