@@ -44,3 +44,11 @@ message that starts the work, and do not stop to ask.
 Decisions already recorded in `docs/registro-decisioni.md` come first: where
 one of them differs from Gmail on purpose (for example generic notifications
 by default, or "deleted means gone"), it stands.
+
+## Commits: no personal e-mail addresses
+
+The owner keeps his e-mail addresses private on GitHub and has push
+protection on for commits that expose them. A commit made in a session uses
+the session's own author identity; no commit, trailer, file or pull request
+text carries one of the owner's personal addresses. Where the owner must be
+named as author, use `bateman@users.noreply.github.com`.
