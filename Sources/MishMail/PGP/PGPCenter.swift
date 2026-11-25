@@ -154,38 +154,50 @@ final class PGPCenter {
             uncheckable.insert(message.id)
             return
         }
-        let engine = engine(accountId: message.accountId)
-        let checked = await PGPInspection.security(ofRaw: raw, engine: engine, enabled: enabled,
-                                                   decryptPartOnRequest: decryptPart)
-        guard !Task.isCancelled else { return }
-        guard let security = checked else {
+        // Keys, a passphrase or the lock state may change while the engine
+        // works (`generation`). A result computed before such a change is
+        // never stored: the check runs again with what holds now.
+        for _ in 0..<Self.maxAttempts {
+            let started = generation
+            let engine = engine(accountId: message.accountId)
+            let checked = await PGPInspection.security(ofRaw: raw, engine: engine, enabled: enabled,
+                                                       decryptPartOnRequest: decryptPart)
+            guard generation == started else { continue }
+            guard let security = checked else {
+                uncheckable.remove(message.id)
+                plain.insert(message.id)
+                return
+            }
+            // The keys could not be read: no verdict, try again later.
+            if case .failed(.keysUnavailable) = security.encryption {
+                uncheckable.insert(message.id)
+                return
+            }
+            if case .notChecked(.keysUnavailable) = security.signature {
+                uncheckable.insert(message.id)
+                return
+            }
+            let displayedFrom = message.fromHeader
+            let reading = await Task.detached(priority: .userInitiated) {
+                Reading.build(security, displayedFrom: displayedFrom)
+            }.value
+            guard generation == started else { continue }
             uncheckable.remove(message.id)
-            plain.insert(message.id)
+            store(reading, for: message.id)
+            if case .failed(.passphraseRequired) = security.encryption,
+               passphrases.passphrase(accountId: message.accountId) != nil {
+                wrongPassphrase.insert(message.accountId)
+            } else if case .decrypted = security.encryption {
+                wrongPassphrase.remove(message.accountId)
+            }
             return
         }
-        // The keys could not be read: no verdict, try again later.
-        if case .failed(.keysUnavailable) = security.encryption {
-            uncheckable.insert(message.id)
-            return
-        }
-        if case .notChecked(.keysUnavailable) = security.signature {
-            uncheckable.insert(message.id)
-            return
-        }
-        uncheckable.remove(message.id)
-        let displayedFrom = message.fromHeader
-        let reading = await Task.detached(priority: .userInitiated) {
-            Reading.build(security, displayedFrom: displayedFrom)
-        }.value
-        guard !Task.isCancelled else { return }
-        store(reading, for: message.id)
-        if case .failed(.passphraseRequired) = security.encryption,
-           passphrases.passphrase(accountId: message.accountId) != nil {
-            wrongPassphrase.insert(message.accountId)
-        } else if case .decrypted = security.encryption {
-            wrongPassphrase.remove(message.accountId)
-        }
+        // Still changing: no verdict now; the next open checks again.
+        uncheckable.insert(message.id)
     }
+
+    /// Checks restarted because keys or a passphrase changed meanwhile.
+    private static let maxAttempts = 3
 
     /// Remote content stays blocked for a message that may be OpenPGP
     /// until it is checked, and after, whenever the rules say so (EFAIL).

@@ -284,6 +284,24 @@ enum PGPDisplay {
         }
     }
 
+    /// A user ID as text that cannot mislead: control characters (a
+    /// newline that fakes a second user ID) and bidirectional formatting
+    /// characters (which reorder what is shown) are written as visible
+    /// `U+XXXX` escapes.
+    static func safeUserID(_ userID: String) -> String {
+        var out = ""
+        for scalar in userID.unicodeScalars {
+            let bidi = (0x202A...0x202E).contains(scalar.value) || (0x2066...0x2069).contains(scalar.value)
+                || [0x200E, 0x200F, 0x061C].contains(scalar.value)
+            if scalar.properties.generalCategory == .control || bidi {
+                out += String(format: "\u{27E8}U+%04X\u{27E9}", scalar.value)
+            } else {
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out
+    }
+
     /// For each key about to be imported, the addresses of its user IDs
     /// that another stored key of the account already claims: the import
     /// screen flags them, since a signature by either key would show that
@@ -293,7 +311,8 @@ enum PGPDisplay {
         var out: [PGPKeyReference: [String]] = [:]
         for key in incoming {
             let mine = PGPSecurityRules.signerAddresses(key)
-            let others = stored.filter { $0.key != key.key }
+            // Other stored keys, and the other keys of the same file.
+            let others = (stored + incoming).filter { $0.key != key.key }
                 .reduce(into: Set<String>()) { $0.formUnion(PGPSecurityRules.signerAddresses($1)) }
             let clash = mine.intersection(others).sorted()
             if !clash.isEmpty { out[key.key] = clash }

@@ -2437,7 +2437,7 @@ struct MessageCard: View {
                 // OpenPGP: checked when opened (again at each open while it
                 // could not be checked), and after the keys, a passphrase or
                 // the lock state change (`generation`).
-                .task(id: "\(message.id)|\(store.openPGP.generation)") {
+                .task(id: "\(message.id)|\(store.openPGP.generation)|\(pgpCandidate)") {
                     if pgpReading == nil { checkPGP() }
                 }
             }

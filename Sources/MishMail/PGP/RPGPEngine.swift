@@ -85,10 +85,14 @@ struct RPGPEngine: OpenPGPEngine {
         return summaries
     }
 
-    /// An older copy of a key, without its revocation signature, must not
-    /// make a revoked key valid again: where the stored certificate is
-    /// revoked and the new one is not, the stored one stays, and its summary
-    /// (revoked) is what the import reports.
+    /// An older copy of a key, without its revocation signature or with an
+    /// older self-signature, must not make a revoked or expired key valid
+    /// again: where the stored certificate is revoked (and the new one is
+    /// not) or expired (and the new one is valid), the stored one stays, and
+    /// its summary is what the import reports. shortcut: a renewed key
+    /// (later expiry) is also kept out until the old one is deleted; telling
+    /// a renewal from a replay, by merging certificates, belongs in the
+    /// library.
     private func keepingRevocations(_ blocks: [PGPArmoredKey], _ keys: [PGPKeySummary])
         async throws -> ([PGPArmoredKey], [PGPKeySummary]) {
         var kept: [PGPArmoredKey] = []
@@ -98,7 +102,7 @@ struct RPGPEngine: OpenPGPEngine {
             if key.validity != .revoked, let stored = try await store.certificate(block.key) {
                 let reply = try await call { $0.inspectKeys(stored, now) }
                 if let old = try RPGPReply.decode(reply.json).keys?.first(where: { $0.key == block.key }),
-                   old.validity == .revoked {
+                   old.validity == .revoked || (old.validity == .expired && key.validity == .valid) {
                     summaries.append(old)
                     continue
                 }

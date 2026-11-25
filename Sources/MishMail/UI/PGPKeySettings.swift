@@ -59,7 +59,7 @@ struct PGPKeySettings: View {
                             Button("Import your secret key…") { importing = .secretKeys }
                                 .accessibilityIdentifier("settings.openPGP.importSecret")
                         }
-                        Text("A secret key stays under its own passphrase. MishMail asks for it when a message needs it and keeps it only until it quits.")
+                        Text("A secret key stays under its own passphrase. MishMail asks for it when a message needs it and keeps it in memory only, until it quits, the screen locks or the Mac sleeps.")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                         if let importResult {
                             Text(importResult).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -140,7 +140,7 @@ struct PGPKeySettings: View {
                     // Every user ID: each one is an address this key can
                     // sign for.
                     ForEach(key.userIDs, id: \.self) { userID in
-                        Text(userID).font(.system(size: 13, weight: .medium))
+                        Text(PGPDisplay.safeUserID(userID)).font(.system(size: 13, weight: .medium))
                     }
                     Text(PGPDisplay.grouped(key.key.fingerprint))
                         .font(.system(size: 11).monospaced())
@@ -165,7 +165,7 @@ struct PGPKeySettings: View {
             }
             if expanded.contains(key.key) {
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(key.userIDs, id: \.self) { Text($0).font(.system(size: 12)) }
+                    ForEach(key.userIDs, id: \.self) { Text(PGPDisplay.safeUserID($0)).font(.system(size: 12)) }
                     Text("User IDs are stated by the key; nobody has verified them. Compare the fingerprint with its owner.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     if let created = key.created {
@@ -228,7 +228,9 @@ struct PGPKeySettings: View {
         }
         do {
             let keys = try await store.openPGP.inspect(data, accountId: account)
-            let stored = (try? await store.openPGP.keys(accountId: account)) ?? []
+            // Fails closed: without the stored keys the clash check cannot
+            // run, so no sheet opens.
+            let stored = try await store.openPGP.keys(accountId: account)
             reviewing = PendingImport(accountId: account, data: data, kind: kind, keys: keys,
                                       claimedElsewhere: PGPDisplay.addressesClaimedElsewhere(keys, stored: stored))
             importResult = nil
@@ -241,9 +243,9 @@ struct PGPKeySettings: View {
         do {
             let imported = try await store.openPGP.importKeys(pending.data, accountId: pending.accountId,
                                                               secret: pending.kind == .secretKeys)
-            let revoked = imported.filter { $0.validity == .revoked }.count
+            let notValid = imported.filter { $0.validity == .revoked || $0.validity == .expired }.count
             importResult = (imported.count == 1 ? "Imported 1 key." : "Imported \(imported.count) keys.")
-                + (revoked > 0 ? " Revoked: \(revoked) (a stored revocation is kept)." : "")
+                + (notValid > 0 ? " Revoked or expired: \(notValid). A stored revoked or expired copy is kept; delete the key first to replace it." : "")
         } catch {
             importResult = Self.message(error)
         }
@@ -292,7 +294,7 @@ private struct PGPImportReviewSheet: View {
                             Text(PGPDisplay.grouped(key.key.fingerprint))
                                 .font(.system(size: 12).monospaced())
                                 .textSelection(.enabled)
-                            ForEach(key.userIDs, id: \.self) { Text($0).font(.system(size: 12)) }
+                            ForEach(key.userIDs, id: \.self) { Text(PGPDisplay.safeUserID($0)).font(.system(size: 12)) }
                             if key.userIDs.isEmpty {
                                 Text("No user ID").font(.system(size: 12)).foregroundStyle(.secondary)
                             }

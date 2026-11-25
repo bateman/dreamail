@@ -59,7 +59,7 @@ private struct PGPDetailsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Signature: \(line.status.rawValue)").font(.system(size: 12, weight: .semibold))
                     ForEach(line.userIDs, id: \.self) { userID in
-                        Text(userID).font(.system(size: 12))
+                        Text(PGPDisplay.safeUserID(userID)).font(.system(size: 12))
                     }
                     if !line.userIDs.isEmpty {
                         Text("User IDs are stated by the key; nobody has verified them.")
@@ -151,7 +151,7 @@ struct PGPBodyReplacement: View {
                         Text("That passphrase didn’t unlock your key.")
                             .font(.system(size: 11)).foregroundStyle(.red)
                     }
-                    Text("Kept in memory until MishMail quits; never saved.")
+                    Text("Kept in memory only, until MishMail quits, the screen locks or the Mac sleeps; never saved.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }

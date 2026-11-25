@@ -192,8 +192,9 @@ final class PGPPassphrases: @unchecked Sendable {
         byAccount = [:]
     }
 
-    /// Zeroes the stored bytes before letting go of them. Copies made
-    /// elsewhere (the text field's `String`, the engine call) cannot be.
+    /// Zeroes the stored bytes before letting go of them. Best effort:
+    /// copies made elsewhere (the text field's `String`, the buffers handed
+    /// to the engine, any copy `Data` made on write) are not reached.
     private func wipe(_ id: String) {
         guard let count = byAccount[id]?.count, count > 0 else { return }
         byAccount[id]?.resetBytes(in: 0..<count)

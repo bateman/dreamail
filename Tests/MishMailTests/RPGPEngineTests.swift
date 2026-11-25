@@ -286,6 +286,21 @@ final class RPGPEngineTests: XCTestCase {
         XCTAssertEqual(store.addedCertificates.last?.map(\.key), [alice])
     }
 
+    /// Round 2: an older copy cannot bring an expired key back either.
+    func testAStoredExpiredKeyIsNotReplacedByAValidCopy() async throws {
+        let store = MemoryStore()
+        let alice = PGPKeyReference(fingerprint: "AAAA0000")
+        store.stored[alice] = Data("stored expired cert".utf8)
+        let (engine, canned) = engine(#"{"ok":true,"keys":[\#(aliceJSON)]}"#, data: reserialized, store: store)
+        canned.replies["inspectKeys"] = RPGPRawReply(json: Data(#"""
+            {"ok":true,"keys":[{"fingerprint":"AAAA0000","user_ids":["Alice <alice@example.org>"],
+              "has_secret":false,"created":1700000000,"expires":1750000000,"validity":"expired"}]}
+            """#.utf8), data: Data())
+        let imported = try await engine.importKeys(Data("older copy".utf8))
+        XCTAssertEqual(imported.map(\.validity), [.expired])
+        XCTAssertEqual(store.addedCertificates, [[]])
+    }
+
     func testInspectStoresNothing() async throws {
         let store = MemoryStore()
         let (engine, canned) = engine(#"{"ok":true,"keys":[\#(aliceJSON)]}"#, store: store)

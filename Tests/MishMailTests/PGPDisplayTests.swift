@@ -287,5 +287,16 @@ final class PGPDisplayTests: XCTestCase {
                        [mallory.key: ["boss@corp.com"]])
         XCTAssertEqual(PGPDisplay.addressesClaimedElsewhere([boss], stored: [boss]), [:], "the same key is no clash")
         XCTAssertEqual(PGPDisplay.addressesClaimedElsewhere([mallory], stored: []), [:])
+        // Two keys of the same file claiming one address flag each other.
+        XCTAssertEqual(PGPDisplay.addressesClaimedElsewhere([mallory, boss], stored: []),
+                       [mallory.key: ["boss@corp.com"], boss.key: ["boss@corp.com"]])
+    }
+
+    /// A user ID cannot fake a second line or reorder what is shown.
+    func testUserIDsAreShownSafely() {
+        XCTAssertEqual(PGPDisplay.safeUserID("Alice <alice@example.org>"), "Alice <alice@example.org>")
+        XCTAssertEqual(PGPDisplay.safeUserID("Mallory\n<boss@corp.com>"), "Mallory\u{27E8}U+000A\u{27E9}<boss@corp.com>")
+        XCTAssertEqual(PGPDisplay.safeUserID("x\u{202E}moc.proc@ssob"), "x\u{27E8}U+202E\u{27E9}moc.proc@ssob")
+        XCTAssertEqual(PGPDisplay.safeUserID("Zoë <zoe@example.org>"), "Zoë <zoe@example.org>", "letters stay")
     }
 }

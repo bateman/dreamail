@@ -316,4 +316,68 @@ final class PGPCenterTests: XCTestCase {
         _ = try await center.importKeys(Data("k".utf8), accountId: "a@x.com", secret: false)
         XCTAssertNotEqual(center.generation, before)
     }
+
+    // MARK: - Review round 2
+
+    /// Opens once; every `wait` before or after returns then.
+    private final class Gate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var opened = false
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+        func wait() async {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if opened { lock.unlock(); continuation.resume() } else { waiting.append(continuation); lock.unlock() }
+            }
+        }
+        func open() {
+            lock.lock(); opened = true; let all = waiting; waiting = []; lock.unlock()
+            all.forEach { $0.resume() }
+        }
+    }
+
+    /// Decrypts the first time only after `release` opens, then answers
+    /// that the key is locked.
+    private final class SuspendingEngine: OpenPGPEngine, @unchecked Sendable {
+        let started = Gate(), release = Gate()
+        private let lock = NSLock()
+        private var calls = 0
+        var decryptCalls: Int { lock.lock(); defer { lock.unlock() }; return calls }
+        func decrypt(_ message: Data) async throws -> PGPDecryptionResult {
+            let first: Bool = { lock.lock(); defer { lock.unlock() }; calls += 1; return calls == 1 }()
+            guard first else { throw PGPEngineError.passphraseRequired }
+            started.open()
+            await release.wait()
+            return PGPDecryptionResult(plaintext: Data("Content-Type: text/plain\r\n\r\nsecret".utf8), signatures: [])
+        }
+        func verifyDetached(signedData: Data, signature: Data) async throws -> [PGPSignatureResult] { [] }
+        func verifyCleartext(_ message: Data) async throws -> PGPCleartextResult { throw PGPEngineError.malformed }
+        func inspectKeys(_ data: Data) async throws -> [PGPKeySummary] { [] }
+        func importKeys(_ data: Data) async throws -> [PGPKeySummary] { [] }
+        func importSecretKeys(_ data: Data) async throws -> [PGPKeySummary] { [] }
+        func keys() async throws -> [PGPKeySummary] { [] }
+        func deleteKey(_ key: PGPKeyReference) async throws {}
+    }
+
+    /// A check in flight when the screen locks never stores what it
+    /// decrypted before the lock: it runs again with what holds now.
+    func testACheckInFlightDoesNotOutliveALock() async throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        let engine = SuspendingEngine()
+        let center = PGPCenter(database: q, enabled: true, secrets: MemorySecretKeys(),
+                               makeEngine: { _ in engine })
+        let encrypted = [AttachmentRow(id: nil, messageId: "a@x.com:m1", gmailAttachmentId: "x",
+                                       filename: "encrypted.asc", mimeType: "application/octet-stream",
+                                       size: 1)]
+        let source = RawSource(PGPCorpus.crlf(PGPCorpus.encrypted))
+        let check = Task { await center.check(message(), attachments: encrypted, fetchRaw: source.fetch) }
+        await engine.started.wait()
+        center.lockedOrAsleep()
+        engine.release.open()
+        await check.value
+        XCTAssertEqual(engine.decryptCalls, 2, "checked again after the lock")
+        XCTAssertEqual(center.readings["a@x.com:m1"]?.body, .notice(.passphraseRequired),
+                       "the text decrypted before the lock is not kept")
+    }
 }
