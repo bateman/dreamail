@@ -25,6 +25,14 @@ packages:
   GRDB:
     url: https://github.com/duckduckgo/GRDB.swift
     revision: 46098847eeabdb008f238bef5750a8e64097b6ed
+  # The OpenPGP engine (rPGP behind a C interface, step 4B) as a prebuilt,
+  # checksummed static xcframework. Release v0.1.0, pinned by the commit that
+  # sets that version and its checksum in Package.swift; SwiftPM refuses a
+  # downloaded zip with another SHA-256. Linked always; called only when the
+  # build turns OpenPGP on (the build switch, see PGPFeatures).
+  MishMailRPGP:
+    url: https://github.com/bateman/dreamail-openpgp
+    revision: adad8a18d07c0ec10695e43bb700479d0d971dfa
 targets:
   MishMail:
     type: application
@@ -36,6 +44,7 @@ targets:
       - Sources/MishMailRelauncher/Relaunch.swift
     dependencies:
       - package: GRDB
+      - package: MishMailRPGP
       # Embedded at Contents/Library/MishMailRelauncher.app and signed on copy.
       - target: MishMailRelauncher
         embed: true
@@ -183,6 +192,8 @@ targets:
           - UITestBreadcrumbs.swift
     dependencies:
       - package: GRDB
+      # The real library, so the bindings and a round trip are tested.
+      - package: MishMailRPGP
     configFiles:
       Debug: Config/Signing.xcconfig
       Release: Config/Signing.xcconfig

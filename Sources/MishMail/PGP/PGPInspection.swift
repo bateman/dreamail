@@ -19,9 +19,9 @@ enum PGPInspection {
     }
 
     /// Checks the first OpenPGP/MIME entity of a raw message with `engine`
-    /// and says what is known. Nil with the switch off (nothing is parsed and
-    /// the engine is not called) and for a message with no OpenPGP/MIME
-    /// entity.
+    /// and says what is known; with none, the first cleartext-signed text
+    /// part. Nil with the switch off (nothing is parsed and the engine is
+    /// not called) and for a message with neither.
     ///
     /// `From` is read from the same raw bytes; a message with more than one
     /// `From` header is not checked. An encrypted part inside a larger
@@ -38,9 +38,13 @@ enum PGPInspection {
         guard let first = found.first(where: {
             $0.finding == .mimeSigned || $0.finding == .mimeEncrypted
         }) else {
-            guard found.contains(where: { $0.finding == .malformedMIME }) else { return nil }
-            return PGPMessageSecurity(encryption: .notEncrypted, signature: .notChecked(.malformed),
-                                      fromHeader: fromHeader)
+            if found.contains(where: { $0.finding == .malformedMIME }) {
+                return PGPMessageSecurity(encryption: .notEncrypted, signature: .notChecked(.malformed),
+                                          fromHeader: fromHeader)
+            }
+            guard let inline = found.first(where: { $0.finding == .inlineSigned }) else { return nil }
+            return await cleartext(inline, root: root, raw: raw, froms: froms.count,
+                                   fromHeader: fromHeader, engine: engine)
         }
         guard froms.count == 1 else {
             return PGPMessageSecurity(encryption: .notEncrypted, signature: .notChecked(.malformed),
@@ -77,6 +81,29 @@ enum PGPInspection {
         }
     }
 
+    /// A cleartext-signed text part (`BEGIN PGP SIGNED MESSAGE`). Only the
+    /// text the engine returns may be shown as signed (`signedText`).
+    private static func cleartext(_ inline: PGPLocatedFinding, root: RawMIMEPart, raw: Data,
+                                  froms: Int, fromHeader: String,
+                                  engine: any OpenPGPEngine) async -> PGPMessageSecurity? {
+        guard froms == 1 else {
+            return PGPMessageSecurity(encryption: .notEncrypted, signature: .notChecked(.malformed),
+                                      fromHeader: fromHeader)
+        }
+        guard let node = part(at: inline.path, in: root) else { return nil }
+        let text = RawMIME.decodedBody(node, in: raw)
+        do {
+            let result = try await engine.verifyCleartext(text)
+            return PGPMessageSecurity(
+                encryption: .notEncrypted,
+                signature: .checked(result.signatures, coversWholeMessage: inline.coversWholeMessage),
+                fromHeader: fromHeader, signedText: result.signedText)
+        } catch {
+            return PGPMessageSecurity(encryption: .notEncrypted, signature: .notChecked(engineError(error)),
+                                      fromHeader: fromHeader)
+        }
+    }
+
     private static func findings(_ root: RawMIMEPart, _ raw: Data) -> [PGPLocatedFinding] {
         PGPStructure.findings(in: MIMEOutline(raw: root, in: raw), enabled: true)
     }
@@ -90,7 +117,9 @@ enum PGPInspection {
         return node
     }
 
+    /// Anything that is not the engine's own answer (the Keychain, the
+    /// database) says nothing about the message.
     private static func engineError(_ error: Error) -> PGPEngineError {
-        (error as? PGPEngineError) ?? .malformed
+        (error as? PGPEngineError) ?? .keysUnavailable
     }
 }

@@ -7,6 +7,8 @@ final class RPGPEngineTests: XCTestCase {
 
     private final class Canned: RPGPBindings, @unchecked Sendable {
         var reply = RPGPRawReply(json: Data(), data: Data())
+        /// Per call, when one needs its own answer.
+        var replies: [String: RPGPRawReply] = [:]
         private(set) var calls: [String] = []
         private(set) var lastPassphrase: Data?
         private(set) var lastNow: Int64?
@@ -14,7 +16,7 @@ final class RPGPEngineTests: XCTestCase {
         private func answer(_ name: String, _ now: Int64) -> RPGPRawReply {
             calls.append(name)
             lastNow = now
-            return reply
+            return replies[name] ?? reply
         }
         func verifyDetached(_ data: Data, _ signature: Data, _ certs: Data, _ now: Int64) -> RPGPRawReply {
             answer("verifyDetached", now)
@@ -41,14 +43,16 @@ final class RPGPEngineTests: XCTestCase {
     private final class MemoryStore: PGPKeyStore, @unchecked Sendable {
         var certs = Data("certs".utf8)
         var secrets = Data("sk".utf8)
-        private(set) var addedCertificates: [Data] = []
-        private(set) var addedSecretKeys: [Data] = []
+        var stored: [PGPKeyReference: Data] = [:]
+        private(set) var addedCertificates: [[PGPArmoredKey]] = []
+        private(set) var addedSecretKeys: [[PGPArmoredKey]] = []
         private(set) var removed: [PGPKeyReference] = []
         func certificates() async throws -> Data { certs }
         func secretKeys() async throws -> Data { secrets }
+        func certificate(_ key: PGPKeyReference) async throws -> Data? { stored[key] }
         func passphrase() async throws -> Data { Data("pw".utf8) }
-        func addCertificates(_ armored: Data) async throws { addedCertificates.append(armored) }
-        func addSecretKeys(_ armored: Data) async throws { addedSecretKeys.append(armored) }
+        func addCertificates(_ keys: [PGPArmoredKey]) async throws { addedCertificates.append(keys) }
+        func addSecretKeys(_ keys: [PGPArmoredKey]) async throws { addedSecretKeys.append(keys) }
         func remove(_ key: PGPKeyReference) async throws { removed.append(key) }
     }
 
@@ -56,6 +60,14 @@ final class RPGPEngineTests: XCTestCase {
         {"fingerprint":"AAAA0000","user_ids":["Alice <alice@example.org>"],"has_secret":false,
          "created":1700000000,"expires":null,"validity":"valid"}
         """
+
+    /// Armor framing around a marker, not key material: the engine only
+    /// splits the library's answer at these lines.
+    private static func block(_ marker: String) -> String {
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n\(Data(marker.utf8).base64EncodedString())\n"
+            + "-----END PGP PUBLIC KEY BLOCK-----\n"
+    }
+    private let reserialized = Data(block("reserialized").utf8)
 
     private func engine(_ json: String, data: Data = Data(), secrets: Data = Data("sk".utf8),
                         store: MemoryStore = MemoryStore()) -> (RPGPEngine, Canned) {
@@ -147,7 +159,7 @@ final class RPGPEngineTests: XCTestCase {
               "created":0,"expires":1900000000,"validity":"revoked"},
               {"fingerprint":"cccc","user_ids":[],"has_secret":false,"created":0,"expires":null,
                "validity":"something_new"}]}
-            """#, data: Data("reserialized".utf8))
+            """#, data: Data((Self.block("one") + Self.block("two")).utf8))
         let imported = try await keys.importKeys(Data("k".utf8))
         XCTAssertEqual(imported.map(\.key.fingerprint), ["BBBB1111", "CCCC"])
         XCTAssertEqual(imported.first?.hasSecretKey, true)
@@ -159,10 +171,11 @@ final class RPGPEngineTests: XCTestCase {
         let store = MemoryStore()
         let (engine, canned) = engine(#"""
             {"ok":true,"keys":[\#(aliceJSON)]}
-            """#, data: Data("reserialized".utf8), store: store)
+            """#, data: reserialized, store: store)
         let imported = try await engine.importKeys(Data("what the user pasted".utf8))
         XCTAssertEqual(imported.map(\.key.fingerprint), ["AAAA0000"])
-        XCTAssertEqual(store.addedCertificates, [Data("reserialized".utf8)],
+        XCTAssertEqual(store.addedCertificates,
+                       [[PGPArmoredKey(key: PGPKeyReference(fingerprint: "AAAA0000"), armored: reserialized)]],
                        "only what the library checked and re-serialized is stored")
         XCTAssertEqual(store.addedSecretKeys, [], "public import never stores secret keys")
 
@@ -192,14 +205,109 @@ final class RPGPEngineTests: XCTestCase {
         let store = MemoryStore()
         let (engine, canned) = engine(#"""
             {"ok":true,"keys":[\#(aliceJSON)]}
-            """#, data: Data("reserialized".utf8), store: store)
+            """#, data: reserialized, store: store)
         _ = try await engine.importSecretKeys(Data("secret".utf8))
         XCTAssertEqual(canned.calls, ["importSecret", "importPublic"])
-        XCTAssertEqual(store.addedSecretKeys, [Data("reserialized".utf8)])
-        XCTAssertEqual(store.addedCertificates, [Data("reserialized".utf8)])
+        let alice = [PGPArmoredKey(key: PGPKeyReference(fingerprint: "AAAA0000"), armored: reserialized)]
+        XCTAssertEqual(store.addedSecretKeys, [alice])
+        XCTAssertEqual(store.addedCertificates, [alice])
 
         let (none, _) = self.engine(#"{"ok":false,"error":"no_secret_key"}"#, store: store)
         await assertThrows(.noSecretKey) { _ = try await none.importSecretKeys(Data("public only".utf8)) }
+    }
+
+    /// The library writes one block per key; any other count cannot say
+    /// which block is which key, so nothing is stored.
+    func testABlockCountThatDoesNotMatchTheKeysStoresNothing() async {
+        let store = MemoryStore()
+        for data in [Data(), Data("no armor".utf8), Data((Self.block("a") + Self.block("b")).utf8)] {
+            let (engine, _) = engine(#"{"ok":true,"keys":[\#(aliceJSON)]}"#, data: data, store: store)
+            await assertThrows(.malformed) { _ = try await engine.importKeys(Data("k".utf8)) }
+            await assertThrows(.malformed) { _ = try await engine.importSecretKeys(Data("k".utf8)) }
+        }
+        XCTAssertEqual(store.addedCertificates, [])
+        XCTAssertEqual(store.addedSecretKeys, [])
+    }
+
+    /// Input above the library's limit is refused before it is copied
+    /// across or a store is read.
+    func testInputAboveTheLimitNeverReachesTheLibrary() async {
+        let (engine, canned) = engine(#"{"ok":true,"signatures":[]}"#)
+        let big = Data(count: RPGPEngine.maxInputBytes + 1)
+        await assertThrows(.tooLarge) { _ = try await engine.decrypt(big) }
+        await assertThrows(.tooLarge) { _ = try await engine.verifyCleartext(big) }
+        await assertThrows(.tooLarge) { _ = try await engine.verifyDetached(signedData: big, signature: Data()) }
+        await assertThrows(.tooLarge) { _ = try await engine.importKeys(big) }
+        XCTAssertEqual(canned.calls, [])
+    }
+
+    func testArmorBlocksSplitAtTheirFramingLines() {
+        let text = "junk\r\n" + Self.block("a").replacingOccurrences(of: "\n", with: "\r\n")
+            + "between\n" + Self.block("b") + "-----BEGIN PGP PUBLIC KEY BLOCK-----\nunterminated\n"
+        XCTAssertEqual(PGPArmorBlocks.split(Data(text.utf8)),
+                       [Data(Self.block("a").utf8), Data(Self.block("b").utf8)])
+    }
+
+    /// A cancelled task does not call the library.
+    func testACancelledCallDoesNotReachTheLibrary() async {
+        let (engine, canned) = engine(#"{"ok":true,"signatures":[]}"#)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await engine.verifyCleartext(Data("m".utf8))
+        }
+        do {
+            _ = try await task.value
+            XCTFail("expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(canned.calls, [])
+    }
+
+    /// R2: an older copy without the revocation signature must not make a
+    /// stored revoked key valid again.
+    func testAStoredRevocationIsNotUndoneByReimport() async throws {
+        let store = MemoryStore()
+        let alice = PGPKeyReference(fingerprint: "AAAA0000")
+        store.stored[alice] = Data("stored revoked cert".utf8)
+        let (engine, canned) = engine(#"{"ok":true,"keys":[\#(aliceJSON)]}"#, data: reserialized, store: store)
+        canned.replies["inspectKeys"] = RPGPRawReply(json: Data(#"""
+            {"ok":true,"keys":[{"fingerprint":"AAAA0000","user_ids":["Alice <alice@example.org>"],
+              "has_secret":false,"created":1700000000,"expires":null,"validity":"revoked"}]}
+            """#.utf8), data: Data())
+        let imported = try await engine.importKeys(Data("older copy".utf8))
+        XCTAssertEqual(imported.map(\.validity), [.revoked], "the import reports the stored, revoked key")
+        XCTAssertEqual(store.addedCertificates, [[]], "the stored certificate is not replaced")
+
+        // A stored valid key is replaced as usual.
+        canned.replies["inspectKeys"] = nil
+        let replaced = try await engine.importKeys(Data("newer copy".utf8))
+        XCTAssertEqual(replaced.map(\.validity), [.valid])
+        XCTAssertEqual(store.addedCertificates.last?.map(\.key), [alice])
+    }
+
+    /// Round 2: an older copy cannot bring an expired key back either.
+    func testAStoredExpiredKeyIsNotReplacedByAValidCopy() async throws {
+        let store = MemoryStore()
+        let alice = PGPKeyReference(fingerprint: "AAAA0000")
+        store.stored[alice] = Data("stored expired cert".utf8)
+        let (engine, canned) = engine(#"{"ok":true,"keys":[\#(aliceJSON)]}"#, data: reserialized, store: store)
+        canned.replies["inspectKeys"] = RPGPRawReply(json: Data(#"""
+            {"ok":true,"keys":[{"fingerprint":"AAAA0000","user_ids":["Alice <alice@example.org>"],
+              "has_secret":false,"created":1700000000,"expires":1750000000,"validity":"expired"}]}
+            """#.utf8), data: Data())
+        let imported = try await engine.importKeys(Data("older copy".utf8))
+        XCTAssertEqual(imported.map(\.validity), [.expired])
+        XCTAssertEqual(store.addedCertificates, [[]])
+    }
+
+    func testInspectStoresNothing() async throws {
+        let store = MemoryStore()
+        let (engine, canned) = engine(#"{"ok":true,"keys":[\#(aliceJSON)]}"#, store: store)
+        let keys = try await engine.inspectKeys(Data("k".utf8))
+        XCTAssertEqual(keys.map(\.key.fingerprint), ["AAAA0000"])
+        XCTAssertEqual(canned.calls, ["inspectKeys"])
+        XCTAssertEqual(store.addedCertificates, [])
     }
 
     /// The whole pipeline: a raw message, the engine over canned bindings,

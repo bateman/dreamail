@@ -2858,6 +2858,14 @@ final class AppDatabase: @unchecked Sendable {
         m.registerMigration("v61") { db in
             try CalendarStore.createTables(db)
         }
+        // v62 (reserved for OpenPGP, step 4B; registered before v63 and v64,
+        // which merged first): each account's OpenPGP certificates, cascading
+        // from the account (`PGPKeyTable`). Secret keys are never stored
+        // here, only in the Keychain; the row carries a flag. Written only
+        // when the build turns OpenPGP on (`PGPFeatures`).
+        m.registerMigration("v62") { db in
+            try PGPKeyTable.createTable(db)
+        }
         // v63 (v62 is reserved for the encryption work): the signatures of each account
         // and the default of each sending address, cascading from the
         // account (`SignatureStore`).

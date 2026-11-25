@@ -48,8 +48,8 @@ MISHMAIL_CALENDAR =
 
 // OpenPGP support, expanded into Info.plist as MishMailPGP. Deliberately
 // empty: with it off no OpenPGP surface is shown and no message is inspected
-// for OpenPGP structure. Set it in Local.xcconfig to build it in (today it
-// adds nothing visible: step 4B is groundwork only):  MISHMAIL_PGP = YES
+// for OpenPGP structure. Set it in Local.xcconfig to build it in (signature
+// check, decryption and Settings → OpenPGP keys):  MISHMAIL_PGP = YES
 MISHMAIL_PGP =
 
 #include? "Local.xcconfig"
