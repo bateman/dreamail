@@ -252,7 +252,7 @@ final class CalendarIntegrationTests: XCTestCase {
 
         // The purge deletes the rows; the store forgets the memory.
         let account = self.account
-        try h.db.write { try CalendarStore.forget($0, accountId: account) }
+        try await h.db.write { try CalendarStore.forget($0, accountId: account) }
         await h.integration.forget(accountId: account)
         XCTAssertEqual(h.integration.locatedCount, 0)
         XCTAssertNil(h.integration.grants[account])
@@ -304,7 +304,8 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertEqual(findings.route(for: facts()),
                        .calendarAndEmail(calendarId: "primary", eventId: "ev1"))
         XCTAssertFalse(findings.canAddToCalendar(facts(), organizerIsSender: true))
-        XCTAssertFalse(try h.db.read { try $0.tableExists("calendarInviteEvent") })
+        let tableExists = try await h.db.read { try $0.tableExists("calendarInviteEvent") }
+        XCTAssertFalse(tableExists)
     }
 
     func testAConflictOnAChosenCalendarIsReported() async throws {
@@ -332,8 +333,8 @@ final class CalendarIntegrationTests: XCTestCase {
         try connect(h)
         h.net.respond = { _, _ in (200, Fixture.empty, [:]) }
         let long = facts(hours: 24 * 40)
-        let findings = try XCTUnwrap(
-            (await h.integration.check(long, messageId: "m1", accountId: account)).findings)
+        let findingsCheck = await h.integration.check(long, messageId: "m1", accountId: account)
+        let findings = try XCTUnwrap(findingsCheck.findings)
         XCTAssertTrue(findings.availabilitySkipped)
         XCTAssertNil(findings.availability)
         XCTAssertEqual(h.net.requests.filter { !Fixture.isLookup($0) }.count, 0,
@@ -347,8 +348,8 @@ final class CalendarIntegrationTests: XCTestCase {
             if Fixture.isLookup(request) { return (200, Fixture.empty, [:]) }
             return (200, #"{"items":[],"nextPageToken":"more"}"#, [:])
         }
-        let findings = try XCTUnwrap(
-            (await h.integration.check(facts(), messageId: "m1", accountId: account)).findings)
+        let findingsCheck = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        let findings = try XCTUnwrap(findingsCheck.findings)
         XCTAssertEqual(findings.availability?.isIncomplete, true)
         XCTAssertEqual(h.net.requests.filter { !Fixture.isLookup($0) }.count,
                        CalendarClient.availabilityMaxPages)
@@ -549,8 +550,8 @@ final class CalendarIntegrationTests: XCTestCase {
             if request.httpMethod == "POST" { return (500, "{}", [:]) }
             return (200, Fixture.empty, [:])
         }
-        let findings = try XCTUnwrap(
-            (await h.integration.check(facts(), messageId: "m1", accountId: account)).findings)
+        let findingsCheck = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        let findings = try XCTUnwrap(findingsCheck.findings)
         onCalendar.set()
         let updated = try await h.integration.addToCalendar(
             facts(), findings: findings, organizerIsSender: true, attendeeEmail: "a@x.com",
@@ -563,8 +564,8 @@ final class CalendarIntegrationTests: XCTestCase {
         let h = try harness()
         try connect(h)
         h.net.respond = { _, _ in (200, Fixture.empty, [:]) }
-        let findings = try XCTUnwrap(
-            (await h.integration.check(facts(), messageId: "m1", accountId: account)).findings)
+        let findingsCheck = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        let findings = try XCTUnwrap(findingsCheck.findings)
         do {
             _ = try await h.integration.addToCalendar(
                 facts(), findings: findings, organizerIsSender: false, attendeeEmail: "a@x.com",
@@ -605,13 +606,13 @@ final class CalendarIntegrationTests: XCTestCase {
             }
             return (200, Fixture.empty, [:])
         }
-        let findings = try XCTUnwrap(
-            (await h.integration.check(facts(), messageId: "m1", accountId: account)).findings)
+        let findingsCheck = await h.integration.check(facts(), messageId: "m1", accountId: account)
+        let findings = try XCTUnwrap(findingsCheck.findings)
         _ = try await h.integration.addToCalendar(
             facts(), findings: findings, organizerIsSender: true, attendeeEmail: "a@x.com",
             messageId: "m1", accountId: account)
-        let other = try XCTUnwrap(
-            (await h.integration.check(facts(), messageId: "m2", accountId: account)).findings)
+        let otherCheck = await h.integration.check(facts(), messageId: "m2", accountId: account)
+        let other = try XCTUnwrap(otherCheck.findings)
         XCTAssertEqual(other.event?.eventId, "new1")
         XCTAssertFalse(other.canAddToCalendar(facts(), organizerIsSender: true))
     }
