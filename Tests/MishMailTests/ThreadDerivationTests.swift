@@ -291,7 +291,9 @@ final class ThreadDerivationTests: XCTestCase {
         ThreadUndo.unsnooze(&row)
         XCTAssertTrue(row.labels.contains("INBOX"))
         ThreadUndo.apply(.snooze(until: second), &row)
-        let woken = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "INBOX")
+        // Same message (same date): only its labels changed on Gmail.
+        var woken = archived
+        woken.labelIds = "INBOX"
         let synced = try XCTUnwrap(derive([woken], existing: row))
         XCTAssertEqual(synced.snoozeUntil, second)
     }
