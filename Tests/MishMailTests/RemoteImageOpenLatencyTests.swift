@@ -185,8 +185,18 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
     private final class ImageHost: NSObject, WKURLSchemeHandler {
         private(set) var started = 0
         private var tasks: [any WKURLSchemeTask] = []
+        /// Paths answered at once (status, MIME type, body); others wait.
+        var immediate: [String: (status: Int, mime: String, body: Data)] = [:]
         func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
             started += 1
+            if let url = urlSchemeTask.request.url, let answer = immediate[url.path] {
+                urlSchemeTask.didReceive(HTTPURLResponse(
+                    url: url, statusCode: answer.status, httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": answer.mime])!)
+                urlSchemeTask.didReceive(answer.body)
+                urlSchemeTask.didFinish()
+                return
+            }
             tasks.append(urlSchemeTask)
         }
         func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
@@ -253,6 +263,39 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
             return HTMLBodyLayout.measuredHeight(fromScriptResult: result)
         }
 
+        /// Per image: failed class, computed `content` and `display`, and
+        /// the alt-text box shown in its place (text, width).
+        func imageStates() async throws -> (allowed: Bool, images: [String: [String: Any]]) {
+            let script = """
+            (function(){
+              var out = {};
+              var imgs = document.querySelectorAll('img');
+              for (var i = 0; i < imgs.length; i++) {
+                var img = imgs[i], cs = getComputedStyle(img), next = img.nextSibling;
+                var box = next && next.classList && next.classList.contains('\(HTMLBodyLayout.altTextClass)') ? next : null;
+                out[img.id] = {
+                  failed: img.classList.contains('\(HTMLBodyLayout.failedImageClass)'),
+                  content: String(cs.content),
+                  display: cs.display,
+                  alt: box ? box.textContent : '',
+                  altWidth: box ? Math.round(box.getBoundingClientRect().width) : 0
+                };
+              }
+              return JSON.stringify({
+                allowed: document.documentElement.classList.contains('\(HTMLBodyLayout.imagesAllowedClass)'),
+                images: out
+              });
+            })()
+            """
+            let result: Any? = await withCheckedContinuation { done in
+                webView.evaluateJavaScript(script) { value, _ in done.resume(returning: value) }
+            }
+            let json = try XCTUnwrap((result as? String)?.data(using: .utf8))
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: json) as? [String: Any])
+            return (object["allowed"] as? Bool ?? false,
+                    object["images"] as? [String: [String: Any]] ?? [:])
+        }
+
         func className() async -> String {
             let result: Any? = await withCheckedContinuation { done in
                 webView.evaluateJavaScript("document.querySelector('img').className") { value, _ in
@@ -263,8 +306,10 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         }
     }
 
-    private func load(_ html: String) -> Harness {
+    private func load(_ html: String, cspMeta: String = "",
+                      immediate: [String: (status: Int, mime: String, body: Data)] = [:]) -> Harness {
         let images = ImageHost()
+        images.immediate = immediate
         let pane = Pane()
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
@@ -280,7 +325,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         webView.navigationDelegate = pane
         window.contentView?.addSubview(webView)
         let document = HTMLBodyDocument.assemble(
-            html: html, cspMeta: "", styleCSS: HTMLBodyDarkMode.injectedCSS(fontScale: 1.0))
+            html: html, cspMeta: cspMeta, styleCSS: HTMLBodyDarkMode.injectedCSS(fontScale: 1.0))
         webView.loadHTMLString(document, baseURL: URL(string: "mmimg://images.example/"))
         return Harness(webView: webView, pane: pane, images: images, window: window)
     }
@@ -327,6 +372,88 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
             after = await h.className()
         }
         XCTAssertTrue(after.contains(HTMLBodyLayout.failedImageClass), after)
+    }
+
+    // MARK: Failed images: no broken-image icon (Gmail-like)
+
+    /// The allowed CSP of the app with the test's image scheme added, so the
+    /// host below can answer 404 or a non-image body; https stays allowed.
+    private var allowedCSPWithTestScheme: String {
+        HTMLBodyCSP.metaTag(allowRemoteImages: true).replacingOccurrences(
+            of: "img-src data: cid: https:", with: "img-src data: cid: https: mmimg:")
+    }
+
+    private func waitForFailures(_ h: Harness, ids: [String]) async throws
+        -> (allowed: Bool, images: [String: [String: Any]]) {
+        var states = try await h.imageStates()
+        let deadline = Date().addingTimeInterval(10)
+        while ids.contains(where: { states.images[$0]?["failed"] as? Bool != true }), Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            _ = await h.measure()
+            states = try await h.imageStates()
+        }
+        return states
+    }
+
+    /// With images allowed, an image that fails (404, a body that is not an
+    /// image, an `http:` URL the CSP blocks, a `cid:` part that is missing)
+    /// draws a transparent pixel instead of WebKit's "?", shows its alt text
+    /// when it has one, in a box of its authored width; an image still
+    /// loading from a dead host is left alone.
+    func testFailedImagesShowNothingOrTheirAltText() async throws {
+        let html = """
+        <p>Grazie per il tuo acquisto!</p>
+        <img id="missing" src="mmimg://images.example/404.png" alt="SumUp" width="80" height="30">
+        <img id="notimage" src="mmimg://images.example/page.png" width="60" height="20">
+        <img id="http" src="http://images.example/logo.png" width="120" height="40">
+        <img id="cid" src="cid:missing-part@example" alt="Logo">
+        <img id="dead" src="mmimg://images.example/dead.png" width="50" height="50">
+        <p>Totale</p>
+        """
+        let h = load(html, cspMeta: allowedCSPWithTestScheme, immediate: [
+            "/404.png": (404, "text/plain", Data()),
+            "/page.png": (200, "text/html", Data("<html>not an image</html>".utf8)),
+        ])
+        defer { h.close() }
+        try await wait { h.pane.domReady }
+        _ = await h.measure()
+        let failing = ["missing", "notimage", "http", "cid"]
+        let states = try await waitForFailures(h, ids: failing)
+        XCTAssertTrue(states.allowed, "the allowed CSP is detected")
+        for id in failing {
+            let image = try XCTUnwrap(states.images[id], id)
+            XCTAssertEqual(image["failed"] as? Bool, true, "\(id) failed: \(image)")
+            XCTAssertTrue((image["content"] as? String ?? "").contains("data:image/gif"),
+                          "\(id) draws the transparent pixel, not the broken-image icon: \(image)")
+        }
+        XCTAssertEqual(states.images["missing"]?["alt"] as? String, "SumUp")
+        XCTAssertEqual(states.images["missing"]?["display"] as? String, "none", "the alt text replaces it")
+        XCTAssertEqual(states.images["missing"]?["altWidth"] as? Int, 80, "at its authored width")
+        XCTAssertEqual(states.images["cid"]?["alt"] as? String, "Logo")
+        XCTAssertEqual(states.images["http"]?["alt"] as? String, "", "no alt: nothing shown")
+        XCTAssertNotEqual(states.images["http"]?["display"] as? String, "none", "its box stays")
+        let dead = try XCTUnwrap(states.images["dead"])
+        XCTAssertEqual(dead["failed"] as? Bool, false, "still loading: not failed")
+        XCTAssertFalse((dead["content"] as? String ?? "").contains("data:image/gif"))
+    }
+
+    /// With images blocked (Ask each time, Spam), a blocked image keeps the
+    /// blocked-image placeholder but no broken-image icon either.
+    func testBlockedImagesKeepThePlaceholderWithoutTheIcon() async throws {
+        let html = """
+        <p>Newsletter</p>
+        <img id="blocked" src="https://images.example/hero.png" width="300" height="100">
+        """
+        let h = load(html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: false))
+        defer { h.close() }
+        try await wait { h.pane.domReady }
+        _ = await h.measure()
+        let states = try await waitForFailures(h, ids: ["blocked"])
+        XCTAssertFalse(states.allowed)
+        let image = try XCTUnwrap(states.images["blocked"])
+        XCTAssertEqual(image["failed"] as? Bool, true, "\(image)")
+        XCTAssertTrue((image["content"] as? String ?? "").contains("data:image/gif"), "\(image)")
+        XCTAssertNotEqual(image["display"] as? String, "none")
     }
 
     /// A slow host: measured before the image, then re-measured when it

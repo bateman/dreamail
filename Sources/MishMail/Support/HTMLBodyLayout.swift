@@ -45,6 +45,20 @@ enum HTMLBodyLayout {
     static let layoutImageClass = "mm-img-layout"
     /// Class stamped when the image failed or is blocked (no natural size).
     static let failedImageClass = "mm-img-failed"
+    /// A failed or blocked image whose alt text is shown in its place (the
+    /// image itself is hidden), as Gmail on the web does.
+    static let replacedImageClass = "mm-img-replaced"
+    /// The element that shows a failed image's alt text.
+    static let altTextClass = "mm-img-alt"
+    /// Set on `<html>` when the document's CSP lets remote images load: a
+    /// failed image then shows nothing (or its alt text) instead of the
+    /// blocked-image placeholder.
+    static let imagesAllowedClass = "mm-images-allowed"
+    /// 1×1 transparent GIF drawn in place of a failed image (CSS `content`),
+    /// so WebKit never paints its broken-image icon. `data:` is allowed by
+    /// every CSP variant.
+    static let transparentPixel =
+        "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
     /// Class stamped on nodes whose viewport-tied height/min-height was neutralized.
     static let heightNeutralizedClass = "mm-h-neutralized"
 
@@ -343,6 +357,9 @@ enum HTMLBodyLayout {
     static var imageCSS: String {
         let layout = layoutImageClass
         let failed = failedImageClass
+        let replaced = replacedImageClass
+        let alt = altTextClass
+        let allowed = imagesAllowedClass
         return """
         img.\(layout) {
           max-width: 100%;
@@ -350,6 +367,27 @@ enum HTMLBodyLayout {
           box-sizing: border-box;
         }
         img.\(failed) {
+          background-color: rgba(127, 127, 127, 0.10);
+          outline: 1px dashed rgba(127, 127, 127, 0.35);
+          outline-offset: -1px;
+          content: url("\(transparentPixel)");
+        }
+        html.\(allowed) img.\(failed) {
+          background: none !important;
+          outline: none !important;
+        }
+        img.\(replaced) {
+          display: none !important;
+        }
+        .\(alt) {
+          display: inline-block;
+          max-width: 100%;
+          overflow: hidden;
+          vertical-align: bottom;
+          box-sizing: border-box;
+          overflow-wrap: anywhere;
+        }
+        html:not(.\(allowed)) .\(alt) {
           background-color: rgba(127, 127, 127, 0.10);
           outline: 1px dashed rgba(127, 127, 127, 0.35);
           outline-offset: -1px;
@@ -445,6 +483,9 @@ enum HTMLBodyLayout {
     static let installLayoutAndMeasureJS: String = {
         let layout = layoutImageClass
         let failed = failedImageClass
+        let replaced = replacedImageClass
+        let altClass = altTextClass
+        let allowedClass = imagesAllowedClass
         let neutral = heightNeutralizedClass
         let maxW = maxPreservedWidth
         let maxH = maxPreservedHeight
@@ -462,6 +503,9 @@ enum HTMLBodyLayout {
         (function(){
           var LAYOUT='\(layout)';
           var FAILED='\(failed)';
+          var REPLACED='\(replaced)';
+          var ALT='\(altClass)';
+          var ALLOWED='\(allowedClass)';
           var NEUTRAL='\(neutral)';
           var MAX_W=\(maxW);
           var MAX_H=\(maxH);
@@ -570,8 +614,38 @@ enum HTMLBodyLayout {
             try { delete img.__mmLayoutSnap; } catch (e) { img.__mmLayoutSnap = null; }
           }
 
+          /* A failed or blocked image with alt text shows that text in its
+             place (as Gmail on the web does), in a box of the image's
+             authored size when it has one; the image itself is hidden. The
+             text is set as text, never parsed as markup. */
+          function removeAlt(img){
+            var box = img.__mmAlt;
+            if (box && box.parentNode) box.parentNode.removeChild(box);
+            img.__mmAlt = null;
+            img.classList.remove(REPLACED);
+          }
+
+          function showAlt(img, capped){
+            var alt = String(img.getAttribute('alt') || '').replace(/^\\s+|\\s+$/g, '');
+            if (!alt || !img.parentNode) { removeAlt(img); return; }
+            var box = img.__mmAlt;
+            if (!box || !box.parentNode) {
+              box = document.createElement('span');
+              box.className = ALT;
+              img.parentNode.insertBefore(box, img.nextSibling);
+              img.__mmAlt = box;
+            }
+            if (box.textContent !== alt) box.textContent = alt;
+            if (capped && capped.w != null) box.style.setProperty('width', capped.w + 'px', 'important');
+            else box.style.removeProperty('width');
+            if (capped && capped.h != null) box.style.setProperty('height', capped.h + 'px', 'important');
+            else box.style.removeProperty('height');
+            img.classList.add(REPLACED);
+          }
+
           function applyImage(img){
             if (img.complete && img.naturalWidth > 0) {
+              removeAlt(img);
               clearLayout(img);
               return;
             }
@@ -581,8 +655,11 @@ enum HTMLBodyLayout {
             /* Failed or blocked only once the load has ended without an
                image (complete, no natural size). An image still loading
                keeps its size reservation but is not painted as failed: the
-               measure now runs at DOM ready, before images arrive. */
+               measure now runs at DOM ready, before images arrive. A failed
+               image draws a transparent pixel (CSS), never WebKit's
+               broken-image icon. */
             var failed = !!img.complete;
+            if (failed) showAlt(img, capped); else removeAlt(img);
             if (!capped) {
               if (failed) img.classList.add(FAILED); else img.classList.remove(FAILED);
               return;
@@ -982,6 +1059,18 @@ enum HTMLBodyLayout {
           window.__mmPass = null;
           window.__mmPassGen = (window.__mmPassGen || 0) + 1;
           window.__mmReflowW = viewportWidth();
+
+          /* The CSP this app injected says whether remote images may load:
+             with them allowed a failed image shows nothing (or its alt
+             text); blocked, it keeps the blocked-image placeholder. */
+          try {
+            var csp = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+            var allowsRemote = !!csp && /img-src[^;]*https:/.test(csp.getAttribute('content') || '');
+            if (document.documentElement) {
+              if (allowsRemote) document.documentElement.classList.add(ALLOWED);
+              else document.documentElement.classList.remove(ALLOWED);
+            }
+          } catch (e) {}
 
           pinViewportUnits();
           neutralizeViewportHeights();
