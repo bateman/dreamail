@@ -81,36 +81,6 @@ jobs:
           BASE: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && 'HEAD^1' || github.event_name == 'push' && github.event.before || '' }}
         run: python3 .github/scripts/needs-build.py "$BASE" >> "$GITHUB_OUTPUT"
 
-  # The OpenPGP engine's C ABI over rPGP (step 4B), staged in
-  # Vendor/dreamail-openpgp until it moves to its own repository (DEC-050),
-  # which runs the same checks in its own CI; this job goes with it. Keys
-  # are generated at test time; the compiler comes from rust-toolchain.toml
-  # and every crate from Cargo.lock (--locked). The runner image ships rustup.
-  # The macOS xcframework is not built here.
-  rpgp-engine:
-    name: OpenPGP engine (Rust)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: Vendor/dreamail-openpgp/rust
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install the pinned Rust toolchain
-        run: rustup toolchain install
-
-      - name: Test
-        run: cargo test --locked
-
-      - name: Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
-
-      - name: Check third-party licences
-        run: python3 ../scripts/third_party_licenses.py --check
-
   test:
     # A fixed name: GitHub does not evaluate the name of a skipped job.
     name: Unit tests & build
