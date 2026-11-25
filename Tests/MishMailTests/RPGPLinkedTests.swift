@@ -33,12 +33,12 @@ final class RPGPLinkedTests: XCTestCase {
 
         func close() {
             let gpgconf = URL(fileURLWithPath: gpg).deletingLastPathComponent().appendingPathComponent("gpgconf")
-            _ = try? run(gpgconf.path, ["--homedir", home.path, "--kill", "all"])
+            _ = try? run(["--homedir", home.path, "--kill", "all"], tool: gpgconf.path)
             try? FileManager.default.removeItem(at: home)
         }
 
         @discardableResult
-        func run(_ tool: String? = nil, _ args: [String], input: Data? = nil) throws -> Data {
+        func run(_ args: [String], tool: String? = nil, input: Data? = nil) throws -> Data {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: tool ?? gpg)
             process.arguments = tool == nil ? ["--homedir", home.path, "--batch", "--no-tty", "--quiet"] + args : args
