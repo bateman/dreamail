@@ -6,6 +6,10 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **OpenPGP groundwork (off).** Recognition of OpenPGP/MIME and inline
+  messages, exact signed-byte extraction, and the security and rendering rules,
+  behind the `MISHMAIL_PGP` build switch (empty by default). No library, no
+  interface and no change in behaviour yet.
 - **Gmail filters can be edited.** Filters can now be created, edited and
   deleted in Settings → Gmail filters, with an approximate preview of the
   matching mail on this Mac and a confirmation before saving a filter that
