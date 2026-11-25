@@ -32,20 +32,19 @@ release ships them is the owner's decision at distribution time.
 |---|---|
 | Package | `MishMailRPGP`, the project's own OpenPGP engine over rPGP |
 | Upstream | <https://github.com/bateman/dreamail-openpgp> |
-| Release | `v0.1.0` |
-| Commit (`revision:` in `project.yml`) | `adad8a18d07c0ec10695e43bb700479d0d971dfa` |
-| Binary | `MishMailRPGP.xcframework.zip` from the `v0.1.0` GitHub release, a static library declared as a SwiftPM `binaryTarget`; built twice by the library's Release workflow and published only if both builds are identical |
-| Binary SHA-256 (declared in `Package.swift` at that commit) | `0142aaa4c25bbbfc7eca1b27d50eef8d52edd7ca6abef1f8f47a59b1d4944a94` |
+| Release | `v0.1.1` |
+| Commit (`revision:` in `project.yml`) | `4c66295af3b5e88fb5e593b48059f7fc2dcbe6b7` |
+| Binary | `MishMailRPGP.xcframework.zip` from the `v0.1.1` GitHub release, a static library declared as a SwiftPM `binaryTarget`; built twice by the library's Release workflow and published only if both builds are identical |
+| Binary SHA-256 (declared in `Package.swift` at that commit) | `441e553914f89dc6565fddc1abd5bf643ec172d5115733914959400e3f78dd3b` |
 | Recorded | 25 November 2026 |
 | Contents | rPGP (`pgp` =0.21.1, MIT OR Apache-2.0) and 145 crates in all, listed with their licences in the library's `THIRD_PARTY_LICENSES.md`, which ships in the app. `cx448` has no licence text; its algorithms are refused by policy but the code is compiled in |
 | Accepted advisories (DEC-051) | RUSTSEC-2023-0071 (`rsa`, Marvin), RUSTSEC-2026-0387 (`crypto-bigint`) |
 | Linked when | always, also with `MISHMAIL_PGP` off (DEC-060); with the switch off no code path reaches it |
 
-Release `v0.1.1` of the library (commit
-`4c66295af3b5e88fb5e593b48059f7fc2dcbe6b7`, SHA-256
-`441e553914f89dc6565fddc1abd5bf643ec172d5115733914959400e3f78dd3b`) adds
-decryption of GnuPG 2.4's OCB messages; the app moves to it in a separate
-change.
+Recorded for `v0.1.1`: the checksum in `Package.swift` at the commit, the
+release's `.sha256` asset and the SHA-256 of the downloaded zip all matched
+(25 November 2026). `v0.1.1` adds decryption of GnuPG 2.4's OCB messages;
+`v0.1.0` was commit `adad8a18d07c0ec10695e43bb700479d0d971dfa`.
 
 ## What enforces what
 
