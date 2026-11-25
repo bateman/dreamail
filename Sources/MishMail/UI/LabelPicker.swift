@@ -194,6 +194,7 @@ struct LabelPicker: View {
                 .shadow(radius: 24)
                 .padding(.top, 130)
                 .sheet(item: $newLabel) { NewLabelSheet(request: $0) }
+                .onChange(of: newLabel?.id) { picker.sheetOpen = newLabel != nil }
                 .onAppear { focused = true }
                 .onChange(of: focused) {
                     // When the field finally wins focus, macOS selects all —

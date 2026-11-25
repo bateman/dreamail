@@ -6,6 +6,12 @@ final class LabelPickerKeyRulesTests: XCTestCase {
         XCTAssertFalse(LabelPickerKeyRules.closesAfterApply(moveMode: false, closeKey: false))
     }
 
+    func testReturnDoesNotUndoAPickMadeInThisOpening() {
+        XCTAssertTrue(LabelPickerKeyRules.returnTogglesLabel(moveMode: false, changed: false))
+        XCTAssertFalse(LabelPickerKeyRules.returnTogglesLabel(moveMode: false, changed: true))
+        XCTAssertTrue(LabelPickerKeyRules.returnTogglesLabel(moveMode: true, changed: true))
+    }
+
     func testMoveModeCloseIsLeftToTheMove() {
         XCTAssertFalse(LabelPickerKeyRules.closesAfterApply(moveMode: true, closeKey: true))
     }

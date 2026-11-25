@@ -1,36 +1,17 @@
 import XCTest
 
 /// Gmail's "Label as…" picker: Return applies the highlighted label and
-/// closes in one keystroke; clicking checkboxes toggles without closing and
-/// Esc closes with every pick applied. Demo inbox only.
+/// closes in one keystroke (and only closes once a box was changed in this
+/// opening); Space and clicks toggle without closing; Esc closes with every
+/// pick applied. Demo inbox only: it has the labels Work, Research, Travel,
+/// Family and Friends, each the only match for its own name.
 final class LabelPickerUITests: XCTestCase {
     private let thread = "you@example.com:t3"
-    private let rowPrefix = "labelPicker.row."
+    private var app: XCUIApplication!
 
-    private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: id).firstMatch
-    }
-
-    private func search(_ app: XCUIApplication) -> XCUIElement {
-        element(app, "labelPicker.search")
-    }
-
-    /// The picker's label rows, top to bottom.
-    private func rows(_ app: XCUIApplication) -> [XCUIElement] {
-        app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", rowPrefix))
-            .allElementsBoundByIndex
-            .sorted { $0.frame.minY < $1.frame.minY }
-    }
-
-    private func openPicker(_ app: XCUIApplication) {
-        app.typeKey("l", modifierFlags: [])
-        XCTAssertTrue(search(app).waitForExistence(timeout: 5), "the picker opens")
-        XCTAssertTrue(rows(app).count >= 3, "the picker lists labels")
-    }
-
-    func testReturnAppliesAndClosesButClicksKeepItOpenUntilEsc() {
-        let app = XCUIApplication()
+    override func setUp() {
+        continueAfterFailure = false
+        app = XCUIApplication()
         app.launchEnvironment["MISHMAIL_DEMO"] = "1"
         app.launchEnvironment["MISHMAIL_UI_TEST"] = "1"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
@@ -39,39 +20,95 @@ final class LabelPickerUITests: XCTestCase {
                                 "-threadOpenStyle", "readingPane"]
         app.terminate()
         app.launch()
-        addTeardownBlock { app.terminate() }
+        addTeardownBlock { [app] in app?.terminate() }
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
         app.activate()
-        let row = element(app, "threadRow.\(thread)")
+        let row = element("threadRow.\(thread)")
         XCTAssertTrue(row.waitForExistence(timeout: 10), "demo inbox should load")
         row.click()
+    }
 
-        // Return: arrow to the second label, apply, picker closed.
-        openPicker(app)
-        let secondName = rows(app)[1].label
-        let before = rows(app)[1].value as? String
-        app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
+    private func element(_ id: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+
+    private var search: XCUIElement { element("labelPicker.search") }
+    private func row(_ name: String) -> XCUIElement { element("labelPicker.row.\(name)") }
+
+    private func wait(_ element: XCUIElement, value: String, _ message: String,
+                      file: StaticString = #filePath, line: UInt = #line) {
+        let done = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", value), object: element)
+        XCTAssertEqual(XCTWaiter().wait(for: [done], timeout: 5), .completed, message,
+                       file: file, line: line)
+    }
+
+    private func value(_ name: String) -> String { (row(name).value as? String) ?? "" }
+
+    /// Opens the picker and types a filter that leaves one row, so the
+    /// highlight is on it whatever the pointer does.
+    private func openPicker(filter: String? = nil) {
+        app.typeKey("l", modifierFlags: [])
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "the picker opens")
+        if let filter {
+            app.typeText(filter)
+            XCTAssertTrue(row(filter).waitForExistence(timeout: 5), "filtered to \(filter)")
+        }
+    }
+
+    private func close() { app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: []) }
+
+    private func flipped(_ v: String) -> String { v == "on" ? "off" : "on" }
+
+    func testReturnAppliesAndCloses() {
+        openPicker(filter: "Family")
+        let before = value("Family")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
-        XCTAssertTrue(search(app).waitForNonExistence(timeout: 5),
-                      "Return closes the picker")
+        XCTAssertTrue(search.waitForNonExistence(timeout: 5), "Return closes the picker")
+        openPicker(filter: "Family")
+        wait(row("Family"), value: flipped(before), "Return toggled the highlighted label")
+    }
 
-        openPicker(app)
-        let after = rows(app).first { $0.label == secondName }?.value as? String
-        XCTAssertNotEqual(before, after, "Return toggled the highlighted label")
+    func testReturnAfterSpaceKeepsTheLabelOn() {
+        openPicker(filter: "Travel")
+        let before = value("Travel")
+        // Arrows mark the list as navigated, so Space toggles instead of typing.
+        app.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.upArrow.rawValue, modifierFlags: [])
+        app.typeKey(" ", modifierFlags: [])
+        wait(row("Travel"), value: flipped(before), "Space toggled without closing")
+        XCTAssertTrue(search.exists, "Space keeps the picker open")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(search.waitForNonExistence(timeout: 5), "Return closes")
+        openPicker(filter: "Travel")
+        wait(row("Travel"), value: flipped(before), "Return after Space did not undo the pick")
+    }
 
-        // Clicks toggle without closing; Esc closes with both applied.
-        let first = rows(app)[0], third = rows(app)[2]
-        let firstBefore = first.value as? String, thirdBefore = third.value as? String
-        first.click()
-        third.click()
-        XCTAssertTrue(search(app).exists, "clicking keeps the picker open")
-        XCTAssertNotEqual(firstBefore, rows(app)[0].value as? String)
-        XCTAssertNotEqual(thirdBefore, rows(app)[2].value as? String)
-        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        XCTAssertTrue(search(app).waitForNonExistence(timeout: 5), "Esc closes")
+    func testReturnAfterAClickKeepsTheLabelOn() {
+        openPicker(filter: "Friends")
+        let before = value("Friends")
+        row("Friends").click()
+        wait(row("Friends"), value: flipped(before), "the click toggled the label")
+        XCTAssertTrue(search.exists, "clicking keeps the picker open")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(search.waitForNonExistence(timeout: 5), "Return closes")
+        openPicker(filter: "Friends")
+        wait(row("Friends"), value: flipped(before), "Return after a click did not undo it")
+    }
 
-        openPicker(app)
-        XCTAssertNotEqual(firstBefore, rows(app)[0].value as? String, "first pick stayed applied")
-        XCTAssertNotEqual(thirdBefore, rows(app)[2].value as? String, "second pick stayed applied")
+    func testClicksKeepThePickerOpenAndEscClosesWithBothApplied() {
+        openPicker()
+        XCTAssertTrue(row("Work").waitForExistence(timeout: 5))
+        let work = value("Work"), research = value("Research")
+        row("Work").click()
+        wait(row("Work"), value: flipped(work), "first click toggled")
+        row("Research").click()
+        wait(row("Research"), value: flipped(research), "second click toggled")
+        XCTAssertTrue(search.exists, "clicking keeps the picker open")
+        close()
+        XCTAssertTrue(search.waitForNonExistence(timeout: 5), "Esc closes")
+        openPicker()
+        wait(row("Work"), value: flipped(work), "first pick stayed applied")
+        wait(row("Research"), value: flipped(research), "second pick stayed applied")
     }
 }

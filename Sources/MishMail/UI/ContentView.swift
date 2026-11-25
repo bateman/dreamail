@@ -1335,6 +1335,8 @@ private extension ContentView {
             }
             if store.showLabelPicker {
                 let picker = store.labelPicker
+                // "Create new" sheet on top: its text field gets every key.
+                if picker.sheetOpen { return event }
                 switch event.keyCode {
                 case 53:  // esc
                     store.mailboxOverlay = nil
@@ -1352,6 +1354,9 @@ private extension ContentView {
                     // the field wins focus, Return would otherwise be eaten
                     // by the default branch below (it's a control character,
                     // so it neither deletes nor appends).
+                    // A held Return must not fire again (several creates) or
+                    // reach the list once the picker is gone.
+                    if event.isARepeat { return nil }
                     store.labelPickerActivateHighlighted(closeAfterApply: true)
                     return nil
                 case 49 where picker.navigated:  // space after arrows: toggle, stay open
@@ -1539,6 +1544,9 @@ private extension ContentView {
                 }
                 return nil
             case 36:   // return (Gmail's other open key is the rebindable `o`)
+                // Not on auto-repeat: a Return held through the label picker
+                // would otherwise open the conversation when it closes.
+                if event.isARepeat { return nil }
                 openSelectedFromKeyboard()
                 return nil
             case 115:  // home — first conversation

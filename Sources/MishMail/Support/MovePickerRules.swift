@@ -30,6 +30,12 @@ enum LabelPickerKeyRules {
         !moveMode && closeKey
     }
 
+    /// Whether Return toggles the highlighted label. Once a box was changed in
+    /// this opening (label mode), Return only closes: it must not undo the pick.
+    static func returnTogglesLabel(moveMode: Bool, changed: Bool) -> Bool {
+        moveMode || !changed
+    }
+
     /// The footer's key hints for the highlighted row.
     static func footerHints(moveMode: Bool, onCreateRow: Bool) -> [String] {
         if onCreateRow { return ["↑↓ select", "↵ create", "esc close"] }
