@@ -362,7 +362,9 @@ works, quit MishMail and remove what it left behind:
 # The old app, and its mail cache, attachments, logs and preferences
 rm -rf /Applications/MishMail.app
 rm -rf ~/Library/Containers/io.github.bateman.MishMail ~/Library/Containers/io.github.bateman.MishMail.debug
-rm -f ~/Library/Logs/MishMailRelauncher.log
+rm -f ~/Library/Logs/MishMailRelauncher.log /tmp/mishmail-summarize.log /tmp/mishmail-summarize.err
+# Only if you set up the MCP helper scripts
+rm -rf ~/.config/mishmail
 # Old Google refresh tokens, client secret, database key and OpenPGP keys.
 # Each command deletes one item; repeat until it reports that none was found.
 security delete-generic-password -s io.github.bateman.MishMail
@@ -370,6 +372,13 @@ security delete-generic-password -s io.github.bateman.MishMail.debug
 security delete-generic-password -s io.github.bateman.MishMail.openpgp
 security delete-generic-password -s io.github.bateman.MishMail.debug.openpgp
 ```
+
+Neither app revokes the Google grant when it deletes its own copy: the old
+refresh tokens stay valid at Google until they expire (after 7 days for an
+OAuth client in "Testing") or until you revoke them. DreaMail reuses the same
+client, so removing MishMail's Keychain items is enough; to end the grant
+anyway, remove the app at https://myaccount.google.com/permissions and sign in
+to DreaMail again.
 
 If you installed the daily-summary agent, unload it with
 `launchctl bootout gui/$(id -u)/io.github.bateman.mishmail-summarize` and

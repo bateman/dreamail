@@ -32,7 +32,7 @@ final class OldProductNameTests: XCTestCase {
     /// The upstream project's own identifiers: another product, still named so.
     private static let upstreamForms = [
         "ronboger/" + name.lowercased(),
-        "dev.ronboger." + name,
+        "dev." + "ronboger." + name,
     ]
 
     /// Files outside the scan, with the reason.
@@ -61,7 +61,9 @@ final class OldProductNameTests: XCTestCase {
             "works, quit \(name) and remove what it left behind:",
             "rm -rf /Applications/\(name).app",
             "rm -rf ~/Library/Containers/io.github.bateman.\(name) ~/Library/Containers/io.github.bateman.\(name).debug",
-            "rm -f ~/Library/Logs/\(name)Relauncher.log",
+            "rm -f ~/Library/Logs/\(name)Relauncher.log /tmp/\(name.lowercased())-summarize.log /tmp/\(name.lowercased())-summarize.err",
+            "rm -rf ~/.config/\(name.lowercased())",
+            "client, so removing \(name)'s Keychain items is enough; to end the grant",
             "security delete-generic-password -s io.github.bateman.\(name)",
             "security delete-generic-password -s io.github.bateman.\(name).debug",
             "security delete-generic-password -s io.github.bateman.\(name).openpgp",

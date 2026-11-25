@@ -13,14 +13,25 @@ block=${3:-first}
 if [[ "$block" == first ]]; then
 mkdir -p "$work"
 git archive "$revision" | tar -x -C "$work"
-cp "$root/scripts/benchmarks/InboxLatencyTests.swift" "$work/Tests/DreaMailUITests/"
-cp "$root/scripts/benchmarks/MailLatencyProbe.swift" "$work/Sources/DreaMail/UI/"
 cd "$work"
+# The product name of the measured revision (a baseline from before the
+# rename to DreaMail has other folders, scheme and switch names). The
+# benchmark files are written for the current name and adapted to it.
+product=$(sed -n 's/^name: //p' project.yml)
+upper=$(printf '%s' "$product" | tr '[:lower:]' '[:upper:]')
+lower=$(printf '%s' "$product" | tr '[:upper:]' '[:lower:]')
+for file in InboxLatencyTests.swift:"Tests/${product}UITests" MailLatencyProbe.swift:"Sources/$product/UI"; do
+    sed -e "s/DREAMAIL_/${upper}_/g" -e "s/dreamail\./${lower}./g" \
+        "$root/scripts/benchmarks/${file%%:*}" > "${file#*:}/${file%%:*}"
+done
+export BENCHMARK_PRODUCT="$product"
 # Extend only the disposable source tree. The shipped app and the recorded
 # revisions remain untouched. Keep the original inbox rows above the replicas.
 python3 - <<'PY'
+import os
 from pathlib import Path
-source = Path("Sources/DreaMail/Support/DemoSeed.swift")
+product = os.environ["BENCHMARK_PRODUCT"]
+source = Path("Sources", product, "Support", "DemoSeed.swift")
 text = source.read_text()
 anchor = "                for msg in seedMessages {"
 assert text.count(anchor) == 1
@@ -42,7 +53,7 @@ text = text.replace(anchor, """                for index in seedMessages.indices
 """ + anchor)
 source.write_text(text)
 def insert_after(filename, anchor, addition):
-    path = Path("Sources/DreaMail/UI") / filename
+    path = Path("Sources", product, "UI", filename)
     text = path.read_text()
     assert text.count(anchor) == 1, anchor
     path.write_text(text.replace(anchor, anchor + addition))
@@ -56,14 +67,15 @@ xcodegen generate
 action="test"
 else
     cd "$work"
+    product=$(sed -n 's/^name: //p' project.yml)
     action=test-without-building
 fi
 # Debug bundle identity keeps fixtures separate; compile app code with release
 # optimization for both revisions. The test runner uses the same settings.
-xcodebuild "$action" -project DreaMail.xcodeproj -scheme DreaMailUITests \
+xcodebuild "$action" -project "$product.xcodeproj" -scheme "${product}UITests" \
     -destination "platform=macOS,arch=$(uname -m)" -derivedDataPath "$work/build" \
     -clonedSourcePackagesDirPath "$RUNNER_TEMP/mail-benchmark-packages" \
-    -parallel-testing-enabled NO -only-testing:DreaMailUITests/InboxLatencyTests \
+    -parallel-testing-enabled NO -only-testing:"${product}UITests/InboxLatencyTests" \
     SWIFT_OPTIMIZATION_LEVEL=-O CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
     > "$RUNNER_TEMP/mail-benchmark-$name-$block.log" 2>&1 || {
         tail -100 "$RUNNER_TEMP/mail-benchmark-$name-$block.log"; exit 1

@@ -21,10 +21,14 @@ minor versions may still change behavior.
   `/Applications/MishMail.app`, the containers
   `~/Library/Containers/io.github.bateman.MishMail` and
   `~/Library/Containers/io.github.bateman.MishMail.debug`, the log
-  `~/Library/Logs/MishMailRelauncher.log`, and the Keychain items of the
+  `~/Library/Logs/MishMailRelauncher.log` (and, if you used them,
+  `/tmp/mishmail-summarize.log`, `.err` and `~/.config/mishmail`), and the
+  Keychain items of the
   services `io.github.bateman.MishMail`, `io.github.bateman.MishMail.debug`
   and their `.openpgp` variants (commands in the README, "Coming from a
-  MishMail install of this fork"). The About panel no longer has a "Support"
+  MishMail install of this fork"). The old Google refresh tokens are not
+  revoked: they stay valid until they expire or you remove the app at
+  myaccount.google.com/permissions. The About panel no longer has a "Support"
   link; it credits MishMail by Ron Boger, which DreaMail is derived from.
   Nothing changes in Google Cloud Console.
 
