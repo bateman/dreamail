@@ -313,6 +313,105 @@ final class DockBadgeTests: XCTestCase {
         XCTAssertEqual(try badge(q, scope: scope, focused: nil), 1)
     }
 
+    // MARK: - Per-account counts (avatar badges)
+
+    private func perAccount(_ q: DatabaseQueue, hide: Set<String> = []) throws -> [String: Int] {
+        try q.read { try SidebarCounts.fetchUnreadByAccount(db: $0, hideCategories: hide) }
+    }
+
+    /// Several accounts: each gets its own number, and they add up to the
+    /// Dock badge counting every account. Accounts with none are absent.
+    func testPerAccountCountsAddUpToTheDockBadge() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.insert(db, "a1", account: self.a)
+            try self.insert(db, "a2", account: self.a)
+            try self.insert(db, "b1", account: self.b)
+            try self.insert(db, "b2", account: self.b) { $0.isUnread = false }
+            try self.insert(db, "c1", account: "c@x.com") { $0.inTrash = true }
+        }
+        let counts = try perAccount(q)
+        XCTAssertEqual(counts, [a: 2, b: 1])
+        XCTAssertEqual(counts.values.reduce(0, +), try badge(q))
+    }
+
+    /// Same exclusions as the Dock badge: promotions and hidden categories.
+    func testPerAccountCountsUseTheDockBadgeRule() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.insert(db, "a1", account: self.a)
+            try self.insert(db, "a2", account: self.a, labels: "INBOX UNREAD CATEGORY_UPDATES")
+            try self.insert(db, "a3", account: self.a) { $0.inPromotions = true }
+        }
+        let hide: Set<String> = ["CATEGORY_UPDATES"]
+        XCTAssertEqual(try perAccount(q, hide: hide), [a: 1])
+        XCTAssertEqual(try perAccount(q, hide: hide)[a], try badge(q, hide: hide))
+        XCTAssertEqual(try perAccount(q), [a: 2])
+    }
+
+    /// Mark read / unread moves only the thread's own account, and the
+    /// optimistic result equals the recount.
+    func testOptimisticDeltaOnMarkReadAndUnread() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.insert(db, "a1", account: self.a)
+            try self.insert(db, "a2", account: self.a)
+            try self.insert(db, "b1", account: self.b)
+        }
+        var state = DockBadge.AccountCounts()
+        state.applyRecount(try perAccount(q), epoch: state.epoch)
+        let old = try q.read { try XCTUnwrap(MailThread.fetchOne($0, key: "\(self.a):a1")) }
+        var read = old
+        read.isUnread = false
+
+        let down = DockBadge.delta(from: old, to: read, badgeAccount: old.accountId)
+        state.applyDelta([old.accountId: down])
+        XCTAssertEqual(state.unread(for: a), 1)
+        XCTAssertEqual(state.unread(for: b), 1, "other accounts do not move")
+        try q.write { db in try OptimisticThreadWrite.updateChangedColumns(db, from: old, to: read) }
+        XCTAssertEqual(state.counts, try perAccount(q))
+
+        let up = DockBadge.delta(from: read, to: old, badgeAccount: old.accountId)
+        state.applyDelta([old.accountId: up])
+        XCTAssertEqual(state.unread(for: a), 2)
+        try q.write { db in try OptimisticThreadWrite.updateChangedColumns(db, from: read, to: old) }
+        XCTAssertEqual(state.counts, try perAccount(q))
+    }
+
+    func testAccountCountsClampAndDropAtZero() {
+        var state = DockBadge.AccountCounts()
+        state.applyRecount([a: 1], epoch: state.epoch)
+        state.applyDelta([a: -3])
+        XCTAssertEqual(state.unread(for: a), 0)
+        XCTAssertNil(state.counts[a], "no entry, so no badge")
+    }
+
+    /// A recount that started before a local action must not undo it.
+    func testAccountRecountStartedBeforeAnActionIsRejected() {
+        var state = DockBadge.AccountCounts()
+        state.applyRecount([a: 3], epoch: state.epoch)
+        let stale = state.epoch
+        state.applyDelta([a: -1])
+        XCTAssertFalse(state.applyRecount([a: 3], epoch: stale))
+        XCTAssertEqual(state.unread(for: a), 2)
+    }
+
+    /// Removing an account drops its mail from the recount, and so its entry.
+    func testRemovingAnAccountDropsItsUnreadCount() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.insert(db, "a1", account: self.a)
+            try self.insert(db, "b1", account: self.b)
+        }
+        var state = DockBadge.AccountCounts()
+        state.applyRecount(try perAccount(q), epoch: state.epoch)
+        XCTAssertEqual(state.unread(for: b), 1)
+        try q.write { db in try AccountLifecycle.purgeAccount(db, id: self.b) }
+        state.applyRecount(try perAccount(q), epoch: state.epoch)
+        XCTAssertEqual(state.counts, [a: 1])
+        XCTAssertEqual(state.unread(for: b), 0)
+    }
+
     // MARK: - Helpers
 
     /// Applies `action` to one counted thread (after `start`) and checks

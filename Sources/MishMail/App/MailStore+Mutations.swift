@@ -34,6 +34,7 @@ extension MailStore {
         let current = liveThread(thread.id) ?? thread
         applyOptimisticSidebarCountDelta(from: current, to: updated)
         applyDockBadgeDelta(dockBadgeDelta(from: current, to: updated))
+        applyAccountUnreadDelta(accountUnreadDelta(from: current, to: updated))
         applyOptimisticThreadUpdate(updated)
         if !suppressThreadReload {
             scheduleThreadMutationReconciliation()
@@ -300,6 +301,13 @@ extension MailStore {
                         hideCategories: inboxBadgeHideCategories)
     }
 
+    /// Unread change for the thread's own account: the avatar badge counts
+    /// by the Dock badge's rule, whatever scope the Dock badge has.
+    private func accountUnreadDelta(from old: MailThread, to updated: MailThread) -> [String: Int] {
+        [old.accountId: DockBadge.delta(from: old, to: updated, badgeAccount: old.accountId,
+                                        hideCategories: inboxBadgeHideCategories)]
+    }
+
     private func applyOptimisticSidebarCountDelta(
         from old: MailThread, to updated: MailThread
     ) {
@@ -356,17 +364,20 @@ extension MailStore {
         edits.reserveCapacity(targets.count)
         let live = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var badgeDelta = 0
+        var accountDelta: [String: Int] = [:]
         for thread in targets {
             var copy = thread
             local(&copy)
             let current = live[thread.id] ?? thread
             applyOptimisticSidebarCountDelta(from: current, to: copy)
             badgeDelta += dockBadgeDelta(from: current, to: copy)
+            accountDelta.merge(accountUnreadDelta(from: current, to: copy), uniquingKeysWith: +)
             applyOptimisticThreadUpdate(copy)
             edits.append((thread, copy))
         }
         // One paint for the whole action, not one per row.
         applyDockBadgeDelta(badgeDelta)
+        applyAccountUnreadDelta(accountDelta)
         scheduleThreadMutationReconciliation()
 
         let persistence = enqueueBulkThreadPersistence(edits)

@@ -145,6 +145,40 @@ enum DockBadge {
         }
     }
 
+    // MARK: - Per-account counts
+
+    /// Unread per account, for the badge on each account's avatar. Same
+    /// predicate as the Dock badge (`SidebarCounts.fetchUnreadByAccount`)
+    /// and the same two writers: recounts (authoritative) and local
+    /// actions (optimistic deltas, via `delta`).
+    struct AccountCounts: Equatable {
+        private(set) var counts: [String: Int] = [:]
+        /// Bumped by every local action, so a recount whose read started
+        /// before it cannot undo its delta.
+        private(set) var epoch = 0
+
+        /// Unread for one account; 0 when unknown or none.
+        func unread(for account: String) -> Int { counts[account] ?? 0 }
+
+        /// A database recount, taken with the `epoch` read before it began.
+        /// Accounts missing from it (none unread, or removed) drop out.
+        @discardableResult
+        mutating func applyRecount(_ new: [String: Int], epoch: Int) -> Bool {
+            guard epoch == self.epoch else { return false }
+            counts = new.filter { $0.value > 0 }
+            return true
+        }
+
+        /// A local action: `delta` per account, summed over its threads.
+        mutating func applyDelta(_ delta: [String: Int]) {
+            epoch += 1
+            for (account, d) in delta where d != 0 {
+                let value = max(0, (counts[account] ?? 0) + d)
+                counts[account] = value > 0 ? value : nil
+            }
+        }
+    }
+
     // MARK: - What macOS allows
 
     /// The app's notification permission, reduced to what the badge needs.

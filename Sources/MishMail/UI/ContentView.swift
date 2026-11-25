@@ -2433,7 +2433,8 @@ struct AccountSwitcher: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title), \(subtitle)")
+        .accessibilityLabel(activeUnread > 0
+            ? "\(title), \(subtitle), \(activeUnread) unread" : "\(title), \(subtitle)")
         .accessibilityIdentifier("accountSwitcher")
         .popover(isPresented: $showMenu, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 1) {
@@ -2572,7 +2573,12 @@ struct AccountSwitcher: View {
         AccountAvatarView(name: AccountLabelColor.title(account), key: account.id, size: size,
                           photo: store.accountPhotos[account.id],
                           ring: .init(storedHex: account.labelColor, surface: surface),
-                          decorative: true)
+                          decorative: true,
+                          unread: store.accountUnread.unread(for: account.id))
+    }
+
+    private var activeUnread: Int {
+        activeAccount.map { store.accountUnread.unread(for: $0.id) } ?? 0
     }
 
     private var activeAccount: Account? {

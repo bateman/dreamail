@@ -28,6 +28,9 @@ struct AccountAvatarView: View {
     /// Hidden from VoiceOver where the surrounding control already reads the
     /// account's name (the switcher rows and header).
     var decorative = false
+    /// Unread count of this account; 0 draws no badge. The badge overlays
+    /// the top-trailing edge and adds nothing to the layout.
+    var unread = 0
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -50,10 +53,33 @@ struct AccountAvatarView: View {
             disc(diameter: inner)
         }
         .frame(width: size, height: size)
+        .overlay(alignment: .topTrailing) {
+            if unread > 0 { unreadBadge }
+        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(photo == nil ? "\(name) account" : "\(name) account photo")
+        .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isImage)
-        .accessibilityHidden(decorative)
+        .accessibilityHidden(decorative && unread <= 0)
+    }
+
+    private var accessibilityText: String {
+        let base = photo == nil ? "\(name) account" : "\(name) account photo"
+        return unread > 0 ? "\(base), \(unread) unread" : base
+    }
+
+    /// Same number format as the Dock badge. White on a dark red passes
+    /// contrast in both appearances; the outline separates it from the ring.
+    private var unreadBadge: some View {
+        Text(DockBadge.label(for: unread))
+            .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 15, minHeight: 15)
+            .background(Capsule().fill(Color(red: 0.78, green: 0.13, blue: 0.11)))
+            .overlay(Capsule().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+            .fixedSize()
+            .offset(x: 5, y: -5)
+            .accessibilityHidden(true)
     }
 
     /// A chosen color as stored; the default as the same system color the
