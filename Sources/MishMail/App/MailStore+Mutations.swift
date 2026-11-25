@@ -1156,9 +1156,7 @@ extension MailStore {
         let now = Date()
         let pool = db
         let due = (try? await pool.read { db in
-            try MailThread
-                .filter(Column("snoozeUntil") != nil && Column("snoozeUntil") <= now)
-                .fetchAll(db)
+            try ThreadListQuery.dueSnoozes(now: now).fetchAll(db)
         }) ?? []
         for thread in due { snooze(thread, until: nil) }
     }

@@ -1577,6 +1577,12 @@ actor SyncEngine {
     /// - **Ghost heal**: pre-fix rows kept `snoozeUntil` after a reply
     ///   re-added INBOX (`inInbox == true` while still "sleeping"). MishMail
     ///   snooze always strips INBOX, so that combo means already woken.
+    /// - **Trash / spam on Gmail**: the wake sweep would otherwise put INBOX
+    ///   back on a conversation the user threw away.
+    /// - **INBOX back on Gmail**: Gmail had confirmed the snooze's archive
+    ///   (`existing.labelIds` without INBOX) and now reports INBOX again —
+    ///   moved to Inbox in Gmail Web, on the phone or on another Mac. Before
+    ///   that confirmation INBOX is just the not-yet-synced snooze, so keep.
     /// Does not clear on draft saves, pure SENT, or prune→backfill count churn.
     /// Pure — unit-tested.
     static func preservedSnoozeUntil(
@@ -1585,6 +1591,12 @@ actor SyncEngine {
         guard let existing, let until = existing.snoozeUntil else { return nil }
         // Pre-fix ghost: reply restored INBOX but left snoozeUntil set.
         if existing.inInbox { return nil }
+        if trashDraftFlags(messages: messages).inTrash { return nil }
+        if messages.contains(where: { labelIdsContain($0.labelIds, "SPAM") }) { return nil }
+        if !labelIdsContain(existing.labelIds, "INBOX"),
+           messages.contains(where: { labelIdsContain($0.labelIds, "INBOX") }) {
+            return nil
+        }
         let inbound = lastInboundDate(messages: messages, accountId: accountId)
         guard let inbound else { return until }  // still pure outbound
         if let prior = existing.lastInboundDate {

@@ -18,6 +18,13 @@ enum ThreadListQuery {
         q.filter(Column("snoozeUntil") == nil || Column("snoozeUntil") <= now)
     }
 
+    /// Snoozes the wake sweep should fire. Trash and spam are skipped: waking
+    /// adds INBOX on Gmail, which must never reach a discarded conversation.
+    static func dueSnoozes(now: Date) -> QueryInterfaceRequest<MailThread> {
+        MailThread.filter(Column("snoozeUntil") != nil && Column("snoozeUntil") <= now
+                          && Column("inTrash") == false && Column("inSpam") == false)
+    }
+
     /// Unified inbox. Category filtering is layered on by the chips.
     static func inbox(now: Date = Date()) -> QueryInterfaceRequest<MailThread> {
         notSnoozed(MailThread.filter(Column("inInbox") == true && Column("inTrash") == false),
