@@ -595,21 +595,24 @@ final class LabelMenuEditsTests: XCTestCase {
 
     func testRemovalForgetsSavedViewsAndUserDefaults() throws {
         let q = try makeDB()
-        let saved = try q.write { db -> [SavedView] in
+        try q.write { db in
             var kept = self.view(0, account: self.a, labelId: "L7")
             kept.id = nil
+            kept.name = "kept"
             try kept.insert(db)
             var gone = self.view(0, account: self.a, labelId: "L2")
             gone.id = nil
+            gone.name = "gone"
             try gone.insert(db)
-            return [kept, gone]
         }
+        // Read back, with the ids the database gave them, as the app does.
+        let saved = try q.read { try SavedView.fetchAll($0) }
         let removed = LabelRemoval.order(rows[0], rows: rows)
         let views = LabelRemoval.views(saved, removing: removed, allLabels: rows)
         XCTAssertEqual(views.removed.map(\.labelId), ["L2"])
         try q.write { db in try LabelRemoval.forget(db, rows: removed, views: views) }
-        let left = try q.read { try SavedView.fetchAll($0).map(\.labelId) }
-        XCTAssertEqual(left, ["L7"])
+        let left = try q.read { try SavedView.fetchAll($0).map(\.name) }
+        XCTAssertEqual(left, ["kept"])
 
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "LabelMenuEditsTests.\(UUID())"))
         let key = "categoryFilter.label.\(a).L2"
