@@ -162,6 +162,8 @@ targets:
       - path: Sources/MishMail/Gmail
       - path: Sources/MishMail/Store
       - path: Sources/MishMail/Auth
+      # OpenPGP groundwork (step 4B): structure, rules and the engine seam.
+      - path: Sources/MishMail/PGP
       - path: Sources/MishMail/MCP
         excludes:
           # MailStore-backed bridge + NWListener stay app-only.
