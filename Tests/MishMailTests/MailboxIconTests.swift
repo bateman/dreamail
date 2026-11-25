@@ -91,9 +91,9 @@ final class MailboxIconTests: XCTestCase {
         }
         let text = try ForkIdentityTests.repoFile("Sources/MishMail/UI/ThreadListView.swift")
         XCTAssertTrue(squash(text).contains(squash("""
-            if thread.isStarred {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.yellow))
+            Image(systemName: thread.isStarred ? "star.fill" : "star")
+                .font(.system(size: 14 * fontScale))
+                .foregroundStyle(thread.isStarred ? inked(.yellow) : inked(.secondary, emphasis: 0.8))
             """)))
         // `inked` returns the colour it is given unless the row is the
         // painted selection.
