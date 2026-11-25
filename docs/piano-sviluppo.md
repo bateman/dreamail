@@ -301,12 +301,24 @@ Avviata dal proprietario il 25 novembre 2026, prima che il cancello fosse comple
 | 3A | Creazione e modifica dei filtri lato server | `feature/gmail-server-filters` | v56 |
 | 3B | Modifica dei colori delle label su Gmail | `feature/gmail-label-color-editing` | v57 |
 | 3C | Verifica ICS/RSVP e analisi delle lacune | `feature/ics-rsvp-verification` | v59 |
-| 3D | Snooze: prima l'analisi e le opzioni, poi la scelta del proprietario | `feature/snooze-gmail-alignment` | v60 |
+| 3D | Snooze: variante B scelta dal proprietario (DEC-041) | `feature/snooze-gmail-alignment` | v60 |
 | 3E | Azioni mancanti degli shortcut di Gmail | `feature/gmail-shortcut-actions` | v58 |
 
 ## Ondata 4 — Calendar e PGP
 
-Entrambi richiedono una decisione di design prima di essere divisi in step: scope e nuovo consenso per Calendar; libreria, chiavi, bozze e ricerca per PGP.
+Avviata dal proprietario il 25 novembre 2026, in parallelo all'ondata 3. Ogni step parte da un progetto con opzioni e costruisce intanto solo le fondamenta che non dipendono dalla scelta, dietro un interruttore di build spento.
+
+| Step | Contenuto | Branch | Migrazione riservata | Stato della decisione |
+|---|---|---|---|---|
+| 4A | Google Calendar | `feature/google-calendar-integration` | v61 | Perimetro B scelto (DEC-042) |
+| 4B | PGP | `feature/openpgp-support` | v62 | In attesa del progetto |
+
+Google Calendar, perimetro B: disponibilità e conflitti accanto a un invito, risposta scritta direttamente sul calendario, "aggiungi al calendario". Richiede un secondo consenso Google separato, solo per Calendar; l'accesso a Gmail non cambia. Predefiniti adottati in assenza di indicazioni del proprietario, ribaltabili: risposta solo sul calendario per gli eventi già presenti in Google Calendar ed e-mail per gli altri; solo il calendario principale; nessuna notifica degli eventi; in locale solo gli eventi degli inviti.
+
+Google Calendar, lavoro futuro (non avviato):
+
+- Perimetro C: agenda del giorno con sincronizzazione incrementale e promemoria (4–6 settimane dalla base di B; più dati personali in locale, notifiche).
+- Perimetro D: creazione di eventi da un messaggio (oltre 6 settimane dalla base di B).
 
 ## Lavori in sospeso
 
@@ -315,6 +327,7 @@ Aggiornato il 25 novembre 2026.
 ### Seguiti offerti, nessuno deciso
 
 - Label prima dell'oggetto come in Gmail.
+- Google Calendar, perimetri C e D (vedi "Ondata 4").
 - Comando "Svuota cache immagini" nelle impostazioni.
 - Avviso nell'app per chi non aveva mai impostato "Load remote images".
 - Immagini remote con una sola richiesta al mittente (2–3 giorni).
@@ -375,3 +388,5 @@ Aggiornato il 25 novembre 2026.
 | — | `feature/unread-dock-badge` | #45 | Unito |
 | — | `docs/process-review-tiers` | #46 | Unito, modifica semplice |
 | 3A–3E | vedi "Ondata 3" | — | In lavorazione dal 25 novembre 2026 |
+| 4A–4B | vedi "Ondata 4" | — | In lavorazione dal 25 novembre 2026 |
+| — | `ux/thread-row-hover-actions` | #52 | In lavorazione (livello basso rischio) |
