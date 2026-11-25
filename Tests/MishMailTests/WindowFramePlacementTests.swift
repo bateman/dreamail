@@ -1,5 +1,4 @@
 import XCTest
-@testable import MishMail
 
 final class WindowFramePlacementTests: XCTestCase {
     private let main = CGRect(x: 0, y: 0, width: 1_440, height: 860)
