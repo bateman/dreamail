@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write summaries produced elsewhere back into MishMail via MCP.
+"""Write summaries produced elsewhere back into DreaMail via MCP.
 
 Input is JSONL, one object per line, from a remote/offline summarizer:
 

@@ -1,7 +1,7 @@
-# OSS Scanner build for MishMail (https://github.com/ronboger/mishmail).
+# OSS Scanner build for DreaMail (https://github.com/ronboger/mishmail).
 #
-# MishMail is a macOS 14+ SwiftUI/AppKit application. It builds with
-# xcodebuild (project.yml -> XcodeGen -> MishMail.xcodeproj), which exists
+# DreaMail is a macOS 14+ SwiftUI/AppKit application. It builds with
+# xcodebuild (project.yml -> XcodeGen -> DreaMail.xcodeproj), which exists
 # only on macOS, so there is no compilation step possible in this Linux
 # container. This image instead gives the scanner the checked-out source, a
 # Swift toolchain (for `swiftc -parse` syntax checks and small standalone
@@ -19,7 +19,7 @@ WORKDIR /src
 
 # The app's only SwiftPM dependency is GRDB (duckduckgo fork, exactVersion
 # 3.0.0 in project.yml). Fetch it now so the audit can read the API the SQL
-# in Sources/MishMail/Store is built on; nothing is reachable after this.
+# in Sources/DreaMail/Store is built on; nothing is reachable after this.
 RUN git clone --depth 1 --branch 3.0.0 \
       https://github.com/duckduckgo/GRDB.swift /deps/GRDB
 

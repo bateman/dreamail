@@ -1,12 +1,12 @@
-# MishMail — build/test entrypoints.
+# DreaMail — build/test entrypoints.
 #
 # Two apps come out of this project, and they are deliberately kept separate:
 #
 #   TESTING → `make run`      builds Debug and launches it. Shows up as
-#                             "MishMail Debug" (io.github.bateman.MishMail.debug)
+#                             "DreaMail Debug" (io.github.bateman.DreaMail.debug)
 #                             with its own isolated data — throwaway, can't touch
 #                             the real app. This is what you build to eyeball a change.
-#   REAL    → `make install`  builds Release and installs "MishMail" into
+#   REAL    → `make install`  builds Release and installs "DreaMail" into
 #                             /Applications. This is your daily driver.
 #
 #   make test      is the gate: run it before every commit (the pre-commit
@@ -19,7 +19,7 @@
 #                  tests of the scripts (`make script-tests`) and shellcheck
 #                  (`make shellcheck`). No Xcode needed.
 #   make release   build Release, zip the app, publish a GitHub release
-#                  (only builds with MISHMAIL_UPDATE_CHANNEL set look at them;
+#                  (only builds with DREAMAIL_UPDATE_CHANNEL set look at them;
 #                  the tracked configuration leaves it empty).
 #
 # All build output lands in ./build/dd.noindex (git-ignored). The `.noindex`
@@ -35,7 +35,7 @@
 # state. Pin PATH so every shell produces the same build graph.
 export PATH := /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
-PROJECT = MishMail.xcodeproj
+PROJECT = DreaMail.xcodeproj
 # Single source of truth for the version: MARKETING_VERSION in project.yml.
 # First match only — the app's. Without `exit`, a MARKETING_VERSION on any
 # other target would silently make this "0.4.4 1.0" and take the whole release
@@ -46,8 +46,8 @@ DD = build/dd.noindex
 # Pin arch so xcodebuild doesn't warn about multiple matching destinations
 # (arm64 + x86_64 "My Mac" on Apple Silicon).
 DESTINATION = platform=macOS,arch=$(shell uname -m)
-DEBUG_APP = $(DD)/Build/Products/Debug/MishMail Debug.app
-RELEASE_APP = $(DD)/Build/Products/Release/MishMail.app
+DEBUG_APP = $(DD)/Build/Products/Debug/DreaMail Debug.app
+RELEASE_APP = $(DD)/Build/Products/Release/DreaMail.app
 RELEASE_DIR = $(DD)/Build/Products/Release
 # `make release` builds the same Release configuration as `make install`, but
 # with different build settings (universal vs arm64-only, whole-module vs
@@ -56,11 +56,11 @@ RELEASE_DIR = $(DD)/Build/Products/Release
 # install→release→install alternation is a FULL rebuild of both. A separate
 # path keeps `make install` at its ~5-12s incremental cost across releases.
 SHIP_DD = build/ddship.noindex
-SHIP_APP = $(SHIP_DD)/Build/Products/Release/MishMail.app
+SHIP_APP = $(SHIP_DD)/Build/Products/Release/DreaMail.app
 SHIP_DIR = $(SHIP_DD)/Build/Products/Release
-ZIP_NAME = MishMail-$(VERSION).zip
+ZIP_NAME = DreaMail-$(VERSION).zip
 # notarytool keychain profile used by `make release` (see release recipe).
-NOTARY_PROFILE ?= MishMail-notary
+NOTARY_PROFILE ?= DreaMail-notary
 # Real-account builds need a stable identity. Apple's free Personal Team is
 # sufficient; the paid Developer Program is only needed for distribution.
 # Ad-hoc builds are deliberately limited to compilation and the fictional demo:
@@ -71,11 +71,11 @@ VALID_SIGNING_IDENTITY = $(if $(strip $(TEAM)),$(shell python3 scripts/check_sig
 VALID_DEVELOPER_IDENTITY = $(if $(strip $(TEAM)),$(shell python3 scripts/check_signing.py $(TEAM) developer_id 2>/dev/null))
 ifeq ($(VALID_SIGNING_IDENTITY),yes)
 DEBUG_SIGN_FLAGS =
-INSTALL_SIGN_FLAGS = MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements
+INSTALL_SIGN_FLAGS = DREAMAIL_APP_ENTITLEMENTS=Sources/DreaMail/DreaMail.Distribution.entitlements
 else
 DEBUG_SIGN_FLAGS = CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
 INSTALL_SIGN_FLAGS = CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
-	MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.entitlements
+	DREAMAIL_APP_ENTITLEMENTS=Sources/DreaMail/DreaMail.entitlements
 endif
 
 .PHONY: test ui-test ui-test-ci build run demo install gen icon hooks prune release clean signing-doctor require-stable-signing require-run-signing require-pushed checks script-tests shellcheck
@@ -92,9 +92,9 @@ endif
 # the gate passes — and that version then cannot update itself to the next
 # one (relauncherMissing, a manual install for everyone).
 define check_relauncher
-	@helper="$(1)/Contents/Library/MishMailRelauncher.app"; \
-	if [ ! -f "$$helper/Contents/MacOS/MishMailRelauncher" ] \
-		|| [ ! -x "$$helper/Contents/MacOS/MishMailRelauncher" ]; then \
+	@helper="$(1)/Contents/Library/DreaMailRelauncher.app"; \
+	if [ ! -f "$$helper/Contents/MacOS/DreaMailRelauncher" ] \
+		|| [ ! -x "$$helper/Contents/MacOS/DreaMailRelauncher" ]; then \
 		echo "Refusing: no embedded relauncher executable in"; \
 		echo "  $$helper"; \
 		echo "An app without it installs an update and then cannot restart."; \
@@ -108,7 +108,7 @@ define check_relauncher
 	fi; \
 	if printf '%s\n' "$$entitlements" | grep -q "app-sandbox"; then \
 		echo "Refusing: the embedded relauncher is sandboxed and cannot unquarantine"; \
-		echo "the update it installs. Check MISHMAIL_APP_ENTITLEMENTS is used instead of"; \
+		echo "the update it installs. Check DREAMAIL_APP_ENTITLEMENTS is used instead of"; \
 		echo "a command-line CODE_SIGN_ENTITLEMENTS, which applies to every target."; \
 		exit 1; \
 	fi
@@ -125,21 +125,21 @@ endef
 # release): always the TRACKED value from Config/Signing.xcconfig, passed on
 # the command line so an untracked Local.xcconfig (needed there for the
 # signing team, and symlinked into worktrees) cannot turn them on. A local
-# Debug build may still set MISHMAIL_AI_FEATURES in Local.xcconfig.
-TRACKED_AI_FEATURES := $(shell awk -F= '/^[ \t]*MISHMAIL_AI_FEATURES[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
-SHIP_AI_FLAGS = MISHMAIL_AI_FEATURES=$(TRACKED_AI_FEATURES)
+# Debug build may still set DREAMAIL_AI_FEATURES in Local.xcconfig.
+TRACKED_AI_FEATURES := $(shell awk -F= '/^[ \t]*DREAMAIL_AI_FEATURES[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
+SHIP_AI_FLAGS = DREAMAIL_AI_FEATURES=$(TRACKED_AI_FEATURES)
 # OpenPGP support (step 4B): the same rule, for the same reason.
-TRACKED_PGP := $(shell awk -F= '/^[ \t]*MISHMAIL_PGP[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
-SHIP_PGP_FLAGS = MISHMAIL_PGP=$(TRACKED_PGP)
+TRACKED_PGP := $(shell awk -F= '/^[ \t]*DREAMAIL_PGP[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
+SHIP_PGP_FLAGS = DREAMAIL_PGP=$(TRACKED_PGP)
 
 # The built app must carry exactly the tracked switch value.
 define check_ai_switch
-	@built=$$(plutil -extract MishMailAIFeatures raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
-		echo "Refusing: the built app has no MishMailAIFeatures key in its Info.plist."; \
+	@built=$$(plutil -extract DreaMailAIFeatures raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
+		echo "Refusing: the built app has no DreaMailAIFeatures key in its Info.plist."; \
 		exit 1; \
 	}; \
 	if [ "$$built" != "$(TRACKED_AI_FEATURES)" ]; then \
-		echo "Refusing: the built app has MishMailAIFeatures='$$built', but the tracked"; \
+		echo "Refusing: the built app has DreaMailAIFeatures='$$built', but the tracked"; \
 		echo "configuration says '$(TRACKED_AI_FEATURES)'. Builds that leave this Mac"; \
 		echo "take the AI switch from Config/Signing.xcconfig only."; \
 		exit 1; \
@@ -148,18 +148,18 @@ define check_ai_switch
 endef
 
 # Google Calendar integration (step 4A), same rule as the AI switch: builds
-# that leave this Mac take MISHMAIL_CALENDAR from Config/Signing.xcconfig
+# that leave this Mac take DREAMAIL_CALENDAR from Config/Signing.xcconfig
 # only, and the built app must carry exactly that value.
-TRACKED_CALENDAR := $(shell awk -F= '/^[ \t]*MISHMAIL_CALENDAR[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
-SHIP_CALENDAR_FLAGS = MISHMAIL_CALENDAR=$(TRACKED_CALENDAR)
+TRACKED_CALENDAR := $(shell awk -F= '/^[ \t]*DREAMAIL_CALENDAR[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
+SHIP_CALENDAR_FLAGS = DREAMAIL_CALENDAR=$(TRACKED_CALENDAR)
 
 define check_calendar_switch
-	@built=$$(plutil -extract MishMailCalendar raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
-		echo "Refusing: the built app has no MishMailCalendar key in its Info.plist."; \
+	@built=$$(plutil -extract DreaMailCalendar raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
+		echo "Refusing: the built app has no DreaMailCalendar key in its Info.plist."; \
 		exit 1; \
 	}; \
 	if [ "$$built" != "$(TRACKED_CALENDAR)" ]; then \
-		echo "Refusing: the built app has MishMailCalendar='$$built', but the tracked"; \
+		echo "Refusing: the built app has DreaMailCalendar='$$built', but the tracked"; \
 		echo "configuration says '$(TRACKED_CALENDAR)'. Builds that leave this Mac"; \
 		echo "take the Calendar switch from Config/Signing.xcconfig only."; \
 		exit 1; \
@@ -169,12 +169,12 @@ endef
 
 # The built app must carry exactly the tracked OpenPGP switch value.
 define check_pgp_switch
-	@built=$$(plutil -extract MishMailPGP raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
-		echo "Refusing: the built app has no MishMailPGP key in its Info.plist."; \
+	@built=$$(plutil -extract DreaMailPGP raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
+		echo "Refusing: the built app has no DreaMailPGP key in its Info.plist."; \
 		exit 1; \
 	}; \
 	if [ "$$built" != "$(TRACKED_PGP)" ]; then \
-		echo "Refusing: the built app has MishMailPGP='$$built', but the tracked"; \
+		echo "Refusing: the built app has DreaMailPGP='$$built', but the tracked"; \
 		echo "configuration says '$(TRACKED_PGP)'. Builds that leave this Mac"; \
 		echo "take the OpenPGP switch from Config/Signing.xcconfig only."; \
 		exit 1; \
@@ -221,7 +221,7 @@ gen: icon
 	@# into a full rebuild on every make invocation.
 	xcodegen generate --use-cache
 
-# CI builds with WARNINGS_AS_ERRORS=1: a compiler warning in MishMail's own
+# CI builds with WARNINGS_AS_ERRORS=1: a compiler warning in DreaMail's own
 # targets fails the build (project.yml routes it to
 # SWIFT/GCC_TREAT_WARNINGS_AS_ERRORS; Swift packages are not affected).
 # `build` and `test` take it, and so does whatever runs them (run, demo, the
@@ -229,11 +229,11 @@ gen: icon
 # builds of install and release never take it. Note that `make release`
 # waits for a full CI run (`make ui-test-ci`), and that run fails on any
 # warning, e.g. a new deprecation after an Xcode update on the runner.
-WARNING_FLAGS = $(if $(filter 1,$(WARNINGS_AS_ERRORS)),MISHMAIL_WARNINGS_AS_ERRORS=YES)
+WARNING_FLAGS = $(if $(filter 1,$(WARNINGS_AS_ERRORS)),DREAMAIL_WARNINGS_AS_ERRORS=YES)
 
 test: gen
 	# No -quiet: show "Executed N tests" (silent pass looked like a no-op).
-	xcodebuild test -project $(PROJECT) -scheme MishMailTests \
+	xcodebuild test -project $(PROJECT) -scheme DreaMailTests \
 		-destination '$(DESTINATION)' -derivedDataPath $(DD) $(WARNING_FLAGS)
 
 # Run the CI workflow, UI smoke tests included, on GitHub for the pushed HEAD
@@ -275,16 +275,16 @@ ui-test: gen
 	fi
 	# XCUITest cannot attach deterministically when another Debug build with the
 	# same bundle id is already open (for example from a different worktree).
-	-pkill -f "MishMail Debug" 2>/dev/null || true
+	-pkill -f "DreaMail Debug" 2>/dev/null || true
 	# The throwaway Debug app persists window frames / prefs between runs;
 	# the smoke test asserts default-launch geometry, so start clean.
-	-defaults delete io.github.bateman.MishMail.debug 2>/dev/null || true
-	xcodebuild test -project $(PROJECT) -scheme MishMailUITests \
+	-defaults delete io.github.bateman.DreaMail.debug 2>/dev/null || true
+	xcodebuild test -project $(PROJECT) -scheme DreaMailUITests \
 		-destination '$(DESTINATION)' -derivedDataPath $(DD)
 
 # The throwaway test app (Debug identity, isolated data).
 build: gen
-	xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Debug \
+	xcodebuild build -project $(PROJECT) -scheme DreaMail -configuration Debug \
 		-destination '$(DESTINATION)' -derivedDataPath $(DD) -quiet $(DEBUG_SIGN_FLAGS) \
 		$(WARNING_FLAGS)
 
@@ -295,7 +295,7 @@ build: gen
 # for screenshots and for debugging without real mail.
 DEMO ?= 0
 # Perf harness console logs: PERF=1 make run
-# (signposts always emit; Console.app subsystem io.github.bateman.MishMail.perf)
+# (signposts always emit; Console.app subsystem io.github.bateman.DreaMail.perf)
 PERF ?= 0
 # Check signing before the build so a refusal doesn't cost a full compile.
 require-run-signing:
@@ -308,17 +308,17 @@ require-run-signing:
 	fi
 
 run: require-run-signing build
-	-pkill -f "MishMail Debug" 2>/dev/null || true
-	open -n "$(DEBUG_APP)" --env MISHMAIL_DEMO=$(DEMO) --env MISHMAIL_PERF=$(PERF)
+	-pkill -f "DreaMail Debug" 2>/dev/null || true
+	open -n "$(DEBUG_APP)" --env DREAMAIL_DEMO=$(DEMO) --env DREAMAIL_PERF=$(PERF)
 
 # Explicit alias for the screenshot/demo verb.
 demo: build
-	-pkill -f "MishMail Debug" 2>/dev/null || true
-	open -n "$(DEBUG_APP)" --env MISHMAIL_DEMO=1
+	-pkill -f "DreaMail Debug" 2>/dev/null || true
+	open -n "$(DEBUG_APP)" --env DREAMAIL_DEMO=1
 
 # Build Release and install it as your real /Applications app — the "ship it to
-# my machine" verb. Replaces whatever MishMail.app is there. Never silently
-# install ad-hoc: doing so changes MishMail's identity on the next rebuild and
+# my machine" verb. Replaces whatever DreaMail.app is there. Never silently
+# install ad-hoc: doing so changes DreaMail's identity on the next rebuild and
 # causes recurring Keychain prompts.
 # Local-install speedups, deliberately NOT applied to `make release`:
 # ONLY_ACTIVE_ARCH skips the x86_64 slice this Mac never runs, and
@@ -327,22 +327,22 @@ demo: build
 INSTALL_SPEED_FLAGS = ONLY_ACTIVE_ARCH=YES SWIFT_COMPILATION_MODE=incremental
 
 install: gen require-stable-signing
-	xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
+	xcodebuild build -project $(PROJECT) -scheme DreaMail -configuration Release \
 		-destination '$(DESTINATION)' -derivedDataPath $(DD) -quiet \
 		$(INSTALL_SPEED_FLAGS) $(INSTALL_SIGN_FLAGS) $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS) $(SHIP_CALENDAR_FLAGS)
 	$(call check_relauncher,$(RELEASE_APP))
 	$(call check_ai_switch,$(RELEASE_APP))
 	$(call check_pgp_switch,$(RELEASE_APP))
 	$(call check_calendar_switch,$(RELEASE_APP))
-	rm -rf /Applications/MishMail.app
-	ditto "$(RELEASE_APP)" /Applications/MishMail.app
-	@echo "Installed MishMail.app → /Applications (your daily driver)."
+	rm -rf /Applications/DreaMail.app
+	ditto "$(RELEASE_APP)" /Applications/DreaMail.app
+	@echo "Installed DreaMail.app → /Applications (your daily driver)."
 
 signing-doctor:
 	@if [ "$(VALID_SIGNING_IDENTITY)" = "yes" ]; then \
 		echo "Ready: team $(TEAM) has a valid local code-signing identity."; \
 	else \
-		echo "MishMail needs stable signing before it can use a real inbox."; \
+		echo "DreaMail needs stable signing before it can use a real inbox."; \
 		echo ""; \
 		echo "No paid Apple Developer membership is required:"; \
 		echo "  1. Xcode → Settings → Apple Accounts → Add Apple Account"; \
@@ -356,7 +356,7 @@ signing-doctor:
 
 require-stable-signing:
 	@if [ "$(VALID_SIGNING_IDENTITY)" != "yes" ]; then \
-		echo "Refusing an ad-hoc MishMail install: it would repeatedly ask for Keychain access after rebuilds."; \
+		echo "Refusing an ad-hoc DreaMail install: it would repeatedly ask for Keychain access after rebuilds."; \
 		echo "Run 'make signing-doctor' for the free Personal Team setup."; \
 		exit 1; \
 	fi
@@ -420,14 +420,14 @@ release: require-pushed test ui-test-ci
 	python3 .github/scripts/check-package-pins.py
 	rm -rf $(SHIP_DD)/SourcePackages
 	@if [ "$(VALID_DEVELOPER_IDENTITY)" = "yes" ]; then \
-		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
+		xcodebuild build -project $(PROJECT) -scheme DreaMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \
 			CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM=$(TEAM) \
-			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS) $(SHIP_CALENDAR_FLAGS); \
+			DREAMAIL_APP_ENTITLEMENTS=Sources/DreaMail/DreaMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS) $(SHIP_CALENDAR_FLAGS); \
 	else \
-		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
+		xcodebuild build -project $(PROJECT) -scheme DreaMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \
-			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS) $(SHIP_CALENDAR_FLAGS); \
+			DREAMAIL_APP_ENTITLEMENTS=Sources/DreaMail/DreaMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS) $(SHIP_CALENDAR_FLAGS); \
 	fi
 	# Notarize and staple (Developer ID builds only): the in-app updater and
 	# Gatekeeper both reject un-notarized Developer ID builds. One-time setup:
@@ -435,11 +435,11 @@ release: require-pushed test ui-test-ci
 	#     --apple-id <appleid> --team-id $(TEAM) --password <app-specific-pw>
 	@if [ "$(VALID_DEVELOPER_IDENTITY)" = "yes" ]; then \
 		cd $(SHIP_DIR) && \
-		ditto -c -k --keepParent MishMail.app notarize-upload.zip && \
+		ditto -c -k --keepParent DreaMail.app notarize-upload.zip && \
 		xcrun notarytool submit notarize-upload.zip \
 			--keychain-profile $(NOTARY_PROFILE) --wait && \
 		rm notarize-upload.zip && \
-		xcrun stapler staple MishMail.app; \
+		xcrun stapler staple DreaMail.app; \
 	fi
 	$(call check_relauncher,$(SHIP_APP))
 	$(call check_ai_switch,$(SHIP_APP))
@@ -447,21 +447,21 @@ release: require-pushed test ui-test-ci
 	$(call check_calendar_switch,$(SHIP_APP))
 	$(call check_ship_app,$(SHIP_APP))
 	cd $(SHIP_DIR) && \
-		ditto -c -k --keepParent MishMail.app $(ZIP_NAME) && \
+		ditto -c -k --keepParent DreaMail.app $(ZIP_NAME) && \
 		shasum -a 256 $(ZIP_NAME) > SHA256SUMS && \
 		echo "Checksum:" && cat SHA256SUMS
 	gh release create v$(VERSION) \
 		$(SHIP_DIR)/$(ZIP_NAME) \
 		$(SHIP_DIR)/SHA256SUMS \
-		--title "MishMail $(VERSION)" --generate-notes
-	@echo "Released v$(VERSION) with SHA256SUMS — apps built with MISHMAIL_UPDATE_CHANNEL set to this repo will offer it within a day."
+		--title "DreaMail $(VERSION)" --generate-notes
+	@echo "Released v$(VERSION) with SHA256SUMS — apps built with DREAMAIL_UPDATE_CHANNEL set to this repo will offer it within a day."
 
 # Reclaim all build output — the local ./build tree plus any stray per-project
 # DerivedData caches Xcode may have left in ~/Library.
 clean:
 	rm -rf build
-	rm -rf ~/Library/Developer/Xcode/DerivedData/MishMail-*
-	@echo "Cleaned ./build and ~/Library DerivedData/MishMail-* caches."
+	rm -rf ~/Library/Developer/Xcode/DerivedData/DreaMail-*
+	@echo "Cleaned ./build and ~/Library DerivedData/DreaMail-* caches."
 
 # The checks CI runs on Linux (the "Workflow hardening" job). Need python3
 # and shellcheck (`brew install shellcheck`), not Xcode.

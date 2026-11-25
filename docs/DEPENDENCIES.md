@@ -1,6 +1,6 @@
 # Dependencies and provenance
 
-MishMail has two third-party packages (GRDB below, and the OpenPGP library in
+DreaMail has two third-party packages (GRDB below, and the OpenPGP library in
 its own section), each pinned in `project.yml` by full commit
 SHA rather than by tag, because a tag can be moved after the fact and the
 generated Xcode project (git-ignored) carries no committed lock file. The
@@ -39,7 +39,7 @@ release ships them is the owner's decision at distribution time.
 | Recorded | 25 November 2026 |
 | Contents | rPGP (`pgp` =0.21.1, MIT OR Apache-2.0) and 145 crates in all, listed with their licences in the library's `THIRD_PARTY_LICENSES.md`, which ships in the app. `cx448` has no licence text; its algorithms are refused by policy but the code is compiled in |
 | Accepted advisories (DEC-051) | RUSTSEC-2023-0071 (`rsa`, Marvin), RUSTSEC-2026-0387 (`crypto-bigint`) |
-| Linked when | always, also with `MISHMAIL_PGP` off (DEC-060); with the switch off no code path reaches it |
+| Linked when | always, also with `DREAMAIL_PGP` off (DEC-060); with the switch off no code path reaches it |
 
 Recorded for `v0.1.1`: the checksum in `Package.swift` at the commit, the
 release's `.sha256` asset and the SHA-256 of the downloaded zip all matched

@@ -1,9 +1,9 @@
-name: MishMail
+name: DreaMail
 options:
   bundleIdPrefix: io.github.bateman
   deploymentTarget:
     macOS: "14.0"
-# Compiler warnings fail the CI build of MishMail's own targets: app,
+# Compiler warnings fail the CI build of DreaMail's own targets: app,
 # relauncher and unit tests (the UI-test target is not gated: CI does not
 # pass the flag to `make ui-test`). Routed through a variable that only CI
 # sets (`make build WARNINGS_AS_ERRORS=1`, see the Makefile) so local builds
@@ -14,9 +14,9 @@ options:
 # SWIFT_TREAT_WARNINGS_AS_ERRORS=YES would reach them too.
 settings:
   base:
-    MISHMAIL_WARNINGS_AS_ERRORS: NO
-    SWIFT_TREAT_WARNINGS_AS_ERRORS: $(MISHMAIL_WARNINGS_AS_ERRORS)
-    GCC_TREAT_WARNINGS_AS_ERRORS: $(MISHMAIL_WARNINGS_AS_ERRORS)
+    DREAMAIL_WARNINGS_AS_ERRORS: NO
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: $(DREAMAIL_WARNINGS_AS_ERRORS)
+    GCC_TREAT_WARNINGS_AS_ERRORS: $(DREAMAIL_WARNINGS_AS_ERRORS)
 packages:
   # DuckDuckGo's GRDB build with SQLCipher, shipped as a prebuilt binary.
   # Package tag 3.0.0 (GRDB 7.4.1, SQLCipher 4.7.0), pinned by commit because
@@ -34,19 +34,19 @@ packages:
     url: https://github.com/bateman/dreamail-openpgp
     revision: 4c66295af3b5e88fb5e593b48059f7fc2dcbe6b7
 targets:
-  MishMail:
+  DreaMail:
     type: application
     platform: macOS
     sources:
-      - Sources/MishMail
+      - Sources/DreaMail
       # The app↔relauncher contract (plan file paths and format); compiled
       # into both targets so the two sides can never skew.
-      - Sources/MishMailRelauncher/Relaunch.swift
+      - Sources/DreaMailRelauncher/Relaunch.swift
     dependencies:
       - package: GRDB
       - package: MishMailRPGP
-      # Embedded at Contents/Library/MishMailRelauncher.app and signed on copy.
-      - target: MishMailRelauncher
+      # Embedded at Contents/Library/DreaMailRelauncher.app and signed on copy.
+      - target: DreaMailRelauncher
         embed: true
         codeSign: true
         copy:
@@ -54,11 +54,11 @@ targets:
           subpath: Contents/Library
     # The app's entitlements are hand-maintained plists (the rationale for
     # each key lives as comments inside them), selected per build through
-    # MISHMAIL_APP_ENTITLEMENTS below — NOT through an `entitlements:` block
+    # DREAMAIL_APP_ENTITLEMENTS below — NOT through an `entitlements:` block
     # here, because that block's generated CODE_SIGN_ENTITLEMENTS overrides
     # the variable-driven one in settings.
-    #   Sources/MishMail/MishMail.entitlements               — dev default
-    #   Sources/MishMail/MishMail.Distribution.entitlements  — install/release
+    #   Sources/DreaMail/DreaMail.entitlements               — dev default
+    #   Sources/DreaMail/DreaMail.Distribution.entitlements  — install/release
     # Signing lives in Config/Signing.xcconfig (portable ad-hoc default; drop a
     # Config/Local.xcconfig to sign with your own team). Keep it out of the
     # per-target settings so the xcconfig actually wins.
@@ -73,16 +73,16 @@ targets:
         # command line. A command-line setting applies to EVERY target, which
         # is how the relauncher shipped sandboxed in 0.4.3–0.4.5 and silently
         # lost the ability to strip quarantine (its whole job).
-        MISHMAIL_APP_ENTITLEMENTS: Sources/MishMail/MishMail.entitlements
-        CODE_SIGN_ENTITLEMENTS: $(MISHMAIL_APP_ENTITLEMENTS)
+        DREAMAIL_APP_ENTITLEMENTS: Sources/DreaMail/DreaMail.entitlements
+        CODE_SIGN_ENTITLEMENTS: $(DREAMAIL_APP_ENTITLEMENTS)
         # Objective-C helpers (exception-safe TextKit calls) for Swift.
-        SWIFT_OBJC_BRIDGING_HEADER: Sources/MishMail/Support/MishMail-Bridging-Header.h
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/DreaMail/Support/DreaMail-Bridging-Header.h
         MARKETING_VERSION: 0.7.0
         CURRENT_PROJECT_VERSION: 7
         SWIFT_VERSION: 5.10
         GENERATE_INFOPLIST_FILE: true
         # Merged with generated keys: registers mailto: for default email app.
-        INFOPLIST_FILE: Sources/MishMail/Info.plist
+        INFOPLIST_FILE: Sources/DreaMail/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
@@ -100,31 +100,31 @@ targets:
         OTHER_SWIFT_FLAGS: "$(inherited) -Xcc -Wno-incomplete-umbrella"
       # Debug and Release build two DISTINCT apps so a throwaway test build is
       # never confused with — or able to corrupt — the real one you use daily:
-      #   Release  → "MishMail",       io.github.bateman.MishMail        (make install → /Applications)
-      #   Debug    → "MishMail Debug", io.github.bateman.MishMail.debug  (make run, launched in place)
+      #   Release  → "DreaMail",       io.github.bateman.DreaMail        (make install → /Applications)
+      #   Debug    → "DreaMail Debug", io.github.bateman.DreaMail.debug  (make run, launched in place)
       # The different bundle id gives Debug its own sandbox container + keychain,
       # so it syncs into a separate local database (sign in once; tokens persist
       # across rebuilds) and can't touch the real app's data. They coexist.
       configs:
         Debug:
-          PRODUCT_NAME: MishMail Debug
-          PRODUCT_BUNDLE_IDENTIFIER: io.github.bateman.MishMail.debug
-          INFOPLIST_KEY_CFBundleDisplayName: MishMail Debug
+          PRODUCT_NAME: DreaMail Debug
+          PRODUCT_BUNDLE_IDENTIFIER: io.github.bateman.DreaMail.debug
+          INFOPLIST_KEY_CFBundleDisplayName: DreaMail Debug
         Release:
-          PRODUCT_NAME: MishMail
-          PRODUCT_BUNDLE_IDENTIFIER: io.github.bateman.MishMail
-  # A second, deliberately tiny app whose whole job is to reopen MishMail after
+          PRODUCT_NAME: DreaMail
+          PRODUCT_BUNDLE_IDENTIFIER: io.github.bateman.DreaMail
+  # A second, deliberately tiny app whose whole job is to reopen DreaMail after
   # it quits. It exists because a sandboxed app cannot restart itself: asking
   # LaunchServices for a second instance of the bundle you are running from
   # fails (-10810, seen updating 0.4.1 → 0.4.2), and the sandbox blocks
   # spawning a shell to do it instead (0.4.2 → 0.4.3). A separate bundle id
   # clears both — launching *another* app is permitted, and by the time this
-  # one acts MishMail is gone, so there is nothing to conflict with.
+  # one acts DreaMail is gone, so there is nothing to conflict with.
   # LSUIElement: no Dock icon, no menu bar, nothing on screen.
-  MishMailRelauncher:
+  DreaMailRelauncher:
     type: application
     platform: macOS
-    sources: [Sources/MishMailRelauncher]
+    sources: [Sources/DreaMailRelauncher]
     # The same signing config as the app it lives inside — an embedded bundle
     # signed with a different certificate than its parent fails the build, and
     # this has to stay matched across all three tiers (ad-hoc default, free
@@ -140,9 +140,9 @@ targets:
         # bundle won't launch at all (-10810). make install / make release
         # verify this after building; see the entitlements file itself for the
         # full story.
-        CODE_SIGN_ENTITLEMENTS: Sources/MishMailRelauncher/MishMailRelauncher.entitlements
-        PRODUCT_NAME: MishMailRelauncher
-        PRODUCT_BUNDLE_IDENTIFIER: io.github.bateman.MishMail.Relauncher
+        CODE_SIGN_ENTITLEMENTS: Sources/DreaMailRelauncher/DreaMailRelauncher.entitlements
+        PRODUCT_NAME: DreaMailRelauncher
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.bateman.DreaMail.Relauncher
         # No MARKETING_VERSION here on purpose: nothing reads the helper's
         # version, and a second one in this file is what the Makefile's
         # version lookup would trip over.
@@ -159,32 +159,32 @@ targets:
   # keychain prompts, no network, no real database. New Gmail/Store/Auth/Support
   # files are picked up automatically; only app-only files need an exclude.
   # Longer term this set becomes a Swift package both targets import.
-  MishMailTests:
+  DreaMailTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - Tests/MishMailTests
+      - Tests/DreaMailTests
       # The relauncher's quarantine stripping, testable here because the test
       # runner is unsandboxed — the same reason the strip lives in the helper.
-      - Sources/MishMailRelauncher/Quarantine.swift
-      - Sources/MishMailRelauncher/Relaunch.swift
-      - path: Sources/MishMail/Gmail
-      - path: Sources/MishMail/Store
-      - path: Sources/MishMail/Auth
-      - path: Sources/MishMail/Calendar
+      - Sources/DreaMailRelauncher/Quarantine.swift
+      - Sources/DreaMailRelauncher/Relaunch.swift
+      - path: Sources/DreaMail/Gmail
+      - path: Sources/DreaMail/Store
+      - path: Sources/DreaMail/Auth
+      - path: Sources/DreaMail/Calendar
       # OpenPGP groundwork (step 4B): structure, rules and the engine seam.
-      - path: Sources/MishMail/PGP
-      - path: Sources/MishMail/MCP
+      - path: Sources/DreaMail/PGP
+      - path: Sources/DreaMail/MCP
         excludes:
           # MailStore-backed bridge + NWListener stay app-only.
           - MCPBridge.swift
           - MCPServer.swift
-      - path: Sources/MishMail/Support
+      - path: Sources/DreaMail/Support
         excludes:
           # MailStore / SwiftUI-environment — app target only. The WebKit
           # pool and HTMLBodyView are compiled here so tests drive the real
           # body coordinator.
-          - AskMishController.swift
+          - AskAIController.swift
           - GmailFilterDisplay.swift
           - HTMLBodyPrerender.swift
           - QuickLookController.swift
@@ -202,43 +202,43 @@ targets:
         SWIFT_VERSION: 5.10
         GENERATE_INFOPLIST_FILE: true
         # Support/ is compiled into this bundle too; it needs the same header.
-        SWIFT_OBJC_BRIDGING_HEADER: Sources/MishMail/Support/MishMail-Bridging-Header.h
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/DreaMail/Support/DreaMail-Bridging-Header.h
         # Same GRDB incomplete-umbrella noise as the app target.
         OTHER_CFLAGS: "$(inherited) -Wno-incomplete-umbrella"
         OTHER_SWIFT_FLAGS: "$(inherited) -Xcc -Wno-incomplete-umbrella"
-  MishMailUITests:
+  DreaMailUITests:
     type: bundle.ui-testing
     platform: macOS
-    sources: [Tests/MishMailUITests]
+    sources: [Tests/DreaMailUITests]
     dependencies:
-      - target: MishMail
+      - target: DreaMail
     settings:
       base:
         SWIFT_VERSION: 5.10
         GENERATE_INFOPLIST_FILE: true
 schemes:
-  MishMail:
+  DreaMail:
     build:
       targets:
-        MishMail: all
+        DreaMail: all
     run:
       config: Debug
     archive:
       config: Release
-  MishMailTests:
+  DreaMailTests:
     build:
       targets:
-        MishMailTests: [test]
+        DreaMailTests: [test]
     test:
       config: Debug
       targets:
-        - MishMailTests
-  MishMailUITests:
+        - DreaMailTests
+  DreaMailUITests:
     build:
       targets:
-        MishMail: all
-        MishMailUITests: [test]
+        DreaMail: all
+        DreaMailUITests: [test]
     test:
       config: Debug
       targets:
-        - MishMailUITests
+        - DreaMailUITests

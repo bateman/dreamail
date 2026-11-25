@@ -2,7 +2,7 @@
 token: plain HTTP only to a literal loopback address, HTTPS otherwise,
 redirects held to the same rule (finding F-05).
 
-Run by Tests/MishMailTests/ScriptEndpointTests.swift, or directly:
+Run by Tests/DreaMailTests/ScriptEndpointTests.swift, or directly:
     python3 -m unittest discover -s scripts/tests -v
 
 No test touches the network: the shared opener is replaced by a recorder,
@@ -178,10 +178,10 @@ class AdvertisedServerTests(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         self.discovery = Path(self.dir.name) / "mcp.json"
-        env = mock.patch.dict(os.environ, {"MISHMAIL_MCP_TOKEN": "t-not-real"})
+        env = mock.patch.dict(os.environ, {"DREAMAIL_MCP_TOKEN": "t-not-real"})
         env.start()
         self.addCleanup(env.stop)
-        os.environ.pop("MISHMAIL_MCP_PORT", None)
+        os.environ.pop("DREAMAIL_MCP_PORT", None)
 
     def write(self, payload):
         self.discovery.write_text(json.dumps(payload))

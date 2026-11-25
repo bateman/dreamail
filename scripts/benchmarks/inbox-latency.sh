@@ -13,14 +13,14 @@ block=${3:-first}
 if [[ "$block" == first ]]; then
 mkdir -p "$work"
 git archive "$revision" | tar -x -C "$work"
-cp "$root/scripts/benchmarks/InboxLatencyTests.swift" "$work/Tests/MishMailUITests/"
-cp "$root/scripts/benchmarks/MailLatencyProbe.swift" "$work/Sources/MishMail/UI/"
+cp "$root/scripts/benchmarks/InboxLatencyTests.swift" "$work/Tests/DreaMailUITests/"
+cp "$root/scripts/benchmarks/MailLatencyProbe.swift" "$work/Sources/DreaMail/UI/"
 cd "$work"
 # Extend only the disposable source tree. The shipped app and the recorded
 # revisions remain untouched. Keep the original inbox rows above the replicas.
 python3 - <<'PY'
 from pathlib import Path
-source = Path("Sources/MishMail/Support/DemoSeed.swift")
+source = Path("Sources/DreaMail/Support/DemoSeed.swift")
 text = source.read_text()
 anchor = "                for msg in seedMessages {"
 assert text.count(anchor) == 1
@@ -42,7 +42,7 @@ text = text.replace(anchor, """                for index in seedMessages.indices
 """ + anchor)
 source.write_text(text)
 def insert_after(filename, anchor, addition):
-    path = Path("Sources/MishMail/UI") / filename
+    path = Path("Sources/DreaMail/UI") / filename
     text = path.read_text()
     assert text.count(anchor) == 1, anchor
     path.write_text(text.replace(anchor, anchor + addition))
@@ -60,10 +60,10 @@ else
 fi
 # Debug bundle identity keeps fixtures separate; compile app code with release
 # optimization for both revisions. The test runner uses the same settings.
-xcodebuild "$action" -project MishMail.xcodeproj -scheme MishMailUITests \
+xcodebuild "$action" -project DreaMail.xcodeproj -scheme DreaMailUITests \
     -destination "platform=macOS,arch=$(uname -m)" -derivedDataPath "$work/build" \
     -clonedSourcePackagesDirPath "$RUNNER_TEMP/mail-benchmark-packages" \
-    -parallel-testing-enabled NO -only-testing:MishMailUITests/InboxLatencyTests \
+    -parallel-testing-enabled NO -only-testing:DreaMailUITests/InboxLatencyTests \
     SWIFT_OPTIMIZATION_LEVEL=-O CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
     > "$RUNNER_TEMP/mail-benchmark-$name-$block.log" 2>&1 || {
         tail -100 "$RUNNER_TEMP/mail-benchmark-$name-$block.log"; exit 1

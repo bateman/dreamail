@@ -6,8 +6,8 @@ final class InboxLatencyTests: XCTestCase {
     func testMailboxLatency() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchEnvironment = ["MISHMAIL_DEMO": "1", "MISHMAIL_UI_TEST": "1",
-                                 "MISHMAIL_DEMO_AMPLIFY": "20"]
+        app.launchEnvironment = ["DREAMAIL_DEMO": "1", "DREAMAIL_UI_TEST": "1",
+                                 "DREAMAIL_DEMO_AMPLIFY": "20"]
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-NSQuitAlwaysKeepsWindows", "NO",
                                "-threadOpenStyle", "readingPane", "-readingPaneHidden", "NO", "-priorityMode", "off",
                                "-groupBy", "date", "-AppleShowScrollBars", "Always"]
@@ -90,7 +90,7 @@ final class InboxLatencyTests: XCTestCase {
                 // Also report the in-app first draw and first viewport move,
                 // which use the same monotonic clock without that wait.
                 func native(_ key: String) -> Double? {
-                    let board = NSPasteboard(name: .init("mishmail.benchmark.\(key)"))
+                    let board = NSPasteboard(name: .init("dreamail.benchmark.\(key)"))
                     let fields = board.string(forType: .string)?.split(separator: " ") ?? []
                     guard fields.count == 2, String(fields[0]) == token,
                           let seconds = Double(fields[1]) else { return nil }
@@ -102,7 +102,7 @@ final class InboxLatencyTests: XCTestCase {
                 // Where an open's time goes: "event@start+duration" in ms
                 // from the click. Not part of the comparison table.
                 for key in ["short", "long", "reopen"] {
-                    let board = NSPasteboard(name: .init("mishmail.benchmark.stages.\(key)"))
+                    let board = NSPasteboard(name: .init("dreamail.benchmark.stages.\(key)"))
                     let fields = board.string(forType: .string)?.split(separator: " ") ?? []
                     if fields.count == 2, String(fields[0]) == token {
                         print("MAIL_STAGES trial=\(trial) \(key) \(fields[1])")

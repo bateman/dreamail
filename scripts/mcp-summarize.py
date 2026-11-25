@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backfill AI summaries into MishMail via its MCP server.
+"""Backfill AI summaries into DreaMail via its MCP server.
 
 Reads the discovery file (mcp.json) for port + token, lists threads, skips
 ones that already have a summary, fetches each thread as Markdown, asks a

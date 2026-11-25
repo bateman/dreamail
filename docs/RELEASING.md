@@ -1,16 +1,16 @@
-# Releasing MishMail
+# Releasing DreaMail
 
-MishMail ships as a signed `.app` published to **GitHub Releases**.
+DreaMail ships as a signed `.app` published to **GitHub Releases**.
 
-> **This fork (`bateman/mishmail`) has no release channel.** The in-app
-> updater reads its channel from the `MISHMAIL_UPDATE_CHANNEL` build setting
+> **This fork (`bateman/dreamail`) has no release channel.** The in-app
+> updater reads its channel from the `DREAMAIL_UPDATE_CHANNEL` build setting
 > (`OWNER/REPO`), which `Config/Signing.xcconfig` leaves empty, so tracked
 > builds never check for, download, or install updates. Publishing releases
 > for this fork first needs its own channel, publisher identity, and
 > anti-rollback policy (decision DEC-009); until then this document describes
 > the upstream process for reference.
 
-A build whose `Config/Local.xcconfig` sets `MISHMAIL_UPDATE_CHANNEL` checks
+A build whose `Config/Local.xcconfig` sets `DREAMAIL_UPDATE_CHANNEL` checks
 that repo about once a day and surfaces an **Update app** button (sidebar +
 Settings → Updates) when a newer version exists. Cutting a release = building Release, zipping the app, and
 creating a GitHub release tagged `v<version>`.
@@ -19,8 +19,8 @@ There are three "apps" the Makefile can produce — don't confuse them:
 
 | Command | Config | What it is |
 |---|---|---|
-| `make run` | Debug | Throwaway **"MishMail Debug"** with isolated data. For eyeballing a change. Never shipped. |
-| `make install` | Release | Installs the real **MishMail.app** into `/Applications` (your daily driver). Local only — does **not** publish. |
+| `make run` | Debug | Throwaway **"DreaMail Debug"** with isolated data. For eyeballing a change. Never shipped. |
+| `make install` | Release | Installs the real **DreaMail.app** into `/Applications` (your daily driver). Local only — does **not** publish. |
 | `make release` | Release | Builds Release, zips it, and **publishes a GitHub release** everyone's updater sees. |
 
 `make install` is "ship it to my machine." `make release` is "ship it to
@@ -30,7 +30,7 @@ everyone." This doc is about `make release`.
 
 - **`gh` CLI authenticated** with push access to the release repository
   (upstream: `ronboger/mishmail`), the same `OWNER/REPO` the shipped build's
-  `MISHMAIL_UPDATE_CHANNEL` names:
+  `DREAMAIL_UPDATE_CHANNEL` names:
   ```sh
   gh auth status
   ```
@@ -97,15 +97,15 @@ everyone." This doc is about `make release`.
      for the pushed commit, UI smoke tests included, and waits about seven
      minutes for the result. The UI tests do not run on pull requests.
    - `xcodebuild ... -configuration Release` into `build/ddship.noindex`
-     (with Distribution entitlements, via `MISHMAIL_APP_ENTITLEMENTS`)
+     (with Distribution entitlements, via `DREAMAIL_APP_ENTITLEMENTS`)
    - artifact checks, which stop the release before anything is published:
      the embedded relauncher exists, is signed, and is not sandboxed; the
      app passes `codesign --verify --deep --strict`; its
      `CFBundleShortVersionString` equals the tag version; its Team ID equals
      `DEVELOPMENT_TEAM`. None of these need Developer ID or notarization.
-   - `ditto -c -k --keepParent MishMail.app MishMail-<version>.zip`
+   - `ditto -c -k --keepParent DreaMail.app DreaMail-<version>.zip`
    - `shasum -a 256 … > SHA256SUMS`
-   - `gh release create v<version> MishMail-<version>.zip SHA256SUMS --generate-notes`
+   - `gh release create v<version> DreaMail-<version>.zip SHA256SUMS --generate-notes`
 
 5. **Verify.**
    ```sh
@@ -140,7 +140,7 @@ everyone." This doc is about `make release`.
 
 ### Tier 1 — free Personal Team (the standard path here)
 
-**This is how every MishMail release to date has shipped.** No paid Apple
+**This is how every DreaMail release to date has shipped.** No paid Apple
 Developer Program needed. `Config/Local.xcconfig`:
 
 ```
@@ -170,7 +170,7 @@ recreate it with the block above).
 If a "Developer ID Application" identity for the team exists in the keychain,
 `make release` automatically switches to Manual Developer ID signing and
 notarizes + staples before publishing (requires a stored
-`MishMail-notary` keychain profile). This makes the binary Gatekeeper-clean
+`DreaMail-notary` keychain profile). This makes the binary Gatekeeper-clean
 for strangers. Setup:
 
 1. In `Config/Local.xcconfig`, use a Developer ID identity:
@@ -181,7 +181,7 @@ for strangers. Setup:
    ```
    Keep `ENABLE_HARDENED_RUNTIME` on (it already is in `project.yml`).
    **`make release` / `make install` automatically pass
-   `MISHMAIL_APP_ENTITLEMENTS=…/MishMail.Distribution.entitlements`** when a
+   `DREAMAIL_APP_ENTITLEMENTS=…/DreaMail.Distribution.entitlements`** when a
    valid signing identity exists for `DEVELOPMENT_TEAM`, so library
    validation stays ON for shipping builds. (Ad-hoc CI/Debug still use the
    looser entitlements so the separately-signed GRDB framework can load.)
@@ -192,7 +192,7 @@ for strangers. Setup:
 2. **Store notarization credentials** once so `make release` can notarize
    automatically:
    ```sh
-   xcrun notarytool store-credentials MishMail-notary \
+   xcrun notarytool store-credentials DreaMail-notary \
      --apple-id <you@example.com> --team-id XXXXXXXXXX --password <app-specific-pw>
    ```
    With the Developer ID identity and this profile in place, `make release`
@@ -225,5 +225,5 @@ path regardless of signing.
 - **"crash on launch — different Team IDs"** — hardened runtime + library
   validation rejecting the ad-hoc-signed GRDB framework. Already handled by
   `com.apple.security.cs.disable-library-validation` in the dev entitlements
-  (`Sources/MishMail/MishMail.entitlements`, used by ad-hoc builds); if you
+  (`Sources/DreaMail/DreaMail.entitlements`, used by ad-hoc builds); if you
   changed signing, make sure the app and its embedded frameworks share a team.
