@@ -80,16 +80,137 @@ final class RemoteImageHTMLTests: XCTestCase {
                        ["https://img.example.com/a.png?x=1&y=2", b])
     }
 
-    func testDataCidHTTPAndRelativeURLsAreLeftAlone() {
+    func testDataCidAndRelativeURLsAreLeftAlone() {
         let html = """
-            <img src="data:image/png;base64,AAAA"><img src="cid:logo@x">\
-            <img src="http://img.example.com/clear.png"><img src="/rel.png">\
-            <img src="//img.example.com/proto.png"><div style="background:url(data:image/gif;base64,R0)"></div>
+            <img src="data:image/png;base64,AAAA"><img src="cid:logo@x"><img src="/rel.png">\
+            <div style="background:url(data:image/gif;base64,R0)"></div>
             """
         XCTAssertEqual(RemoteImageHTML.candidates(in: html), [])
         let out = rewrite(html, [:])
         XCTAssertEqual(out.html, html)
-        XCTAssertFalse(out.needsNetwork, "http is blocked by the CSP in every variant")
+        XCTAssertFalse(out.needsNetwork)
+        XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: html), html)
+    }
+
+    // MARK: http and protocol-relative images (upgraded to https)
+
+    /// Gmail shows `http:` and `//host/…` images; the app's CSP admits only
+    /// `https:` and its document base is `about:blank`. Both count as the
+    /// https URL they are upgraded to: cached, and needing the network until
+    /// they are.
+    func testHTTPAndProtocolRelativeImagesCountAsTheirHTTPSURL() {
+        let html = """
+            <img src="http://img.example.com/clear.png"><img src="//img.example.com/proto.png">\
+            <img src="HTTP://img.example.com:80/port.png">
+            """
+        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [
+            "https://img.example.com/clear.png", "https://img.example.com/proto.png",
+            "https://img.example.com/port.png",
+        ])
+        XCTAssertTrue(rewrite(html, [:]).needsNetwork, "they load once upgraded")
+        let cached = rewrite(html, [
+            "https://img.example.com/clear.png": dataA, "https://img.example.com/proto.png": dataB,
+            "https://img.example.com/port.png": dataA,
+        ])
+        XCTAssertEqual(cached.html, "<img src=\"\(dataA)\"><img src=\"\(dataB)\"><img src=\"\(dataA)\">")
+        XCTAssertFalse(cached.needsNetwork)
+        XCTAssertEqual(RemoteImageHTML.normalizedHTTPSURL("http://img.example.com:8080/a.png"),
+                       "https://img.example.com:8080/a.png", "another port is kept")
+    }
+
+    /// The rewrite gives protocol-relative image URLs the https scheme, in
+    /// every position the scanner knows, and nothing else: `http:` URLs
+    /// (left to `upgrade-insecure-requests`), links, namespaces, text and
+    /// https URLs are untouched.
+    func testUpgradeGivesProtocolRelativeImageURLsHTTPSOnly() {
+        let html = """
+            <html xmlns="http://www.w3.org/1999/xhtml"><a href="//shop.example.com/">\
+            <img src=" //img.example.com/logo.png" alt="Logo: //x"></a>\
+            <img src='//img.example.com/a.png'><img src=//img.example.com/b.png>\
+            <img src="http://img.example.com:80/h.png">\
+            <img srcset="http://img.example.com/1.png 1x, //img.example.com/2.png 2x" src="\(a)">\
+            <picture><source srcset="//img.example.com/w.webp"><img src="\(b)"></picture>\
+            <table background="//img.example.com/bg.jpg"><tr>\
+            <td style="background-image:url('//img.example.com/td.png');color:red">x</td>\
+            <td style="background:url(&quot;//img.example.com/q.png&quot;)">y</td></tr></table>\
+            <style>.h{background:url(//img.example.com/s.png)} .k{background:url("//img.example.com/k.png")}</style>\
+            <p>see http://example.com and //comment</p>
+            """
+        let out = RemoteImageHTML.upgradingInsecureImageURLs(in: html)
+        let expected = """
+            <html xmlns="http://www.w3.org/1999/xhtml"><a href="//shop.example.com/">\
+            <img src=" https://img.example.com/logo.png" alt="Logo: //x"></a>\
+            <img src='https://img.example.com/a.png'><img src=https://img.example.com/b.png>\
+            <img src="http://img.example.com:80/h.png">\
+            <img srcset="http://img.example.com/1.png 1x, https://img.example.com/2.png 2x" src="\(a)">\
+            <picture><source srcset="https://img.example.com/w.webp"><img src="\(b)"></picture>\
+            <table background="https://img.example.com/bg.jpg"><tr>\
+            <td style="background-image:url('https://img.example.com/td.png');color:red">x</td>\
+            <td style="background:url(&quot;//img.example.com/q.png&quot;)">y</td></tr></table>\
+            <style>.h{background:url(https://img.example.com/s.png)} .k{background:url("https://img.example.com/k.png")}</style>\
+            <p>see http://example.com and //comment</p>
+            """
+        XCTAssertEqual(out, expected)
+        XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: out), out, "idempotent")
+        let plain = "<img src=\"\(a)\"><a href=\"http://x.example.com/\">x</a>"
+        XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: plain), plain)
+    }
+
+    /// Where the scanner and WebKit disagree on markup (an SVG `<title>` is
+    /// raw text to the scanner, markup to WebKit), the rewrite still only
+    /// inserts `https:` before `//`: no attribute is re-serialised, no quote
+    /// is added or changed.
+    func testUpgradeOnlyEverInsertsTheScheme() {
+        let svgTitle = """
+            <svg><title><a href="https://a.example/" title="</title>\
+            <i style='background:url(//x.example/a);X'>">t</a></title></svg>
+            """
+        let out = RemoteImageHTML.upgradingInsecureImageURLs(in: svgTitle)
+        XCTAssertEqual(out, svgTitle.replacingOccurrences(of: "url(//x.example", with: "url(https://x.example"))
+
+        let hostile = [
+            svgTitle,
+            "<div style=\"background:url(//a.example/x)\" title='\"><img src=//b.example/y>'>",
+            "<td style='color:red;background:url(\"//a.example/q\")'>",
+            "<td style=\"background:url(&quot;//a.example/q&quot;)\">",
+            "<td style=background:url(//a.example/u)>x",
+            "<img src=\"//a.example/1\" srcset=\"//a.example/2 2x,//a.example/3 3x\" style=\"x:url(//a.example/4)\">",
+            "<style>a{background:url(//a.example/s)}</style><textarea><img src=//a.example/t></textarea>",
+            "<img src='//a.example/\"onerror=x'><img src=\"//a.example/'>\">",
+            "<!-- <img src=//a.example/c> --><img src=\" \n//a.example/n\">",
+            "<img src=//a.example/x <img src=//a.example/y>",
+            "<svg><![CDATA[<img src=//a.example/cd>]]><image href=\"//a.example/i\"/></svg><img src=//a.example/z>",
+            "<p>x</p><img src=\"//a.example/open",
+            "<img src=//a.example/ok><!-- <img src=//a.example/c",
+            "<img src=//a.example/ok><style>.a{background:url(//a.example/s)",
+            "<img src=//a.example/ok><div style=\"background:url(//a.example/v",
+        ]
+        for html in hostile {
+            let upgraded = RemoteImageHTML.upgradingInsecureImageURLs(in: html)
+            XCTAssertEqual(upgraded.utf8.count - html.utf8.count, 6 * (upgraded.components(separatedBy: "https://").count
+                                                                       - html.components(separatedBy: "https://").count),
+                           "only `https:` inserted: \(upgraded)")
+            XCTAssertEqual(upgraded.replacingOccurrences(of: "https://", with: "//"),
+                           html.replacingOccurrences(of: "https://", with: "//"),
+                           "reversing the inserted scheme gives the input back: \(upgraded)")
+        }
+        // An entity-encoded style value is left alone (the CSP upgrades
+        // what it can; `//` there stays unresolved rather than re-serialised).
+        let entity = "<td style=\"background:url(&quot;//a.example/q&quot;)\">"
+        XCTAssertEqual(RemoteImageHTML.upgradingInsecureImageURLs(in: entity), entity)
+    }
+
+    /// Only the allowed variant is rewritten; the blocked one loads no
+    /// remote image and is assembled as before.
+    func testAllowedDocumentIsAssembledWithUpgradedImageURLs() {
+        let html = "<img src=\"http://img.example.com/a.png\"><img src=\"//img.example.com/b.png\">"
+        let allowed = HTMLBodyDocument.assemble(
+            html: html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: true), styleCSS: "")
+        XCTAssertTrue(allowed.contains("<img src=\"http://img.example.com/a.png\"><img src=\"https://img.example.com/b.png\">"),
+                      "http: is left to upgrade-insecure-requests: \(allowed)")
+        let blocked = HTMLBodyDocument.assemble(
+            html: html, cspMeta: HTMLBodyCSP.metaTag(allowRemoteImages: false), styleCSS: "")
+        XCTAssertTrue(blocked.hasSuffix("<body>\(html)</body></html>"))
     }
 
     func testQuotesInsideURLsCannotBreakOutOfTheAttribute() {
@@ -143,8 +264,14 @@ final class RemoteImageHTMLTests: XCTestCase {
         XCTAssertTrue(out.needsNetwork)
     }
 
-    func testMixedSrcsetIsLeftLive() {
+    func testMixedSrcsetIsUsableOnceUpgraded() {
         let html = "<img srcset=\"http://x.example.com/1.png 1x, \(b) 2x\" src=\"\(a)\">"
+        XCTAssertEqual(RemoteImageHTML.candidates(in: html), [b])
+        XCTAssertTrue(rewrite(html, [a: dataA]).needsNetwork)
+    }
+
+    func testSrcsetWithAnUnusableCandidateIsLeftLive() {
+        let html = "<img srcset=\"/rel/1.png 1x, \(b) 2x\" src=\"\(a)\">"
         XCTAssertEqual(RemoteImageHTML.candidates(in: html), [])
         XCTAssertTrue(rewrite(html, [a: dataA]).needsNetwork)
     }
@@ -233,6 +360,7 @@ final class RemoteImageHTMLTests: XCTestCase {
     func testPositionsNotRewrittenStillNeedTheNetwork() {
         let cases = [
             "<picture><source srcset=\"\(a)\"><img src=\"data:image/png;base64,AA\"></picture>",
+            "<picture><source srcset=\"//img.example.com/w.webp\"><img src=\"data:image/png;base64,AA\"></picture>",
             "<video poster=\"\(a)\"></video>",
             "<input type=image src=\"\(a)\">",
             "<svg><image href=\"\(a)\"/></svg>",

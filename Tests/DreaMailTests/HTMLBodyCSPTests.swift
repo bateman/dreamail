@@ -21,8 +21,14 @@ final class HTMLBodyCSPTests: XCTestCase {
 
         let allowed = HTMLBodyCSP.metaTag(allowRemoteImages: true)
         XCTAssertTrue(allowed.contains("img-src data: cid: https:"))
-        // Cleartext image loads stay banned even when remote images are on.
+        // Cleartext image loads stay banned even when remote images are on:
+        // they are upgraded to https, never admitted as http.
         XCTAssertFalse(allowed.contains(" http:"))
+        XCTAssertTrue(allowed.contains("upgrade-insecure-requests"))
+        XCTAssertFalse(blocked.contains("upgrade-insecure-requests"))
+        XCTAssertTrue(HTMLBodyCSP.allowsRemoteImages(allowed))
+        XCTAssertFalse(HTMLBodyCSP.allowsRemoteImages(blocked))
+        XCTAssertFalse(HTMLBodyCSP.allowsRemoteImages(allowed + " "))
     }
 
     /// Both variants pinned exactly: turning remote images on by default must
@@ -37,6 +43,6 @@ final class HTMLBodyCSPTests: XCTestCase {
             HTMLBodyCSP.metaTag(allowRemoteImages: true),
             "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
             + "base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; "
-            + "img-src data: cid: https:; style-src 'unsafe-inline'\">")
+            + "img-src data: cid: https:; style-src 'unsafe-inline'; upgrade-insecure-requests\">")
     }
 }

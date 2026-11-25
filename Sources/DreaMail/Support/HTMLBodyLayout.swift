@@ -50,6 +50,13 @@ enum HTMLBodyLayout {
     /// of showing WebKit's broken-image icon, as Gmail on the web shows
     /// nothing there. Blocked images keep their placeholder.
     static let imagesAllowedClass = "mm-images-allowed"
+    /// With images allowed, a failed image with alt text is replaced by its
+    /// alt text, as Gmail on the web shows it: a `<span>` of this class with
+    /// the text (as text, never markup) goes before the image, which gets
+    /// `altShownImageClass` and leaves the layout. No broken-image icon, no
+    /// dashed box at the authored size. Blocked images keep their placeholder.
+    static let altTextClass = "mm-img-alt"
+    static let altShownImageClass = "mm-img-alt-shown"
     /// Class stamped on nodes whose viewport-tied height/min-height was neutralized.
     static let heightNeutralizedClass = "mm-h-neutralized"
 
@@ -81,6 +88,114 @@ enum HTMLBodyLayout {
     /// background image fetch starts and heights may be cached. Bounds what
     /// one image that never completes can hold back.
     static let loadBound: TimeInterval = 5
+
+    /// App-injected user script at document start: records each image's own
+    /// `load` / `error` event on the element (`__mmImgState`), so a loaded
+    /// image without an intrinsic size (an SVG can report `naturalWidth` 0)
+    /// is never taken for a failed one; and counts the image loads the CSP
+    /// refused (`img-src`, `<img>` and CSS images) for `imageCensusJS`.
+    /// Counts and states only: no URL is kept.
+    static let imageEventsJS: String = {
+        """
+        (function(){
+          try {
+            \(safeDOMJS)
+            window.__mmCSPImg = 0;
+            var mark = function(e){
+              var t = e && e.target;
+              if (t instanceof HTMLImageElement) t.__mmImgState = e.type;
+            };
+            SAFE.listen('load', mark);
+            SAFE.listen('error', mark);
+            SAFE.listen('securitypolicyviolation', function(e){
+              var d = String((e && (e.effectiveDirective || e.violatedDirective)) || '');
+              if (d.indexOf('img-src') === 0) window.__mmCSPImg = (window.__mmCSPImg || 0) + 1;
+            });
+          } catch (e) {}
+        })();
+        """
+    }()
+
+    /// Counts of the document's `<img>` elements by outcome, as JSON
+    /// (`RemoteImageCensus`). Failed images are counted by the kind of URL
+    /// they had, never by the URL. Run once the load ended.
+    static let imageCensusJS: String = {
+        """
+        (function(){
+          \(safeDOMJS)
+          var out = {loaded:0, failed:0, blocked:0, pending:0, altShown:0,
+                     remote:0, insecure:0, inline:0, unresolvable:0,
+                     csp: (window.__mmCSPImg || 0)};
+          var allowed = false;
+          try { allowed = SAFE.cls(SAFE.root()).contains('\(imagesAllowedClass)'); } catch (e) {}
+          out.allowed = allowed;
+          var imgs = SAFE.all('img');
+          for (var i = 0; i < imgs.length; i++) {
+            var img = imgs[i];
+            var src = String(img.currentSrc || img.getAttribute('src') || '').trim().toLowerCase();
+            if (!src && !img.getAttribute('srcset')) continue;
+            if (!img.complete) { out.pending++; continue; }
+            var state = img.__mmImgState;
+            if (state === 'load' || (state !== 'error' && img.naturalWidth > 0)) { out.loaded++; continue; }
+            var inline = src.indexOf('data:') === 0 || src.indexOf('cid:') === 0;
+            if (!allowed && !inline) { out.blocked++; continue; }
+            out.failed++;
+            if (SAFE.cls(img).contains('\(altShownImageClass)')) out.altShown++;
+            if (src.indexOf('https:') === 0) out.remote++;
+            else if (src.indexOf('http:') === 0) out.insecure++;
+            else if (inline) out.inline++;
+            else out.unresolvable++;
+          }
+          return JSON.stringify(out);
+        })()
+        """
+    }()
+
+    /// JS prologue for the app's image scripts: DOM access that message
+    /// content cannot steer. A named element (`<img name="documentElement">`,
+    /// `<form>` with `<input name="classList">`) shadows `document.x` or a
+    /// form's own properties, so these go through the prototypes' own
+    /// getters and methods instead. Used by every script the app injects
+    /// into message documents that reads the document (image events, census,
+    /// layout and measure).
+    static let safeDOMJS = """
+    var SAFE = (function(){
+      function getter(proto, name){
+        var d = Object.getOwnPropertyDescriptor(proto, name);
+        return d && d.get;
+      }
+      var rootGet = getter(Document.prototype, 'documentElement');
+      var bodyGet = getter(Document.prototype, 'body');
+      var scrollHeightGet = getter(Element.prototype, 'scrollHeight');
+      var rect = Element.prototype.getBoundingClientRect;
+      var classListGet = getter(Element.prototype, 'classList');
+      var parentElementGet = getter(Node.prototype, 'parentElement');
+      var parentNodeGet = getter(Node.prototype, 'parentNode');
+      var qs = Document.prototype.querySelector;
+      var qsa = Document.prototype.querySelectorAll;
+      var make = Document.prototype.createElement;
+      var listen = EventTarget.prototype.addEventListener;
+      return {
+        root: function(){
+          var r = rootGet.call(document);
+          return (r instanceof HTMLHtmlElement) ? r : null;
+        },
+        body: function(){
+          var b = bodyGet.call(document);
+          return (b instanceof HTMLBodyElement) ? b : null;
+        },
+        rect: function(el){ return rect.call(el); },
+        scrollHeight: function(el){ return scrollHeightGet.call(el); },
+        one: function(sel){ return qs.call(document, sel); },
+        all: function(sel){ return qsa.call(document, sel); },
+        make: function(tag){ return make.call(document, tag); },
+        cls: function(el){ return classListGet.call(el); },
+        parentElement: function(el){ return parentElementGet.call(el); },
+        parentNode: function(el){ return parentNodeGet.call(el); },
+        listen: function(type, fn){ listen.call(document, type, fn, true); }
+      };
+    })();
+    """
 
     static func isDOMReadyMessage(_ body: Any) -> Bool {
         (body as? String) == domReadyMessage
@@ -349,6 +464,8 @@ enum HTMLBodyLayout {
         let layout = layoutImageClass
         let failed = failedImageClass
         let allowed = imagesAllowedClass
+        let altText = altTextClass
+        let altShown = altShownImageClass
         return """
         img.\(layout) {
           max-width: 100%;
@@ -363,6 +480,20 @@ enum HTMLBodyLayout {
         html.\(allowed) img.\(failed):not([alt]),
         html.\(allowed) img.\(failed)[alt=""] {
           visibility: hidden;
+        }
+        html.\(allowed) img.\(altShown) {
+          display: none !important;
+        }
+        span.\(altText) {
+          display: inline;
+          font-size: 12px;
+          line-height: 1.4;
+          font-weight: normal;
+          font-style: normal;
+          letter-spacing: normal;
+          text-transform: none;
+          white-space: normal;
+          overflow-wrap: anywhere;
         }
         """
     }
@@ -456,6 +587,8 @@ enum HTMLBodyLayout {
         let layout = layoutImageClass
         let failed = failedImageClass
         let allowedClass = imagesAllowedClass
+        let altText = altTextClass
+        let altShown = altShownImageClass
         let neutral = heightNeutralizedClass
         let maxW = maxPreservedWidth
         let maxH = maxPreservedHeight
@@ -471,9 +604,14 @@ enum HTMLBodyLayout {
         let refVH = pinnedViewportHeight
         return """
         (function(){
+          \(safeDOMJS)
           var LAYOUT='\(layout)';
           var FAILED='\(failed)';
           var ALLOWED='\(allowedClass)';
+          var ALT_TEXT='\(altText)';
+          var ALT_SHOWN='\(altShown)';
+          var FG_LIGHT='\(HTMLBodyDarkMode.fgOnLightClass)';
+          var FG_DARK='\(HTMLBodyDarkMode.fgOnDarkClass)';
           var NEUTRAL='\(neutral)';
           var MAX_W=\(maxW);
           var MAX_H=\(maxH);
@@ -519,11 +657,11 @@ enum HTMLBodyLayout {
               if (typeof window !== 'undefined' && window.innerWidth) {
                 w = window.innerWidth;
               }
-              if ((!w || w <= 0) && document.documentElement) {
-                w = document.documentElement.clientWidth || 0;
+              if ((!w || w <= 0) && SAFE.root()) {
+                w = SAFE.root().clientWidth || 0;
               }
-              if ((!w || w <= 0) && document.body) {
-                w = document.body.clientWidth || 0;
+              if ((!w || w <= 0) && SAFE.body()) {
+                w = SAFE.body().clientWidth || 0;
               }
             } catch (e) {}
             return w > 0 ? w : MAX_W;
@@ -535,8 +673,8 @@ enum HTMLBodyLayout {
               if (typeof window !== 'undefined' && window.innerHeight) {
                 h = window.innerHeight;
               }
-              if ((!h || h <= 0) && document.documentElement) {
-                h = document.documentElement.clientHeight || 0;
+              if ((!h || h <= 0) && SAFE.root()) {
+                h = SAFE.root().clientHeight || 0;
               }
             } catch (e) {}
             return h > 0 ? h : 0;
@@ -582,11 +720,72 @@ enum HTMLBodyLayout {
             try { delete img.__mmLayoutSnap; } catch (e) { img.__mmLayoutSnap = null; }
           }
 
+          /* Gmail-like failed image with alt text (images allowed): the alt
+             text alone, small, in place of the image, as text (textContent:
+             never parsed as markup). Inside a link it stays the link. */
+          function imagesAllowed(){
+            try { return SAFE.cls(SAFE.root()).contains(ALLOWED); } catch (e) { return false; }
+          }
+          function altOf(img){
+            var a = img.getAttribute('alt');
+            return a == null ? '' : String(a).replace(/\\s+/g, ' ').trim();
+          }
+          function showAlt(img, text){
+            var span = img.__mmAlt;
+            var parent = SAFE.parentNode(img);
+            if (!span || SAFE.parentNode(span) !== parent) {
+              span = SAFE.make('span');
+              span.className = ALT_TEXT;
+              /* Dark mode stamps every element once, at document end; this
+                 span comes later: it takes its parent's stamp (the fill it
+                 sits on; else the image's), so its text contrasts with it. */
+              var p = SAFE.parentElement(img);
+              var pc = p ? SAFE.cls(p) : null;
+              var from = pc && (pc.contains(FG_LIGHT) || pc.contains(FG_DARK)) ? pc : SAFE.cls(img);
+              if (from.contains(FG_LIGHT)) span.classList.add(FG_LIGHT);
+              if (from.contains(FG_DARK)) span.classList.add(FG_DARK);
+              if (parent) Node.prototype.insertBefore.call(parent, span, img);
+              img.__mmAlt = span;
+            }
+            if (span.textContent !== text) span.textContent = text;
+            img.classList.add(ALT_SHOWN);
+          }
+          function hideAlt(img){
+            var span = img.__mmAlt;
+            if (span) {
+              var sp = SAFE.parentNode(span);
+              if (sp) Node.prototype.removeChild.call(sp, span);
+              img.__mmAlt = null;
+            }
+            img.classList.remove(ALT_SHOWN);
+          }
+
+          /* Loaded: its own load event (`imageEventsJS`), else, without a
+             recorded event (a view without that script), a natural size. */
+          function isLoaded(img){
+            if (!img.complete) return false;
+            var state = img.__mmImgState;
+            if (state === 'load') return true;
+            if (state === 'error') return false;
+            return img.naturalWidth > 0;
+          }
+
           function applyImage(img){
-            if (img.complete && img.naturalWidth > 0) {
+            if (isLoaded(img)) {
+              hideAlt(img);
               clearLayout(img);
               return;
             }
+            if (img.complete && imagesAllowed()) {
+              var alt = altOf(img);
+              if (alt) {
+                clearLayout(img);
+                img.classList.add(FAILED);
+                showAlt(img, alt);
+                return;
+              }
+            }
+            hideAlt(img);
             var attrW = img.getAttribute('width');
             var attrH = img.getAttribute('height');
             var capped = fitViewport(capPair(attrW, attrH));
@@ -614,7 +813,7 @@ enum HTMLBodyLayout {
           }
 
           function reflowPlaceholders(){
-            var imgs = document.querySelectorAll('img');
+            var imgs = SAFE.all('img');
             for (var i = 0; i < imgs.length; i++) applyImage(imgs[i]);
           }
 
@@ -683,7 +882,7 @@ enum HTMLBodyLayout {
               }
             } catch (e) {}
             try {
-              var els = document.querySelectorAll('[style]');
+              var els = SAFE.all('[style]');
               for (var k = 0; k < els.length; k++) {
                 var attr = els[k].getAttribute('style');
                 if (attr && HAS_VIEWPORT_UNIT.test(attr)) pinStyle(els[k].style);
@@ -708,15 +907,22 @@ enum HTMLBodyLayout {
             }
             window.__mmLastNeutralVH = vh;
             var changed = false;
-            var nodes = document.querySelectorAll('body, body *');
+            var nodes = SAFE.all('body, body *');
             for (var i = 0; i < nodes.length; i++) {
-              var el = nodes[i];
-              if (el.classList && el.classList.contains(NEUTRAL)) continue;
+              /* One node's shadowed property (a form's `classList`, `style`)
+                 must not end the walk. */
+              try { if (neutralizeNode(nodes[i], vh)) changed = true; } catch (e) {}
+            }
+            return changed;
+          }
+
+          function neutralizeNode(el, vh){
+              if (el.classList && el.classList.contains(NEUTRAL)) return false;
               var tag = (el.tagName || '').toLowerCase();
-              if (tag === 'img' || tag === 'svg' || tag === 'video' || tag === 'canvas') continue;
+              if (tag === 'img' || tag === 'svg' || tag === 'video' || tag === 'canvas') return false;
               var cs;
-              try { cs = window.getComputedStyle(el); } catch (e) { continue; }
-              if (!cs) continue;
+              try { cs = window.getComputedStyle(el); } catch (e) { return false; }
+              if (!cs) return false;
               var mh = parseFloat(cs.minHeight);
               var killMin = (mh === mh) && mh >= 200 && Math.abs(mh - vh) <= 2;
               var styleH = '';
@@ -750,25 +956,24 @@ enum HTMLBodyLayout {
               var clipsContent = nearVH && overflowClips && !styleLooksPx
                 && ((el.scrollHeight || 0) > ch + 8);
               var killHeight = nearVH && (authoredPct || authoredVh || clipsContent);
-              if (!killMin && !killHeight) continue;
+              if (!killMin && !killHeight) return false;
               if (killMin) el.style.setProperty('min-height', '0', 'important');
               if (killHeight) el.style.setProperty('height', 'auto', 'important');
               if (el.classList) el.classList.add(NEUTRAL);
-              changed = true;
-            }
-            return changed;
+              return true;
           }
 
           function measure(){
-            var body = document.body;
+            var body = SAFE.body();
             if (!body) return MIN_H;
             var bodyTop = body.getBoundingClientRect().top;
             var bottom = bodyTop;
             var kids = body.children;
             for (var i = 0; i < kids.length; i++) {
               var el = kids[i];
-              var r = el.getBoundingClientRect();
-              var sh = el.scrollHeight || 0;
+              /* Prototype calls: a `form` child can shadow its own. */
+              var r = SAFE.rect(el);
+              var sh = SAFE.scrollHeight(el) || 0;
               /* display:none → height 0. max-height:0 / height:0 overflow
                  preheaders keep full scrollHeight — never extend bottom from
                  a zero border-box (dead-gap regression for quote trails). */
@@ -958,7 +1163,7 @@ enum HTMLBodyLayout {
             /* Only real geometry changes should unfreeze. Blocked/error images
                already have placeholders applied — clearing freeze on every
                error restarts the measure→frame loop and can oscillate. */
-            if (img && img.complete && img.naturalWidth > 0) {
+            if (img && isLoaded(img)) {
               window.__mmFrozenH = 0;
               window.__mmFeedbackHits = 0;
               window.__mmFeedbackBase = 0;
@@ -976,7 +1181,7 @@ enum HTMLBodyLayout {
              freeze and feedback state, so a mail already frozen against the
              measure/frame loop does not start it again. */
           var reinstall = false;
-          try { reinstall = document.__mmInstalled === true; document.__mmInstalled = true; } catch (e) {}
+          try { reinstall = window.__mmInstalledFor === document; window.__mmInstalledFor = document; } catch (e) {}
           if (!reinstall) {
             window.__mmLastH = 0;
             window.__mmLastVH = 0;
@@ -999,11 +1204,12 @@ enum HTMLBodyLayout {
              with them allowed a failed image without alt text is hidden
              (imageCSS); blocked, it keeps the blocked-image placeholder. */
           try {
-            var csp = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+            var csp = SAFE.one('meta[http-equiv="Content-Security-Policy"]');
             var allowsRemote = !!csp && /img-src[^;]*https:/.test(csp.getAttribute('content') || '');
-            if (document.documentElement) {
-              if (allowsRemote) document.documentElement.classList.add(ALLOWED);
-              else document.documentElement.classList.remove(ALLOWED);
+            var root = SAFE.root();
+            if (root) {
+              if (allowsRemote) SAFE.cls(root).add(ALLOWED);
+              else SAFE.cls(root).remove(ALLOWED);
             }
           } catch (e) {}
 
@@ -1015,7 +1221,7 @@ enum HTMLBodyLayout {
              and removed here before the new one is bound. */
           var previousOnImg = window.__mmOnImg;
           window.__mmOnImg = onImgEvent;
-          var imgs = document.querySelectorAll('img');
+          var imgs = SAFE.all('img');
           for (var i = 0; i < imgs.length; i++) {
             var img = imgs[i];
             applyImage(img);
@@ -1030,18 +1236,18 @@ enum HTMLBodyLayout {
           try {
             if (window.__mmRO) { window.__mmRO.disconnect(); window.__mmRO = null; }
           } catch (e) {}
-          if (typeof ResizeObserver !== 'undefined' && document.body) {
+          var observedBody = SAFE.body();
+          if (typeof ResizeObserver !== 'undefined' && observedBody) {
             window.__mmRO = new ResizeObserver(function(){
               /* Re-check after host frame changes — new viewport px can make
                  previously sub-threshold min-heights match 100vh. Coalesced:
                  a resize drag delivers many callbacks per frame. */
               schedulePass(false, true);
             });
-            window.__mmRO.observe(document.body);
+            window.__mmRO.observe(observedBody);
             try {
-              if (document.documentElement) {
-                window.__mmRO.observe(document.documentElement);
-              }
+              var observedRoot = SAFE.root();
+              if (observedRoot) window.__mmRO.observe(observedRoot);
             } catch (e) {}
           }
 

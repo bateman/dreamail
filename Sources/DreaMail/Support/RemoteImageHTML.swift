@@ -23,8 +23,16 @@ import Foundation
 /// `<picture><source srcset>`, `<video poster>`,
 /// `<input type=image>`, SVG `<image>`/`<use>`/`<feImage>`, `<link>`,
 /// `image-set()`, any URL in CSS written with a backslash escape, and every
-/// URL the transport refuses. `data:`, `cid:` and `http:` URLs are never
-/// touched (the CSP blocks `http:` in every variant).
+/// URL the transport refuses. `data:` and `cid:` URLs are never touched.
+///
+/// `http:` and protocol-relative (`//host/…`) image URLs count as the
+/// `https:` URL they are upgraded to (`normalizedHTTPSURL`): Gmail shows
+/// them (through its proxy), the CSP never admits `http:`, and the
+/// document's base is `about:blank`, against which `//host/…` resolves to
+/// nothing. `upgradingInsecureImageURLs` gives `//` URLs the `https:`
+/// scheme in the document the web view loads with remote images allowed;
+/// `upgrade-insecure-requests` in that CSP upgrades every `http:` request
+/// (redirects to `http:` included).
 ///
 /// `needsNetwork` on the result says whether anything in the rewritten
 /// document could still make the web view fetch a remote image; when it is
@@ -65,14 +73,120 @@ enum RemoteImageHTML {
     /// What the web view would request for an attribute or CSS value: ASCII
     /// tab and newlines removed, surrounding whitespace trimmed. Nil unless
     /// the result is an absolute `https:` URL that `URL` parses.
+    ///
+    /// An `http:` or protocol-relative URL is normalised to the `https:` URL
+    /// it is upgraded to (port 80 dropped, as `upgrade-insecure-requests`
+    /// does).
     static func normalizedHTTPSURL(_ raw: String) -> String? {
         var s = raw.filter { $0 != "\t" && $0 != "\n" && $0 != "\r" }
         s = s.trimmingCharacters(in: .whitespaces.union(.controlCharacters))
+        var upgraded = false
+        if s.hasPrefix("//") {
+            s = "https:" + s
+            upgraded = true
+        } else if s.prefix(7).lowercased() == "http://" {
+            s = "https://" + s.dropFirst(7)
+            upgraded = true
+        }
         guard s.count > 8, s.prefix(8).lowercased() == "https://" else { return nil }
         s = "https://" + s.dropFirst(8)
-        guard let url = URL(string: s), url.scheme?.lowercased() == "https",
+        guard var url = URL(string: s), url.scheme?.lowercased() == "https",
               let host = url.host, !host.isEmpty else { return nil }
+        if upgraded, url.port == 80,
+           var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.port = nil
+            if let withoutPort = components.url { url = withoutPort }
+        }
         return url.absoluteString
+    }
+
+    /// `html` with every protocol-relative (`//host/…`) image URL the
+    /// scanner sees (`<img src/srcset>`, `<picture><source srcset>`,
+    /// `background`, CSS `url()` in `style` attributes and `<style>`) given
+    /// the `https:` scheme: against the `about:blank` base it would resolve
+    /// to nothing. Only `https:` is inserted in front; nothing else in the
+    /// value is touched, so no value can grow past its quotes. `http:` URLs
+    /// are left to `upgrade-insecure-requests` in the allowed CSP, which
+    /// also drops port 80 as `normalizedHTTPSURL` does. Links, `xmlns` and
+    /// every other attribute stay as they are. Returns `html` itself when
+    /// there is nothing to change.
+    static func upgradingInsecureImageURLs(in html: String) -> String {
+        let bytes = Array(html.utf8)
+        guard mayHaveProtocolRelativeURL(bytes) else { return html }
+        var state = State(replacements: [:], budget: 0, upgrade: true)
+        scanDocument(bytes, &state)
+        guard !state.edits.isEmpty else { return html }
+        return String(decoding: applying(state.edits, to: bytes), as: UTF8.self)
+    }
+
+    /// Cheap pre-check: `//` right after a quote, `=`, `(`, `,`, `;` (an
+    /// entity-encoded quote) or a space, where a protocol-relative URL can
+    /// start. Most mail has none, and is then not scanned at all.
+    private static func mayHaveProtocolRelativeURL(_ b: [UInt8]) -> Bool {
+        let n = b.count
+        var i = 1
+        while i + 1 < n {
+            if b[i] == 0x2F, b[i + 1] == 0x2F {
+                let p = b[i - 1]
+                if p == 0x22 || p == 0x27 || p == 0x3D || p == 0x28 || p == 0x2C || p == 0x3B
+                    || isSpace(p) {
+                    return true
+                }
+            }
+            i += 1
+        }
+        return false
+    }
+
+    /// The edit that gives the URL starting at the first non-space byte of
+    /// `range` the `https:` scheme, if it is protocol-relative (`//`).
+    private static func upgradeEdit(_ b: [UInt8], _ range: Range<Int>) -> Edit? {
+        var i = range.lowerBound
+        while i < range.upperBound, isSpace(b[i]) { i += 1 }
+        let left = range.upperBound - i
+        if left >= 2, b[i] == 0x2F, b[i + 1] == 0x2F {
+            return Edit(range: i..<i, bytes: Array("https:".utf8))
+        }
+        return nil
+    }
+
+    /// Upgrade edits for every candidate URL of a `srcset` value at `range`.
+    private static func srcsetUpgradeEdits(_ b: [UInt8], _ range: Range<Int>) -> [Edit] {
+        var edits: [Edit] = []
+        var i = range.lowerBound
+        let end = range.upperBound
+        while i < end {
+            while i < end, isSpace(b[i]) || b[i] == 0x2C { i += 1 }
+            guard i < end else { break }
+            let start = i
+            while i < end, !isSpace(b[i]) { i += 1 }
+            if let edit = upgradeEdit(b, start..<i) { edits.append(edit) }
+            if b[i - 1] == 0x2C { continue }
+            // Descriptors, up to the next top-level comma.
+            var depth = 0
+            while i < end {
+                let c = b[i]
+                if c == 0x28 { depth += 1 }
+                if c == 0x29 { depth = max(0, depth - 1) }
+                i += 1
+                if c == 0x2C, depth == 0 { break }
+            }
+        }
+        return edits
+    }
+
+    private static func applying(_ edits: [Edit], to bytes: [UInt8]) -> [UInt8] {
+        var out: [UInt8] = []
+        out.reserveCapacity(bytes.count + edits.reduce(0) { $0 + $1.bytes.count })
+        var cursor = 0
+        for edit in edits.sorted(by: { $0.range.lowerBound < $1.range.lowerBound }) {
+            guard edit.range.lowerBound >= cursor else { continue }
+            out.append(contentsOf: bytes[cursor..<edit.range.lowerBound])
+            out.append(contentsOf: edit.bytes)
+            cursor = edit.range.upperBound
+        }
+        out.append(contentsOf: bytes[cursor...])
+        return out
     }
 
     // MARK: - Scanner
@@ -93,6 +207,8 @@ enum RemoteImageHTML {
         /// the rewritten size whatever the number of occurrences: one cached
         /// image referenced ten thousand times is inlined only while it fits.
         var budget: Int
+        /// `upgradingInsecureImageURLs`: record `//` → `https://`, no data.
+        var upgrade = false
 
         mutating func found(_ url: String) {
             if seen.insert(url).inserted { urls.append(url) }
@@ -142,16 +258,7 @@ enum RemoteImageHTML {
             return Result(html: html, urls: state.urls, rewrittenCount: 0,
                           needsNetwork: state.needsNetwork)
         }
-        var out: [UInt8] = []
-        out.reserveCapacity(bytes.count + state.edits.reduce(0) { $0 + $1.bytes.count })
-        var cursor = 0
-        for edit in state.edits.sorted(by: { $0.range.lowerBound < $1.range.lowerBound }) {
-            guard edit.range.lowerBound >= cursor else { continue }
-            out.append(contentsOf: bytes[cursor..<edit.range.lowerBound])
-            out.append(contentsOf: edit.bytes)
-            cursor = edit.range.upperBound
-        }
-        out.append(contentsOf: bytes[cursor...])
+        let out = applying(state.edits, to: bytes)
         return Result(html: String(decoding: out, as: UTF8.self), urls: state.urls,
                       rewrittenCount: state.rewritten, needsNetwork: state.needsNetwork)
     }
@@ -264,6 +371,17 @@ enum RemoteImageHTML {
         let byName = Dictionary(attributes.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
 
         var handled: Set<String> = []
+        if state.upgrade {
+            if tag == "img", let range = byName["src"]?.value, let edit = upgradeEdit(b, range) {
+                state.edits.append(edit)
+            }
+            if tag == "img" || tag == "source", let range = byName["srcset"]?.value {
+                state.edits += srcsetUpgradeEdits(b, range)
+            }
+            if let range = byName["background"]?.value, let edit = upgradeEdit(b, range) {
+                state.edits.append(edit)
+            }
+        }
         if tag == "img" {
             handled.formUnion(["src", "srcset", "sizes"])
             handleImage(byName, decoded: decoded, &state)
@@ -291,7 +409,18 @@ enum RemoteImageHTML {
                 }
             }
         }
-        if let style = byName["style"], let raw = decoded(style) {
+        if state.upgrade, let style = byName["style"] {
+            // Never re-serialised here: the CSS is scanned over the
+            // document's own bytes and only `https:` is inserted, at document
+            // offsets. A value with an entity is left as it is (its bytes
+            // are not the CSS WebKit reads).
+            handled.insert("style")
+            if let range = style.value, !b[range].contains(0x26) {  // "&"
+                var inner = State(replacements: [:], budget: 0, upgrade: true)
+                scanCSS(b, range, inline: true, &inner)
+                state.edits += inner.edits
+            }
+        } else if let style = byName["style"], let raw = decoded(style) {
             handled.insert("style")
             let css = Array(raw.utf8)
             var inner = State(replacements: state.replacements, budget: state.budget)
@@ -319,7 +448,11 @@ enum RemoteImageHTML {
         for attribute in attributes where !handled.contains(attribute.name) {
             guard !neverLoads(attribute.name, tag: tag), let raw = decoded(attribute) else { continue }
             let squeezed = raw.filter { $0 != "\t" && $0 != "\n" && $0 != "\r" }.lowercased()
-            if squeezed.contains("https:") {
+            // `//host/…` in an image position is upgraded to https before
+            // loading (`<picture><source srcset>`, `<video poster>`…).
+            let imagePosition = ["src", "srcset", "poster"].contains(attribute.name)
+            if squeezed.contains("https:") || squeezed.contains("http:")
+                || (imagePosition && squeezed.contains("//")) {
                 state.needsNetwork = true
                 return
             }
@@ -352,7 +485,8 @@ enum RemoteImageHTML {
             }
             return
         }
-        if let raw = srcsetRaw, looksRemote(raw) || raw.lowercased().contains("https:") {
+        if let raw = srcsetRaw, looksRemote(raw) || raw.lowercased().contains("https:")
+            || raw.lowercased().contains("http:") {
             // A srcset the app cannot use: WebKit loads it live.
             state.needsNetwork = true
             return
@@ -404,12 +538,14 @@ enum RemoteImageHTML {
         return (best.url, text + "x")
     }
 
-    /// What the web view would still treat as an https URL although `URL`
+    /// What the web view would still treat as a remote URL although `URL`
     /// does not parse it (`https:/host`, `https:host`, backslashes…).
+    /// `http:` and `//` too: they are upgraded to https before loading.
     private static func looksRemote(_ raw: String) -> Bool {
-        raw.filter { $0 != "\t" && $0 != "\n" && $0 != "\r" }
+        let s = raw.filter { $0 != "\t" && $0 != "\n" && $0 != "\r" }
             .trimmingCharacters(in: .whitespaces.union(.controlCharacters))
-            .lowercased().hasPrefix("https:")
+            .lowercased()
+        return s.hasPrefix("https:") || s.hasPrefix("http:") || s.hasPrefix("//")
     }
 
     /// Whether the value at `range` starts (after spaces) with `data:`.
@@ -475,8 +611,10 @@ enum RemoteImageHTML {
 
     // MARK: - CSS
 
-    /// Scans CSS in `range` of `b`. Inline: `b` is a decoded `style`
-    /// attribute (its edits are applied by the caller and re-encoded).
+    /// Scans CSS in `range` of `b`. Inline: a `style` attribute, either
+    /// decoded (`rewrite`: its edits are applied by the caller and
+    /// re-encoded) or, for `upgradingInsecureImageURLs`, the document's own
+    /// bytes of the value (edits at document offsets, never re-encoded).
     private static func scanCSS(_ b: [UInt8], _ range: Range<Int>, inline: Bool,
                                 _ state: inout State) {
         var i = range.lowerBound
@@ -542,6 +680,7 @@ enum RemoteImageHTML {
         while i < end, isSpace(b[i]) { i += 1 }
         guard i < end else { return end }
         var raw: String
+        let rawStart = (b[i] == 0x22 || b[i] == 0x27) ? i + 1 : i
         if b[i] == 0x22 || b[i] == 0x27 {
             let quote = b[i]
             var k = i + 1
@@ -576,10 +715,11 @@ enum RemoteImageHTML {
         if lower.hasPrefix("data:") || lower.hasPrefix("cid:") || lower.hasPrefix("#") {
             return i
         }
+        if state.upgrade, let edit = upgradeEdit(b, rawStart..<(rawStart + raw.utf8.count)) {
+            state.edits.append(edit)
+        }
         guard let url = normalizedHTTPSURL(raw) else {
-            if lower.filter({ $0 != "\t" && $0 != "\n" && $0 != "\r" }).hasPrefix("https:") {
-                state.needsNetwork = true
-            }
+            if looksRemote(lower) { state.needsNetwork = true }
             return i
         }
         state.found(url)

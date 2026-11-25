@@ -83,6 +83,20 @@ enum DiagnosticLog {
         record("SYNC-FAIL account=\(accountTag(account)) \(describe(error))")
     }
 
+    /// The reading pane's images for the open message, when one failed
+    /// (`RemoteImageCensus`): counts and URL kinds only.
+    static func remoteImages(_ census: RemoteImageCensus) {
+        record("REMOTE-IMAGES web \(census.text)")
+    }
+
+    /// The app's own background fetch of a message's images (the same URLs
+    /// the web view asked for), when some failed: counts per reason.
+    static func remoteImageFetch(failures: [RemoteImageFetchFailure: Int], attempted: Int) {
+        let parts = failures.sorted { $0.key.rawValue < $1.key.rawValue }
+            .map { "\($0.key.rawValue)=\($0.value)" }
+        record("REMOTE-IMAGES fetch attempted=\(attempted) " + parts.joined(separator: " "))
+    }
+
     // MARK: - Redaction
 
     static func format(account: String, method: String, path: String,

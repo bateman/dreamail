@@ -281,10 +281,65 @@ enum RemoteImageFetchError: Error, Equatable {
     case unresolved
     /// 5xx, 408 or 429: the server may answer later; transient.
     case serverUnavailable
+    /// Another 4xx: the server refuses this URL.
+    case clientError
     case badStatus
     case redirected
     case notAnImage
     case tooLarge
+}
+
+/// Why one image of the app's own fetch failed: a reason category for the
+/// diagnostics line the reading pane writes, never a URL.
+enum RemoteImageFetchFailure: String, Sendable, CaseIterable {
+    /// Not https on the default port, user info, or a local host name.
+    case refusedURL = "refused-url"
+    case privateAddress = "private-address"
+    case dns
+    case http4xx = "http-4xx"
+    /// 5xx, 408 or 429.
+    case httpUnavailable = "http-5xx"
+    /// Any other status but 200.
+    case httpOther = "http-other"
+    /// A redirect to a URL the rules refuse (http, another port, a local host).
+    case redirect = "redirect-refused"
+    case notAnImage = "not-an-image"
+    case tooLarge = "too-large"
+    case timeout
+    case tls
+    case network
+
+    /// nil for a cancellation (not a failure).
+    init?(_ error: Error) {
+        if let refusal = error as? RemoteImageFetchError {
+            switch refusal {
+            case .notAllowedURL: self = .refusedURL
+            case .privateAddress: self = .privateAddress
+            case .unresolved: self = .dns
+            case .serverUnavailable: self = .httpUnavailable
+            case .clientError: self = .http4xx
+            case .badStatus: self = .httpOther
+            case .redirected: self = .redirect
+            case .notAnImage: self = .notAnImage
+            case .tooLarge: self = .tooLarge
+            }
+            return
+        }
+        if error is CancellationError { return nil }
+        guard let url = error as? URLError else {
+            self = .network
+            return
+        }
+        switch url.code {
+        case .cancelled: return nil
+        case .timedOut: self = .timeout
+        case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted,
+             .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+             .clientCertificateRejected, .clientCertificateRequired:
+            self = .tls
+        default: self = .network
+        }
+    }
 }
 
 /// The network under `RemoteImageFetcher`; tests drive the real streaming
@@ -474,6 +529,7 @@ enum RemoteImageFetcher {
         if http.statusCode >= 500 || http.statusCode == 408 || http.statusCode == 429 {
             throw RemoteImageFetchError.serverUnavailable
         }
+        if (400..<500).contains(http.statusCode) { throw RemoteImageFetchError.clientError }
         guard http.statusCode == 200 else { throw RemoteImageFetchError.badStatus }
         // Where the bytes came from must pass the rules too (a redirect the
         // guard let through was re-checked; this is belt and braces).
@@ -504,6 +560,8 @@ enum RemoteImageFetcher {
         var attempted: Set<String> = []
         /// Some URLs were never started because `byteBudget` was reached.
         var stoppedByBudget = false
+        /// Failed requests by reason (cancellations excluded).
+        var failures: [RemoteImageFetchFailure: Int] = [:]
     }
 
     /// Fetches `urls` with at most `RemoteImageFetchPolicy.concurrency` in
@@ -529,6 +587,9 @@ enum RemoteImageFetcher {
                     received += image.data.count
                 case .failure(let error):
                     if isRefusal(error) { batch.refused.insert(item.0) }
+                    if let failure = RemoteImageFetchFailure(error) {
+                        batch.failures[failure, default: 0] += 1
+                    }
                 }
                 if next < urls.count, received < byteBudget, !Task.isCancelled {
                     let url = urls[next]
