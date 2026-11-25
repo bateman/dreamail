@@ -304,6 +304,39 @@ struct ComposeSignatureState: Equatable {
     }
 }
 
+/// The compose signature menu, as in Gmail: "Manage signatures", a
+/// separator, "No signature", then each signature of the sending account
+/// by name. The check mark follows the body (`ComposeSignatureState.selection`):
+/// none on a signature the user typed or edited.
+enum ComposeSignatureMenu {
+    enum Row: Equatable, Identifiable {
+        case manage
+        case divider
+        case none(checked: Bool)
+        case signature(id: Int64, name: String, checked: Bool)
+
+        var id: String {
+            switch self {
+            case .manage: return "manage"
+            case .divider: return "divider"
+            case .none: return "none"
+            case .signature(let id, _, _): return "signature.\(id)"
+            }
+        }
+    }
+
+    static func rows(signatures: [SignatureRecord],
+                     selection: ComposeSignatureState.Selection) -> [Row] {
+        var rows: [Row] = [.manage, .divider, .none(checked: selection == .none)]
+        for signature in signatures {
+            guard let id = signature.id else { continue }
+            rows.append(.signature(id: id, name: signature.name,
+                                   checked: selection == .signature(id)))
+        }
+        return rows
+    }
+}
+
 /// A From change to another account left a signature MishMail cannot swap:
 /// the compose window asks whether to replace it with `signature` (remove
 /// it, for nil) or keep it.

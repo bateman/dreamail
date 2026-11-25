@@ -72,31 +72,80 @@ extension MailStore {
         }
     }
 
-    /// The Gmail signature of each send-as address of the account, read
-    /// from Gmail now (gmail.settings.basic, already granted for send-as).
-    /// Addresses without one are left out.
-    func gmailSignatures(accountId: String) async throws -> [(email: String, html: String)] {
-        guard !demoMode else { return [] }
-        return try await client(for: accountId).listSendAs().compactMap { row in
-            guard let html = row.signature,
-                  !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return (row.sendAsEmail, html)
-        }
+    /// "Use Gmail's": a copy edited here takes Gmail's text again.
+    func useGmailSignature(id: Int64) throws {
+        try writeSignatures { db in try SignatureStore.useGmailVersion(db, id: id) }
     }
 
-    /// Copies one Gmail signature into MishMail as a new signature of the
-    /// account. Returns what the conversion left out; throws with the
-    /// reason when nothing was saved.
-    func importGmailSignature(accountId: String, email: String,
-                              html: String) throws -> SignatureImport.Result {
-        let result = SignatureImport.markdown(fromGmailHTML: html)
-        if result.tooLarge {
-            throw SignatureWriteError(reason: "That signature is too large to import.")
+    /// The signature of each send-as address of the account, read from
+    /// Gmail now (`users.settings.sendAs`, under gmail.settings.basic, the
+    /// scope send-as already uses). The demo account reads a fixed one.
+    /// An address without a signature is left out.
+    func gmailSignatures(accountId: String) async throws -> [String: GmailSignature] {
+        let rows: [(String, String?)]
+        if demoMode {
+            rows = DemoSeed.gmailSignatures.filter {
+                $0.key.caseInsensitiveCompare(accountId) == .orderedSame
+            }.map { ($0.key, $0.value) }
+        } else {
+            rows = try await client(for: accountId).listSendAs().map { ($0.sendAsEmail, $0.signature) }
         }
-        guard !result.body.isEmpty else {
-            throw SignatureWriteError(reason: "That signature has no text MishMail can keep.")
+        var out: [String: GmailSignature] = [:]
+        for (email, html) in rows {
+            if let signature = GmailSignature.from(html: html) { out[email.lowercased()] = signature }
         }
-        try addSignature(accountId: accountId, name: "Gmail – \(email)", body: result.body)
-        return result
+        return out
+    }
+
+    /// Throttled refresh (Settings shown, compose opened).
+    func refreshGmailSignaturesIfDue(accountId: String) {
+        guard SignatureSyncPolicy.isDue(signatureSync[accountId], force: false, now: Date())
+        else { return }
+        Task { await refreshGmailSignatures(accountId: accountId, force: false) }
+    }
+
+    /// Reads the account's signatures from Gmail and applies them
+    /// (`SignatureStore.applyGmail`). Offline or on an error, what is here
+    /// stays and the state says so; nothing is shown outside Settings.
+    func refreshGmailSignatures(accountId: String, force: Bool) async {
+        guard !isShuttingDown, !accountId.isEmpty,
+              SignatureSyncPolicy.isDue(signatureSync[accountId], force: force, now: Date())
+        else { return }
+        let previous = signatureSync[accountId]
+        signatureSync[accountId] = SignatureSyncState(
+            status: .refreshing, lastAttempt: Date(), lastSuccess: previous?.lastSuccess,
+            unusable: previous?.unusable ?? [:])
+        let result: Result<[String: GmailSignature], Error>
+        do {
+            result = .success(try await gmailSignatures(accountId: accountId))
+        } catch {
+            result = .failure(error)
+        }
+        // Removed while Gmail answered: nothing of it is written back.
+        guard accounts.contains(where: { $0.id == accountId }) else {
+            signatureSync[accountId] = nil
+            return
+        }
+        var state = signatureSync[accountId] ?? SignatureSyncState(status: .refreshing,
+                                                                     lastAttempt: Date())
+        switch result {
+        case .success(let gmail):
+            do {
+                try writeSignatures { db in
+                    try SignatureStore.applyGmail(db, accountId: accountId, gmail: gmail)
+                }
+                state.status = .done
+                state.lastSuccess = Date()
+                state.unusable = gmail.compactMapValues {
+                    if case .unusable(let reason) = $0 { return reason }
+                    return nil
+                }
+            } catch {
+                state.status = .failed
+            }
+        case .failure(let error):
+            state.status = RemoteFailureKind.classify(error) == .offline ? .offline : .failed
+        }
+        signatureSync[accountId] = state
     }
 }

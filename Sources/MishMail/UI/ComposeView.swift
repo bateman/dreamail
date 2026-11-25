@@ -1155,6 +1155,7 @@ struct ComposeView: View {
                               formatTarget: formatTarget, fontSize: 14 * fontScale,
                               onFilesDropped: { ingestDroppedFiles($0) },
                               onTextHeightChange: { bodyTextHeight = $0 })
+                .accessibilityIdentifier("compose.body")
                 .padding(.top, 10)
                 .padding(.bottom, 6)
                 // Grow with authored content while the quote is collapsed so
@@ -1919,6 +1920,8 @@ struct ComposeView: View {
     /// After prefill: the sender's default for a new message, reply or
     /// forward; for a body opened again, recognise the signature it ends with.
     private func startSignature() {
+        // Signatures changed in Gmail arrive for the next window (throttled).
+        if !fromAccountId.isEmpty { store.refreshGmailSignaturesIfDue(accountId: fromAccountId) }
         if signatureFollowsSender {
             signatureState.accountId = fromAccountId.isEmpty ? nil : fromAccountId
             applyDefaultSignature()
@@ -2007,24 +2010,29 @@ struct ComposeView: View {
         signatureState.selection(in: signatureHead)
     }
 
-    private func signatureToggle(_ title: String, _ signature: SignatureRecord?) -> some View {
-        let selected = signature.map { signatureSelection == .signature($0.id ?? -1) }
-            ?? (signatureSelection == ComposeSignatureState.Selection.none)
-        return Toggle(title, isOn: Binding(get: { selected },
-                                           set: { _ in chooseSignature(signature) }))
-    }
-
+    /// Gmail's signature menu (`ComposeSignatureMenu`): a checked row is the
+    /// signature in the body now; choosing one swaps it in at once (⌘Z
+    /// undoes), "No signature" takes it out. Text the user typed stays.
     private var signatureMenu: some View {
         Menu {
-            signatureToggle("No signature", nil)
-            if !senderSignatures.isEmpty { Divider() }
-            ForEach(senderSignatures) { signature in
-                signatureToggle(signature.name, signature)
-            }
-            Divider()
-            Button("Manage signatures") {
-                SignatureSettings.open(accountId: fromAccountId)
-                openSettings()
+            ForEach(ComposeSignatureMenu.rows(signatures: senderSignatures,
+                                              selection: signatureSelection)) { row in
+                switch row {
+                case .manage:
+                    Button("Manage signatures") {
+                        SignatureSettings.open(accountId: fromAccountId)
+                        openSettings()
+                    }
+                case .divider:
+                    Divider()
+                case .none(let checked):
+                    Toggle("No signature", isOn: Binding(get: { checked },
+                                                         set: { _ in chooseSignature(nil) }))
+                case .signature(let id, let name, let checked):
+                    Toggle(name, isOn: Binding(get: { checked }, set: { _ in
+                        chooseSignature(senderSignatures.first { $0.id == id })
+                    }))
+                }
             }
         } label: {
             Image(systemName: ComposeToolbarItem.signature.systemImage)

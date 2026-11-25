@@ -1,7 +1,8 @@
 import Foundation
 
-/// "Import from Gmail": turns the HTML signature Gmail keeps for a send-as
-/// address (`users.settings.sendAs.signature`) into the compose editor's
+/// Gmail signatures copied into MishMail by themselves
+/// (`SignatureStore.applyGmail`): turns the HTML signature Gmail keeps for
+/// a send-as address (`users.settings.sendAs.signature`) into the compose editor's
 /// Markdown, which is how every MishMail signature is stored.
 ///
 /// Only what the editor can express survives: text, line breaks, bold,

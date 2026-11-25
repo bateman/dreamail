@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Settings → Signatures: each account's named signatures (add, rename,
-/// edit, delete, import from Gmail) and the default of each address the
+/// edit, delete; the Gmail one of each address arrives by itself) and the default of each address the
 /// account sends as, for new messages and for replies and forwards.
 ///
 /// A signature is written like the compose body: Markdown, with ⌘B, ⌘I,
@@ -22,7 +22,6 @@ struct SignatureSettings: View {
 
     @State private var editing: SignatureRecord?
     @State private var deleting: SignatureRecord?
-    @State private var importing = false
     /// The last write that failed, shown under the list.
     @State private var writeError: String?
 
@@ -72,15 +71,16 @@ struct SignatureSettings: View {
         .onAppear {
             store.reloadSignatures()
             validateAccount()
+            store.refreshGmailSignaturesIfDue(accountId: accountId)
         }
         // An account removed (or added) while the pane is open.
         .onChange(of: store.accounts.map(\.id)) { validateAccount() }
-        .onChange(of: accountId) { writeError = nil }
+        .onChange(of: accountId) {
+            writeError = nil
+            store.refreshGmailSignaturesIfDue(accountId: accountId)
+        }
         .sheet(item: $editing) { signature in
             SignatureEditor(signature: signature)
-        }
-        .sheet(isPresented: $importing) {
-            GmailSignatureImportSheet(accountId: accountId)
         }
         .confirmationDialog("Delete this signature?",
                             isPresented: Binding(get: { deleting != nil },
@@ -119,15 +119,13 @@ struct SignatureSettings: View {
             HStack {
                 Text("Signatures").font(.headline)
                 Spacer()
-                Button("Import from Gmail…") { importing = true }
-                    .help("Copy the signature Gmail has for one of this account's addresses")
-                    .accessibilityIdentifier("settings.signatures.import")
                 Button("New signature") {
                     editing = SignatureRecord(id: nil, accountId: accountId, name: "",
                                               body: "", createdAt: Date())
                 }
                 .accessibilityIdentifier("settings.signatures.new")
             }
+            gmailStatus
             if signatures.isEmpty {
                 Text("No signatures for \(accountId) yet.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -140,6 +138,7 @@ struct SignatureSettings: View {
                                 Text(signature.body.replacingOccurrences(of: "\n", with: " · "))
                                     .font(.system(size: 11)).foregroundStyle(.secondary)
                                     .lineLimit(1)
+                                gmailNote(signature)
                             }
                             Spacer()
                             Button("Edit…") { editing = signature }
@@ -158,6 +157,91 @@ struct SignatureSettings: View {
                 }
             }
         }
+    }
+
+    /// Signatures follow Gmail by themselves; this says when they last did,
+    /// and refreshes now on request.
+    private var gmailStatus: some View {
+        HStack(spacing: 6) {
+            Text(gmailStatusText)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("settings.signatures.gmailStatus")
+            Button("Refresh from Gmail") {
+                Task { await store.refreshGmailSignatures(accountId: accountId, force: true) }
+            }
+            .controlSize(.small)
+            .disabled(store.signatureSync[accountId]?.status == .refreshing)
+            .help("Read this account's signatures from Gmail now")
+            .accessibilityIdentifier("settings.signatures.refresh")
+        }
+    }
+
+    private var gmailStatusText: String {
+        let lead = "The signature each address has in Gmail is added here by itself."
+        guard let state = store.signatureSync[accountId] else { return lead }
+        var parts = [lead]
+        switch state.status {
+        case .refreshing:
+            parts.append("Reading Gmail…")
+        case .done:
+            parts.append("Checked \(state.lastAttempt.formatted(date: .omitted, time: .shortened)).")
+        case .offline:
+            parts.append("Gmail could not be reached; nothing changed here.")
+        case .failed:
+            parts.append("Gmail did not answer; nothing changed here. Signing in again may help.")
+        }
+        for (email, reason) in state.unusable.sorted(by: { $0.key < $1.key }) {
+            parts.append("Gmail's signature for \(email) was not added: \(reason).")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// Where a signature stands against Gmail.
+    @ViewBuilder
+    private func gmailNote(_ signature: SignatureRecord) -> some View {
+        let state = store.signatureBook.gmailState(of: signature)
+        let dropped = signature.gmailAddress.flatMap {
+            store.signatureBook.gmailRecord(accountId: signature.accountId, email: $0)
+        }.flatMap(Self.droppedNote)
+        switch state {
+        case .local:
+            EmptyView()
+        case .synced:
+            Text(["From Gmail.", dropped].compactMap { $0 }.joined(separator: " "))
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+        case .differs:
+            HStack(spacing: 6) {
+                Text("Edited here; Gmail's version differs.")
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                Button("Use Gmail's") {
+                    if let id = signature.id { perform { try store.useGmailSignature(id: id) } }
+                }
+                .controlSize(.mini)
+                .accessibilityLabel("Use Gmail's version of \(signature.name)")
+            }
+        case .gone:
+            Text("No longer on Gmail.")
+                .font(.system(size: 10.5)).foregroundStyle(.orange)
+        }
+    }
+
+    /// What the conversion of Gmail's signature left out, in words.
+    static func droppedNote(_ record: SignatureGmailRecord) -> String? {
+        var left: [String] = []
+        switch record.droppedImages {
+        case 0: break
+        case 1: left.append("its image")
+        default: left.append("its \(record.droppedImages) images")
+        }
+        switch record.droppedLinks {
+        case 0: break
+        case 1: left.append("one link, kept as text")
+        default: left.append("\(record.droppedLinks) links, kept as text")
+        }
+        guard !left.isEmpty else { return nil }
+        return "Without " + left.joined(separator: " and ")
+            + ": MishMail signatures hold text, formatting and links only."
     }
 
     private var defaultsSection: some View {
@@ -288,136 +372,6 @@ private struct SignatureEditor: View {
         .padding(20)
         .frame(width: 480)
         .onChange(of: text) { saveError = nil }
-    }
-}
-
-/// The Gmail signature of each of the account's send-as addresses, read
-/// from Gmail when the sheet opens; "Import" copies one into MishMail.
-private struct GmailSignatureImportSheet: View {
-    @Environment(MailStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    let accountId: String
-
-    private struct Entry: Identifiable {
-        var id: String { email }
-        let email: String
-        let html: String
-        let preview: String
-    }
-
-    private enum Load {
-        case loading
-        case loaded([Entry])
-        case failed
-    }
-    @State private var load: Load = .loading
-    @State private var note: String?
-    @State private var imported: Set<String> = []
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Import from Gmail").font(.headline)
-            Text("Copies the signature Gmail has for an address into MishMail, as a new signature of \(accountId). Gmail's own signature is not changed.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            content.frame(minHeight: 120, maxHeight: 300)
-            if let note {
-                Text(note).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 480)
-        .task { await fetch() }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch load {
-        case .loading:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Reading your Gmail signatures…").foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .failed:
-            VStack(spacing: 8) {
-                Text("Gmail did not answer. Check the connection, or sign in to this account again.")
-                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Button("Try Again") { Task { await fetch() } }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .loaded(let entries) where entries.isEmpty:
-            Text("Gmail has no signature for this account's addresses.")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .loaded(let entries):
-            List(entries) { entry in
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.email).font(.system(size: 12.5, weight: .medium))
-                        Text(entry.preview).font(.system(size: 11)).foregroundStyle(.secondary)
-                            .lineLimit(3)
-                    }
-                    Spacer()
-                    Button(imported.contains(entry.email) ? "Imported" : "Import") {
-                        importEntry(entry)
-                    }
-                    .disabled(imported.contains(entry.email))
-                }
-            }
-        }
-    }
-
-    private func fetch() async {
-        load = .loading
-        do {
-            let rows = try await store.gmailSignatures(accountId: accountId)
-            load = .loaded(rows.map {
-                let converted = SignatureImport.markdown(fromGmailHTML: $0.html)
-                return Entry(email: $0.email, html: $0.html,
-                             preview: converted.tooLarge ? "Too large to import." : converted.body)
-            })
-        } catch {
-            load = .failed
-        }
-    }
-
-    private func importEntry(_ entry: Entry) {
-        let result: SignatureImport.Result
-        do {
-            result = try store.importGmailSignature(accountId: accountId, email: entry.email,
-                                                    html: entry.html)
-        } catch {
-            note = error.localizedDescription
-            return
-        }
-        imported.insert(entry.email)
-        note = Self.importNote(result)
-    }
-
-    /// What the import left out, in words.
-    static func importNote(_ result: SignatureImport.Result) -> String {
-        var left: [String] = []
-        switch result.droppedImages {
-        case 0: break
-        case 1: left.append("its image")
-        default: left.append("its \(result.droppedImages) images")
-        }
-        switch result.droppedLinks {
-        case 0: break
-        case 1: left.append("one link, kept as text (a link type MishMail does not send, or one whose text names another address)")
-        default: left.append("\(result.droppedLinks) links, kept as text (link types MishMail does not send, or links whose text names another address)")
-        }
-        guard !left.isEmpty else {
-            return "Imported. Choose it as a default below the list, or in compose."
-        }
-        return "Imported without " + left.joined(separator: " and ")
-            + ". MishMail signatures hold text, formatting and links only."
     }
 }
 

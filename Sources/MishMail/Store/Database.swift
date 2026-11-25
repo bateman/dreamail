@@ -2907,6 +2907,13 @@ final class AppDatabase: @unchecked Sendable {
                 WHERE isUnread = 1 AND inSpam = 1
                 """)
         }
+        // v67 (v66 belongs to another open branch; registered last): signatures
+        // follow Gmail by themselves. Each copy keeps the address it came
+        // from and whether it was edited here; Gmail's last version of each
+        // address's signature is kept beside it. Both go with the account.
+        m.registerMigration("v67") { db in
+            try SignatureStore.addGmailSync(db)
+        }
         return m
     }
 }
