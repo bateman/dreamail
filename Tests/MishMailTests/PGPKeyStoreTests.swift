@@ -227,10 +227,10 @@ final class PGPKeyStoreTests: XCTestCase {
     }
 }
 
-/// v62 (this branch) registers before v63 and v64, which merged first. A
+/// v62 (this branch) registers before v63, v64 and v65, which merged first. A
 /// database that already ran them from `main` must still get v62.
 final class PGPKeyMigrationOrderTests: XCTestCase {
-    func testV62RunsOnADatabaseThatAlreadyHasV63AndV64() throws {
+    func testV62RunsOnADatabaseThatAlreadyHasLaterMigrations() throws {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q)
         try q.write { db in
@@ -241,6 +241,7 @@ final class PGPKeyMigrationOrderTests: XCTestCase {
             let applied = try AppDatabase.migrator.appliedIdentifiers(db)
             XCTAssertTrue(applied.contains("v63"))
             XCTAssertTrue(applied.contains("v64"))
+            XCTAssertTrue(applied.contains("v65"))
             XCTAssertFalse(applied.contains("v62"))
         }
         try AppDatabase.migrator.migrate(q)
