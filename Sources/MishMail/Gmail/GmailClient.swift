@@ -430,6 +430,27 @@ actor GmailClient {
         ])
     }
 
+    /// Sets a user label's color on Gmail (`labels.patch`, gmail.modify
+    /// scope), or removes it with nil. Only `color` is sent; the answer is
+    /// the label as Gmail now has it.
+    func patchLabelColor(id: String, color: GmailLabelColor?) async throws -> GLabel {
+        try await request("PATCH", "/labels/\(Self.pathSegment(id))", jsonBody: Self.labelColorPatchBody(color))
+    }
+
+    /// A label id as one path segment: `/`, `?`, `#` and the like are
+    /// percent-encoded, so an id can't reach another endpoint.
+    nonisolated static func pathSegment(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? ""
+    }
+
+    /// The `labels.patch` body: both colors, or `"color": null` to remove
+    /// it. Typed on `GmailLabelColor`, so no color outside Gmail's palette
+    /// can reach the request.
+    nonisolated static func labelColorPatchBody(_ color: GmailLabelColor?) -> [String: Any] {
+        guard let color else { return ["color": NSNull()] }
+        return ["color": ["backgroundColor": color.background, "textColor": color.text]]
+    }
+
     /// All filters the account has set up in Gmail. Requires the
     /// gmail.settings.basic scope (403 for tokens granted before it).
     func listFilters() async throws -> [GFilter] {
@@ -454,7 +475,7 @@ actor GmailClient {
 
     /// Authoritative per-label unread counts, straight from Gmail.
     func labelInfo(_ id: String) async throws -> GLabelDetail {
-        try await request("GET", "/labels/\(id)")
+        try await request("GET", "/labels/\(Self.pathSegment(id))")
     }
 
     /// The account's display name from the Google profile.
@@ -551,6 +572,7 @@ actor GmailClient {
     nonisolated static func quotaCost(method: String, path: String, format: String = "full") -> Int {
         if path == "/history" { return 2 }
         if path == "/labels" && method == "POST" { return 5 }
+        if path.hasPrefix("/labels/") && method == "PATCH" { return 5 }
         if path == "/messages" { return 5 }
         if path == "/messages/send" { return 100 }
         if path.contains("/attachments/") { return 20 }
