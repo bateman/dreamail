@@ -16,9 +16,21 @@ enum SignatureImport {
     struct Result: Equatable {
         var body: String
         var droppedImages: Int
+        /// Links kept as text only: a scheme other than http, https or
+        /// mailto, or a label that names another address than the link.
+        var droppedLinks = 0
+        /// Over `maxInputLength`: nothing was read.
+        var tooLarge = false
     }
 
+    /// Gmail caps a signature at 10,000 characters; markup on top of that
+    /// stays well under this. Larger input is refused before any pass.
+    static let maxInputLength = 50_000
+
     static func markdown(fromGmailHTML html: String) -> Result {
+        guard html.utf16.count <= maxInputLength else {
+            return Result(body: "", droppedImages: 0, tooLarge: true)
+        }
         var s = html.replacingOccurrences(of: "\r\n", with: "\n")
         // Gmail stores line breaks as tags; source newlines are layout.
         s = s.replacingOccurrences(of: "\n", with: " ")
@@ -36,20 +48,29 @@ enum SignatureImport {
         let images = count(#"<img\b"#, in: s)
         s = s.replacingOccurrences(of: #"<img\b[^>]*>"#, with: "",
                                    options: [.regularExpression, .caseInsensitive])
-        s = replaceLinks(s)
+        let links = replaceLinks(s)
+        s = links.text
         s = wrap(s, tags: "b|strong", marker: "**")
         s = wrap(s, tags: "i|em", marker: "*")
         s = replaceLists(s)
         // Block ends and breaks become newlines.
         s = s.replacingOccurrences(of: #"<br\b[^>]*>"#, with: "\n",
                                    options: [.regularExpression, .caseInsensitive])
+        // Block boundaries: a run of them (</div><div>, </tr><tr>) is one
+        // line break; an empty block holding a <br> is still a blank line.
         s = s.replacingOccurrences(of: #"</?(div|p|tr|table|h[1-6]|blockquote|center)\b[^>]*>"#,
-                                   with: "\n", options: [.regularExpression, .caseInsensitive])
+                                   with: "\u{1E}", options: [.regularExpression, .caseInsensitive])
+        s = s.replacingOccurrences(of: "\u{1E}[ \t]*(?:\u{1E}[ \t]*)*", with: "\n",
+                                   options: .regularExpression)
+        // Table cells side by side: keep them apart.
+        s = s.replacingOccurrences(of: #"</t[dh]\s*>"#, with: " ",
+                                   options: [.regularExpression, .caseInsensitive])
         // Everything else that looks like a tag goes, attributes and all.
         s = s.replacingOccurrences(of: #"</?[A-Za-z][^>]*>"#, with: "",
                                    options: .regularExpression)
-        s = s.decodingHTMLEntities()
+        s = stripInvisible(s.decodingHTMLEntities()
             .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: "\t", with: " "))
         let lines = s.components(separatedBy: "\n").map {
             $0.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespaces)
@@ -60,7 +81,20 @@ enum SignatureImport {
             out.append(line)
         }
         return Result(body: ComposeSignature.normalizedBody(out.joined(separator: "\n")),
-                      droppedImages: images)
+                      droppedImages: images, droppedLinks: links.dropped)
+    }
+
+    /// Bidi overrides and isolates (which can make text read other than it
+    /// is), zero-width characters and C0 controls other than the newline.
+    static func stripInvisible(_ s: String) -> String {
+        String(String.UnicodeScalarView(s.unicodeScalars.filter { scalar in
+            switch scalar.value {
+            case 0x0A: return true
+            case 0x00...0x1F, 0x7F: return false
+            case 0x200B...0x200F, 0x202A...0x202E, 0x2066...0x2069, 0xFEFF: return false
+            default: return true
+            }
+        }))
     }
 
     // MARK: - Pieces
@@ -73,30 +107,65 @@ enum SignatureImport {
     }
 
     /// `<a href="…">text</a>` → `[text](url)` for an accepted URL, else the
-    /// text alone. A link with no text (it held an image) is dropped.
-    private static func replaceLinks(_ s: String) -> String {
+    /// text alone. A link with no text (it held an image) is dropped. A
+    /// label that is itself an address other than the link's becomes
+    /// "label (url)" in plain text, so the mismatch shows. Text and URL
+    /// have `&` re-escaped: the final pass decodes entities once.
+    private static func replaceLinks(_ s: String) -> (text: String, dropped: Int) {
         let pattern = #"<a\b([^>]*)>([\s\S]*?)</a\s*>"#
         guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
-            return s
+            return (s, 0)
         }
         let ns = s as NSString
         var out = ""
         var last = 0
+        var dropped = 0
         for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
             out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
             last = m.range.location + m.range.length
             let attrs = ns.substring(with: m.range(at: 1))
             let text = plainText(ns.substring(with: m.range(at: 2)))
             guard !text.isEmpty else { continue }
-            if let href = href(in: attrs), let url = ComposeLinks.normalizeURL(href),
-               url.lowercased().hasPrefix("http") || url.lowercased().hasPrefix("mailto:") {
-                out += "[\(escapeLinkText(text))](\(escapeLinkURL(url)))"
-            } else {
-                out += text
+            let rawHref = Self.href(in: attrs)
+            guard let hrefValue = rawHref, let url = ComposeLinks.normalizeURL(hrefValue),
+                  url.lowercased().hasPrefix("http") || url.lowercased().hasPrefix("mailto:")
+            else {
+                if rawHref != nil { dropped += 1 }
+                out += reescaped(text)
+                continue
             }
+            if labelNamesOtherAddress(text, than: url) {
+                dropped += 1
+                out += reescaped("\(text) (\(url))")
+                continue
+            }
+            out += "[\(reescaped(escapeLinkText(text)))](\(reescaped(escapeLinkURL(url))))"
         }
         out += ns.substring(from: last)
-        return out
+        return (out, dropped)
+    }
+
+    private static func reescaped(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+    }
+
+    /// True when the label reads as a URL or an address whose host differs
+    /// from the link's.
+    static func labelNamesOtherAddress(_ label: String, than url: String) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.contains(" "), trimmed.contains("."),
+              let labelURL = ComposeLinks.normalizeURL(trimmed) else { return false }
+        return host(of: labelURL) != host(of: url)
+    }
+
+    private static func host(of url: String) -> String {
+        let lower = url.lowercased()
+        if lower.hasPrefix("mailto:") {
+            return String(lower.dropFirst("mailto:".count).split(separator: "?").first ?? "")
+        }
+        var host = URL(string: lower)?.host ?? lower
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        return host
     }
 
     private static func href(in attributes: String) -> String? {
@@ -153,7 +222,9 @@ enum SignatureImport {
                 last = m.range.location + m.range.length
                 let inner = ns.substring(with: m.range(at: 2))
                 let visible = plainText(inner)
-                guard !visible.isEmpty, !inner.contains("<br"), !inner.contains("<div") else {
+                guard !visible.isEmpty,
+                      inner.range(of: "<(br|div|p)\\b", options: [.regularExpression, .caseInsensitive]) == nil
+                else {
                     out += inner
                     continue
                 }

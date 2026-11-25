@@ -112,9 +112,11 @@ enum SignatureStore {
                 .references("account", onDelete: .cascade)
             t.column("sendAsEmail", .text).notNull()
             t.column("use", .text).notNull()
-            // Deleting a signature drops the defaults that named it.
+            // Deleting a signature turns the defaults that named it into
+            // "No signature" (NULL): an alias must not start following the
+            // primary's signature because its own was deleted.
             t.column("signatureId", .integer)
-                .references(SignatureRecord.databaseTableName, onDelete: .cascade)
+                .references(SignatureRecord.databaseTableName, onDelete: .setNull)
             t.primaryKey(["accountId", "sendAsEmail", "use"])
         }
     }
@@ -128,21 +130,31 @@ enum SignatureStore {
             defaults: try SignatureDefaultRecord.fetchAll(db))
     }
 
-    /// The name and text as stored: trimmed, bounded, and with no line the
-    /// compose body would take for the start of a signature
+    /// A signature that cannot be saved, with the reason to show.
+    struct InvalidSignature: LocalizedError, Equatable {
+        let reason: String
+        var errorDescription: String? { reason }
+    }
+
+    /// The name and text as stored: trimmed, and with no line the compose
+    /// body would take for the start of a signature
     /// (`ComposeSignature.delimiter`), so a signature is always one block.
-    static func normalized(name: String, body: String) -> (name: String, body: String) {
+    /// Refused, never cut, when the text is empty, too long, or has a line
+    /// compose would take for quoted mail (`ComposeSignature.saveProblem`).
+    static func normalized(name: String, body: String) throws -> (name: String, body: String) {
+        if let problem = ComposeSignature.saveProblem(body, maxLength: maxBodyLength) {
+            throw InvalidSignature(reason: problem)
+        }
         var cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\n", with: " ")
         if cleanName.isEmpty { cleanName = "Signature" }
-        let cleanBody = ComposeSignature.normalizedBody(body)
-        return (String(cleanName.prefix(maxNameLength)), String(cleanBody.prefix(maxBodyLength)))
+        return (String(cleanName.prefix(maxNameLength)), ComposeSignature.normalizedBody(body))
     }
 
     @discardableResult
     static func insert(_ db: Database, accountId: String, name: String, body: String,
                        at date: Date = Date()) throws -> SignatureRecord {
-        let clean = normalized(name: name, body: body)
+        let clean = try normalized(name: name, body: body)
         var row = SignatureRecord(id: nil, accountId: accountId, name: clean.name,
                                   body: clean.body, createdAt: date)
         try row.insert(db)
@@ -150,7 +162,7 @@ enum SignatureStore {
     }
 
     static func update(_ db: Database, id: Int64, name: String, body: String) throws {
-        let clean = normalized(name: name, body: body)
+        let clean = try normalized(name: name, body: body)
         try db.execute(sql: "UPDATE signature SET name = ?, body = ? WHERE id = ?",
                        arguments: [clean.name, clean.body, id])
     }

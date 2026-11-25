@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import GRDB
 
 /// Signatures per account: storage (v63) and removal with the account, the
@@ -94,18 +95,26 @@ final class SignatureTests: XCTestCase {
         }
     }
 
-    func testDeletingASignatureDropsTheDefaultsThatNamedIt() throws {
+    func testDeletingASignatureMakesItsDefaultsNoSignature() throws {
         let q = try makeDB()
         try q.write { db in
             try self.insertAccount(db, "a@x.com")
-            let row = try SignatureStore.insert(db, accountId: "a@x.com", name: "S", body: "Sig")
+            let primary = try SignatureStore.insert(db, accountId: "a@x.com", name: "P", body: "Primary")
+            let alias = try SignatureStore.insert(db, accountId: "a@x.com", name: "A", body: "Alias")
             try SignatureStore.setDefault(db, accountId: "a@x.com", email: "a@x.com",
-                                          use: .newMessage, choice: .signature(row.id!))
-            try SignatureStore.delete(db, id: row.id!)
+                                          use: .newMessage, choice: .signature(primary.id!))
+            try SignatureStore.setDefault(db, accountId: "a@x.com", email: "alias@x.com",
+                                          use: .newMessage, choice: .signature(alias.id!))
+            try SignatureStore.delete(db, id: alias.id!)
         }
         let book = try q.read { try SignatureStore.load($0) }
-        XCTAssertTrue(book.defaults.isEmpty)
-        XCTAssertNil(book.defaultSignature(use: .newMessage, accountId: "a@x.com", email: "a@x.com"))
+        // The alias does not start following the primary's signature.
+        XCTAssertEqual(book.choice(use: .newMessage, accountId: "a@x.com", email: "alias@x.com"),
+                       .none)
+        XCTAssertNil(book.defaultSignature(use: .newMessage, accountId: "a@x.com",
+                                           email: "alias@x.com"))
+        XCTAssertEqual(book.defaultSignature(use: .newMessage, accountId: "a@x.com",
+                                             email: "a@x.com")?.body, "Primary")
     }
 
     func testADefaultCannotNameAnotherAccountsSignature() throws {
@@ -121,16 +130,31 @@ final class SignatureTests: XCTestCase {
         XCTAssertTrue(book.defaults.isEmpty)
     }
 
-    func testSavedTextIsNormalisedIntoOneBlock() {
-        let clean = SignatureStore.normalized(name: "  Work\n", body: "-- \r\nAnn\r\n-- \r\nUni\n\n")
+    func testSavedTextIsNormalisedIntoOneBlock() throws {
+        let clean = try SignatureStore.normalized(name: "  Work\n",
+                                                  body: "-- \r\nAnn\r\n-- \r\nUni\n\n")
         XCTAssertEqual(clean.name, "Work")
         // The leading delimiter goes (MishMail adds its own); one inside
-        // would split the block, so it loses its trailing space.
-        XCTAssertEqual(clean.body, "Ann\n--\nUni")
-        XCTAssertEqual(SignatureStore.normalized(name: " ", body: "x").name, "Signature")
-        XCTAssertEqual(SignatureStore.normalized(
-            name: "n", body: String(repeating: "a", count: 20_000)).body.count,
-            SignatureStore.maxBodyLength)
+        // would split the block, so it becomes a dash.
+        XCTAssertEqual(clean.body, "Ann\n—\nUni")
+        XCTAssertEqual(try SignatureStore.normalized(name: " ", body: "x").name, "Signature")
+    }
+
+    func testEmptyTooLongOrQuoteLikeSignaturesAreRefusedNotCut() throws {
+        for body in [" \n-- \n ", String(repeating: "a", count: SignatureStore.maxBodyLength + 1),
+                     "Ann\nOn Mon, Jan 5, 2026 at 9:00 AM, Bob <b@x.com> wrote:\nUni",
+                     "Ann\n" + ForwardComposer.marker] {
+            XCTAssertThrowsError(try SignatureStore.normalized(name: "n", body: body)) { error in
+                XCTAssertTrue(error is SignatureStore.InvalidSignature)
+            }
+        }
+        let q = try makeDB()
+        try q.write { db in
+            try self.insertAccount(db, "a@x.com")
+            XCTAssertThrowsError(try SignatureStore.insert(db, accountId: "a@x.com", name: "n",
+                                                           body: "   "))
+        }
+        XCTAssertEqual(try q.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM signature") }, 0)
     }
 
     // MARK: - Default rules
@@ -177,72 +201,195 @@ final class SignatureTests: XCTestCase {
 
     // MARK: - Compose block
 
+    /// The automatic rule for a sender of account `account`.
+    @discardableResult
+    private func apply(_ state: inout ComposeSignatureState, _ signature: SignatureRecord?,
+                       to head: String, account: String = "a@x.com") -> String? {
+        if case .replaced(let next) = state.senderChanged(to: signature, accountId: account,
+                                                         head: head) {
+            return next
+        }
+        return nil
+    }
+
     func testNewMessageGetsTheDefaultBelowAnEmptyBody() {
         var state = ComposeSignatureState()
-        XCTAssertEqual(state.applyDefault(signature(1, "Ann\n**Uni**"), to: ""),
-                       "\n\n-- \nAnn\n**Uni**")
+        XCTAssertEqual(apply(&state, signature(1, "Ann\n**Uni**"), to: ""), "\n\n-- \nAnn\n**Uni**")
         XCTAssertEqual(state.signatureId, 1)
+        XCTAssertEqual(state.accountId, "a@x.com")
     }
 
     func testFromChangeSwapsAnUntouchedSignature() throws {
         var state = ComposeSignatureState()
-        let first = try XCTUnwrap(state.applyDefault(signature(1, "Ann"), to: ""))
+        let first = try XCTUnwrap(apply(&state, signature(1, "Ann"), to: ""))
         let typed = "Hello" + first
-        XCTAssertEqual(state.applyDefault(signature(2, "Bob"), to: typed), "Hello\n\n-- \nBob")
+        XCTAssertEqual(apply(&state, signature(2, "Bob", account: "b@x.com"), to: typed,
+                             account: "b@x.com"), "Hello\n\n-- \nBob")
         XCTAssertEqual(state.signatureId, 2)
         // To a sender with no default: removed, the user's text kept.
-        XCTAssertEqual(state.applyDefault(nil, to: "Hello\n\n-- \nBob"), "Hello")
+        XCTAssertEqual(apply(&state, nil, to: "Hello\n\n-- \nBob"), "Hello")
         XCTAssertNil(state.block)
         // And back.
-        XCTAssertEqual(state.applyDefault(signature(1, "Ann"), to: "Hello"), "Hello\n\n-- \nAnn")
+        XCTAssertEqual(apply(&state, signature(1, "Ann"), to: "Hello"), "Hello\n\n-- \nAnn")
     }
 
-    func testFromChangeLeavesAnEditedSignatureAlone() throws {
+    func testAliasChangeLeavesAnEditedSignatureAlone() throws {
         var state = ComposeSignatureState()
-        let first = try XCTUnwrap(state.applyDefault(signature(1, "Ann"), to: ""))
-        XCTAssertNil(state.applyDefault(signature(2, "Bob"), to: "Hi" + first + " (mobile)"))
-        XCTAssertNil(state.applyDefault(signature(2, "Bob"), to: "Hi\n\n-- \nAnnie"))
+        let first = try XCTUnwrap(apply(&state, signature(1, "Ann"), to: ""))
+        let edited = "Hi" + first + " (mobile)"
+        XCTAssertEqual(state.senderChanged(to: signature(2, "Bob"), accountId: "a@x.com",
+                                           head: edited), .unchanged)
+        XCTAssertEqual(state.senderChanged(to: signature(2, "Bob"), accountId: "A@x.com",
+                                           head: "Hi\n\n-- \nAnnie"), .unchanged)
         // Removed by the user: not put back.
-        XCTAssertNil(state.applyDefault(signature(2, "Bob"), to: "Hi"))
+        XCTAssertEqual(state.senderChanged(to: signature(2, "Bob"), accountId: "a@x.com",
+                                           head: "Hi"), .unchanged)
     }
 
-    func testASignatureTheUserTypedIsLeftAlone() {
+    func testAnotherAccountOverAnEditedSignatureAsksAndResolves() throws {
         var state = ComposeSignatureState()
-        XCTAssertNil(state.applyDefault(signature(1, "Ann"), to: "Hi\n\n-- \nmy own"))
-    }
-
-    func testManualChoiceReplacesTheSignatureEvenWhenEdited() throws {
-        var state = ComposeSignatureState()
-        let first = try XCTUnwrap(state.applyDefault(signature(1, "Ann"), to: ""))
-        XCTAssertEqual(state.choose(signature(2, "Bob"), in: "Hi" + first + " edited"),
+        let first = try XCTUnwrap(apply(&state, signature(1, "Ann"), to: ""))
+        let edited = "Hi" + first + " (mobile)"
+        let bob = signature(2, "Bob", account: "b@x.com")
+        XCTAssertEqual(state.senderChanged(to: bob, accountId: "b@x.com", head: edited),
+                       .needsDecision)
+        // Body untouched until the user answers.
+        var replacing = state
+        XCTAssertEqual(replacing.resolveReplacing(with: bob, accountId: "b@x.com", head: edited),
                        "Hi\n\n-- \nBob")
-        XCTAssertEqual(state.signatureId, 2)
-        // With no signature in the body, the choice is appended.
-        var fresh = ComposeSignatureState()
-        XCTAssertEqual(fresh.choose(signature(1, "Ann"), in: "Hi"), "Hi\n\n-- \nAnn")
+        XCTAssertEqual(replacing.signatureId, 2)
+        var removing = state
+        XCTAssertEqual(removing.resolveReplacing(with: nil, accountId: "b@x.com", head: edited), "Hi")
+        // Keep: not asked again for that account.
+        var keeping = state
+        keeping.resolveKeeping(accountId: "b@x.com")
+        XCTAssertEqual(keeping.senderChanged(to: bob, accountId: "b@x.com", head: edited),
+                       .unchanged)
+    }
+
+    func testAnotherAccountOverATypedSignatureAsksToo() {
+        var state = ComposeSignatureState(accountId: "a@x.com")
+        XCTAssertEqual(state.senderChanged(to: nil, accountId: "b@x.com", head: "Hi\n\n-- \nmine"),
+                       .needsDecision)
+    }
+
+    func testASignatureTheUserTypedIsLeftAloneWithinTheAccount() {
+        var state = ComposeSignatureState()
+        XCTAssertNil(apply(&state, signature(1, "Ann"), to: "Hi\n\n-- \nmy own"))
+        // Gmail trimmed the delimiter's space: still a signature, so no
+        // second one is appended under it.
+        XCTAssertNil(apply(&state, signature(1, "Ann"), to: "Hi\n\n--\nmy own"))
+    }
+
+    func testManualChoiceNeverCutsTextMishMailDidNotInsert() throws {
+        var state = ComposeSignatureState()
+        let first = try XCTUnwrap(apply(&state, signature(1, "Ann"), to: ""))
+        // A P.S. typed under the signature stays.
+        XCTAssertEqual(state.choose(signature(2, "Bob"), in: "Hi" + first + "\nP.S. call me",
+                                    known: ["Ann", "Bob"]),
+                       "Hi\n\n-- \nBob\nP.S. call me")
+        // An edited signature is not cut: the choice is added at the end.
+        var edited = ComposeSignatureState()
+        let block = try XCTUnwrap(apply(&edited, signature(1, "Ann"), to: ""))
+        XCTAssertEqual(edited.choose(signature(2, "Bob"), in: "Hi" + block + "ie", known: ["Ann", "Bob"]),
+                       "Hi\n\n-- \nAnnie\n\n-- \nBob")
+        // Pasted text with a delimiter line, and no signature current.
+        var none = ComposeSignatureState()
+        let pasted = "Fwd text\n-- \nsomeone's footer"
+        XCTAssertEqual(none.choose(signature(1, "Ann"), in: pasted, known: ["someone's footer"]),
+                       pasted + "\n\n-- \nAnn")
+        XCTAssertEqual(none.choose(nil, in: pasted + "\n\n-- \nAnn", known: []), pasted)
     }
 
     func testNoSignatureRemovesOnlyTheBlock() throws {
         var state = ComposeSignatureState()
-        let first = try XCTUnwrap(state.applyDefault(signature(1, "Ann"), to: ""))
+        let first = try XCTUnwrap(apply(&state, signature(1, "Ann"), to: ""))
         XCTAssertEqual(state.choose(nil, in: "Dear Bob,\n\nSee you." + first), "Dear Bob,\n\nSee you.")
         XCTAssertNil(state.block)
         XCTAssertNil(state.signatureId)
     }
 
+    func testMenuSelectionFollowsTheBody() throws {
+        var state = ComposeSignatureState()
+        let first = try XCTUnwrap(apply(&state, signature(1, "Ann"), to: ""))
+        XCTAssertEqual(state.selection(in: "Hi" + first), .signature(1))
+        XCTAssertEqual(state.selection(in: "Hi"), .none)
+        XCTAssertEqual(state.selection(in: "Hi" + first + "!"), .custom)
+    }
+
     func testADraftOpenedAgainKeepsItsBodyAndKnowsItsSignature() {
         let saved = "Hello\n\n-- \nAnn\n"
-        let state = ComposeSignatureState.restored(head: saved,
-                                                   among: [signature(1, "Ann"), signature(2, "Bob")])
+        let state = ComposeSignatureState.restored(
+            head: saved, among: [signature(1, "Ann"), signature(2, "Bob")], accountId: "a@x.com")
         XCTAssertEqual(state.signatureId, 1)
         XCTAssertEqual(state.block, "\n\n-- \nAnn")
         // Its signature swaps like one just inserted once the user picks
         // another sender.
         var next = state
-        XCTAssertEqual(next.applyDefault(signature(2, "Bob"), to: saved), "Hello\n\n-- \nBob")
+        XCTAssertEqual(apply(&next, signature(2, "Bob"), to: saved), "Hello\n\n-- \nBob")
         // Unknown signature text: the user's own.
         XCTAssertNil(ComposeSignatureState.restored(head: "Hi\n\n-- \nMine",
-                                                    among: [signature(1, "Ann")]).block)
+                                                    among: [signature(1, "Ann")],
+                                                    accountId: "a@x.com").block)
+    }
+
+    func testADraftBackFromGmailWithoutTheDelimiterSpaceIsRecognised() {
+        let state = ComposeSignatureState.restored(head: "Hello\n\n--\nAnn",
+                                                   among: [signature(1, "Ann")], accountId: "a@x.com")
+        XCTAssertEqual(state.block, "\n\n--\nAnn")
+        var next = state
+        XCTAssertEqual(apply(&next, signature(2, "Bob"), to: "Hello\n\n--\nAnn"),
+                       "Hello\n\n-- \nBob")
+    }
+
+    func testAReopenedForwardDraftUsesTheReplyDefault() {
+        XCTAssertEqual(SignatureUse.forDraft(referencesHeader: "", body: "Hi"), .newMessage)
+        XCTAssertEqual(SignatureUse.forDraft(referencesHeader: "<m@x>", body: "Hi"), .reply)
+        XCTAssertEqual(SignatureUse.forDraft(
+            referencesHeader: "", body: "FYI\n\n\(ForwardComposer.marker)\nFrom: a"), .reply)
+    }
+
+    func testUntouchedReplyStaysUntouchedAcrossQuoteExpandAndCollapse() {
+        let head = "\n\n-- \nAnn"          // the automatic signature, nothing typed
+        let quote = "On Mon, Bob <b@x.com> wrote:\n> hi"
+        let expanded = head + "\n\n" + quote
+        let afterExpand = ComposePrefillBaseline.afterExpand(
+            head: head, initial: head, quotedTail: quote, expanded: expanded)
+        XCTAssertTrue(ComposePrefillBaseline.isUntouched(body: expanded, initial: afterExpand))
+        let afterCollapse = ComposePrefillBaseline.afterCollapse(
+            body: expanded, initial: afterExpand, head: head)
+        XCTAssertTrue(ComposePrefillBaseline.isUntouched(body: head, initial: afterCollapse))
+        // Typed text still counts as content.
+        XCTAssertFalse(ComposePrefillBaseline.isUntouched(body: "Hi" + head, initial: afterCollapse))
+    }
+
+    func testSaveAsSnippetKeepsOnlyTheAuthoredText() {
+        XCTAssertEqual(ComposeSignature.authoredText(ofHead: "Thanks!\n\n-- \nAnn"), "Thanks!")
+        XCTAssertEqual(ComposeSignature.authoredText(ofHead: "Thanks!"), "Thanks!")
+    }
+
+    @MainActor
+    func testSignatureSwapIsOneUndoStep() throws {
+        let undo = UndoManager()
+        final class Delegate: NSObject, NSTextViewDelegate {
+            let undo: UndoManager
+            init(_ undo: UndoManager) { self.undo = undo }
+            func undoManager(for view: NSTextView) -> UndoManager? { undo }
+        }
+        let delegate = Delegate(undo)
+        let textView = NSTextView()
+        textView.allowsUndo = true
+        textView.delegate = delegate
+        textView.string = "Hi\n\n-- \nAnn"
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        XCTAssertTrue(UndoableTextEdit.replace(in: textView, with: "Hi\n\n-- \nBob",
+                                               actionName: "Signature"))
+        undo.endUndoGrouping()
+        XCTAssertEqual(textView.string, "Hi\n\n-- \nBob")
+        XCTAssertTrue(undo.canUndo)
+        undo.undo()
+        XCTAssertEqual(textView.string, "Hi\n\n-- \nAnn")
     }
 
     // MARK: - Outgoing HTML
@@ -316,5 +463,47 @@ final class SignatureTests: XCTestCase {
 
     func testGmailSignatureStartingWithADelimiterIsNotDoubled() {
         XCTAssertEqual(SignatureImport.markdown(fromGmailHTML: "-- <br>Ann").body, "Ann")
+    }
+
+    func testImportStripsBidiZeroWidthAndControlCharacters() {
+        let result = SignatureImport.markdown(fromGmailHTML:
+            "A\u{202E}nn\u{200B} L&#x2066;ee\u{0007}<br>U\u{FEFF}ni")
+        XCTAssertEqual(result.body, "Ann Lee\nUni")
+    }
+
+    func testImportShowsALinkWhoseLabelNamesAnotherAddress() {
+        let result = SignatureImport.markdown(fromGmailHTML:
+            "<a href=\"https://evil.example/login\">www.uniba.it</a> <a href=\"https://www.uniba.it/x\">uniba.it</a>")
+        XCTAssertEqual(result.body, "www.uniba.it (https://evil.example/login) [uniba.it](https://www.uniba.it/x)")
+        XCTAssertEqual(result.droppedLinks, 1)
+    }
+
+    func testImportKeepsTableCellsApart() {
+        let result = SignatureImport.markdown(fromGmailHTML: """
+            <table><tr><td><img src="https://x.example/logo.png"></td><td><b>Ann</b></td>            <td>Uni</td></tr><tr><th>Phone</th><td>123</td></tr></table>
+            """)
+        XCTAssertEqual(result.body, "**Ann** Uni\nPhone 123")
+        XCTAssertEqual(result.droppedImages, 1)
+    }
+
+    func testImportGivesOneLineBreakPerBlock() {
+        XCTAssertEqual(SignatureImport.markdown(fromGmailHTML:
+            "<div>Ann</div><div>Uni</div><div><br></div><div>Bari</div>").body,
+                       "Ann\nUni\n\nBari")
+    }
+
+    func testImportRefusesOversizedInput() {
+        let result = SignatureImport.markdown(fromGmailHTML:
+            String(repeating: "<b>a</b>", count: SignatureImport.maxInputLength / 8 + 1))
+        XCTAssertTrue(result.tooLarge)
+        XCTAssertEqual(result.body, "")
+    }
+
+    func testImportCountsRefusedLinksAndDecodesEntitiesOnce() {
+        let result = SignatureImport.markdown(fromGmailHTML: """
+            <a href="ftp://x.example/f">files</a><BR>            <a href="https://x.example/?a=1&amp;amp;b">A &amp;lt; B</a>
+            """)
+        XCTAssertEqual(result.body, "files\n[A &lt; B](https://x.example/?a=1&amp;b)")
+        XCTAssertEqual(result.droppedLinks, 1)
     }
 }

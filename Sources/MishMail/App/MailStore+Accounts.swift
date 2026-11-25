@@ -91,6 +91,7 @@ extension MailStore {
         let reachable = !isOffline
         accounts.removeAll { $0.id == id }
         forgetAccountPhoto(id)
+        forgetSignatureSettingsAccount(id)
         // DEC-019: the account's Gmail filters leave memory with it.
         filterCache.forget(account: id)
         // Same for the Google Calendar integration's memory of it (again

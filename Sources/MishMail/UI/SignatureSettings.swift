@@ -12,7 +12,7 @@ struct SignatureSettings: View {
     /// signatures" can open the pane on a given account.
     @AppStorage(SignatureSettings.accountKey) private var accountId = ""
 
-    static let accountKey = "settingsSignaturesAccount"
+    static let accountKey = MailStore.signatureSettingsAccountKey
 
     /// Opens on `accountId` the next time the pane shows.
     static func open(accountId: String) {
@@ -23,6 +23,8 @@ struct SignatureSettings: View {
     @State private var editing: SignatureRecord?
     @State private var deleting: SignatureRecord?
     @State private var importing = false
+    /// The last write that failed, shown under the list.
+    @State private var writeError: String?
 
     private var signatures: [SignatureRecord] {
         store.signatureBook.signatures(for: accountId)
@@ -58,6 +60,9 @@ struct SignatureSettings: View {
                             .accessibilityIdentifier("settings.signatures.account")
                         }
                         signatureList
+                        if let writeError {
+                            Text(writeError).font(.system(size: 11)).foregroundStyle(.red)
+                        }
                         defaultsSection
                     }
                     .padding(20)
@@ -66,10 +71,11 @@ struct SignatureSettings: View {
         }
         .onAppear {
             store.reloadSignatures()
-            if !store.accounts.contains(where: { $0.id == accountId }) {
-                accountId = store.activeAccountId ?? store.accounts.first?.id ?? ""
-            }
+            validateAccount()
         }
+        // An account removed (or added) while the pane is open.
+        .onChange(of: store.accounts.map(\.id)) { validateAccount() }
+        .onChange(of: accountId) { writeError = nil }
         .sheet(item: $editing) { signature in
             SignatureEditor(signature: signature)
         }
@@ -81,11 +87,30 @@ struct SignatureSettings: View {
                                                  set: { if !$0 { deleting = nil } }),
                             presenting: deleting) { signature in
             Button("Delete “\(signature.name)”", role: .destructive) {
-                if let id = signature.id { store.deleteSignature(id: id) }
+                if let id = signature.id { perform { try store.deleteSignature(id: id) } }
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Messages already written keep it. Defaults that used it go back to none.")
+            Text("Messages already written keep it. Defaults that used it become “No signature”.")
+        }
+    }
+
+    /// The shown account must be a signed-in one.
+    private func validateAccount() {
+        guard !store.accounts.contains(where: {
+            $0.id.caseInsensitiveCompare(accountId) == .orderedSame
+        }) else { return }
+        accountId = store.activeAccountId.flatMap { active in
+            store.accounts.first { $0.id == active }?.id
+        } ?? store.accounts.first?.id ?? ""
+    }
+
+    private func perform(_ write: () throws -> Void) {
+        do {
+            try write()
+            writeError = nil
+        } catch {
+            writeError = error.localizedDescription
         }
     }
 
@@ -168,8 +193,11 @@ struct SignatureSettings: View {
                 return choice
             },
             set: { choice in
-                store.setSignatureDefault(accountId: accountId, email: email, use: use,
-                                          choice: isPrimary && choice == .none ? .followPrimary : choice)
+                perform {
+                    try store.setSignatureDefault(
+                        accountId: accountId, email: email, use: use,
+                        choice: isPrimary && choice == .none ? .followPrimary : choice)
+                }
             })
         return Picker("", selection: binding) {
             if !isPrimary {
@@ -200,6 +228,7 @@ private struct SignatureEditor: View {
     @State private var caret = 0
     @State private var selection = NSRange(location: 0, length: 0)
     @State private var formatTarget = ComposeBodyFormatTarget()
+    @State private var saveError: String?
 
     init(signature: SignatureRecord) {
         self.signature = signature
@@ -207,8 +236,14 @@ private struct SignatureEditor: View {
         _text = State(initialValue: signature.body)
     }
 
+    /// Why the text cannot be saved as it is (shown as the user types).
+    private var problem: String? {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return ComposeSignature.saveProblem(text, maxLength: SignatureStore.maxBodyLength)
+    }
+
     private var canSave: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && problem == nil
     }
 
     var body: some View {
@@ -224,17 +259,27 @@ private struct SignatureEditor: View {
             Text("Written like a message: **bold** (⌘B), *italic* (⌘I), [link](https://…), lists with “- ”. MishMail adds the “-- ” line above it. No images.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let message = saveError ?? problem {
+                Text(message).font(.system(size: 11)).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Save") {
-                    if let id = signature.id {
-                        store.updateSignature(id: id, name: name, body: text)
-                    } else {
-                        store.addSignature(accountId: signature.accountId, name: name, body: text)
+                    // Closes only once the signature is stored.
+                    do {
+                        if let id = signature.id {
+                            try store.updateSignature(id: id, name: name, body: text)
+                        } else {
+                            try store.addSignature(accountId: signature.accountId,
+                                                   name: name, body: text)
+                        }
+                        dismiss()
+                    } catch {
+                        saveError = error.localizedDescription
                     }
-                    dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSave)
@@ -242,6 +287,7 @@ private struct SignatureEditor: View {
         }
         .padding(20)
         .frame(width: 480)
+        .onChange(of: text) { saveError = nil }
     }
 }
 
@@ -332,8 +378,9 @@ private struct GmailSignatureImportSheet: View {
         do {
             let rows = try await store.gmailSignatures(accountId: accountId)
             load = .loaded(rows.map {
-                Entry(email: $0.email, html: $0.html,
-                      preview: SignatureImport.markdown(fromGmailHTML: $0.html).body)
+                let converted = SignatureImport.markdown(fromGmailHTML: $0.html)
+                return Entry(email: $0.email, html: $0.html,
+                             preview: converted.tooLarge ? "Too large to import." : converted.body)
             })
         } catch {
             load = .failed
@@ -341,17 +388,36 @@ private struct GmailSignatureImportSheet: View {
     }
 
     private func importEntry(_ entry: Entry) {
-        guard let dropped = store.importGmailSignature(accountId: accountId, email: entry.email,
-                                                       html: entry.html) else {
-            note = "Nothing to import: that signature has no text MishMail can keep."
+        let result: SignatureImport.Result
+        do {
+            result = try store.importGmailSignature(accountId: accountId, email: entry.email,
+                                                    html: entry.html)
+        } catch {
+            note = error.localizedDescription
             return
         }
         imported.insert(entry.email)
-        note = switch dropped {
-        case 0: "Imported. Choose it as a default below the list, or in compose."
-        case 1: "Imported without its image: MishMail signatures hold text, formatting and links only."
-        default: "Imported without its \(dropped) images: MishMail signatures hold text, formatting and links only."
+        note = Self.importNote(result)
+    }
+
+    /// What the import left out, in words.
+    static func importNote(_ result: SignatureImport.Result) -> String {
+        var left: [String] = []
+        switch result.droppedImages {
+        case 0: break
+        case 1: left.append("its image")
+        default: left.append("its \(result.droppedImages) images")
         }
+        switch result.droppedLinks {
+        case 0: break
+        case 1: left.append("one link, kept as text (a link type MishMail does not send, or one whose text names another address)")
+        default: left.append("\(result.droppedLinks) links, kept as text (link types MishMail does not send, or links whose text names another address)")
+        }
+        guard !left.isEmpty else {
+            return "Imported. Choose it as a default below the list, or in compose."
+        }
+        return "Imported without " + left.joined(separator: " and ")
+            + ". MishMail signatures hold text, formatting and links only."
     }
 }
 
