@@ -1822,7 +1822,7 @@ struct ThreadRow: View, Equatable {
             .buttonStyle(PressScaleButtonStyle())
             .help(thread.isStarred ? "Unstar" : "Star")
             .accessibilityLabel(thread.isStarred ? "Unstar" : "Star")
-            .accessibilityIdentifier("threadRow.star")
+            .accessibilityIdentifier("rowStar")
 
             Circle()
                 .fill(thread.isUnread ? inked(accent.foreground) : .clear)
@@ -2023,7 +2023,7 @@ struct ThreadRow: View, Equatable {
         .buttonStyle(PressScaleButtonStyle())
         .help(title)
         .accessibilityLabel(title)
-        .accessibilityIdentifier("threadRow.action.\(action.identifier)")
+        .accessibilityIdentifier("rowAction.\(action.identifier)")
     }
 
     private var relativeFormat: Date.FormatStyle {

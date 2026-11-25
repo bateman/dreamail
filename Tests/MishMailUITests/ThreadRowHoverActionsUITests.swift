@@ -29,7 +29,7 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
 
     private func button(_ row: XCUIElement, _ id: String) -> XCUIElement {
         row.descendants(matching: .button)
-            .matching(identifier: "threadRow.action.\(id)").firstMatch
+            .matching(identifier: "rowAction.\(id)").firstMatch
     }
 
     func testHoverShowsTheFourActionsInOrderAndKeepsTheRowHeight() {
@@ -51,7 +51,7 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         let row = row(app)
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         let star = row.descendants(matching: .button)
-            .matching(identifier: "threadRow.star").firstMatch
+            .matching(identifier: "rowStar").firstMatch
         XCTAssertTrue(star.waitForExistence(timeout: 5), "the star shows without hovering")
         XCTAssertLessThan(star.frame.maxX, row.frame.minX + row.frame.width / 2)
         XCTAssertLessThan(star.frame.minX, button(row, "archive").frame.minX)
