@@ -1971,10 +1971,12 @@ struct Sidebar: View {
             Color.clear.frame(height: 8)
         }
         .background(Color.mailSidebar)
-        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxX } action: {
-            store.sidebarTrailingEdge = $0
-        }
-        .onDisappear { store.sidebarTrailingEdge = nil }
+        .background(GeometryReader { proxy in
+            let edge = proxy.frame(in: .global).maxX
+            Color.clear
+                .onAppear { store.sidebarTrailingEdge = edge }
+                .onChange(of: edge) { store.sidebarTrailingEdge = edge }
+        })
         .sheet(item: $newLabel) { request in
             NewLabelSheet(request: request)
         }

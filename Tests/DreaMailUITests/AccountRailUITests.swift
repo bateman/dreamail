@@ -65,7 +65,7 @@ final class AccountRailUITests: XCTestCase {
         let compose = element(app, "composeButton")
         XCTAssertTrue(compose.waitForExistence(timeout: 5), "the sidebar is shown")
         XCTAssertTrue(waitUntil { band.frame.maxX > compose.frame.maxX },
-                      "the band reaches the sidebar's right edge (\(band.frame), \(band.value ?? "no value"), compose \(compose.frame))")
+                      "the band reaches the sidebar's right edge (\(band.frame), \(band.label), compose \(compose.frame))")
         XCTAssertGreaterThanOrEqual(compose.frame.minY, band.frame.maxY, "sidebar content starts below the band")
         assertButtonsInBand("sidebar shown")
     }

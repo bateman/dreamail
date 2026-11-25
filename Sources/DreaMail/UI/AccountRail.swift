@@ -213,7 +213,7 @@ struct AccountRailTopBand: View {
                 .offset(y: -top)
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("accountRail.topBand")
-                .accessibilityValue("sidebar edge \(store.sidebarTrailingEdge.map { String(Int($0)) } ?? "none")")
+                .accessibilityLabel("sidebar edge \(store.sidebarTrailingEdge.map { String(Int($0)) } ?? "none")")
         }
         .allowsHitTesting(false)
     }
