@@ -221,7 +221,7 @@ actor SyncEngine {
                 pages += 1
             } while pageToken != nil && pages < GmailSnoozed.maxPages
             let complete = pageToken == nil
-            try await db.write { [accountId] db in
+            try await db.write { [accountId, threadIds] db in
                 try GmailSnoozed.apply(db, accountId: accountId,
                                        threadIds: threadIds, complete: complete)
             }
