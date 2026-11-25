@@ -112,6 +112,8 @@ enum AccountLifecycle {
         try RemoteImageCache.forget(db, account: id)
         // Answers sent to calendar invites: same.
         try CalendarRSVPStore.forget(db, account: id)
+        // Calendar grant and chosen calendars: same.
+        try CalendarStore.forget(db, accountId: id)
         // The account's mail cascades with the account row.
         let messages = try Int.fetchOne(
             db, sql: "SELECT count(*) FROM message WHERE accountId = ?", arguments: [id]) ?? 0
@@ -218,6 +220,7 @@ enum AccountLifecycle {
         try InlineImageCache.purgeOrphans(db)
         try RemoteImageCache.purgeOrphans(db)
         try CalendarRSVPStore.purgeOrphans(db)
+        try CalendarStore.purgeOrphans(db)
         try db.execute(sql: """
             DELETE FROM chatConversation
             WHERE id IN (SELECT conversationId FROM chatConversationAccount

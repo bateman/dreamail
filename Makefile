@@ -147,6 +147,26 @@ define check_ai_switch
 	@echo "AI features in the built app: '$(TRACKED_AI_FEATURES)' (tracked configuration)."
 endef
 
+# Google Calendar integration (step 4A), same rule as the AI switch: builds
+# that leave this Mac take MISHMAIL_CALENDAR from Config/Signing.xcconfig
+# only, and the built app must carry exactly that value.
+TRACKED_CALENDAR := $(shell awk -F= '/^[ \t]*MISHMAIL_CALENDAR[ \t]*=/ {gsub(/[ \t]/, "", $$2); print $$2; exit}' Config/Signing.xcconfig)
+SHIP_CALENDAR_FLAGS = MISHMAIL_CALENDAR=$(TRACKED_CALENDAR)
+
+define check_calendar_switch
+	@built=$$(plutil -extract MishMailCalendar raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
+		echo "Refusing: the built app has no MishMailCalendar key in its Info.plist."; \
+		exit 1; \
+	}; \
+	if [ "$$built" != "$(TRACKED_CALENDAR)" ]; then \
+		echo "Refusing: the built app has MishMailCalendar='$$built', but the tracked"; \
+		echo "configuration says '$(TRACKED_CALENDAR)'. Builds that leave this Mac"; \
+		echo "take the Calendar switch from Config/Signing.xcconfig only."; \
+		exit 1; \
+	fi
+	@echo "Google Calendar in the built app: '$(TRACKED_CALENDAR)' (tracked configuration)."
+endef
+
 # The built app must carry exactly the tracked OpenPGP switch value.
 define check_pgp_switch
 	@built=$$(plutil -extract MishMailPGP raw "$(1)/Contents/Info.plist" 2>/dev/null) || { \
@@ -307,10 +327,11 @@ INSTALL_SPEED_FLAGS = ONLY_ACTIVE_ARCH=YES SWIFT_COMPILATION_MODE=incremental
 install: gen require-stable-signing
 	xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 		-destination '$(DESTINATION)' -derivedDataPath $(DD) -quiet \
-		$(INSTALL_SPEED_FLAGS) $(INSTALL_SIGN_FLAGS) $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS)
+		$(INSTALL_SPEED_FLAGS) $(INSTALL_SIGN_FLAGS) $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS) $(SHIP_CALENDAR_FLAGS)
 	$(call check_relauncher,$(RELEASE_APP))
 	$(call check_ai_switch,$(RELEASE_APP))
 	$(call check_pgp_switch,$(RELEASE_APP))
+	$(call check_calendar_switch,$(RELEASE_APP))
 	rm -rf /Applications/MishMail.app
 	ditto "$(RELEASE_APP)" /Applications/MishMail.app
 	@echo "Installed MishMail.app → /Applications (your daily driver)."
@@ -400,11 +421,11 @@ release: require-pushed test ui-test-ci
 		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \
 			CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM=$(TEAM) \
-			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS); \
+			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS) $(SHIP_CALENDAR_FLAGS); \
 	else \
 		xcodebuild build -project $(PROJECT) -scheme MishMail -configuration Release \
 			-destination '$(DESTINATION)' -derivedDataPath $(SHIP_DD) -quiet \
-			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS); \
+			MISHMAIL_APP_ENTITLEMENTS=Sources/MishMail/MishMail.Distribution.entitlements $(SHIP_AI_FLAGS) $(SHIP_PGP_FLAGS) $(SHIP_CALENDAR_FLAGS); \
 	fi
 	# Notarize and staple (Developer ID builds only): the in-app updater and
 	# Gatekeeper both reject un-notarized Developer ID builds. One-time setup:
@@ -421,6 +442,7 @@ release: require-pushed test ui-test-ci
 	$(call check_relauncher,$(SHIP_APP))
 	$(call check_ai_switch,$(SHIP_APP))
 	$(call check_pgp_switch,$(SHIP_APP))
+	$(call check_calendar_switch,$(SHIP_APP))
 	$(call check_ship_app,$(SHIP_APP))
 	cd $(SHIP_DIR) && \
 		ditto -c -k --keepParent MishMail.app $(ZIP_NAME) && \
