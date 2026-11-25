@@ -141,18 +141,24 @@ struct AccountRail: View {
                     .disabled(store.connectingAccount)
             }
             Button("Edit Account Labels…") { store.editingAccountLabels = true }
-            Button(store.connectingAccount ? "Connecting…" : "Add Google Account…") {
-                store.addAccount()
+            if store.connectingAccount {
+                Button("Cancel Connecting") { store.cancelAccountSignIn() }
+            } else {
+                Button("Add Google Account…") { store.addAccount() }
             }
-            .disabled(store.connectingAccount)
         }
     }
 
     private var addButton: some View {
         Button {
-            store.addAccount()
+            // While the browser sign-in waits, the same button gives it up.
+            if store.connectingAccount {
+                store.cancelAccountSignIn()
+            } else {
+                store.addAccount()
+            }
         } label: {
-            Image(systemName: "plus")
+            Image(systemName: store.connectingAccount ? "xmark" : "plus")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(AccountRailPalette.glyph)
                 .frame(width: Self.avatarSize, height: Self.avatarSize)
@@ -161,9 +167,8 @@ struct AccountRail: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .disabled(store.connectingAccount)
-        .help(store.connectingAccount ? "Connecting…" : "Add Google Account…")
-        .accessibilityLabel("Add Google Account")
+        .help(store.connectingAccount ? "Connecting… Click to cancel." : "Add Google Account…")
+        .accessibilityLabel(store.connectingAccount ? "Cancel connecting" : "Add Google Account")
         .accessibilityIdentifier("accountRail.add")
     }
 

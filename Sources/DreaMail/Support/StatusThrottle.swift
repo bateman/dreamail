@@ -163,3 +163,54 @@ final class ThrottledStatusSink: @unchecked Sendable {
         deliver(value)
     }
 }
+
+/// Brings a running sync pass's stored pages to the list (first sync, a
+/// wider "Keep mail from"). The engine reports each committed page's thread
+/// keys; the keys gather here and reach `deliver` on the main actor at most
+/// once per `interval` (leading edge, then one trailing delivery with
+/// everything that came meanwhile, as `StatusThrottle`). One list reload per
+/// interval, never one per message or per page burst.
+///
+/// `close()` ends it before the pass's own final reload: nothing queued can
+/// land after that.
+final class SyncBatchSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending = Set<String>()
+    private var submitted = 0
+    private var closed = false
+    private var throttle: ThrottledStatusSink!
+
+    init(interval: TimeInterval = 1.0,
+         clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         deliver: @escaping @MainActor @Sendable (Set<String>) -> Void) {
+        throttle = ThrottledStatusSink(interval: interval, clock: clock) { [weak self] _ in
+            guard let self else { return }
+            let keys: Set<String> = self.lock.withLock {
+                defer { self.pending.removeAll() }
+                return self.closed ? [] : self.pending
+            }
+            guard !keys.isEmpty else { return }
+            deliver(keys)
+        }
+    }
+
+    func submit(_ keys: Set<String>) {
+        guard !keys.isEmpty else { return }
+        let token: String? = lock.withLock {
+            guard !closed else { return nil }
+            pending.formUnion(keys)
+            submitted += 1
+            return String(submitted)
+        }
+        // A new value each time, so the throttle never drops it as equal.
+        if let token { throttle.submit(token) }
+    }
+
+    func close() {
+        lock.withLock {
+            closed = true
+            pending.removeAll()
+        }
+        throttle.close()
+    }
+}

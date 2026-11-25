@@ -64,6 +64,10 @@ struct OnboardingView: View {
                     .controlSize(.large)
                     .buttonStyle(.borderedProminent)
                     .disabled(!configured || store.connectingAccount)
+                    if store.connectingAccount {
+                        Button("Cancel") { store.cancelAccountSignIn() }
+                            .frame(maxWidth: .infinity)
+                    }
                     if !configured {
                         Text("Enter a valid Client ID (ends in .apps.googleusercontent.com) and secret to continue.")
                             .font(PMFont.caption()).foregroundStyle(.secondary)

@@ -26,6 +26,8 @@ struct SyncWindowPicker: View {
         }
         .onChange(of: days) {
             UserDefaults.standard.set(days, forKey: "syncWindowDays.\(accountId)")
+            // Older mail now downloaded is not new mail.
+            store.quietNewMailBacklog(accountId: accountId)
             Task { await store.sync(accountId: accountId) }
         }
     }

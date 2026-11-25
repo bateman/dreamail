@@ -79,6 +79,9 @@ final class MailStore {
     @ObservationIgnored var accountPhotoData: [String: Data] = [:]
     @ObservationIgnored var loadedPhotoAccountIds: Set<String> = []
     @ObservationIgnored var photoRefreshTasks: [String: AccountPhotoRefreshHandle] = [:]
+    /// First syncs of accounts just added, outside `accountSignInTask` so
+    /// "Connecting…" ends when the account is stored.
+    @ObservationIgnored var firstSyncTasks: [String: FirstSyncHandle] = [:]
     /// When each account's photo is next worth checking (in memory only).
     @ObservationIgnored var photoNextCheck: [String: Date] = [:]
     @ObservationIgnored var photoLoadTask: Task<Void, Never>?
@@ -2499,7 +2502,9 @@ struct ComposeRequest: Identifiable {
             classificationTask,
             photoLoadTask,
         ].compactMap { $0 } + photoRefreshTasks.values.map(\.task)
+            + firstSyncTasks.values.map(\.task)
         photoRefreshTasks = [:]
+        firstSyncTasks = [:]
         photoLoadTask = nil
         contactsRebuildTask = nil
         threadReloadTask = nil

@@ -208,6 +208,8 @@ extension MailStore {
         let message = syncIds.count == 1
             ? "Syncing \(syncIds[0])…" : "Syncing \(syncIds.count) accounts…"
         let progress = makeSyncStatusSink(message)
+        let batches = makeSyncBatchSink()
+        quietBacklogOfFirstSyncs(syncIds)
 
         // Whether any account actually rewrote thread rows this pass.
         // `deriveThreads` is the single choke point for message-row writes and
@@ -220,9 +222,9 @@ extension MailStore {
             for (id, engine) in pairs {
                 group.addTask {
                     do {
-                        let change = try await engine.syncNow { status in
-                            progress.submit(status)
-                        }
+                        let change = try await engine.syncNow(
+                            progress: { progress.submit($0) },
+                            batch: { batches.submit($0) })
                         return (id, nil, change)
                     } catch {
                         // Drain rather than fabricate .none: incrementalSync
@@ -273,6 +275,7 @@ extension MailStore {
                 }
             }
         }
+        batches.close()
         endSyncStatus(progress)
         // Always: `syncLabels` can rename/add a Gmail label without touching a
         // single thread row, and the sidebar renders from this.
@@ -307,10 +310,13 @@ extension MailStore {
         // Throttled like syncAll's; both exits close it before writing the
         // final "" so a queued progress hop can't land on top of it.
         let progress = makeSyncStatusSink("Syncing \(accountId)…")
+        let batches = makeSyncBatchSink()
+        quietBacklogOfFirstSyncs([accountId])
         do {
-            let change = try await engine.syncNow { status in
-                progress.submit(status)
-            }
+            let change = try await engine.syncNow(
+                progress: { progress.submit($0) },
+                batch: { batches.submit($0) })
+            batches.close()
             endSyncStatus(progress)
             applyThreadContentChange(change)
             isOffline = false
@@ -322,6 +328,7 @@ extension MailStore {
             reloadAccounts()
             reloadThreads()
         } catch {
+            batches.close()
             endSyncStatus(progress)
             // Removed while this pass ran: ignore its failure (the refresh
             // token is gone and the pass was cancelled on purpose).
@@ -442,6 +449,33 @@ extension MailStore {
             items, detailAccounts: detailAccounts) {
             Notifier.notify(request)
         }
+    }
+
+    /// Pages a backfill stores while the pass runs reach the list here: the
+    /// reading-pane cache of those threads is dropped and the list reloads
+    /// (no flicker, selection and scroll kept: `reloadThreads` replaces rows
+    /// by id). Sidebar counts, the account badges and the Dock badge come
+    /// with the same reload, so they count what is stored so far.
+    func makeSyncBatchSink() -> SyncBatchSink {
+        SyncBatchSink { [weak self] keys in
+            guard let self, !self.isShuttingDown else { return }
+            self.applyThreadContentChange(.threads(keys))
+            self.reloadThreads()
+        }
+    }
+
+    /// A first sync downloads mail that arrived before the account was
+    /// added; none of it is new mail (Gmail notifies only for what arrives).
+    /// Mail that arrives during and after the pass still notifies.
+    func quietBacklogOfFirstSyncs(_ ids: [String]) {
+        for id in ids where accounts.first(where: { $0.id == id })?.historyId == nil {
+            quietNewMailBacklog(accountId: id)
+        }
+    }
+
+    /// The same for older mail a wider "Keep mail from" downloads.
+    func quietNewMailBacklog(accountId: String) {
+        newMailNotifications.quietBacklog(accountId: accountId, before: Date())
     }
 
     func makeSyncStatusSink(_ message: String) -> ThrottledStatusSink {
