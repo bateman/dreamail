@@ -2881,13 +2881,16 @@ struct ComposeRequest: Identifiable {
                     try MailStore.computeVIPThreadIds(
                         threads: listPage, activeVIP: activeVIP, db: db)
                 }
-                let ((counts, badge), accountUnread) = try PerfMetrics.measure(.reloadCounts) {
-                    (try MailStore.fetchSidebarCounts(
+                let fetched = try PerfMetrics.measure(.reloadCounts) {
+                    () throws -> (counts: [String: Int], badge: Int, accountUnread: [String: Int]) in
+                    let sidebar = try MailStore.fetchSidebarCounts(
                         db: db, activeAccount: activeAccount, badgeAccount: badgeAccount,
-                        hideCategories: inboxHideCategories),
-                     try SidebarCounts.fetchUnreadByAccount(
-                        db: db, hideCategories: inboxHideCategories))
+                        hideCategories: inboxHideCategories)
+                    let perAccount = try SidebarCounts.fetchUnreadByAccount(
+                        db: db, hideCategories: inboxHideCategories)
+                    return (sidebar.counts, sidebar.badge, perAccount)
                 }
+                let (counts, badge, accountUnread) = fetched
                 return ReloadPayload(threads: listPage, vipHits: vipHits,
                                      counts: counts, badge: badge,
                                      accountUnread: accountUnread, hasMore: hasMore,
