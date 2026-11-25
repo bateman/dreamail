@@ -4424,13 +4424,13 @@ struct ComposeRequest: Identifiable {
         // The card offers the buttons only then; checked again here because
         // the To below comes from the untrusted ICS.
         guard invite.isActionable else {
-            lastError = "This invite can't be answered: it has no valid organizer."
+            lastError = "This invite can't be answered."
             return
         }
         // Prefer a send-as address listed as ATTENDEE on the invite (the
         // address the organizer's calendar already knows), then fall back to
         // a To/Cc match, then the mailbox primary.
-        let identity = preferredRSVPIdentity(for: message, invite: invite)
+        let identity = rsvpIdentity(for: message, invite: invite)
         let fromEmail = identity.email
         let displayName = identity.displayName
         let organizer = invite.organizerEmail
@@ -4484,29 +4484,37 @@ struct ComposeRequest: Identifiable {
         return found ?? [:]
     }
 
-    /// Identity used on the RSVP. Order:
-    /// 1. send-as listed in the invite's ATTENDEE lines (most reliable),
-    /// 2. send-as appearing on the message To/Cc,
+    /// Identity used on the RSVP (also shown on the invite card). Order:
+    /// 1. a send-as listed in the invite's ATTENDEE lines *and* on the
+    ///    message's Delivered-To / To / Cc (the ATTENDEE list alone is the
+    ///    ICS author's choice, so it can't pick which alias answers),
+    /// 2. the send-as the message was delivered to, then one on To / Cc,
     /// 3. mailbox primary.
-    private func preferredRSVPIdentity(
+    func rsvpIdentity(
         for message: Message, invite: CalendarInvite
     ) -> (email: String, displayName: String) {
         let candidates = fromIdentities(forMailbox: message.accountId)
         let attendeeSet = Set(invite.attendeeEmails.map { $0.lowercased() })
-        if let match = candidates.first(where: { attendeeSet.contains($0.email.lowercased()) }) {
-            return (match.email, match.displayName)
-        }
-        let headerEmails: Set<String> = {
+        func emails(_ header: String) -> Set<String> {
             var set = Set<String>()
-            for header in [message.toHeader, message.ccHeader] {
-                for addr in MessageParser.splitAddresses(header) {
-                    let e = MessageParser.emailAddress(addr).lowercased()
-                    if !e.isEmpty { set.insert(e) }
-                }
+            for addr in MessageParser.splitAddresses(header) {
+                let e = MessageParser.emailAddress(addr).lowercased()
+                if !e.isEmpty { set.insert(e) }
             }
             return set
-        }()
-        if let match = candidates.first(where: { headerEmails.contains($0.email.lowercased()) }) {
+        }
+        let delivered = emails(message.deliveredTo ?? "")
+        let headerEmails = delivered
+            .union(emails(message.toHeader))
+            .union(emails(message.ccHeader))
+        if let match = candidates.first(where: {
+            let e = $0.email.lowercased()
+            return attendeeSet.contains(e) && headerEmails.contains(e)
+        }) {
+            return (match.email, match.displayName)
+        }
+        if let match = candidates.first(where: { delivered.contains($0.email.lowercased()) })
+            ?? candidates.first(where: { headerEmails.contains($0.email.lowercased()) }) {
             return (match.email, match.displayName)
         }
         if let primary = candidates.first(where: \.isPrimary) ?? candidates.first {

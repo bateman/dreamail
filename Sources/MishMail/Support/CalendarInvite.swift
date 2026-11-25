@@ -100,8 +100,14 @@ struct CalendarInvite: Equatable, Sendable {
     /// the untrusted attachment author wrote. A cancelled event or an
     /// ORGANIZER that is not one plain address is never answered.
     var isActionable: Bool {
-        method == .request && !isCancelled && hasValidOrganizer
+        method == .request && !isCancelled && hasValidOrganizer && replyIsSafe
     }
+
+    /// Everything the reply copies from the invite (UID, RECURRENCE-ID)
+    /// could be rebuilt into safe lines (`echoSafe`, `rebuildDateLine`).
+    /// False: the invite can't be answered rather than echo what its author
+    /// wrote.
+    var replyIsSafe: Bool = true
 
     var isCancelled: Bool { method == .cancel || status == "CANCELLED" }
 
@@ -134,27 +140,140 @@ struct CalendarInvite: Equatable, Sendable {
         static let years = 1900...2200
         /// Longest event (DTEND or DURATION past DTSTART) accepted.
         static let maxDuration: TimeInterval = 10 * 366 * 24 * 3600
+        /// Longest UID, RECURRENCE-ID or zone line the reply copies; past it
+        /// the invite can't be answered (they are also a stored key).
+        static let maxEchoBytes = 1_024
+        /// Highest SEQUENCE kept; larger values are clamped.
+        static let maxSequence = 1_000_000
     }
 
     // MARK: - Recipient checks
 
-    /// One plain `local@domain` address: printable ASCII, no spaces, no
-    /// list or header punctuation, one `@`, a dotted domain. The reply's
-    /// To is built from this, so a crafted ORGANIZER such as
-    /// `a@x.com,b@y.com` or `"Boss" <a@x.com>` is refused, not sent.
+    /// One plain `local@domain` address. The reply's To is built from
+    /// this, so a crafted ORGANIZER such as `a@x.com,b@y.com`,
+    /// `"Boss" <a@x.com>`, `a@x.com?subject=y` or a `%` relay route is
+    /// refused, not sent.
+    /// - local part: RFC 5322 atom characters without `%`, `!` and `?`,
+    ///   dot-separated, no empty segment, at most 64 octets;
+    /// - domain: at least two dot-separated labels of letters, digits and
+    ///   inner hyphens, each 1–63 octets.
     static func isPlainAddress(_ raw: String) -> Bool {
         guard (3...254).contains(raw.utf8.count) else { return false }
-        let forbidden = Set(" \t,;:<>()[]\"\\".unicodeScalars)
-        for u in raw.unicodeScalars {
-            guard u.value > 0x20, u.value < 0x7F, !forbidden.contains(u) else { return false }
-        }
         let parts = raw.split(separator: "@", omittingEmptySubsequences: false)
         guard parts.count == 2 else { return false }
         let local = parts[0], domain = parts[1]
-        guard !local.isEmpty, local.utf8.count <= 64,
-              domain.contains("."), !domain.hasPrefix("."), !domain.hasSuffix("."),
-              !domain.contains("..") else { return false }
+        guard (1...64).contains(local.utf8.count) else { return false }
+        for segment in local.split(separator: ".", omittingEmptySubsequences: false) {
+            guard !segment.isEmpty,
+                  segment.unicodeScalars.allSatisfy({ isASCIIAlphanumeric($0) || localSpecials.contains($0) })
+            else { return false }
+        }
+        let labels = domain.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2 else { return false }
+        for label in labels {
+            guard (1...63).contains(label.utf8.count), !label.hasPrefix("-"), !label.hasSuffix("-"),
+                  label.unicodeScalars.allSatisfy({ isASCIIAlphanumeric($0) || $0 == "-" })
+            else { return false }
+        }
         return true
+    }
+
+    private static let localSpecials = Set("#$&'*+-/=^_`{|}~".unicodeScalars)
+
+    private static func isASCIIAlphanumeric(_ u: Unicode.Scalar) -> Bool {
+        let v = u.value
+        return (0x61...0x7A).contains(v) || (0x41...0x5A).contains(v) || (0x30...0x39).contains(v)
+    }
+
+    // MARK: - Reply echo
+
+    /// Text the reply may copy from the invite: no control character
+    /// (`Cc`, which includes CR, LF, VT, FF and NEL) and no line or
+    /// paragraph separator, so nothing copied can start a line of its own.
+    static func isEchoSafe(_ value: String) -> Bool {
+        !value.unicodeScalars.contains(where: isLineBreakingOrControl)
+    }
+
+    /// Cc, Zl and Zp. Format characters (Cf, such as the zero-width joiner
+    /// inside an emoji) are text and stay.
+    static func isLineBreakingOrControl(_ u: Unicode.Scalar) -> Bool {
+        switch u.properties.generalCategory {
+        case .control, .lineSeparator, .paragraphSeparator: return true
+        default: return false
+        }
+    }
+
+    /// `DTSTART`, `DTEND` or `RECURRENCE-ID` rebuilt for the reply from its
+    /// parsed parts, never copied: only TZID (echo-safe, no DQUOTE), VALUE
+    /// (DATE / DATE-TIME) and, on RECURRENCE-ID, RANGE=THISANDFUTURE are
+    /// kept, and the value must be a DATE or DATE-TIME. Nil for anything
+    /// else or a line over `Limits.maxEchoBytes`.
+    static func rebuildDateLine(_ line: String) -> String? {
+        guard line.utf8.count <= Limits.maxEchoBytes,
+              let prop = splitProperty(line),
+              ["DTSTART", "DTEND", "RECURRENCE-ID"].contains(prop.name) else { return nil }
+        let value = prop.value.trimmingCharacters(in: .whitespaces)
+        guard value.range(of: #"^[0-9]{8}(T[0-9]{6}Z?)?$"#, options: .regularExpression) != nil
+        else { return nil }
+        // Unknown parameters (X-…) are dropped, not echoed.
+        var out = prop.name
+        if let raw = prop.params["TZID"] {
+            let tzid = cleanTZID(raw)
+            guard !tzid.isEmpty, isEchoSafe(tzid), !tzid.contains("\"") else { return nil }
+            out += ";TZID=" + (tzid.contains(where: { ";:,".contains($0) }) ? "\"\(tzid)\"" : tzid)
+        }
+        if let raw = prop.params["VALUE"] {
+            let v = raw.uppercased()
+            guard v == "DATE" || v == "DATE-TIME" else { return nil }
+            out += ";VALUE=\(v)"
+        }
+        if let raw = prop.params["RANGE"] {
+            guard prop.name == "RECURRENCE-ID", raw.uppercased() == "THISANDFUTURE" else { return nil }
+            out += ";RANGE=THISANDFUTURE"
+        }
+        return out + ":" + value
+    }
+
+    /// A VTIMEZONE rebuilt for the reply from its parsed properties: BEGIN
+    /// and END (with or without parameters) must nest as VTIMEZONE >
+    /// STANDARD / DAYLIGHT, only zone properties are kept (without
+    /// parameters, echo-safe, each within `Limits.maxEchoBytes`), anything
+    /// unknown is dropped. Nil when the block is malformed: the reply then
+    /// carries no zone.
+    static func echoableZoneLines(_ source: [String]) -> [String]? {
+        let kept: Set<String> = ["TZID", "TZOFFSETFROM", "TZOFFSETTO", "TZNAME", "DTSTART", "RRULE", "RDATE"]
+        var out: [String] = []
+        var depth = 0
+        var closed = false
+        for line in source {
+            guard !closed, line.utf8.count <= Limits.maxEchoBytes,
+                  let prop = splitProperty(line) else { return nil }
+            let value = prop.value.trimmingCharacters(in: .whitespaces)
+            guard isEchoSafe(value) else { return nil }
+            switch prop.name {
+            case "BEGIN":
+                let v = value.uppercased()
+                if depth == 0, v == "VTIMEZONE", out.isEmpty { depth = 1 }
+                else if depth == 1, v == "STANDARD" || v == "DAYLIGHT" { depth = 2 }
+                else { return nil }
+                out.append("BEGIN:\(v)")
+            case "END":
+                let v = value.uppercased()
+                if depth == 2, v == "STANDARD" || v == "DAYLIGHT" { depth = 1 }
+                else if depth == 1, v == "VTIMEZONE" { depth = 0; closed = true }
+                else { return nil }
+                out.append("END:\(v)")
+            case let name where kept.contains(name):
+                guard depth >= 1, !value.isEmpty else { return nil }
+                if name == "TZID" { guard depth == 1 else { return nil } }
+                else { guard depth == 2 else { return nil } }
+                out.append("\(name):\(value)")
+            default:
+                guard depth >= 1 else { return nil }
+            }
+        }
+        guard closed, out.count <= maxEchoedZoneLines else { return nil }
+        return out
     }
 
     /// The reply goes to ORGANIZER, which the ICS author chose. False when
@@ -164,6 +283,23 @@ struct CalendarInvite: Equatable, Sendable {
     func organizerIsSender(senderEmail: String) -> Bool {
         let sender = senderEmail.trimmingCharacters(in: .whitespaces).lowercased()
         return !sender.isEmpty && sender == organizerEmail.lowercased()
+    }
+
+    /// "guest@example.org declined" for a received METHOD:REPLY, only when
+    /// the answering ATTENDEE is the address the message came from (the
+    /// ATTENDEE line alone is whatever the ICS author wrote).
+    func replySummary(senderEmail: String) -> String? {
+        guard method == .reply, let who = replyAttendeeEmail,
+              who == senderEmail.trimmingCharacters(in: .whitespaces).lowercased()
+        else { return nil }
+        let name = Self.displaySafe(who, limit: 254)
+        switch replyPartstat {
+        case "ACCEPTED": return "\(name) accepted"
+        case "DECLINED": return "\(name) declined"
+        case "TENTATIVE": return "\(name) replied maybe"
+        case "DELEGATED": return "\(name) delegated"
+        default: return nil
+        }
     }
 
     /// "Repeats weekly" for the card, from RRULE's FREQ and INTERVAL.
@@ -325,6 +461,7 @@ struct CalendarInvite: Equatable, Sendable {
         var firstAttendee: (email: String, partstat: String?)?
         var hasRDate = false
         var recurrenceIdLine: String?
+        var unsafeRecurrenceId = false
         var events: [CalendarInvite] = []
         // VTIMEZONE blocks normally precede the VEVENTs, but a pre-pass keeps
         // the fallback independent of component order.
@@ -339,6 +476,9 @@ struct CalendarInvite: Equatable, Sendable {
                 invite.startLine = rawLines["DTSTART"]
                 invite.endLine = rawLines["DTEND"]
                 invite.hasRecurrenceDates = hasRDate
+                invite.replyIsSafe = !unsafeRecurrenceId
+                    && invite.uid.utf8.count <= Limits.maxEchoBytes
+                    && isEchoSafe(invite.uid)
                 if invite.method == .reply, let firstAttendee {
                     invite.replyAttendeeEmail = firstAttendee.email
                     invite.replyPartstat = firstAttendee.partstat
@@ -352,6 +492,7 @@ struct CalendarInvite: Equatable, Sendable {
             firstAttendee = nil
             hasRDate = false
             recurrenceIdLine = nil
+            unsafeRecurrenceId = false
             nestedDepth = 0
             inEvent = false
         }
@@ -369,6 +510,7 @@ struct CalendarInvite: Equatable, Sendable {
                 firstAttendee = nil
                 hasRDate = false
                 recurrenceIdLine = nil
+                unsafeRecurrenceId = false
                 continue
             }
             if upper.hasPrefix("END:VEVENT") {
@@ -413,14 +555,20 @@ struct CalendarInvite: Equatable, Sendable {
                 }
             }
             if name == "RDATE" { hasRDate = true }
-            if name == "RECURRENCE-ID", recurrenceIdLine == nil {
-                // Keep the original property line (params + value) for the reply.
-                recurrenceIdLine = line
+            if name == "RECURRENCE-ID", recurrenceIdLine == nil, !unsafeRecurrenceId {
+                // Rebuilt, not copied, for the reply; one that can't be
+                // rebuilt makes the event unanswerable (answering the whole
+                // series instead of one instance would be wrong).
+                if let rebuilt = rebuildDateLine(line) {
+                    recurrenceIdLine = rebuilt
+                } else {
+                    unsafeRecurrenceId = true
+                }
             }
             // First wins for most props; later DTSTART/DTEND rarely appear twice.
             if props[name] == nil {
                 props[name] = (params, value)
-                if name == "DTSTART" || name == "DTEND" { rawLines[name] = line }
+                if name == "DTSTART" || name == "DTEND" { rawLines[name] = rebuildDateLine(line) }
             }
         }
         if inEvent, events.count < Limits.maxEvents { finishEvent() }
@@ -458,7 +606,8 @@ struct CalendarInvite: Equatable, Sendable {
                                    limit: Limits.maxDisplayLength)
         let description = String(unescape(props["DESCRIPTION"]?.value ?? "")
             .prefix(Limits.maxDescriptionLength))
-        let sequence = max(0, Int(props["SEQUENCE"]?.value.trimmingCharacters(in: .whitespaces) ?? "") ?? 0)
+        let sequence = min(Limits.maxSequence,
+                           max(0, Int(props["SEQUENCE"]?.value.trimmingCharacters(in: .whitespaces) ?? "") ?? 0))
 
         let (orgEmail, orgNameRaw) = parseAddress(
             value: props["ORGANIZER"]?.value ?? "",
@@ -504,16 +653,19 @@ struct CalendarInvite: Equatable, Sendable {
         )
     }
 
-    /// Untrusted text bound for the card: no control or bidirectional
+    /// Untrusted text bound for the card (and the reply's SUMMARY and
+    /// LOCATION): no control, line-separator or bidirectional
     /// override characters (a right-to-left override in an organizer's name
     /// could make the address after it read as another one), newlines and
     /// tabs as spaces, and a bounded length.
     static func displaySafe(_ value: String, limit: Int) -> String {
         var out = String.UnicodeScalarView()
         for u in value.unicodeScalars {
-            if u == "\n" || u == "\t" || u == "\r" {
+            if u == "\n" || u == "\t" || u == "\r"
+                || u.properties.generalCategory == .lineSeparator
+                || u.properties.generalCategory == .paragraphSeparator {
                 out.append(" ")
-            } else if CharacterSet.controlCharacters.contains(u) || bidiControls.contains(u.value) {
+            } else if isLineBreakingOrControl(u) || bidiControls.contains(u.value) {
                 continue
             } else {
                 out.append(u)
@@ -551,8 +703,8 @@ struct CalendarInvite: Equatable, Sendable {
         let echoRawTimes = unresolvedTZID != nil && startLine != nil
         if echoRawTimes, let tzid = unresolvedTZID,
            let zone = ICSTimeZone.parseAll(Self.unfold(sourceICS))[tzid],
-           zone.lines.count <= Self.maxEchoedZoneLines {
-            lines.append(contentsOf: zone.lines)
+           let zoneLines = Self.echoableZoneLines(zone.lines) {
+            lines.append(contentsOf: zoneLines)
         }
         lines.append(contentsOf: [
             "BEGIN:VEVENT",
@@ -895,7 +1047,7 @@ struct CalendarInvite: Equatable, Sendable {
     /// the line. Values with specials are double-quoted.
     static func escapeParam(_ value: String) -> String {
         var clean = String.UnicodeScalarView()
-        for u in value.unicodeScalars where !CharacterSet.controlCharacters.contains(u) {
+        for u in value.unicodeScalars where !isLineBreakingOrControl(u) {
             clean.append(u)
         }
         let escaped = String(clean)

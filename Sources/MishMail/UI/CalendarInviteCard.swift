@@ -183,18 +183,23 @@ struct CalendarInviteCard: View {
     /// which its author chose. Always shown; flagged when it is not the
     /// address the message came from (a forged invite would otherwise make
     /// the user answer a third party unseen).
+    /// Where Accept / Decline / Maybe sends the reply, and from which
+    /// address: the ICS's ORGANIZER, which its author chose. Always shown;
+    /// flagged when it is not the address the message came from (a forged
+    /// invite would otherwise make the user answer a third party unseen).
     @ViewBuilder
     private func replyRecipientNote(_ invite: CalendarInvite) -> some View {
         let sender = MessageParser.emailAddress(message.fromHeader)
+        let from = store.rsvpIdentity(for: message, invite: invite).email
         if invite.organizerIsSender(senderEmail: sender) {
-            Text("Your reply goes to \(invite.organizerEmail)")
+            Text("Reply from \(from) goes to \(invite.organizerEmail)")
                 .font(PMFont.caption(fontScale))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
         } else {
-            Label("Your reply goes to \(invite.organizerEmail), not to the sender \(CalendarInvite.displaySafe(sender, limit: 254))",
+            Label("Reply from \(from) goes to \(invite.organizerEmail), not to the sender \(CalendarInvite.displaySafe(sender, limit: 254))",
                   systemImage: "exclamationmark.triangle")
                 .font(PMFont.caption(fontScale))
                 .foregroundStyle(.orange)
@@ -309,18 +314,12 @@ struct CalendarInviteCard: View {
 
     /// Pill for an invite without buttons.
     private func statusLabel(_ invite: CalendarInvite) -> String {
-        if invite.method == .request, !invite.hasValidOrganizer {
-            return "Can't reply: no valid organizer"
+        if invite.method == .request {
+            return "Can't reply to this invite"
         }
-        if invite.method == .reply, let who = invite.replyAttendeeEmail {
-            let name = CalendarInvite.displaySafe(who, limit: 254)
-            switch invite.replyPartstat {
-            case "ACCEPTED": return "\(name) accepted"
-            case "DECLINED": return "\(name) declined"
-            case "TENTATIVE": return "\(name) replied maybe"
-            case "DELEGATED": return "\(name) delegated"
-            default: break
-            }
+        if let summary = invite.replySummary(
+            senderEmail: MessageParser.emailAddress(message.fromHeader)) {
+            return summary
         }
         return methodLabel(invite.method)
     }
@@ -349,6 +348,11 @@ struct CalendarInviteCard: View {
 
     private func loadInvite() async {
         load = .loading
+        // Refused before the download, not after: the row's size is known.
+        guard attachment.size <= CalendarInvite.Limits.maxBytes else {
+            load = .failed("This calendar invite is too large to read.")
+            return
+        }
         do {
             let data = try await store.downloadAttachment(attachment, message: message)
             guard !Task.isCancelled else { return }

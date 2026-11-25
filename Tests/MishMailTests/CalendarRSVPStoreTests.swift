@@ -91,6 +91,64 @@ final class CalendarRSVPStoreTests: XCTestCase {
         }
     }
 
+    /// R2: answering an older copy does not replace the answer to a newer one.
+    func testAnOlderCopyDoesNotDowngrade() throws {
+        let q = try makeDB()
+        let first = try invite(ICSCorpus.google)
+        let update = try invite(ICSCorpus.googleUpdated)
+        try q.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "old")
+            try self.addMessage(db, account: self.me, gmailId: "new")
+            try CalendarRSVPStore.record(db, status: .declined, invite: update,
+                                         accountId: self.me, messageId: "\(self.me):new")
+            try CalendarRSVPStore.record(db, status: .accepted, invite: first,
+                                         accountId: self.me, messageId: "\(self.me):old")
+            XCTAssertEqual(try CalendarRSVPStore.current(db, invite: update, accountId: self.me), .declined)
+            let row = try XCTUnwrap(CalendarRSVPRecord.fetchOne(db))
+            XCTAssertEqual(row.sequence, 2)
+            XCTAssertEqual(row.messageId, "\(self.me):new")
+        }
+    }
+
+    /// S3: a forged invite reusing the UID under another organizer does not
+    /// show the earlier answer.
+    func testAnotherOrganizerDoesNotSeeTheAnswer() throws {
+        let q = try makeDB()
+        let real = try invite(ICSCorpus.google)
+        let forged = try invite(ICSCorpus.google.replacingOccurrences(
+            of: "ORGANIZER;CN=Ada Organizer:mailto:ada@example.com",
+            with: "ORGANIZER;CN=Ada Organizer:mailto:ada@example.net"))
+        XCTAssertEqual(real.uid, forged.uid)
+        try q.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "m1")
+            try CalendarRSVPStore.record(db, status: .accepted, invite: real,
+                                         accountId: self.me, messageId: "\(self.me):m1")
+            XCTAssertNil(try CalendarRSVPStore.current(db, invite: forged, accountId: self.me))
+            XCTAssertEqual(try CalendarRSVPStore.current(db, invite: real, accountId: self.me), .accepted)
+            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT organizer FROM calendarRSVP"),
+                           "ada@example.com")
+        }
+    }
+
+    /// S3: the key is bounded and SEQUENCE clamped.
+    func testKeyLengthsAndSequenceAreBounded() throws {
+        let q = try makeDB()
+        var long = try invite(ICSCorpus.google)
+        long.uid = String(repeating: "u", count: CalendarInvite.Limits.maxEchoBytes + 1)
+        var huge = try invite(ICSCorpus.google)
+        huge.sequence = Int.max
+        try q.write { db in
+            try self.addMessage(db, account: self.me, gmailId: "m1")
+            try CalendarRSVPStore.record(db, status: .accepted, invite: long,
+                                         accountId: self.me, messageId: "\(self.me):m1")
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM calendarRSVP"), 0)
+            try CalendarRSVPStore.record(db, status: .accepted, invite: huge,
+                                         accountId: self.me, messageId: "\(self.me):m1")
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT sequence FROM calendarRSVP"),
+                           CalendarInvite.Limits.maxSequence)
+        }
+    }
+
     // MARK: - Deleted means gone
 
     func testDeletingTheMessageDeletesItsAnswer() throws {
@@ -167,7 +225,7 @@ final class CalendarRSVPStoreTests: XCTestCase {
         try AppDatabase.migrator.migrate(q)
         try q.read { db in
             XCTAssertEqual(Set(try db.columns(in: "calendarRSVP").map(\.name)),
-                           ["accountId", "uid", "recurrenceId", "messageId", "status", "sequence"])
+                           ["accountId", "uid", "recurrenceId", "messageId", "status", "sequence", "organizer"])
             XCTAssertEqual(try db.primaryKey("calendarRSVP").columns,
                            ["accountId", "uid", "recurrenceId"])
             let keys = try Row.fetchAll(db, sql: "PRAGMA foreign_key_list(calendarRSVP)")

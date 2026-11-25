@@ -275,6 +275,128 @@ final class ICSCorpusTests: XCTestCase {
         XCTAssertEqual(CalendarInvite.escapeParam("Plain"), "Plain")
     }
 
+    // MARK: - Review round 1
+
+    /// S1: nothing the invite's author wrote is copied into the reply as is.
+    func testReplyNeverEchoesRawLines() throws {
+        // A zone the app can't resolve (BYSETPOS) is echoed for the raw
+        // times, and its author tries to close it early and add an event.
+        let zone = """
+            BEGIN:VTIMEZONE
+            TZID:Evil Zone
+            BEGIN:STANDARD
+            DTSTART:16010101T020000
+            TZOFFSETFROM:-0400
+            TZOFFSETTO:-0500
+            RRULE:FREQ=YEARLY;BYDAY=1SU;BYMONTH=11
+            END:STANDARD
+            BEGIN:DAYLIGHT
+            DTSTART:16010101T020000
+            TZOFFSETFROM:-0500
+            TZOFFSETTO:-0400
+            RRULE:FREQ=YEARLY;BYDAY=SU;BYSETPOS=2;BYMONTH=3
+            END:DAYLIGHT
+            END;X=1:VTIMEZONE
+            BEGIN;X=1:VEVENT
+            ATTENDEE;PARTSTAT=ACCEPTED:mailto:victim@example.net
+            END;X=1:VEVENT
+            END:VTIMEZONE
+            """
+        let ics = """
+            BEGIN:VCALENDAR
+            METHOD:REQUEST
+            \(zone)
+            BEGIN:VEVENT
+            UID:zone@example.com
+            DTSTART;TZID=Evil Zone;X-NOTE=hi:20261005T090000
+            DTEND;TZID=Evil Zone:20261005T100000
+            RECURRENCE-ID;TZID=Evil Zone;X-A=1:20261005T090000
+            ORGANIZER:mailto:ada@example.com
+            END:VEVENT
+            END:VCALENDAR
+            """
+        let invite = try one(ics)
+        XCTAssertEqual(invite.unresolvedTZID, "Evil Zone")
+        XCTAssertTrue(invite.isActionable)
+        XCTAssertEqual(invite.recurrenceIdLine, "RECURRENCE-ID;TZID=Evil Zone:20261005T090000")
+        let lines = replyLines(invite)
+        XCTAssertFalse(lines.contains { $0.contains("victim") }, "\(lines)")
+        XCTAssertFalse(lines.contains { $0.contains("VTIMEZONE") }, "a malformed zone is dropped")
+        XCTAssertEqual(lines.filter { $0.hasPrefix("BEGIN") }, ["BEGIN:VCALENDAR", "BEGIN:VEVENT"])
+        XCTAssertEqual(lines.filter { $0.hasPrefix("ATTENDEE") }.count, 1)
+        XCTAssertTrue(lines.contains("DTSTART;TZID=Evil Zone:20261005T090000"), "\(lines)")
+
+        XCTAssertNil(CalendarInvite.echoableZoneLines(
+            CalendarInvite.unfold(zone)), "content after the zone's END")
+        XCTAssertNil(CalendarInvite.echoableZoneLines(
+            ["BEGIN:VTIMEZONE", "TZID:A\u{2028}B", "END:VTIMEZONE"]))
+        XCTAssertEqual(CalendarInvite.echoableZoneLines([
+            "BEGIN;X=1:VTIMEZONE", "TZID:Z", "X-LIC-LOCATION:Z", "BEGIN:STANDARD",
+            "TZOFFSETFROM;X=1:+0100", "TZOFFSETTO:+0100", "DTSTART:19700101T000000",
+            "END:STANDARD", "END:VTIMEZONE",
+        ]), ["BEGIN:VTIMEZONE", "TZID:Z", "BEGIN:STANDARD", "TZOFFSETFROM:+0100",
+             "TZOFFSETTO:+0100", "DTSTART:19700101T000000", "END:STANDARD", "END:VTIMEZONE"])
+    }
+
+    func testDateLinesAreRebuiltFromWhitelistedParts() {
+        XCTAssertEqual(CalendarInvite.rebuildDateLine(
+            "RECURRENCE-ID;X-FOO=bar;RANGE=thisandfuture;TZID=\"Zone; A\":20261214T100000"),
+            "RECURRENCE-ID;TZID=\"Zone; A\";RANGE=THISANDFUTURE:20261214T100000")
+        XCTAssertEqual(CalendarInvite.rebuildDateLine("DTSTART;VALUE=date:20261224"),
+                       "DTSTART;VALUE=DATE:20261224")
+        for bad in ["RECURRENCE-ID:20261214T100000Z\u{000B}ATTENDEE:x",
+                    "RECURRENCE-ID:2026-12-14",
+                    "RECURRENCE-ID;VALUE=PERIOD:20261214T100000Z",
+                    "DTSTART;RANGE=THISANDFUTURE:20261214T100000Z",
+                    "RECURRENCE-ID;TZID=A\u{0085}B:20261214T100000",
+                    "SUMMARY:20261214",
+                    "RECURRENCE-ID;TZID=" + String(repeating: "z", count: 1_100) + ":20261214T100000"] {
+            XCTAssertNil(CalendarInvite.rebuildDateLine(bad), bad)
+        }
+        // The RANGE survives rebuilding.
+        XCTAssertEqual(CalendarInvite.rebuildDateLine(
+            "RECURRENCE-ID;RANGE=THISANDFUTURE:20261214T100000Z"),
+            "RECURRENCE-ID;RANGE=THISANDFUTURE:20261214T100000Z")
+    }
+
+    func testUnsafeUIDOrRecurrenceIdMakesTheInviteUnanswerable() throws {
+        for uid in ["a\u{000B}b@example.com", "a\u{000C}b@example.com", "a\u{0085}b@example.com",
+                    "a\u{2028}b@example.com", String(repeating: "u", count: 1_025)] {
+            let invite = try one(ICSCorpus.floating.replacingOccurrences(
+                of: "UID:floating@example.com", with: "UID:\(uid)"))
+            XCTAssertFalse(invite.replyIsSafe, uid.debugDescription)
+            XCTAssertFalse(invite.isActionable)
+        }
+        let badRID = try one(ICSCorpus.floating.replacingOccurrences(
+            of: "SUMMARY:Floating", with: "SUMMARY:Floating\nRECURRENCE-ID;VALUE=PERIOD:x"))
+        XCTAssertNil(badRID.recurrenceIdLine)
+        XCTAssertFalse(badRID.isActionable, "not answered as if it were the whole series")
+        XCTAssertTrue(try one(ICSCorpus.floating).replyIsSafe)
+    }
+
+    func testSequenceIsClamped() throws {
+        let invite = try one(ICSCorpus.google.replacingOccurrences(
+            of: "SEQUENCE:0", with: "SEQUENCE:999999999"))
+        XCTAssertEqual(invite.sequence, CalendarInvite.Limits.maxSequence)
+    }
+
+    /// R1: only Cc (and line separators) go; format characters such as the
+    /// zero-width joiner are text.
+    func testZeroWidthJoinerIsKept() {
+        let coder = "Dev \u{1F469}\u{200D}\u{1F4BB}"
+        XCTAssertEqual(CalendarInvite.displaySafe(coder, limit: 100), coder)
+        XCTAssertEqual(CalendarInvite.escapeParam(coder), "\"\(coder)\"")
+        XCTAssertEqual(CalendarInvite.displaySafe("a\u{2028}b\u{202E}c", limit: 10), "a bc")
+    }
+
+    /// R4: "X declined" only when X sent the message.
+    func testReceivedReplySummaryNeedsTheSender() throws {
+        let invite = try one(ICSCorpus.replyReceived)
+        XCTAssertEqual(invite.replySummary(senderEmail: "Guest@example.org"), "guest@example.org declined")
+        XCTAssertNil(invite.replySummary(senderEmail: "someone@example.net"))
+        XCTAssertNil(try one(ICSCorpus.google).replySummary(senderEmail: "ada@example.com"))
+    }
+
     // MARK: - Hostile input
 
     func testOrganizerMustBeOnePlainAddress() throws {
@@ -287,10 +409,15 @@ final class ICSCorpusTests: XCTestCase {
         for bad in ["", "a", "a@b", "@example.com", "a@.example.com", "a@example.com.",
                     "a@exa..mple.com", "a b@example.com", "a@example.com\r\nBcc: x@y.z",
                     "a@b@example.com", "\"a\"@example.com", "ä@example.com",
-                    "a@example.com\u{202E}"] {
+                    "a@example.com\u{202E}", "a@example.com?subject=y", "a%b.com@relay.example.com",
+                    "a!b@example.com", "a?b@example.com", "a@x/y.example.com", "a@x=y.example.com",
+                    "a@x&y.example.com", "a@x*.example.com", "a@{x}.example.com", "a@x|y.example.com",
+                    "a@-x.example.com", "a@x-.example.com", "a..b@example.com", ".a@example.com",
+                    "a.@example.com", "a@example", "a@" + String(repeating: "l", count: 64) + ".com"] {
             XCTAssertFalse(CalendarInvite.isPlainAddress(bad), bad)
         }
-        for good in ["ada@example.com", "first.last+tag@sub.example.co.uk", "x_y-z@example.it"] {
+        for good in ["ada@example.com", "first.last+tag@sub.example.co.uk", "x_y-z@example.it",
+                     "o'brien@example.ie", "a=b@example.com", "x@x-y.example.com"] {
             XCTAssertTrue(CalendarInvite.isPlainAddress(good), good)
         }
     }
