@@ -1,18 +1,18 @@
 
 ## MCP helper scripts
 
-These drive the in-app MCP server (Settings → AI → MCP must be on, MishMail
+These drive the in-app MCP server (Settings → AI → MCP must be on, DreaMail
 running). **This fork's tracked build has the AI features and the MCP server
-switched off** (`MISHMAIL_AI_FEATURES`, see the main README): no server runs,
+switched off** (`DREAMAIL_AI_FEATURES`, see the main README): no server runs,
 no `mcp.json` is written, and the scripts exit without sending anything when
 `mcp.json` advertises no live server. Unload the daily launchd job while AI is
-off (`launchctl unload -w ~/Library/LaunchAgents/io.github.bateman.mishmail-summarize.plist`):
+off (`launchctl unload -w ~/Library/LaunchAgents/io.github.bateman.dreamail-summarize.plist`):
 a launchd agent cannot read the app container, so it cannot see that the
 server is down, and would keep posting the old token to a port any local
 process may have bound. Turning MCP on again later mints a new token; copy it
-to `~/.config/mishmail/mcp-token` before reloading the job. They read the port from `mcp.json` in the app container. The bearer
-token stays in the Keychain; set `MISHMAIL_MCP_TOKEN` or put it in
-`~/.config/mishmail/mcp-token`. Older `mcp.json` files that still include
+to `~/.config/dreamail/mcp-token` before reloading the job. They read the port from `mcp.json` in the app container. The bearer
+token stays in the Keychain; set `DREAMAIL_MCP_TOKEN` or put it in
+`~/.config/dreamail/mcp-token`. Older `mcp.json` files that still include
 `token` continue to work.
 
 - `mcp-summarize.py` — backfill thread summaries. Local Ollama by default
@@ -27,7 +27,7 @@ token stays in the Keychain; set `MISHMAIL_MCP_TOKEN` or put it in
   request (MCP, Ollama, hosted API) must go to `https://`, or to plain
   `http://` on a loopback address (`127.0.0.1`, `::1`) only; a redirect must
   pass the same rule and stay on the same origin. Keys come from the
-  environment (`OPENAI_API_KEY`, `MISHMAIL_MCP_TOKEN`), never from arguments.
+  environment (`OPENAI_API_KEY`, `DREAMAIL_MCP_TOKEN`), never from arguments.
   Tests: `python3 -m unittest discover -s scripts/tests` (also run by the unit
   suite).
 
