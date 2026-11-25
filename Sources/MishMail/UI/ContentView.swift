@@ -1076,6 +1076,13 @@ private extension ContentView {
                     openedThread: store.openedThreadId != nil) else { return }
                 store.archiveOpenConversation(
                     goToPrevious: command == .archivePrevious)
+            case .nextMessage, .previousMessage, .expandAll, .collapseAll:
+                // Gmail's `n` `p` `;` `:` act inside the open conversation.
+                guard BackToList.conversationOnScreen(
+                    layoutMode: layoutMode,
+                    openedThread: store.openedThreadId != nil),
+                      let action = MessageNavigation.Action(command) else { return }
+                store.requestConversationKey(action)
             default: break
             }
         }
@@ -1345,7 +1352,7 @@ private extension ContentView {
                         let rowCount = labels.count + (createName != nil ? 1 : 0)
                         let idx = min(picker.highlight, max(rowCount - 1, 0))
                         if let label = labels[safe: idx] {
-                            store.toggleLabel(thread, labelId: label.gmailLabelId)
+                            store.labelPickerCommit(label, thread: thread)
                         } else if let createName {
                             store.createLabelAndApply(name: createName, thread: thread)
                         }
@@ -1358,7 +1365,7 @@ private extension ContentView {
                         let rowCount = labels.count + (createName != nil ? 1 : 0)
                         let idx = min(picker.highlight, max(rowCount - 1, 0))
                         if let label = labels[safe: idx] {
-                            store.toggleLabel(thread, labelId: label.gmailLabelId)
+                            store.labelPickerCommit(label, thread: thread)
                         } else if let createName {
                             store.createLabelAndApply(name: createName, thread: thread)
                         }

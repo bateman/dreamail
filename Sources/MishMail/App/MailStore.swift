@@ -22,6 +22,9 @@ final class LabelPickerState: ObservableObject {
     // True once arrows moved the highlight; space then toggles the
     // highlighted label instead of typing into the filter. Typing resets it.
     var navigated = false
+    /// `l` toggles labels; `v` (Gmail's Move to) adds one and leaves the inbox.
+    enum Mode { case label, move }
+    @Published var mode = Mode.label
 }
 
 /// List-row focus (highlight), split out of MailStore so holding ↓ / j only
@@ -420,10 +423,11 @@ final class MailStore {
     /// Open the label picker with fresh state — every entry point (shortcut,
     /// command palette, toolbar/"Add category") must go through here so a
     /// stale query/highlight from the last use never leaks in.
-    func openLabelPicker() {
+    func openLabelPicker(mode: LabelPickerState.Mode = .label) {
         labelPicker.query = ""
         labelPicker.highlight = 0
         labelPicker.navigated = false
+        labelPicker.mode = mode
         mailboxOverlay = .labels
     }
     var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
@@ -3788,8 +3792,21 @@ struct ComposeRequest: Identifiable {
     var hasPendingShortcutPrefix: Bool { keyRouter.hasPendingPrefix() }
 
     /// Set by ContentView: runs the commands whose effect depends on what
-    /// the window shows (`open`, `backToList`, `[` / `]`).
+    /// the window shows (`open`, `backToList`, `[` / `]`, `n` / `p`, `;` / `:`).
     @ObservationIgnored var viewCommandHandler: ((ShortcutCommand) -> Void)?
+
+    /// `n` / `p` / `;` / `:` for the open conversation. ThreadDetailView acts
+    /// on each new request (a fresh id, so the same key twice runs twice).
+    struct ConversationKeyRequest: Equatable {
+        let id = UUID()
+        let threadId: String
+        let action: MessageNavigation.Action
+    }
+    private(set) var conversationKeyRequest: ConversationKeyRequest?
+    func requestConversationKey(_ action: MessageNavigation.Action) {
+        guard let threadId = openedThreadId else { return }
+        conversationKeyRequest = .init(threadId: threadId, action: action)
+    }
 
     /// Returns true if the key was handled. Gmail-style single keys,
     /// including the `g` then … (go to) and `*` then … (select) sequences.
@@ -3860,7 +3877,12 @@ struct ComposeRequest: Identifiable {
         case .label: if selectedThread != nil { openLabelPicker() }
         case .undo: if let undo = undoAction { undo.undo() }
         case .compose: openCompose(ComposeRequest(replyTo: nil))
-        case .open, .backToList, .archiveNext, .archivePrevious:
+        case .mute: toggleMuteTargets()
+        case .markImportant: setImportantTargets(true)
+        case .markNotImportant: setImportantTargets(false)
+        case .moveTo: openMovePicker()
+        case .open, .backToList, .archiveNext, .archivePrevious,
+             .nextMessage, .previousMessage, .expandAll, .collapseAll:
             viewCommandHandler?(command)
         }
     }
@@ -3925,7 +3947,10 @@ struct ComposeRequest: Identifiable {
                         .firstIndex(where: { $0.gmailLabelId == l.id }) {
                         self.labelPicker.highlight = idx
                     }
-                    self.toggleLabel(thread, labelId: l.id)
+                    switch self.labelPicker.mode {
+                    case .label: self.toggleLabel(thread, labelId: l.id)
+                    case .move: self.moveTargets(toLabel: l.id, accountId: accountId)
+                    }
                 }
             } catch {
                 await MainActor.run { self.lastError = error.localizedDescription }

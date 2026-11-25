@@ -97,15 +97,16 @@ extension MailStore {
             try await Self.perform(change, on: client, gmailThreadId: gmailThreadId)
             isOffline = false
         } catch {
-            if OfflinePolicy.shouldDefer(error) {
+            switch RemoteThreadSend.disposition(for: error) {
+            case .queueOffline:
                 isOffline = true
                 await queueThreadChange(change, accountId: accountId, gmailThreadId: gmailThreadId)
-            } else if ThreadEditRetryPolicy.shouldRequeue(error) {
+            case .queue:
                 // Quota or server error: Gmail is reachable (not offline)
                 // but did not take the edit. Keep it for the replay ahead
                 // of the next sync instead of reverting the thread.
                 await queueThreadChange(change, accountId: accountId, gmailThreadId: gmailThreadId)
-            } else {
+            case .revert:
                 lastError = error.localizedDescription
                 await rederiveThreadFromMessages(
                     accountId: accountId, gmailThreadId: gmailThreadId)
@@ -116,12 +117,7 @@ extension MailStore {
 
     private static func perform(_ change: RemoteThreadChange, on client: GmailClient,
                                 gmailThreadId: String) async throws {
-        switch change {
-        case .modify(let add, let remove):
-            try await client.modifyThread(id: gmailThreadId, add: add, remove: remove)
-        case .trash:
-            try await client.trashThread(id: gmailThreadId)
-        }
+        try await RemoteThreadSend.send(change, via: client, gmailThreadId: gmailThreadId)
     }
 
     private func queueThreadChange(_ change: RemoteThreadChange,
@@ -476,7 +472,7 @@ extension MailStore {
     /// Must run **before** `mutateThread(s)` on undo: `reloadThreads` snapshots
     /// `readStateKeepIds` synchronously at call time, so a pin after the
     /// mutation never reaches the reload query.
-    private func pinReadStateKeep(_ ids: [String]) {
+    func pinReadStateKeep(_ ids: [String]) {
         guard readStateFilterActive else { return }
         for id in ids { readStateKeepIds.insert(id) }
     }
@@ -494,7 +490,7 @@ extension MailStore {
         }
     }
 
-    private func restoreSelectionFocus(_ id: String?) {
+    func restoreSelectionFocus(_ id: String?) {
         guard let id else { return }
         selectThread(id, intent: .restoreFocus)
     }
@@ -693,7 +689,7 @@ extension MailStore {
         }
     }
 
-    private func offerUndo(_ label: String, undo: @escaping () -> Void) {
+    func offerUndo(_ label: String, undo: @escaping () -> Void) {
         let id = UUID()
         triageUndo = UndoAction(id: id, label: label) { [weak self] in
             guard let self, self.triageUndo?.id == id else { return }
@@ -720,7 +716,7 @@ extension MailStore {
     }
 
     /// Threads currently multi-selected, in list order.
-    private var checkedThreadsInOrder: [MailThread] {
+    var checkedThreadsInOrder: [MailThread] {
         let byId = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
         let checked = checkedThreadIds
         return selectionOrder.compactMap { id in

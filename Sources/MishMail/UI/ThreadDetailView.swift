@@ -119,6 +119,10 @@ struct ThreadDetailView: View {
     /// this to one id (`MessageExpandPolicy.single`); side-by-side compose
     /// opens every sent card so the draft can reference the full thread.
     @State private var expandedMessageIds: Set<String> = []
+    /// Gmail `;` pressed: every card open until `:` (or another conversation).
+    @State private var expandAllActive = false
+    /// The message Gmail's `n` / `p` last moved to.
+    @State private var messageCursorId: String?
     /// Visible height of the conversation's scroll view. The open card
     /// reserves it for a body that has not measured itself yet, so the pane
     /// never opens as a short box (see `MessageBodyHeight`).
@@ -422,6 +426,12 @@ struct ThreadDetailView: View {
             // navigating away — but only when it was *this* thread: a sync
             // touching other conversations must not disturb what we're reading.
             // Scroll anchor and summary stay put.
+            // Gmail `n` / `p` / `;` / `:` (routed by ContentView only while
+            // this conversation is on screen).
+            .onChange(of: store.conversationKeyRequest) { _, request in
+                guard let request, request.threadId == thread.id else { return }
+                runConversationKey(request.action, proxy: proxy)
+            }
             .onChange(of: store.threadContentToken) {
                 let revision = store.contentRevision(of: thread.id)
                 guard revision != seenContentRevision else { return }
@@ -836,9 +846,32 @@ struct ThreadDetailView: View {
             composingDraftIds: store.composingDraftMessageIds)
     }
 
-    /// Side-by-side opens every sent card; the reading pane stays single-active.
+    /// Side-by-side opens every sent card; the reading pane stays
+    /// single-active unless Gmail's `;` opened every message.
     private var messageExpandPolicy: MessageExpandPolicy {
-        splitMode ? .multiple : .single
+        splitMode || expandAllActive ? .multiple : .single
+    }
+
+    private func runConversationKey(_ action: MessageNavigation.Action, proxy: ScrollViewProxy) {
+        let ids = messageRoles.nonDraftIds
+        let before = MessageNavigation.State(
+            expanded: expandedMessageIds, cursor: messageCursorId,
+            expandAll: expandAllActive || splitMode)
+        let (after, scrollTo) = MessageNavigation.apply(
+            action, to: before, ids: ids, policy: messageExpandPolicy)
+        messageCursorId = after.cursor
+        // Side-by-side always keeps every card open; `:` there closes them
+        // but the policy stays multiple.
+        expandAllActive = after.expandAll && !splitMode
+        withAnimation(.easeOut(duration: 0.12)) {
+            expandedMessageIds = after.expanded
+        }
+        for id in after.expanded.subtracting(before.expanded) {
+            loadBodyIfNeeded(id: id)
+        }
+        if let scrollTo {
+            applyScrollAnchor(scrollTo, proxy: proxy)
+        }
     }
 
     /// Seed open cards for the active policy and hydrate each body.

@@ -260,4 +260,49 @@ final class KeyBindingsTests: XCTestCase {
         XCTAssertEqual(kb.key(for: .label), "l")
         XCTAssertNil(kb.key(for: .toggleRead))
     }
+
+    // MARK: - New defaults against stored overrides (rule of PR #17)
+
+    /// A user who put a command on `m`, `v`, `n`, `p`, `;`, `:`, `+` or `-`
+    /// before these defaults existed keeps it; the new command is left
+    /// unbound, not moved, and nothing stored is rewritten.
+    func testNewDefaultsNeverTakeAUserKey() {
+        let raw = ["archive": "m", "trash": "v", "label": "n", "snooze": "p",
+                   "reply": ";", "forward": ":", "toggleStar": "+", "compose": "-"]
+        defaults.set(try! JSONEncoder().encode(raw), forKey: "keyBindings")
+        let kb = KeyBindings(defaults: defaults)
+        let shadowed: [(ShortcutCommand, ShortcutCommand, String)] = [
+            (.mute, .archive, "m"), (.moveTo, .trash, "v"),
+            (.nextMessage, .label, "n"), (.previousMessage, .snooze, "p"),
+            (.expandAll, .reply, ";"), (.collapseAll, .forward, ":"),
+            (.markImportant, .toggleStar, "+"), (.markNotImportant, .compose, "-"),
+        ]
+        for (command, holder, key) in shadowed {
+            XCTAssertNil(kb.key(for: command), "\(command) must be unbound")
+            XCTAssertEqual(kb.displayKey(for: command), KeyBindings.unboundLabel)
+            XCTAssertEqual(kb.defaultKeyHolder(for: command), holder)
+            XCTAssertEqual(kb.command(for: key), holder, "\(key) keeps firing \(holder)")
+        }
+        let stored = try! JSONDecoder().decode(
+            [String: String].self, from: defaults.data(forKey: "keyBindings")!)
+        XCTAssertEqual(stored, raw)
+        // The new commands can still be bound to a free key.
+        XCTAssertEqual(kb.rebind(.mute, to: "y"), .ok)
+        XCTAssertEqual(kb.command(for: "y"), .mute)
+    }
+
+    func testNewDefaultsWithoutOverrides() {
+        let kb = KeyBindings(defaults: defaults)
+        let expected: [String: ShortcutCommand] = [
+            "m": .mute, "v": .moveTo, "+": .markImportant, "-": .markNotImportant,
+            "n": .nextMessage, "p": .previousMessage, ";": .expandAll, ":": .collapseAll,
+        ]
+        for (key, command) in expected {
+            XCTAssertEqual(kb.command(for: key), command, key)
+            XCTAssertEqual(kb.key(for: command), key)
+        }
+        // Shift+N stays the fixed refresh chord, ahead of the registry.
+        XCTAssertTrue(GmailRefreshKey.matches(key: "N", shiftOnly: true))
+        XCTAssertFalse(GmailRefreshKey.matches(key: "n", shiftOnly: false))
+    }
 }

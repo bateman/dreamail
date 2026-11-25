@@ -104,4 +104,27 @@ final class PaletteCommandsTests: XCTestCase {
         XCTAssertEqual(list.last?.title, "Go to Work")
         XCTAssertEqual(list.last?.action, .goToSaved(id: 7, name: "Work"))
     }
+
+    // MARK: Mute, importance, move to
+
+    func testConversationActionsRunTheirKeys() {
+        let list = entries()
+        XCTAssertEqual(entry("act.mute", in: list)?.action, .perform(.mute))
+        XCTAssertEqual(entry("act.important", in: list)?.action, .perform(.markImportant))
+        XCTAssertEqual(entry("act.notImportant", in: list)?.action, .perform(.markNotImportant))
+        XCTAssertEqual(entry("act.move", in: list)?.action, .perform(.moveTo))
+        XCTAssertEqual(entry("act.mute", in: list)?.shortcut, .mute)
+        XCTAssertEqual(entry("act.move", in: list)?.title, "Move Conversation To…")
+    }
+
+    func testMuteRowFollowsTheToggleRule() {
+        XCTAssertEqual(entry("act.mute", in: entries())?.title, "Mute Conversation")
+        XCTAssertEqual(entry("act.mute", in: entries(focused: Thread(isMuted: true)))?.title,
+                       "Unmute Conversation")
+        let mixed = entries(focused: nil, checked: [Thread(isMuted: true), Thread()])
+        XCTAssertEqual(entry("act.mute", in: mixed)?.title, "Mute 2 Selected Conversations")
+        let allMuted = entries(focused: nil, checked: [Thread(isMuted: true), Thread(isMuted: true)])
+        XCTAssertEqual(entry("act.mute", in: allMuted)?.title, "Unmute 2 Selected Conversations")
+        XCTAssertEqual(entry("act.move", in: allMuted)?.title, "Move 2 Selected Conversations To…")
+    }
 }

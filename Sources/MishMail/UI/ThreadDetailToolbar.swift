@@ -263,6 +263,28 @@ struct ThreadDetailToolbar: ViewModifier {
                         } label: {
                             Label("Snooze", systemImage: "clock")
                         }
+                        Button {
+                            store.toggleMuteTargets(thread)
+                        } label: {
+                            Label(thread.isMuted ? "Unmute" : "Mute",
+                                  systemImage: thread.isMuted ? "bell" : "bell.slash")
+                        }
+                        .help("\(thread.isMuted ? "Unmute" : "Mute") (\(store.keyBindings.displayKey(for: .mute)))")
+                        Button {
+                            store.setImportantTargets(!thread.isImportant, thread: thread)
+                        } label: {
+                            Label(thread.isImportant ? "Mark as not important" : "Mark as important",
+                                  systemImage: thread.isImportant ? "flag.slash" : "flag")
+                        }
+                        .help(thread.isImportant
+                              ? "Mark as not important (\(store.keyBindings.displayKey(for: .markNotImportant)))"
+                              : "Mark as important (\(store.keyBindings.displayKey(for: .markImportant)))")
+                        Button {
+                            store.openMovePicker()
+                        } label: {
+                            Label("Move to…", systemImage: "folder")
+                        }
+                        .help("Move to (\(store.keyBindings.displayKey(for: .moveTo)))")
                         Divider()
                         if thread.inSpam {
                             Button {

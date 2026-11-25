@@ -208,6 +208,23 @@ struct MishMailApp: App {
                     .disabled(!hasMessageSelection)
                 Button("Label…") { store.perform(.label) }
                     .disabled(!hasSingleThreadSelection)
+                Button("Move to…") { store.perform(.moveTo) }
+                    .disabled(!hasSingleThreadSelection)
+                Button("Mute/Unmute") { store.perform(.mute) }
+                    .disabled(!hasMessageSelection)
+                Button("Mark as Important") { store.perform(.markImportant) }
+                    .disabled(!hasMessageSelection)
+                Button("Mark as Not Important") { store.perform(.markNotImportant) }
+                    .disabled(!hasMessageSelection)
+                Divider()
+                Button("Next Message") { store.perform(.nextMessage) }
+                    .disabled(store.openedThreadId == nil)
+                Button("Previous Message") { store.perform(.previousMessage) }
+                    .disabled(store.openedThreadId == nil)
+                Button("Expand All Messages") { store.perform(.expandAll) }
+                    .disabled(store.openedThreadId == nil)
+                Button("Collapse All Messages") { store.perform(.collapseAll) }
+                    .disabled(store.openedThreadId == nil)
             }
             CommandMenu("Go") {
                 Button("Inbox") { store.goTo(.inbox) }
