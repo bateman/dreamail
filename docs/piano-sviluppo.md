@@ -459,4 +459,5 @@ Aggiornato il 25 novembre 2026.
 | — | `feature/gmail-label-menu` | #78 | Unito (migrazione v66): menu dell'etichetta come Gmail, colore del genitore alle annidate (DEC-071); test UI con limite a 35 minuti; da provare (C-62) |
 | — | `ux/account-rail-top-band` | #81 | Unito (livello basso rischio): striscia account a 64 pt sotto una fascia in alto fino al bordo della barra laterale; da provare (C-63) |
 | — | `perf/first-sync-progressive` | #82 | Unito: posta visibile durante la prima sincronizzazione, azioni conservate, ripresa dopo interruzione, "Connecting…" con Cancel (DEC-072); da provare su un account vero (C-64) |
+| — | `ci/faster-ui-tests` | #80 | Unito: test UI in due metà parallele da circa 13 minuti (prima un job da 22-27), meno avvii, elenco etichette demo corto dove non serve quello lungo; nessuna verifica tolta; limite 20 minuti per metà |
 | — | `docs/study-google-chat`, `docs/study-google-calendar`, `docs/study-rebranding-dreamail` | #69, #70, #71 | Uniti (studi in `docs/studi/`; domande aperte per il proprietario in fondo a ciascuno) |
