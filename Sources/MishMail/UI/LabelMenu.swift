@@ -16,11 +16,14 @@ struct LabelMenuItems: View {
                 Divider()
                 // The two colors stay apart (DEC-023): Gmail's, and the one
                 // only on this Mac that wins on display.
+                let family = store.labelFamily(row)
+                // Both kinds go, on the label and its sublabels: no color is
+                // what is seen.
                 Button("Remove color") { store.setGmailLabelColor(row, to: nil) }
-                    .disabled(row.gmailBackgroundColor == nil)
+                    .disabled(!family.contains { $0.gmailBackgroundColor != nil || $0.color != nil })
                     .accessibilityIdentifier("labelMenu.color.remove")
                 Button("Remove color only on this Mac") { store.setLabelColor(row, hex: nil) }
-                    .disabled(row.color == nil)
+                    .disabled(!family.contains { $0.color != nil })
                     .accessibilityIdentifier("labelMenu.color.removeLocal")
             }
             .accessibilityIdentifier("labelMenu.color")
@@ -127,7 +130,7 @@ struct LabelMenuPresentation: ViewModifier {
                     label: label,
                     sublabels: LabelFamily.descendants(
                         of: label, in: store.userLabels(forAccount: label.accountId)).count,
-                    savedViews: store.savedViewsRemoved(with: label).count))
+                    savedViews: store.savedViewsRemoved(with: label).map(\.name)))
             }
             .alert(Text(verbatim: store.labelMenu.failure?.title ?? ""),
                    isPresented: Binding(get: { store.labelMenu.failure != nil },

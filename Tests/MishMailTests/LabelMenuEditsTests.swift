@@ -206,10 +206,10 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertGreaterThan(gauge.peak, 0)
     }
 
-    /// The owner's rule, visible: a sublabel with its own Mac-only color
-    /// shows the parent's new Gmail color, because that override goes. The
-    /// parent keeps its own Mac-only color (DEC-023).
-    func testGmailColorOnAParentClearsTheSublabelsMacOnlyColor() async throws {
+    /// What is picked is what is seen: a Gmail color on a parent clears the
+    /// Mac-only colors of the parent and of its sublabels, which would win
+    /// on display (DEC-023); the look-alike is not touched.
+    func testGmailColorOnAParentIsWhatTheWholeFamilyShows() async throws {
         var labels = rows
         labels[0].color = "#EB5757"   // the parent
         labels[2].color = "#27AE60"   // a sublabel
@@ -217,16 +217,37 @@ final class LabelMenuEditsTests: XCTestCase {
         let q = try makeDB(labels)
         let family = LabelFamily.members(of: labels[0], in: labels).map(\.id)
         let result = await GmailLabelColorEdit.applyMany(
-            blue, labelRowIds: family, clearingLocalColor: Set(family.dropFirst()), db: q,
+            blue, labelRowIds: family, clearingLocalColor: Set(family), db: q,
             pending: PendingLabelColorEdits()) { id, color in
                 self.answer(id, color)
             }
         XCTAssertTrue(result.failed.isEmpty)
         let after = try stored(q)
-        XCTAssertNil(after[id("L3")]?.color, "the sublabel shows the parent's new color")
-        XCTAssertEqual(after[id("L3")]?.displayColors.background, "#4a86e8")
-        XCTAssertEqual(after[id("L1")]?.color, "#EB5757", "the label itself keeps its Mac-only color")
+        for rowId in family {
+            XCTAssertNil(after[rowId]?.color, rowId)
+            XCTAssertEqual(after[rowId]?.displayColors.background, "#4a86e8", rowId)
+        }
         XCTAssertEqual(after[id("L5")]?.color, "#2D9CDB", "the look-alike is not touched")
+    }
+
+    /// "Remove color" on a parent: no color on the parent and its
+    /// sublabels, of either kind.
+    func testRemoveColorOnAParentLeavesNoColorOfEitherKind() async throws {
+        var labels = rows
+        labels[0].color = "#EB5757"
+        labels[1].gmailBackgroundColor = "#4a86e8"
+        labels[1].gmailTextColor = "#ffffff"
+        labels[3].color = "#27AE60"
+        let q = try makeDB(labels)
+        let family = LabelFamily.members(of: labels[0], in: labels).map(\.id)
+        let result = await GmailLabelColorEdit.applyMany(
+            nil, labelRowIds: family, clearingLocalColor: Set(family), db: q,
+            pending: PendingLabelColorEdits()) { id, _ in
+                self.answer(id, nil)
+            }
+        XCTAssertTrue(result.failed.isEmpty)
+        let after = try stored(q)
+        for rowId in family { XCTAssertEqual(after[rowId]?.displayColors, LabelColors.none, rowId) }
     }
 
     /// A failed sublabel gets its Mac-only color back with its Gmail color.
@@ -472,7 +493,9 @@ final class LabelMenuEditsTests: XCTestCase {
         withName.labelId = "L2"
         withName.labelName = "Bandi/PRIN"
         named[0].chipsJSON = try JSONEncoder().encode(withName)
-        let updated = LabelRename.views(named, after: changes)
+        let updated = LabelRename.views(named, after: changes, accountId: a)
+        XCTAssertTrue(LabelRename.views(named, after: changes, accountId: b).isEmpty,
+                      "another account's view is not touched")
         XCTAssertEqual(updated.map(\.id), [1])
         let decoded = try JSONDecoder().decode(FilterChips.self, from: XCTUnwrap(updated.first?.chipsJSON))
         XCTAssertEqual(decoded.labelName, "Calls/PRIN")
@@ -544,8 +567,30 @@ final class LabelMenuEditsTests: XCTestCase {
             view(6, account: nil, labelId: "L3"),                   // all accounts, only a: goes
             view(7, account: a, labelId: nil),                      // no label: stays
         ]
-        let gone = LabelRemoval.viewsUsing(removed, views: views, allLabels: rows).compactMap(\.id)
-        XCTAssertEqual(gone, [1, 2, 6])
+        let changes = LabelRemoval.views(views, removing: removed, allLabels: rows)
+        XCTAssertEqual(changes.removed.compactMap(\.id), [1, 2, 6])
+        XCTAssertTrue(changes.updated.isEmpty)
+    }
+
+    /// "Not label Newsletters" still works without the label: the view stays
+    /// and only loses that filter.
+    func testASavedViewThatOnlyExcludesTheLabelStays() throws {
+        var excluding = view(1, account: a, labelId: nil, chipsLabel: "L2")
+        var chips = FilterChips()
+        chips.labelId = "L2"
+        chips.labelName = "Bandi/PRIN"
+        chips.labelExclude = true
+        chips.read = .unread
+        excluding.chipsJSON = try JSONEncoder().encode(chips)
+        let removed = LabelRemoval.order(rows[0], rows: rows)
+        let changes = LabelRemoval.views([excluding], removing: removed, allLabels: rows)
+        XCTAssertTrue(changes.removed.isEmpty)
+        XCTAssertEqual(changes.updated.map(\.id), [1])
+        let kept = try JSONDecoder().decode(FilterChips.self, from: XCTUnwrap(changes.updated.first?.chipsJSON))
+        XCTAssertNil(kept.labelId)
+        XCTAssertNil(kept.labelName)
+        XCTAssertFalse(kept.labelExclude)
+        XCTAssertEqual(kept.read, .unread, "the rest of the view is kept")
     }
 
     func testRemovalForgetsSavedViewsAndUserDefaults() throws {
@@ -560,8 +605,8 @@ final class LabelMenuEditsTests: XCTestCase {
             return [kept, gone]
         }
         let removed = LabelRemoval.order(rows[0], rows: rows)
-        let views = LabelRemoval.viewsUsing(removed, views: saved, allLabels: rows)
-        XCTAssertEqual(views.map(\.labelId), ["L2"])
+        let views = LabelRemoval.views(saved, removing: removed, allLabels: rows)
+        XCTAssertEqual(views.removed.map(\.labelId), ["L2"])
         try q.write { db in try LabelRemoval.forget(db, rows: removed, views: views) }
         let left = try q.read { try SavedView.fetchAll($0).map(\.labelId) }
         XCTAssertEqual(left, ["L7"])
@@ -587,6 +632,8 @@ final class LabelMenuEditsTests: XCTestCase {
         // Markdown stays literal text (shown with Text(verbatim:)).
         XCTAssertEqual(LabelText.safe("[Inbox](x) *a*"), "[Inbox](x) *a*")
         XCTAssertEqual(LabelText.quoted("é/ü"), "“é/ü”")
+        XCTAssertEqual(LabelText.safe("Wo\u{200B}rk"), "Wo\u{27E8}U+200B\u{27E9}rk")
+        XCTAssertEqual(LabelText.safe("\u{FEFF}a\u{2060}"), "\u{27E8}U+FEFF\u{27E9}a\u{27E8}U+2060\u{27E9}")
     }
 
     func testRemoveConfirmationNamesTheAccountWithSeveralAccounts() {
@@ -595,8 +642,8 @@ final class LabelMenuEditsTests: XCTestCase {
                        "Remove label “Work\u{27E8}U+202E\u{27E9}”?")
         XCTAssertEqual(LabelRemovalText.title(label: label, multipleAccounts: true),
                        "Remove label “Work\u{27E8}U+202E\u{27E9}” from a@x.com?")
-        XCTAssertTrue(LabelRemovalText.message(label: label, sublabels: 0, savedViews: 2)
-            .contains("The 2 saved views that use it are removed too."))
+        let text = LabelRemovalText.message(label: label, sublabels: 0, savedViews: ["Calls", "PRIN"])
+        XCTAssertTrue(text.contains("The saved views “Calls”, “PRIN”, which show it, are removed too."), text)
     }
 
     func testRemovalDeletesSublabelsDeepestFirst() {

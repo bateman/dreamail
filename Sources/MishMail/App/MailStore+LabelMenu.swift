@@ -38,10 +38,25 @@ extension MailStore {
         return LabelFamily.members(of: current, in: rows)
     }
 
-    /// The saved views that go with `label` and its sublabels.
+    /// The saved views that go with `label` and its sublabels (not those
+    /// that only exclude it: they lose that filter and stay).
     func savedViewsRemoved(with label: LabelRow) -> [SavedView] {
-        LabelRemoval.viewsUsing(labelFamily(label), views: savedViews,
-                                allLabels: labelsByAccount.values.flatMap { $0 })
+        LabelRemoval.views(savedViews, removing: labelFamily(label),
+                           allLabels: labelsByAccount.values.flatMap { $0 }).removed
+    }
+
+    /// The filter chips in use apply to `accountId`'s labels.
+    private func chipsCover(_ accountId: String) -> Bool {
+        activeAccountId == nil || activeAccountId == accountId
+    }
+
+    /// Gmail's label list for one account, read again (not a mail sync).
+    private func refreshLabels(_ accountId: String) async {
+        guard !demoMode, !isShuttingDown, isKnownAccount(accountId) else { return }
+        let engine = engines[accountId] ?? SyncEngine(accountId: accountId)
+        engines[accountId] = engine
+        // A failure leaves the names stored; the next sync reads them.
+        try? await engine.refreshLabels()
     }
 
     /// Gmail, or nothing at all in the demo mailbox.
@@ -146,24 +161,25 @@ extension MailStore {
             return nil
         }
         // A call that timed out may have landed on Gmail all the same: read
-        // the names back before saying anything about them.
-        await sync(accountId: accountId)
+        // the names back (labels only) before saying anything about them.
+        await refreshLabels(accountId)
         reloadAccounts()
         followRename(names, accountId: accountId)
+        let local = localFailure.map { "\n\n" + $0 } ?? ""
         switch outcome {
         case .renamed:
             return nil
         case .rolledBack(let cause):
             if OfflinePolicy.shouldDefer(cause) { isOffline = true }
             return "Couldn't rename the label: \(describe(cause)). The renames that went through were "
-                + "undone; the names shown are Gmail's as of now."
+                + "undone; the names shown are Gmail's as of now." + local
         case .partial(let renamed, let notRenamed, let cause):
             if OfflinePolicy.shouldDefer(cause) { isOffline = true }
             labelMenu.failure = LabelEditFailure(
                 title: "The label was only partly renamed",
                 message: "\(describe(cause)).\n\nRenamed: \(LabelEditFailure.list(renamed.map(\.to)))."
                     + "\nStill with the old name: \(LabelEditFailure.list(notRenamed.map(\.from)))."
-                    + "\n\nThe sidebar shows Gmail's names as of now.",
+                    + "\n\nThe sidebar shows Gmail's names as of now." + local,
                 retry: { [weak self] in
                     Task { @MainActor in
                         guard let self else { return }
@@ -191,9 +207,12 @@ extension MailStore {
     /// renamed label by its name on Gmail.
     private func followRenameInFilters(_ changes: [LabelRename.Change], names: [String: String]) {
         let landed = changes.filter { names[$0.rowId] == $0.to }
-        guard !landed.isEmpty else { return }
-        for c in landed { chips.followRename(labelId: c.gmailLabelId, from: c.from, to: c.to) }
-        let updated = LabelRename.views(savedViews, after: landed)
+        guard let first = landed.first else { return }
+        let accountId = String(first.rowId.prefix { ch in ch != ":" })
+        if chipsCover(accountId) {
+            for c in landed { chips.followRename(labelId: c.gmailLabelId, from: c.from, to: c.to) }
+        }
+        let updated = LabelRename.views(savedViews, after: landed, accountId: accountId)
         guard !updated.isEmpty else { return }
         do {
             try db.write { db in for view in updated { try view.update(db) } }
@@ -235,8 +254,8 @@ extension MailStore {
         Task { @MainActor [weak self] in
             let report = await LabelRemoval.execute(rows, under: label, remote: remote)
             guard let self else { return }
-            let views = LabelRemoval.viewsUsing(report.deleted, views: self.savedViews,
-                                                allLabels: self.labelsByAccount.values.flatMap { $0 })
+            let views = LabelRemoval.views(self.savedViews, removing: report.deleted,
+                                           allLabels: self.labelsByAccount.values.flatMap { $0 })
             do {
                 try await pool.write { db in try LabelRemoval.forget(db, rows: report.deleted, views: views) }
             } catch {
@@ -244,11 +263,14 @@ extension MailStore {
                     + "(\(error.localizedDescription)). They go at the next sync."
             }
             LabelRemoval.forgetDefaults(report.deleted)
-            for row in report.deleted { self.chips.dropLabel(row) }
+            if self.chipsCover(accountId) {
+                for row in report.deleted { self.chips.dropLabel(row) }
+            }
             self.endLabelEdit(ids)
             self.reloadAccounts()
             self.reloadSavedViews()
-            if let next = LabelSelection.afterRemoval(self.selectedView, removed: report.deleted, views: views) {
+            if let next = LabelSelection.afterRemoval(self.selectedView, removed: report.deleted,
+                                                      views: views.removed) {
                 self.goTo(next)
             }
             guard let cause = report.cause else { return }
@@ -270,12 +292,8 @@ extension MailStore {
                 title: report.deleted.isEmpty ? "The label was not removed" : "Some labels were not removed",
                 message: self.describe(cause) + "." + removedFirst + "\n\nNot removed: "
                     + LabelEditFailure.list(report.notDeleted.map(\.name)) + ".",
-                retry: { [weak self] in
-                    guard let self,
-                          let again = self.userLabels(forAccount: accountId).first(where: { $0.id == label.id })
-                    else { return }
-                    self.removeLabel(again)
-                })
+                // Checked again against the name the confirmation showed.
+                retry: { [weak self] in self?.removeLabel(snapshot) })
         }
     }
 

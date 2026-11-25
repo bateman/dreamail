@@ -69,9 +69,11 @@ enum LabelText {
             let v = scalar.value
             let bidi = (0x202A...0x202E).contains(v) || (0x2066...0x2069).contains(v)
                 || [0x200E, 0x200F, 0x061C].contains(v)
+            // Zero-width characters: two names that look the same differ.
+            let invisible = [0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF].contains(v)
             let category = scalar.properties.generalCategory
             if category == .control || category == .lineSeparator || category == .paragraphSeparator
-                || bidi {
+                || bidi || invisible {
                 out += String(format: "\u{27E8}U+%04X\u{27E9}", v)
             } else {
                 out.unicodeScalars.append(scalar)
@@ -294,11 +296,13 @@ enum LabelRename {
         return out
     }
 
-    /// Saved views whose filter chips name a renamed label, with the stored
-    /// display name updated (the id stays).
-    static func views(_ views: [SavedView], after changes: [Change]) -> [SavedView] {
+    /// Saved views of the renamed labels' account (or of every account)
+    /// whose filter chips name a renamed label, with the stored display name
+    /// updated (the id stays).
+    static func views(_ views: [SavedView], after changes: [Change], accountId: String) -> [SavedView] {
         views.compactMap { view in
-            guard let data = view.chipsJSON,
+            guard view.accountId == nil || view.accountId == accountId,
+                  let data = view.chipsJSON,
                   var chips = try? JSONDecoder().decode(FilterChips.self, from: data) else { return nil }
             let before = chips
             for c in changes { chips.followRename(labelId: c.gmailLabelId, from: c.from, to: c.to) }
@@ -377,21 +381,43 @@ enum LabelRemoval {
         return row
     }
 
-    /// Saved views that show (or exclude) one of the removed labels: they go
-    /// with them (DEC-019). A view of every account goes only when no other
-    /// account still has a label with that id (ids are per account).
-    static func viewsUsing(_ removed: [LabelRow], views: [SavedView],
-                           allLabels: [LabelRow]) -> [SavedView] {
-        guard let account = removed.first?.accountId else { return [] }
+    /// What the saved views become when labels are removed.
+    struct ViewChanges {
+        /// Views that show a removed label: they go with it (DEC-019).
+        var removed: [SavedView] = []
+        /// Views that only exclude a removed label: they still work, and
+        /// only lose that filter.
+        var updated: [SavedView] = []
+    }
+
+    /// A view of every account is touched only when no other account still
+    /// has a label with that id (ids are per account).
+    static func views(_ views: [SavedView], removing removed: [LabelRow],
+                      allLabels: [LabelRow]) -> ViewChanges {
+        var out = ViewChanges()
+        guard let account = removed.first?.accountId else { return out }
         let ids = Set(removed.map(\.gmailLabelId))
         let elsewhere = Set(allLabels.filter { $0.accountId != account }.map(\.gmailLabelId))
-        return views.filter { view in
-            let chipLabel = view.chipsJSON.flatMap { try? JSONDecoder().decode(FilterChips.self, from: $0) }?.labelId
-            let used = [view.labelId, chipLabel].compactMap { $0 }.filter(ids.contains)
-            guard !used.isEmpty else { return false }
-            if view.accountId == account { return true }
-            return view.accountId == nil && used.allSatisfy { !elsewhere.contains($0) }
+        for view in views {
+            let chips = view.chipsJSON.flatMap { try? JSONDecoder().decode(FilterChips.self, from: $0) }
+            let used = [view.labelId, chips?.labelId].compactMap { $0 }.filter(ids.contains)
+            guard !used.isEmpty else { continue }
+            guard view.accountId == account
+                    || (view.accountId == nil && used.allSatisfy { !elsewhere.contains($0) }) else { continue }
+            let columnShows = view.labelId.map(ids.contains) ?? false
+            if !columnShows, var excluding = chips, excluding.labelExclude {
+                // The account already matched: drop the filter by id.
+                excluding.labelId = nil
+                excluding.labelName = nil
+                excluding.labelExclude = false
+                var kept = view
+                kept.chipsJSON = try? JSONEncoder().encode(excluding)
+                out.updated.append(kept)
+            } else {
+                out.removed.append(view)
+            }
         }
+        return out
     }
 
     /// "Deleted means gone" (DEC-019): the rows, the conversations'
@@ -399,7 +425,7 @@ enum LabelRemoval {
     /// and the saved views on them go. The label's color only
     /// on this Mac and its order are columns of the row; what UserDefaults
     /// keeps per label goes with `forgetDefaults`.
-    static func forget(_ db: Database, rows: [LabelRow], views: [SavedView] = []) throws {
+    static func forget(_ db: Database, rows: [LabelRow], views: ViewChanges = ViewChanges()) throws {
         for row in rows {
             try db.execute(sql: """
                 DELETE FROM thread_label
@@ -415,9 +441,10 @@ enum LabelRemoval {
             }
             try db.execute(sql: "DELETE FROM label WHERE id = ?", arguments: [row.id])
         }
-        for view in views {
+        for view in views.removed {
             if let id = view.id { _ = try SavedView.deleteOne(db, key: id) }
         }
+        for view in views.updated { try view.update(db) }
     }
 
     /// The per-label keys in UserDefaults: the disclosure state and the
@@ -442,17 +469,18 @@ enum LabelRemovalText {
             : "Remove label \(LabelText.quoted(label.name))?"
     }
 
-    static func message(label: LabelRow, sublabels: Int, savedViews: Int = 0) -> String {
+    static func message(label: LabelRow, sublabels: Int, savedViews: [String] = []) -> String {
         var parts: [String] = []
         switch sublabels {
         case 0: break
         case 1: parts.append("Its sublabel is removed too.")
         default: parts.append("Its \(sublabels) sublabels are removed too.")
         }
-        switch savedViews {
+        let views = savedViews.map(LabelText.quoted).joined(separator: ", ")
+        switch savedViews.count {
         case 0: break
-        case 1: parts.append("The saved view that uses it is removed too.")
-        default: parts.append("The \(savedViews) saved views that use it are removed too.")
+        case 1: parts.append("The saved view \(views), which shows it, is removed too.")
+        default: parts.append("The saved views \(views), which show it, are removed too.")
         }
         parts.append("Conversations are not deleted: they only lose the label.")
         parts.append("This can't be undone.")

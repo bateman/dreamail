@@ -4183,9 +4183,9 @@ struct ComposeRequest: Identifiable {
         let family = labelFamily(label).map(\.id)
         let ids = family.filter { !gmailLabelColorSaving.contains($0) }
         guard label.type == "user", !ids.isEmpty else { return }
-        // The sublabels show the parent's new color: their Mac-only colors,
-        // which would win on display (DEC-023), go.
-        setGmailLabelColor(rowIds: ids, clearing: Set(family.dropFirst()), accountId: label.accountId,
+        // What is picked is what is seen: the Mac-only colors of the label
+        // and its sublabels, which would win on display (DEC-023), go.
+        setGmailLabelColor(rowIds: ids, clearing: Set(family), accountId: label.accountId,
                            to: color)
     }
 

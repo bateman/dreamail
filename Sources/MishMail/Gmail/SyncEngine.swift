@@ -278,6 +278,12 @@ actor SyncEngine {
 
     // MARK: - Labels
 
+    /// The label list only, read again from Gmail: what the label menu
+    /// does after an edit that may have half landed, without a mail sync.
+    func refreshLabels() async throws {
+        try await syncLabels()
+    }
+
     private func syncLabels() async throws {
         let labels = try await client.labels()
         try await db.write { [accountId] db in
