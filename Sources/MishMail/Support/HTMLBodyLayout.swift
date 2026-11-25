@@ -666,7 +666,7 @@ enum HTMLBodyLayout {
           }
           function altOf(img){
             var a = img.getAttribute('alt');
-            return a == null ? '' : String(a).replace(/\s+/g, ' ').trim();
+            return a == null ? '' : String(a).replace(/\\s+/g, ' ').trim();
           }
           function showAlt(img, text){
             var span = img.__mmAlt;
