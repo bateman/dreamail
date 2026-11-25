@@ -29,7 +29,9 @@ final class ShortcutKeyRouterTests: XCTestCase {
         XCTAssertEqual(press("e"), .command(.archive))
         XCTAssertEqual(press("u"), .command(.backToList))
         XCTAssertEqual(press("?"), .help)
-        XCTAssertEqual(press("n"), .unhandled)
+        // `n` became Gmail's next message; `q` has no command.
+        XCTAssertEqual(press("n"), .command(.nextMessage))
+        XCTAssertEqual(press("q"), .unhandled)
     }
 
     func testGoToSequences() {

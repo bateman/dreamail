@@ -22,6 +22,26 @@ enum ShortcutCommand: String, CaseIterable, Codable {
     /// Archive the open conversation and go to the previous (newer) one
     /// (Gmail `[`). Does nothing on the list.
     case archivePrevious
+    /// Mute the conversation, or unmute a muted one (Gmail `m`).
+    case mute
+    /// Gmail `+` (and `=`, a built-in alias) / `-`.
+    case markImportant, markNotImportant
+    /// Gmail's "Move to" (`v`): add a label and leave the inbox.
+    case moveTo
+    /// Next / previous message inside the open conversation (Gmail `n` / `p`).
+    case nextMessage, previousMessage
+    /// Open / close every message of the open conversation (Gmail `;` / `:`).
+    case expandAll, collapseAll
+}
+
+extension ShortcutCommand {
+    /// Toggles and pickers: a held key runs them once, not on every repeat.
+    var ignoresAutoRepeat: Bool {
+        switch self {
+        case .mute, .moveTo, .markImportant, .markNotImportant: return true
+        default: return false
+        }
+    }
 }
 
 struct ShortcutSpec: Identifiable {
@@ -53,6 +73,7 @@ struct ShortcutSpec: Identifiable {
 final class KeyBindings: ObservableObject {
     enum Category: String, CaseIterable {
         case navigation = "Navigation"
+        case conversation = "Inside a conversation"
         case actions = "Actions"
     }
 
@@ -81,6 +102,10 @@ final class KeyBindings: ObservableObject {
         .init(command: .open, title: "Open conversation", category: .navigation, defaultKey: "o"),
         .init(command: .backToList, title: "Back to conversation list", category: .navigation, defaultKey: "u"),
         .init(command: .toggleCheck, title: "Select / deselect conversation", category: .navigation, defaultKey: "x"),
+        .init(command: .nextMessage, title: "Next message", category: .conversation, defaultKey: "n"),
+        .init(command: .previousMessage, title: "Previous message", category: .conversation, defaultKey: "p"),
+        .init(command: .expandAll, title: "Expand all messages", category: .conversation, defaultKey: ";"),
+        .init(command: .collapseAll, title: "Collapse all messages", category: .conversation, defaultKey: ":"),
         .init(command: .archive, title: "Archive", category: .actions, defaultKey: "e"),
         .init(command: .archiveNext, title: "Archive and go to next conversation", category: .actions, defaultKey: "]"),
         .init(command: .archivePrevious, title: "Archive and go to previous conversation", category: .actions, defaultKey: "["),
@@ -97,6 +122,11 @@ final class KeyBindings: ObservableObject {
         .init(command: .replyAll, title: "Reply all", category: .actions, defaultKey: "a"),
         .init(command: .forward, title: "Forward", category: .actions, defaultKey: "f"),
         .init(command: .label, title: "Label…", category: .actions, defaultKey: "l"),
+        .init(command: .moveTo, title: "Move to…", category: .actions, defaultKey: "v"),
+        .init(command: .mute, title: "Mute / Unmute", category: .actions, defaultKey: "m"),
+        // Gmail lists `+` and `=`: `=` is an alias (see `aliases`).
+        .init(command: .markImportant, title: "Mark as important", category: .actions, defaultKey: "+"),
+        .init(command: .markNotImportant, title: "Mark as not important", category: .actions, defaultKey: "-"),
         .init(command: .undo, title: "Undo", category: .actions, defaultKey: "z"),
         .init(command: .compose, title: "Compose", category: .actions, defaultKey: "c"),
     ]
@@ -184,7 +214,7 @@ final class KeyBindings: ObservableObject {
 
     /// Secondary built-in keys that fire a command when the key isn't
     /// bound to anything else (a rebind to the key wins over the alias).
-    static let aliases: [String: ShortcutCommand] = ["h": .snooze]
+    static let aliases: [String: ShortcutCommand] = ["h": .snooze, "=": .markImportant]
 
     func command(for key: String) -> ShortcutCommand? {
         let key = Self.normalizeKey(key)
