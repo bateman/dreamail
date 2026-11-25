@@ -178,7 +178,7 @@ final class SignatureSyncTests: XCTestCase {
     func testAManualImportWithTheSameTextBecomesTheCopy() throws {
         let q = try makeDB()
         try q.write { db in
-            try SignatureStore.insert(db, accountId: self.a, name: "Gmail – \(self.a)", body: "Ann")
+            _ = try SignatureStore.insert(db, accountId: self.a, name: "Gmail – \(self.a)", body: "Ann")
         }
         XCTAssertEqual(try apply(q, [a: .text("Ann")]).added, 0)
         let s = try XCTUnwrap(try book(q).signatures(for: a).first)
