@@ -44,6 +44,13 @@ struct CalendarSpan: Equatable, Sendable {
         return date
     }
 
+    /// The same time, within a second (RFC 3339 and ICS carry whole
+    /// seconds). How an invitation is matched with Google's event: a shared
+    /// UID alone is something any sender can copy.
+    func sameTime(as other: CalendarSpan) -> Bool {
+        abs(start.timeIntervalSince(other.start)) < 1 && abs(end.timeIntervalSince(other.end)) < 1
+    }
+
     /// Half-open overlap: back-to-back events do not conflict. A
     /// zero-length span conflicts with what is running at its instant.
     func overlaps(_ other: CalendarSpan) -> Bool {
@@ -81,31 +88,48 @@ struct CalendarAvailabilityResult: Equatable, Sendable {
     var isFree: Bool { conflicts.isEmpty && allDayConflicts.isEmpty }
 }
 
+/// The invitation being checked: its UID and its time, as the ICS says.
+struct CalendarInviteIdentity: Equatable, Sendable {
+    var uid: String
+    var span: CalendarSpan
+}
+
 /// Pure availability logic for an invitation against the user's calendars.
 /// Recurring events must come expanded (`singleEvents`), as the client asks.
 enum CalendarAvailability {
     /// The busy periods among `events` of one calendar. Not busy: cancelled
     /// events, events marked free ("transparent"), events the user declined,
-    /// and the invitation itself (same iCalendar UID: Google puts an invite
-    /// on the calendar as soon as it arrives).
+    /// and the invitation itself: same iCalendar UID *and* same time (Google
+    /// puts an invite on the calendar as soon as it arrives; a forged invite
+    /// that reuses a real event's UID with another time must not hide it).
     static func busy(events: [GCalendarEvent], calendarId: String, calendarTimeZone: String?,
-                     excludingUID inviteUID: String?, fallback: TimeZone = .current) -> [CalendarBusy] {
+                     excluding invite: CalendarInviteIdentity?,
+                     fallback: TimeZone = .current) -> [CalendarBusy] {
         events.compactMap { event in
             guard event.status != "cancelled",
                   event.transparency != "transparent",
                   event.selfResponse != "declined" else { return nil }
-            if let inviteUID, !inviteUID.isEmpty, event.iCalUID == inviteUID { return nil }
             guard let span = CalendarSpan.from(start: event.start, end: event.end,
                                                calendarTimeZone: calendarTimeZone,
                                                fallback: fallback) else { return nil }
+            if let invite, !invite.uid.isEmpty, event.iCalUID == invite.uid,
+               span.sameTime(as: invite.span) { return nil }
             return CalendarBusy(span: span, source: .event(calendarId: calendarId, eventId: event.id,
                                                            summary: event.summary))
         }
     }
 
-    static func busy(freeBusy: [CalendarFreeBusy]) -> [CalendarBusy] {
+    /// Busy periods from free/busy-only calendars. Free/busy cannot tell the
+    /// invitation's own event from another one, so a period at exactly the
+    /// invitation's time is left out; the caller marks the result
+    /// incomplete whenever free/busy was used.
+    static func busy(freeBusy: [CalendarFreeBusy], invite: CalendarSpan? = nil) -> [CalendarBusy] {
         freeBusy.flatMap { calendar in
-            calendar.busy.map {
+            calendar.busy.filter { period in
+                guard let invite else { return true }
+                return !CalendarSpan(start: period.start, end: period.end, isAllDay: false)
+                    .sameTime(as: invite)
+            }.map {
                 CalendarBusy(span: CalendarSpan(start: $0.start, end: $0.end, isAllDay: false),
                              source: .freeBusy(calendarId: calendar.calendarId))
             }

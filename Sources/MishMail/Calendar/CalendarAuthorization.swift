@@ -163,6 +163,22 @@ enum CalendarAuthorization {
     }
 }
 
+extension CalendarAuthorization {
+    /// The address in a userinfo response, only from a 200 that names one.
+    /// Pure, for the hostless tests.
+    static func email(fromUserInfo data: Data, response: URLResponse) throws -> String {
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            throw status == 401 ? CalendarError.notGranted(nil)
+                                : CalendarError.http(status, reason: CalendarError.reason(in: data))
+        }
+        guard let email = (try? GoogleUserInfo.decode(data))?.email, !email.isEmpty else {
+            throw CalendarError.badResponse
+        }
+        return email
+    }
+}
+
 extension CalendarAuthorization.Steps {
     /// The app's steps: the loopback OAuth flow, the userinfo lookup and
     /// the Keychain.
@@ -178,11 +194,8 @@ extension CalendarAuthorization.Steps {
         signedInEmail: { access in
             var req = URLRequest(url: URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!)
             req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
-            let (data, _) = try await GoogleHTTP.session.data(for: req)
-            guard let email = try GoogleUserInfo.decode(data).email else {
-                throw URLError(.badServerResponse)
-            }
-            return email
+            let (data, response) = try await GoogleHTTP.session.data(for: req)
+            return try CalendarAuthorization.email(fromUserInfo: data, response: response)
         },
         saveRefreshToken: { token, accountId in
             try Keychain.set(token, forKey: CalendarAuthorization.keychainKey(accountId: accountId))

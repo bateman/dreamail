@@ -220,6 +220,7 @@ enum AccountLifecycle {
         try InlineImageCache.purgeOrphans(db)
         try RemoteImageCache.purgeOrphans(db)
         try CalendarRSVPStore.purgeOrphans(db)
+        try CalendarStore.purgeOrphans(db)
         try db.execute(sql: """
             DELETE FROM chatConversation
             WHERE id IN (SELECT conversationId FROM chatConversationAccount

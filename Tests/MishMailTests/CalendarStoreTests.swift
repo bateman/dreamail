@@ -28,13 +28,13 @@ final class CalendarStoreTests: XCTestCase {
 
     private func entry(_ id: String, primary: Bool = false, role: String = "owner") -> GCalendarListEntry {
         GCalendarListEntry(id: id, summary: "Cal \(id)", timeZone: "Europe/Rome", primary: primary,
-                           accessRole: role, selected: true)
+                           accessRole: role)
     }
 
     private func inviteEvent(_ messageId: String, account: String) -> CalendarInviteEventRecord {
         CalendarInviteEventRecord(messageId: messageId, accountId: account, calendarId: "primary",
-                                  eventId: "ev1", iCalUID: "uid-1", selfResponse: "needsAction",
-                                  checkedAt: Date())
+                                  eventId: "ev1", iCalUID: "uid-1", organizerEmail: "org@y.com",
+                                  span: nil, checkedAt: Date())
     }
 
     private let scopes = CalendarScope.recommended.joined(separator: " ")
@@ -119,7 +119,7 @@ final class CalendarStoreTests: XCTestCase {
                 self.entry("primary", primary: true), self.entry("gone"), self.entry("kept")])
             try CalendarStore.reconcileChosenCalendars(db, accountId: "a@x.com", with: [
                 GCalendarListEntry(id: "kept", summary: "Renamed", timeZone: "UTC", primary: false,
-                                   accessRole: "reader", selected: true)])
+                                   accessRole: "reader")])
             let chosen = try CalendarStore.chosenCalendars(db, accountId: "a@x.com")
             XCTAssertEqual(chosen.map(\.calendarId), ["primary", "kept"], "the alias stays")
             XCTAssertEqual(chosen.last?.summary, "Renamed")

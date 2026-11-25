@@ -1,8 +1,7 @@
 import Foundation
 
 /// What the Calendar integration needs from one invitation, read from the
-/// parsed ICS (`CalendarInvite`). A separate value so the Calendar code
-/// does not depend on the parser's internals.
+/// parsed ICS (`CalendarInvite`). Everything here is written by the sender.
 struct CalendarInviteFacts: Equatable, Sendable {
     var uid: String
     var summary: String
@@ -11,31 +10,30 @@ struct CalendarInviteFacts: Equatable, Sendable {
     var span: CalendarSpan?
     /// A reply to one occurrence of a series (`RECURRENCE-ID`).
     var isSingleOccurrence: Bool
-    /// The ICS says it was produced by Google Calendar (`PRODID`). Written
-    /// by the sender, so only a hint: it never suppresses the e-mail alone
-    /// (`CalendarRSVPRoute`).
-    var organizerUsesGoogleCalendar: Bool
+    /// The invitation repeats (`RRULE` or `RDATE`).
+    var isRecurring: Bool
     /// The parser offers an answer at all (`CalendarInvite.isActionable`:
     /// a request, not cancelled, a valid organizer, a safe reply).
     var isAnswerable: Bool
 
     init(uid: String, summary: String = "", location: String = "", organizerEmail: String = "",
-         span: CalendarSpan?, isSingleOccurrence: Bool = false,
-         organizerUsesGoogleCalendar: Bool = false, isAnswerable: Bool = true) {
+         span: CalendarSpan?, isSingleOccurrence: Bool = false, isRecurring: Bool = false,
+         isAnswerable: Bool = true) {
         self.uid = uid
         self.summary = summary
         self.location = location
         self.organizerEmail = organizerEmail
         self.span = span
         self.isSingleOccurrence = isSingleOccurrence
-        self.organizerUsesGoogleCalendar = organizerUsesGoogleCalendar
+        self.isRecurring = isRecurring
         self.isAnswerable = isAnswerable
     }
 
     init(_ invite: CalendarInvite) {
         var span: CalendarSpan?
         // A time read in the local zone because its TZID could not be
-        // resolved is not the real instant: no availability, no import.
+        // resolved is not the real instant: no availability, no import, no
+        // match with Google's event.
         if invite.unresolvedTZID == nil, let start = invite.start {
             let end = invite.end ?? start
             if end >= start { span = CalendarSpan(start: start, end: end, isAllDay: invite.isAllDay) }
@@ -43,90 +41,92 @@ struct CalendarInviteFacts: Equatable, Sendable {
         self.init(uid: invite.uid, summary: invite.summary, location: invite.location,
                   organizerEmail: invite.organizerEmail, span: span,
                   isSingleOccurrence: invite.recurrenceIdLine != nil,
-                  organizerUsesGoogleCalendar: Self.isGoogleCalendarICS(invite.sourceICS),
-                  isAnswerable: invite.isActionable)
+                  isRecurring: invite.isRecurring, isAnswerable: invite.isActionable)
     }
 
-    /// `PRODID:-//Google Inc//Google Calendar 70.9054//EN`, as Google
-    /// Calendar (consumer and Workspace) writes it. Only the calendar
-    /// object's own PRODID line counts.
-    static func isGoogleCalendarICS(_ ics: String) -> Bool {
-        for raw in ics.split(whereSeparator: \.isNewline) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard line.uppercased().hasPrefix("PRODID:") else { continue }
-            let value = line.dropFirst("PRODID:".count).lowercased()
-            return value.hasPrefix("-//google inc//google calendar")
-        }
-        return false
+    var identity: CalendarInviteIdentity? {
+        span.map { CalendarInviteIdentity(uid: uid, span: $0) }
     }
 }
 
-/// Where the answer to an invitation goes (owner's decision for step 4A:
-/// on the calendar for events already in Google Calendar, by e-mail for the
-/// others).
+/// Where the answer to an invitation goes. The iTIP e-mail is always sent
+/// (#51's path): every field that could tell "the organizer already sees it
+/// in Google Calendar" (PRODID, the UID, the organizer Google copies from the
+/// ICS) is written by the sender, so none of them may drop the e-mail. The
+/// answer is also written on the user's calendar, with Google asked to
+/// notify nobody, when Google holds the very event the invitation describes.
 enum CalendarRSVPRoute: Equatable, Sendable {
     /// The invitation offers no answer (`CalendarInvite.isActionable`).
     case notAnswerable
-    /// The event is in the user's Google Calendar, Google itself created it
-    /// and Google's organizer is the invitation's: the answer written there
-    /// reaches the organizer's event; no e-mail.
-    case calendarOnly(calendarId: String, eventId: String)
-    /// The event is in Google Calendar but the organizer does not use it:
-    /// write the answer there (so the user's calendar is right) and send
-    /// the iTIP e-mail too, because it is not verified that Google tells an
-    /// outside organizer. Google is asked to send nothing (`none`), so the
-    /// organizer does not get two answers.
+    /// Write the answer on this event, then send the e-mail.
     case calendarAndEmail(calendarId: String, eventId: String)
-    /// Not in Google Calendar, Calendar not connected, or one occurrence of
-    /// a series: the existing e-mail reply only.
+    /// The e-mail only: Calendar not connected or read-only, the event is not
+    /// in Google Calendar or is not the one the invitation describes, or one
+    /// occurrence of a series.
     case emailOnly
 
-    /// What Google is asked to e-mail when the answer is written.
-    static let sendUpdates = CalendarSendUpdates.none
+    /// Google's event is the invitation's when UID, organizer and time all
+    /// agree. A UID is enough for a sender to point at a real event on the
+    /// user's calendar; organizer and time must match too, or the answer to
+    /// a forged invitation would change a real event.
+    static func matches(_ facts: CalendarInviteFacts, _ event: CalendarInviteEventRecord) -> Bool {
+        guard !facts.uid.isEmpty, event.iCalUID == facts.uid,
+              let organizer = event.organizerEmail, !organizer.isEmpty,
+              organizer.caseInsensitiveCompare(facts.organizerEmail) == .orderedSame,
+              let mine = facts.span, let theirs = event.span else { return false }
+        return mine.sameTime(as: theirs)
+    }
 
-    /// The e-mail is left out only when Google's own record agrees with the
-    /// ICS: PRODID is written by the sender, so a forged one (say, a copy of
-    /// an Outlook invitation claiming Google Calendar) still gets the e-mail.
     static func route(for facts: CalendarInviteFacts,
                       event: CalendarInviteEventRecord?,
                       canWrite: Bool) -> CalendarRSVPRoute {
         guard facts.isAnswerable else { return .notAnswerable }
-        guard canWrite, !facts.isSingleOccurrence, let event,
-              event.iCalUID == facts.uid else { return .emailOnly }
-        let organizerMatches = event.organizerEmail.map {
-            !$0.isEmpty && $0.caseInsensitiveCompare(facts.organizerEmail) == .orderedSame
-        } ?? false
-        return facts.organizerUsesGoogleCalendar && event.hostedByGoogle && organizerMatches
-            ? .calendarOnly(calendarId: event.calendarId, eventId: event.eventId)
-            : .calendarAndEmail(calendarId: event.calendarId, eventId: event.eventId)
+        guard canWrite, !facts.isSingleOccurrence, let event, matches(facts, event) else {
+            return .emailOnly
+        }
+        return .calendarAndEmail(calendarId: event.calendarId, eventId: event.eventId)
     }
 
-    var sendsEmail: Bool {
-        switch self {
-        case .calendarAndEmail, .emailOnly: return true
-        case .calendarOnly, .notAnswerable: return false
-        }
-    }
+    var sendsEmail: Bool { self != .notAnswerable }
+}
+
+/// What writing the answer on the calendar did. Never an error: a failed
+/// calendar write must not hold back the e-mail.
+struct CalendarRSVPOutcome: Equatable, Sendable {
+    var route: CalendarRSVPRoute
+    /// The answer is now on the calendar.
+    var calendarWritten: Bool
+    /// Google no longer has the event (404/410): forget where it was.
+    var eventGone: Bool
+    /// Why the calendar write failed, for the notice; nil on success or
+    /// when nothing was to be written.
+    var calendarError: CalendarError?
 }
 
 enum CalendarInvitePlan {
     /// "Add to calendar" is offered for an answerable invitation that is not
-    /// in the user's Google Calendar, has a real time and is not one
-    /// occurrence of a series (which needs the series first).
+    /// in the user's Google Calendar and has a real time. Not for a series
+    /// (importing it without its rule would create a single event under the
+    /// series' UID) nor for one occurrence of a series.
     static func canAddToCalendar(_ facts: CalendarInviteFacts, event: CalendarInviteEventRecord?,
                                  canWrite: Bool) -> Bool {
-        canWrite && facts.isAnswerable && event == nil && facts.span != nil && !facts.isSingleOccurrence
-            && !facts.uid.isEmpty
+        canWrite && facts.isAnswerable && event == nil && facts.span != nil
+            && !facts.isSingleOccurrence && !facts.isRecurring && !facts.uid.isEmpty
+            && facts.uid.utf8.count <= CalendarClient.maxUIDBytes
     }
 
-    /// The `events.import` body: the invitation's UID, title, place, time
-    /// and organizer. All-day dates are local days in `zone`, end exclusive.
-    static func importBody(_ facts: CalendarInviteFacts, zone: TimeZone) -> [String: Any]? {
-        guard let span = facts.span, !facts.uid.isEmpty else { return nil }
+    /// The `events.import` body: the invitation's UID, title, place, time,
+    /// organizer, and the user as a guest who has not answered yet, so the
+    /// answer can be written on the imported event. All-day dates are local
+    /// days in `zone`, end exclusive.
+    static func importBody(_ facts: CalendarInviteFacts, attendeeEmail: String,
+                           zone: TimeZone) -> [String: Any]? {
+        guard let span = facts.span, !facts.uid.isEmpty, !attendeeEmail.isEmpty else { return nil }
         var body: [String: Any] = ["iCalUID": facts.uid]
         if !facts.summary.isEmpty { body["summary"] = facts.summary }
         if !facts.location.isEmpty { body["location"] = facts.location }
         if !facts.organizerEmail.isEmpty { body["organizer"] = ["email": facts.organizerEmail] }
+        body["attendees"] = [["email": attendeeEmail, "responseStatus": "needsAction"]]
         if span.isAllDay {
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = zone
@@ -148,18 +148,20 @@ enum CalendarInvitePlan {
 }
 
 /// The step 4A flows for one account, over the client: availability next to
-/// an invitation, finding the invitation's event, answering on the
-/// calendar, adding to the calendar. Results stay in memory except the
-/// invitation's event location (`CalendarStore.saveInviteEvent`), which the
+/// an invitation, finding the invitation's event, answering on the calendar,
+/// adding to the calendar. Results stay in memory except where the
+/// invitation's event is (`CalendarStore.saveInviteEvent`), which the
 /// caller stores.
 struct CalendarInviteService: Sendable {
     let client: CalendarClient
     let grant: CalendarGrant
 
     /// Conflicts on the chosen calendars. Calendars whose events can be read
-    /// are read (so the invitation's own event is recognised by UID);
-    /// free/busy-only ones give busy periods. A calendar that fails makes
-    /// the result incomplete rather than failing it.
+    /// are read, so the invitation's own event is recognised by UID and
+    /// time; free/busy-only ones give busy periods, which cannot tell the
+    /// invitation from another event, so the result is then marked
+    /// incomplete. A calendar that fails makes the result incomplete rather
+    /// than failing it.
     func availability(for facts: CalendarInviteFacts, chosen: [CalendarSourceRecord],
                       zone: TimeZone = .current) async throws -> CalendarAvailabilityResult? {
         guard let span = facts.span, !chosen.isEmpty else { return nil }
@@ -177,18 +179,16 @@ struct CalendarInviteService: Sendable {
                 busy += CalendarAvailability.busy(
                     events: result.events, calendarId: calendar.calendarId,
                     calendarTimeZone: result.calendarTimeZone ?? calendar.timeZone,
-                    excludingUID: facts.uid, fallback: zone)
+                    excluding: facts.identity, fallback: zone)
             } catch let error as CalendarError where Self.isPerCalendar(error) {
                 incomplete = true
             }
         }
         if !freeBusyOnly.isEmpty {
+            incomplete = true
             if grant.canReadAvailability {
                 let periods = try await client.freeBusy(calendarIds: freeBusyOnly, in: window)
-                incomplete = incomplete || periods.contains { $0.failed }
-                busy += CalendarAvailability.busy(freeBusy: periods)
-            } else {
-                incomplete = true
+                busy += CalendarAvailability.busy(freeBusy: periods, invite: span)
             }
         }
         return CalendarAvailability.check(invite: span, against: busy, incomplete: incomplete)
@@ -196,14 +196,16 @@ struct CalendarInviteService: Sendable {
 
     /// The invitation's event in the user's calendars: the primary first,
     /// then the other chosen ones. Nil when Google has not put it on any.
+    /// The record keeps Google's organizer and time, which decide whether
+    /// the answer may be written there (`CalendarRSVPRoute.matches`).
     func locate(_ facts: CalendarInviteFacts, chosen: [CalendarSourceRecord],
                 messageId: String, accountId: String,
-                now: Date = Date()) async throws -> CalendarInviteEventRecord? {
-        guard !facts.uid.isEmpty else { return nil }
-        var ids = ["primary"]
-        ids += chosen.filter { !$0.isPrimary && $0.canReadEvents && $0.calendarId != "primary" }
-            .map(\.calendarId)
-        for id in ids {
+                zone: TimeZone = .current, now: Date = Date()) async throws -> CalendarInviteEventRecord? {
+        guard !facts.uid.isEmpty, facts.uid.utf8.count <= CalendarClient.maxUIDBytes else { return nil }
+        var calendars = [("primary", String?.none)]
+        calendars += chosen.filter { !$0.isPrimary && $0.canReadEvents && $0.calendarId != "primary" }
+            .map { ($0.calendarId, $0.timeZone) }
+        for (id, timeZone) in calendars {
             let found: [GCalendarEvent]
             do {
                 found = try await client.events(calendarId: id, iCalUID: facts.uid)
@@ -212,35 +214,50 @@ struct CalendarInviteService: Sendable {
             }
             // A series comes back as its master event; a single event as itself.
             if let event = found.first(where: { $0.recurringEventId == nil }) ?? found.first {
-                return CalendarInviteEventRecord(messageId: messageId, accountId: accountId,
-                                                 calendarId: id, event: event, iCalUID: facts.uid,
-                                                 checkedAt: now)
+                return CalendarInviteEventRecord(
+                    messageId: messageId, accountId: accountId, calendarId: id, event: event,
+                    iCalUID: facts.uid, calendarTimeZone: event.start?.timeZone ?? timeZone,
+                    fallback: zone, checkedAt: now)
             }
         }
         return nil
     }
 
-    /// Writes the answer on the calendar when the route says so. Returns the
-    /// route, so the caller sends the iTIP e-mail when `sendsEmail`.
+    /// Writes the answer on the calendar when the route says so. Never
+    /// throws: whatever happens here, the caller sends the e-mail when
+    /// `route.sendsEmail`.
     func respond(_ response: CalendarResponse, facts: CalendarInviteFacts,
-                 event: CalendarInviteEventRecord?) async throws -> CalendarRSVPRoute {
+                 event: CalendarInviteEventRecord?) async -> CalendarRSVPOutcome {
         let route = CalendarRSVPRoute.route(for: facts, event: event, canWrite: grant.canWriteEvents)
-        switch route {
-        case .calendarOnly(let calendarId, let eventId), .calendarAndEmail(let calendarId, let eventId):
-            try await client.respond(calendarId: calendarId, eventId: eventId, response: response,
-                                     sendUpdates: CalendarRSVPRoute.sendUpdates)
-        case .emailOnly, .notAnswerable:
-            break
+        guard case .calendarAndEmail(let calendarId, let eventId) = route else {
+            return CalendarRSVPOutcome(route: route, calendarWritten: false, eventGone: false,
+                                       calendarError: nil)
         }
-        return route
+        do {
+            try await client.respond(calendarId: calendarId, eventId: eventId, response: response)
+            return CalendarRSVPOutcome(route: route, calendarWritten: true, eventGone: false,
+                                       calendarError: nil)
+        } catch let error as CalendarError {
+            var gone = false
+            if case .http(let code, _) = error { gone = code == 404 || code == 410 }
+            return CalendarRSVPOutcome(route: route, calendarWritten: false, eventGone: gone,
+                                       calendarError: error)
+        } catch {
+            return CalendarRSVPOutcome(route: route, calendarWritten: false, eventGone: false,
+                                       calendarError: .badResponse)
+        }
     }
 
-    /// "Add to calendar" on the primary calendar.
-    func addToCalendar(_ facts: CalendarInviteFacts, messageId: String, accountId: String,
-                       zone: TimeZone = .current, now: Date = Date()) async throws -> CalendarInviteEventRecord {
-        let event = try await client.importEvent(calendarId: "primary", facts: facts, zone: zone)
+    /// "Add to calendar" on the primary calendar, with the user (the
+    /// address the answer goes from) as a guest.
+    func addToCalendar(_ facts: CalendarInviteFacts, attendeeEmail: String, messageId: String,
+                       accountId: String, zone: TimeZone = .current,
+                       now: Date = Date()) async throws -> CalendarInviteEventRecord {
+        let event = try await client.importEvent(calendarId: "primary", facts: facts,
+                                                 attendeeEmail: attendeeEmail, zone: zone)
         return CalendarInviteEventRecord(messageId: messageId, accountId: accountId,
                                          calendarId: "primary", event: event, iCalUID: facts.uid,
+                                         calendarTimeZone: event.start?.timeZone, fallback: zone,
                                          checkedAt: now)
     }
 
