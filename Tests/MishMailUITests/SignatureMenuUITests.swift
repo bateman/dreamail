@@ -81,11 +81,17 @@ final class SignatureMenuUITests: XCTestCase {
         XCTAssertTrue(waitForBody(app) {
             $0.contains("Alex Rivera") && !$0.contains(self.shortText)
         }, "choosing another signature replaces the first")
+        // Its Gmail look is shown as sent, under the editor's text form.
+        let preview = app.descendants(matching: .any)
+            .matching(identifier: "compose.signaturePreview").firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5),
+                      "a Gmail signature carried unchanged shows how it is sent")
 
         openMenu(app)
         app.menuItems["No signature"].click()
         XCTAssertTrue(waitForBody(app) { !$0.contains(self.gmailText) && !$0.contains("-- ") },
                       "No signature takes it out")
+        XCTAssertFalse(preview.exists, "no signature, no preview")
 
         openMenu(app)
         app.menuItems["Manage signatures"].click()

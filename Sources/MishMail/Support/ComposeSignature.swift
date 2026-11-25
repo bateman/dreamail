@@ -117,14 +117,23 @@ enum ComposeSignature {
     /// made in MishMail, goes out as rendered text.
     static func withRichSignature(_ html: String, head: String,
                                   signatures: [SignatureRecord]) -> String {
-        guard let parts = split(head) else { return html }
-        let text = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty,
-              let match = signatures.first(where: { $0.html != nil && normalizedBody($0.body) == text }),
+        guard let parts = split(head),
+              let match = richSignature(in: head, signatures: signatures),
               let rich = match.html.flatMap({ SignatureHTML.sanitize($0) }) else { return html }
+        let text = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
         let plain = ComposeQuote.signatureBlockHTML(text)
         guard let range = html.range(of: plain, options: .backwards) else { return html }
         return html.replacingCharacters(in: range, with: htmlBlock(innerHTML: rich.html))
+    }
+
+    /// The Gmail copy whose look a body sends: the signature after the last
+    /// delimiter of `head`, word for word, that kept Gmail's HTML. Nil when
+    /// the user changed it (it then goes out as typed) or it is not one.
+    static func richSignature(in head: String, signatures: [SignatureRecord]) -> SignatureRecord? {
+        guard let parts = split(head) else { return nil }
+        let text = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return signatures.first { $0.html != nil && normalizedBody($0.body) == text }
     }
 
     /// Where `block` sits in `head`, intact: found, with nothing but

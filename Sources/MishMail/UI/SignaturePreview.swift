@@ -16,15 +16,14 @@ struct SignaturePreview: NSViewRepresentable {
     @Binding var height: CGFloat
 
     static func document(_ html: String) -> String {
-        """
-        <!doctype html><html><head><meta charset="utf-8">
-        \(HTMLBodyCSP.metaTag(allowRemoteImages: false).replacingOccurrences(
-            of: "img-src data: cid:", with: "img-src 'none'"))
-        <meta name="color-scheme" content="light">
-        <style>html{margin:0;padding:0;background:#fff}body{margin:0;padding:6px 8px;\
-        background:#fff;color:#222;font:13px Arial,Helvetica,sans-serif}a{color:#1155cc}</style>
-        </head><body>\(html)</body></html>
-        """
+        let csp = HTMLBodyCSP.metaTag(allowRemoteImages: false)
+            .replacingOccurrences(of: "img-src data: cid:", with: "img-src 'none'")
+        let style = "html{margin:0;padding:0;background:#fff}"
+            + "body{margin:0;padding:6px 8px;background:#fff;color:#222;"
+            + "font:13px Arial,Helvetica,sans-serif}a{color:#1155cc}"
+        return "<!doctype html><html><head><meta charset=\"utf-8\">\(csp)"
+            + "<meta name=\"color-scheme\" content=\"light\"><style>\(style)</style>"
+            + "</head><body>\(html)</body></html>"
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }

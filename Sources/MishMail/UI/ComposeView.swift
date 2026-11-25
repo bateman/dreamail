@@ -47,6 +47,8 @@ struct ComposeView: View {
     @State private var signatureState = ComposeSignatureState()
     /// From moved to another account over a signature MishMail cannot swap.
     @State private var signatureConflict: SignatureConflict?
+    /// "Signature as sent" under the body, open or folded (kept).
+    @AppStorage("composeSignaturePreviewExpanded") private var signaturePreviewExpanded = true
     @State private var attachmentURLs: [URL] = []
     /// Attachments carried back from an undone send, or pulled off the
     /// original message on a forward (data already loaded).
@@ -1350,6 +1352,7 @@ struct ComposeView: View {
             }
 
             signatureConflictNotice
+            signatureAsSentPreview
 
             // Priority split: right cluster (draft status + trash + Send) is
             // fixedSize so it never clips under the card's topLeading frame;
@@ -2047,6 +2050,39 @@ struct ComposeView: View {
         .help(ComposeToolbarItem.signature.help)
         .accessibilityLabel(ComposeToolbarItem.signature.help)
         .accessibilityIdentifier("compose.signature")
+    }
+
+    /// The editor shows a Gmail signature as text; the recipient gets
+    /// Gmail's look. While the body carries it unchanged, this shows that
+    /// look (sandboxed, like Settings). Edited, it goes out as typed, and
+    /// this goes away.
+    @ViewBuilder
+    private var signatureAsSentPreview: some View {
+        if let rich = ComposeSignature.richSignature(in: signatureHead, signatures: senderSignatures),
+           let html = rich.html.flatMap({ SignatureHTML.sanitize($0) })?.html {
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    signaturePreviewExpanded.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: signaturePreviewExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Signature as sent")
+                            .font(.system(size: 11))
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("The recipient sees “\(rich.name)” with Gmail's layout and colours; the editor shows its text")
+                .accessibilityLabel(signaturePreviewExpanded ? "Hide signature as sent" : "Show signature as sent")
+                if signaturePreviewExpanded {
+                    SignaturePreviewBox(html: ComposeSignature.htmlBlock(innerHTML: html))
+                }
+            }
+            .padding(.bottom, 6)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("compose.signaturePreview")
+        }
     }
 
     /// Shown when From moved to another account and the body still ends

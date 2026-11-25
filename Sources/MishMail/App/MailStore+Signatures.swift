@@ -86,7 +86,7 @@ extension MailStore {
         if demoMode {
             rows = DemoSeed.gmailSignatures.filter {
                 $0.key.caseInsensitiveCompare(accountId) == .orderedSame
-            }.map { ($0.key, $0.value) }
+            }.map { ($0.key, Optional($0.value)) }
         } else {
             rows = try await client(for: accountId).listSendAs().map { ($0.sendAsEmail, $0.signature) }
         }
@@ -131,13 +131,13 @@ extension MailStore {
         switch result {
         case .success(let gmail):
             do {
-                try writeSignatures { db in
+                _ = try writeSignatures { db in
                     try SignatureStore.applyGmail(db, accountId: accountId, gmail: gmail)
                 }
                 state.status = .done
                 state.lastSuccess = Date()
-                state.unusable = gmail.compactMapValues {
-                    if case .unusable(let reason) = $0 { return reason }
+                state.unusable = gmail.compactMapValues { (signature: GmailSignature) -> String? in
+                    if case .unusable(let reason) = signature { return reason }
                     return nil
                 }
             } catch {
