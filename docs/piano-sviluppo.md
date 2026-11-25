@@ -6,7 +6,7 @@ Riferimento: [Registro delle decisioni](registro-decisioni.md) v0.7 (finding F-x
 Decisioni prese per questo piano:
 
 - Le funzioni AI e il server MCP vengono disattivati per il momento, senza cancellare codice.
-- F-01 viene segnalato in privato all'upstream dal proprietario del fork.
+- F-01: la segnalazione all'upstream, prima a carico del proprietario, è stata annullata dal proprietario il 25 novembre 2026 (DEC-039).
 - L'orchestratore è autorizzato a fare il merge su `main` di `bateman/mishmail` quando CI e review sono a posto.
 
 ## Flusso per ogni step
@@ -14,7 +14,7 @@ Decisioni prese per questo piano:
 1. Una sessione dedicata (Opus 5.5, impegno medio) implementa lo step su un branch descrittivo, senza "claude" nel nome.
 2. La sessione apre subito una PR in bozza verso `bateman/mishmail` (mai verso l'upstream), perché la CI gira solo su PR, push a `main` o avvio manuale.
 3. Lo step termina con una nuova suite di test (unità, mock, integrazione) superata in CI. Ogni test di regressione deve fallire sul codice precedente alla correzione.
-4. A CI verde la sessione avvisa l'orchestratore, che lancia in parallelo `ponytail-review` a livello ultra e `security-audit`. I due report tornano alla sessione per la risoluzione.
+4. A CI verde la sessione avvisa l'orchestratore, che lancia in parallelo `ponytail-review` in modalità `full` e `security-audit`. Dal 25 novembre 2026 valgono i tre livelli di review di `CLAUDE.md` (DEC-038): questo flusso completo è il livello standard. I due report tornano alla sessione per la risoluzione.
 5. A correzioni fatte e CI di nuovo verde la sessione marca la PR come pronta. L'orchestratore controlla il diff delle correzioni e decide: merge oppure rinvio alla sessione. Al massimo due giri; bloccano solo i difetti seri.
 6. Dopo ogni merge i branch ancora aperti si riallineano a `main` e rifanno la CI.
 
@@ -145,7 +145,7 @@ Esiti da ricordare:
 - PR #21: la review ha trovato che un caricamento in corso durante una cancellazione rimetteva in memoria il contenuto cancellato (contro DEC-019); corretto prima del merge. Misure sulla macchina di CI, casella dimostrativa: prima apertura da 736 a 514 ms (mediana). L'obiettivo di 50 ms non è raggiunto in CI e va giudicato sul Mac.
 - PR #26: salto tra sezioni da circa 140 pt (riferito dal proprietario) a 29 pt misurati in CI.
 
-Opzione in sospeso, da decidere dopo le prove del proprietario: **cache persistente e cifrata delle immagini**. Renderebbe immediata anche la prima apertura dopo un riavvio; costa byte di immagini su disco, un database più grande e altro contenuto da sovrascrivere alla cancellazione (DEC-019). Non implementare prima della decisione.
+Opzione rimasta in sospeso in questo giro e decisa nel quarto: **cache persistente e cifrata delle immagini** (DEC-032, PR #39).
 
 Seguiti annotati:
 
@@ -182,15 +182,115 @@ Seguiti annotati:
 - Su macOS precedenti al 26 il colore predefinito della pillola dell'account può differire leggermente da quello del disco dell'avatar.
 - La build dei test di interfaccia non passa il blocco sui warning.
 
+## Quarto giro di richieste del proprietario
+
+| Contenuto | PR |
+|---|---|
+| Colore dell'account come anello intorno alla foto; nome della label come titolo dell'account al posto del nome del mittente; pillola dell'account rimossa | #36 |
+| Label a forma di rettangolo arrotondato come in Gmail, senza contorno sulle righe normali | #37 |
+| Pannello di lettura: i messaggi di una conversazione sono righe piatte separate da un filetto, come in Gmail | #38 |
+| Cache persistente e cifrata delle immagini incorporate (migrazione v54) | #39 |
+| Immagini remote caricate per impostazione predefinita all'apertura; Spam sempre bloccato; nessun caricamento anticipato | #40 |
+| Anello dell'account a spessore doppio (3 pt). Modifica semplice: sessione Sonnet, nessuna review, unita a CI verde (DEC-036) | #41 |
+| Cache cifrata delle immagini remote, solo dove sono già permesse (migrazione v55). Prima apertura come prima, con salvataggio in secondo piano (DEC-043) | #42 |
+| Colore d'accento configurabile in Settings → Appearance | #43 |
+| Badge delle non lette sull'icona nel Dock: aggiornamento immediato dopo le azioni locali, ridisegno al ritorno nell'app, riga "Shown by macOS" nelle impostazioni | #45 |
+
+Il 24 novembre 2026 il proprietario ha sostituito l'orchestratore con una nuova sessione (DEC-037). Le sessioni non toccano più `CHANGELOG.md` né `docs/`: propongono le righe nel corpo della PR e l'orchestratore le raccoglie in una PR di documentazione.
+
+Esiti da ricordare:
+
+- PR #36: l'anello predefinito usa lo stesso colore di sistema del disco con l'iniziale; sotto 1,5:1 di contrasto con lo sfondo si aggiunge un filetto neutro, il colore scelto non viene mai alterato. Una label riempita in automatico con il nome del profilo Google resta visibile dopo una modifica di "Send as": si corregge modificando la label.
+- PR #37: il contorno si decide con una distanza di colore (CIE76), non con il rapporto WCAG, perché i pastelli di Gmail sono chiari quanto la riga letta. Le label restano a destra, prima della data.
+- PR #38: riga compressa di 80 pt senza spazio tra le righe (prima scheda di circa 72 pt più 12 pt). L'avatar della propria posta vale solo per i messaggi che Gmail ha archiviato come SENT da un proprio indirizzo o alias: un mittente falsificato non riceve la foto. Nessun anello dell'account nelle righe dei messaggi.
+- PR #39: immagini solo dentro il database cifrato, mai in file; 200 MiB in tutto, 3 MiB per messaggio, esce prima ciò che è usato meno di recente; cancellazione a cascata con allegato, messaggio e account. Nessun confronto di latenza in CI: da giudicare sul Mac.
+- PR #40: un'installazione che non aveva mai scelto segue il nuovo predefinito; una scelta salvata resta; un valore sconosciuto vale "Ask". Con un tasto freccia tenuto premuto si apre solo la conversazione su cui ci si ferma. Nessun avviso nell'app per chi non aveva mai scelto: lo dice solo il changelog. `SECURITY.md` ha una nuova nota "Remote images".
+
+- PR #42: alla prima apertura le immagini sono chieste due volte al mittente (dal visualizzatore e dall'app, che non può leggere i byte scaricati dal visualizzatore). Un messaggio si riapre dalla cache solo quando tutte le sue immagini sono "sistemate": salvate, oppure rifiutate e ricordate come tali (pixel, SVG, troppo grandi, oltre il tetto). Gli errori di rete non vengono ricordati e si ritentano. La review sul percorso nuovo ha trovato un difetto serio (immagini incorporate mai mostrate a freddo con cache completa) corretto prima dell'unione.
+- PR #43: Settings → Appearance → "Accent color" (selettore di sistema, colori rapidi, "Default" = aspetto di prima). Il testo sopra l'accento diventa bianco o nero; l'accento usato come testo o icona viene corretto in luminosità quanto basta; i pulsanti di sistema usano una variante scurita. L'evidenziazione della riga selezionata nel colore scelto vale solo su macOS 26 e successivi: su macOS 14 e 15 resta quella di sistema. Restano al sistema la selezione del testo, i controlli nativi e gli avvisi. Ha toccato 45 file dell'interfaccia.
+- PR #45: il badge esisteva già e usava il supporto di sistema (`dockTile.badgeLabel`); il proprietario ha segnalato che sul suo Mac non compare affatto. Nel codice non è stata trovata una causa certa: la PR toglie i casi in cui un disegno perso non veniva ritentato e mostra nelle impostazioni lo stato riferito da macOS. La causa sul Mac del proprietario resta da accertare. Le skill `ponytail-review` e `security-audit` non erano disponibili nella sessione dell'orchestratore: le due review sono state fatte a mano da agenti.
+
+Seguiti annotati:
+
+- Label prima dell'oggetto come in Gmail (oggi a destra, prima della data): offerto come lavoro separato.
+- Le label senza colore sono grigio neutro come in Gmail; il proprietario può chiedere di tornare al colore automatico per nome.
+- Avviso nell'app per chi non aveva mai impostato "Load remote images".
+- Comando "Svuota cache immagini" nelle impostazioni (oggi non esiste una sezione su archiviazione o privacy).
+- Sospetto preesistente, da verificare su Mac: `preconnect` e `dns-prefetch` nell'HTML di un messaggio potrebbero risolvere o contattare host del mittente anche a immagini bloccate. La ricetta di prova è nel corpo della PR #40.
+- La preparazione anticipata del documento resta attiva per la variante bloccata: da misurare.
+- Il messaggio più lungo del benchmark ha ora 43 messaggi invece di 40: i numeri non sono confrontabili uno a uno con quelli precedenti.
+
 ## Cancello — prova su Mac del proprietario
 
-☐ Build locale, test e uso della demo.
-☐ Verifiche che la CI non copre, emerse dall'ondata 1: pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub; nuovo accesso a Google con il listener limitato (Safari e Chrome); avvio con un vecchio database in chiaro e una seconda copia aperta (striscia di sola lettura, schermata "Finish encrypting your mail"); eliminazione del vecchio file di log all'avvio.
-☐ Verifiche emerse dall'ondata 2 e dalla pulizia: `make install` e il controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto); nessuna interfaccia AI visibile (impostazioni, palette, barra di composizione, vista del thread); impostazioni, onboarding e palette senza le voci Notion; finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche); interruttore "Show sender and subject in notifications" e testo delle notifiche; avviso con un errore reale di Gmail.
-☐ Verifiche emerse dalle PR #17 e #18: shortcut su tastiera italiana (`]`, `[`, `#`, `*`), cursore nei campi Cc e Bcc e scelta del mittente in composizione, pannello di lettura su finestra stretta e su schermo da 13 pollici, lettura anticipata scorrendo con `j` e `k`; tempo della ricostruzione dell'indice di ricerca al primo avvio; ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio; nessun `Cache.db` che cresce nella cartella Caches.
-☐ Verifiche emerse dalle PR #20–#26: aspetto delle icone monocromatiche e della voce selezionata; email singola espansa (anche in "center peek" e vista compatta, e restringimento per email HTML corte); correttore con English e Italian scelti (menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta); riapertura di email con loghi senza sfarfallio, velocità della prima apertura e di `j`/`k`; colori delle label in lista, pannello di lettura e menu, riga selezionata con colore d'accento non blu e a finestra in secondo piano; intestazioni di sezione su macOS 14 e 15, intestazione fissa durante lo scorrimento, vista Labels.
-☐ Verifiche emerse dalle PR #31–#34: editor del colore della label (pannello colori di sistema, chiusura all'uscita, riga disattivata quando la pillola non si vede), testo nero sulle pillole predefinite blu, viola e rosa; foto profilo con un account reale (download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione, VoiceOver nel menu degli account); icone in modalità scura, con accento giallo o grafite, con dimensione della barra laterale piccola e grande, su macOS 14 e 15.
-☐ Solo dopo, collegamento di un account Gmail reale.
+Controlli che la CI non può fare. Il proprietario usa l'app come client quotidiano e li segna come risolti man mano, citando il numero (per esempio "C-12 risolto"). Il cancello non blocca più l'ondata 3 (DEC-040). I controlli delle PR dell'ondata 3 si aggiungono qui quando vengono unite.
+
+Aggiornato il 25 novembre 2026.
+
+### Avvio, build, aggiornamenti
+
+- ☑ **C-01** Build locale e avvio (`make run DEMO=0` o `make install`).
+- ☑ **C-02** Account Gmail reale collegato e in uso.
+- ☐ **C-03** Pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub.
+- ☐ **C-04** `make install`: controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto).
+- ☐ **C-05** Nessuna interfaccia AI visibile: impostazioni, palette, barra di composizione, vista del thread.
+- ☐ **C-06** Impostazioni, onboarding e palette senza le voci Notion.
+- ☐ **C-07** Eliminazione del vecchio file di log all'avvio.
+
+### Accesso e account
+
+- ☐ **C-08** Nuovo accesso a Google con il listener limitato, da Safari e da Chrome.
+- ☐ **C-09** Avvio con un vecchio database in chiaro e una seconda copia aperta: striscia di sola lettura, schermata "Finish encrypting your mail".
+- ☐ **C-10** Finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche).
+- ☐ **C-11** Foto profilo con un account reale: download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione.
+- ☐ **C-12** Avviso con un errore reale di Gmail.
+
+### Notifiche e badge
+
+- ☑ **C-13** Il badge delle non lette compare sull'icona nel Dock. Causa del badge assente: notifiche disattivate per l'app in macOS; la riga "Shown by macOS" lo segnala (25 novembre 2026).
+- ☐ **C-14** Il numero del badge cambia subito dopo lettura, archiviazione e cancellazione.
+- ☐ **C-15** Il pulsante "Open Notification Settings…" apre il pannello Notifiche.
+- ☐ **C-16** Interruttore "Show sender and subject in notifications" e testo delle notifiche.
+- ☐ **C-17** Ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio.
+
+### Tastiera e composizione
+
+- ☐ **C-18** Shortcut su tastiera italiana: `]`, `[`, `#`, `*`.
+- ☐ **C-19** Cursore nei campi Cc e Bcc e scelta del mittente in composizione.
+- ☐ **C-20** Lettura anticipata scorrendo con `j` e `k`; tasto freccia tenuto premuto apre solo la conversazione su cui ci si ferma.
+- ☐ **C-21** Correttore con English e Italian scelti: menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta.
+
+### Lista e barra laterale
+
+- ☐ **C-22** Icone monocromatiche e voce selezionata; modalità scura; dimensione della barra laterale piccola e grande.
+- ☐ **C-23** Colori e forma delle label in lista, pannello di lettura e menu: testo centrato, troncamento al limite.
+- ☐ **C-24** Intestazioni di sezione, intestazione fissa durante lo scorrimento, vista Labels.
+- ☐ **C-25** Anello dell'account su barra laterale, popover e impostazioni; centratura del testo dell'intestazione; altezza delle righe del popover.
+- ☐ **C-26** Editor del colore della label dell'account: pannello colori di sistema, chiusura all'uscita.
+- ☐ **C-27** Colore d'accento personalizzato: modalità scura, pannello colori reale (anche colori P3), barra laterale delle impostazioni, contatori sulla riga selezionata, lampi dell'evidenziazione di sistema mentre la selezione si sposta, raggio della capsula.
+
+### Pannello di lettura e immagini
+
+- ☐ **C-28** Pannello di lettura su finestra stretta e su schermo da 13 pollici.
+- ☐ **C-29** Email singola espansa, anche in "center peek" e vista compatta; restringimento per email HTML corte.
+- ☐ **C-30** Righe dei messaggi di una conversazione: modalità scura con posta HTML, pannelli stretti con testo grande, pannello di 400–450 pt con un mittente dal nome lungo.
+- ☐ **C-31** Riapertura di email con loghi senza sfarfallio; velocità della prima apertura e di `j`/`k`.
+- ☐ **C-32** Immagini incorporate dopo un riavvio con posta reale.
+- ☐ **C-33** Immagini remote: piè di pagina delle impostazioni, messaggio in Spam con "Load images", comportamento reale di rete all'apertura.
+- ☐ **C-34** Prova di `preconnect` e `dns-prefetch` a immagini bloccate (ricetta nel corpo della PR #40).
+
+### Dati e cancellazione
+
+- ☐ **C-35** Tempo della ricostruzione dell'indice di ricerca al primo avvio.
+- ☐ **C-36** Nessun `Cache.db` che cresce nella cartella Caches.
+
+### Accessibilità e altre versioni di macOS
+
+- ☐ **C-37** VoiceOver: menu degli account, righe dei messaggi, anello dell'account.
+- ☐ **C-38** macOS 14 e 15: intestazioni di sezione, icone, selezione con accento personalizzato (lì resta quella di sistema).
+
+### Aggiunti dalle PR unite dopo il 25 novembre 2026
+
+- ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme.
 
 ## Ondata 3 — parità Gmail
 
@@ -199,11 +299,63 @@ Seguiti annotati:
 - Verifica ICS/RSVP su inviti reali e gap analysis rispetto a Postie.
 - Snooze: richiede prima una scelta di progetto (allineamento con Gmail Web e mobile).
 
-L'ondata 3 parte dopo il cancello: è la prima che aggiunge funzionalità, e ogni step va provato su un account reale.
+Avviata dal proprietario il 25 novembre 2026, prima che il cancello fosse completato: ogni step va comunque provato su un account reale, e i passi di prova stanno nel corpo di ciascuna PR.
+
+| Step | Contenuto | Branch | Migrazione riservata |
+|---|---|---|---|
+| 3A | Creazione e modifica dei filtri lato server | `feature/gmail-server-filters` | v56 |
+| 3B | Modifica dei colori delle label su Gmail | `feature/gmail-label-color-editing` | v57 |
+| 3C | Verifica ICS/RSVP e analisi delle lacune | `feature/ics-rsvp-verification` | v59 |
+| 3D | Snooze: variante B scelta dal proprietario (DEC-041) | `feature/snooze-gmail-alignment` | v60 |
+| 3E | Azioni mancanti degli shortcut di Gmail | `feature/gmail-shortcut-actions` | v58 |
 
 ## Ondata 4 — Calendar e PGP
 
-Entrambi richiedono una decisione di design prima di essere divisi in step: scope e nuovo consenso per Calendar; libreria, chiavi, bozze e ricerca per PGP.
+Avviata dal proprietario il 25 novembre 2026, in parallelo all'ondata 3. Ogni step parte da un progetto con opzioni e costruisce intanto solo le fondamenta che non dipendono dalla scelta, dietro un interruttore di build spento.
+
+| Step | Contenuto | Branch | Migrazione riservata | Stato della decisione |
+|---|---|---|---|---|
+| 4A | Google Calendar | `feature/google-calendar-integration` | v61 | Perimetro B scelto (DEC-042) |
+| 4B | PGP | `feature/openpgp-support` | v62 | Perimetro B scelto (DEC-045); libreria non ancora approvata |
+
+Google Calendar, perimetro B: disponibilità e conflitti accanto a un invito, risposta scritta direttamente sul calendario, "aggiungi al calendario". Richiede un secondo consenso Google separato, solo per Calendar; l'accesso a Gmail non cambia. Confermato dal proprietario: risposta solo sul calendario per gli eventi già presenti in Google Calendar ed e-mail per gli altri; calendari per i conflitti scelti dall'utente, con il principale come predefinito. Predefiniti adottati in assenza di indicazioni, ribaltabili: nessuna notifica degli eventi; in locale solo gli eventi degli inviti.
+
+Google Calendar, lavoro futuro (non avviato):
+
+- Perimetro C: agenda del giorno con sincronizzazione incrementale e promemoria (4–6 settimane dalla base di B; più dati personali in locale, notifiche).
+- Perimetro D: creazione di eventi da un messaggio (oltre 6 settimane dalla base di B).
+
+PGP, perimetro B: verifica delle firme, decifratura, import manuale delle chiavi. Predefiniti adottati, ribaltabili: chiavi private nel Keychain solo su questo Mac e protette da passphrase; nessuna copia su disco del testo decifrato; testo decifrato fuori dall'indice di ricerca. Libreria proposta: rPGP (Rust), da integrare con una PR separata che richiede il sì esplicito del proprietario, perché porta Rust nella catena di build.
+
+PGP, lavoro futuro (non avviato):
+
+- Perimetro C: firma e cifratura in invio, generazione e revoca delle chiavi, bozze cifrate solo locali.
+- Perimetro D: ricerca delle chiavi pubbliche in rete (WKD, keys.openpgp.org), Autocrypt, intestazioni protette.
+
+## Lavori in sospeso
+
+Aggiornato il 25 novembre 2026.
+
+### Seguiti offerti, nessuno deciso
+
+- Label prima dell'oggetto come in Gmail.
+- Google Calendar, perimetri C e D (vedi "Ondata 4").
+- PGP, perimetri C e D (vedi "Ondata 4").
+- Comando "Svuota cache immagini" nelle impostazioni.
+- Avviso nell'app per chi non aveva mai impostato "Load remote images".
+- Immagini remote con una sola richiesta al mittente (2–3 giorni).
+- Conferma prima di un'azione di massa dopo `* a`.
+- Struttura della barra laterale come Gmail.
+- Selettore della lingua per messaggio.
+- Avatar nel selettore del mittente.
+
+### Rimandato dal proprietario
+
+- Dependabot per Swift e Python, SwiftLint e CodeQL, misura della copertura, hook git versionati.
+
+### Prima di distribuire l'app ad altri
+
+- Riprogettare la regola di fiducia dell'updater, note di licenza di GRDB e SQLCipher, firma e notarizzazione.
 
 ## Stato
 
@@ -236,4 +388,18 @@ Entrambi richiedono una decisione di design prima di essere divisi in step: scop
 | — | `feature/account-profile-photo` | #32 | Unito |
 | — | `ci/script-tests-warnings-shellcheck` | #33 | Unito |
 | — | `ux/sidebar-icon-shape` | #34 | Unito |
-| 3 | — | — | Non avviare: in attesa del proprietario |
+| — | `docs/ux-round-3` | #35 | Unito |
+| — | `ux/account-ring-and-label-title` | #36 | Unito |
+| — | `ux/gmail-label-shape` | #37 | Unito |
+| — | `ux/thread-message-list-spacing` | #38 | Unito |
+| — | `perf/persistent-image-cache` | #39 | Unito |
+| — | `ux/remote-images-default-on` | #40 | Unito |
+| — | `ux/account-ring-thicker` | #41 | Unito, modifica semplice senza review |
+| — | `perf/remote-image-cache` | #42 | Unito |
+| — | `ux/custom-accent-color` | #43 | Unito |
+| — | `docs/ux-round-4` | #44 | Documentazione del quarto giro |
+| — | `feature/unread-dock-badge` | #45 | Unito |
+| — | `docs/process-review-tiers` | #46 | Unito, modifica semplice |
+| 3A–3E | vedi "Ondata 3" | — | In lavorazione dal 25 novembre 2026 |
+| 4A–4B | vedi "Ondata 4" | — | In lavorazione dal 25 novembre 2026 |
+| — | `ux/thread-row-hover-actions` | #52 | In lavorazione (livello basso rischio) |
