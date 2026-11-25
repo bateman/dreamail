@@ -66,6 +66,13 @@ struct MailThread: Codable, Identifiable, Hashable, FetchableRecord, Persistable
     /// (`GmailSnoozed`); a derive that sees INBOX again clears it.
     var gmailSnoozed: Bool = false
 
+    /// A local edit that puts the thread in the Inbox (unsnooze, move to
+    /// Inbox, not spam, undo) ends Gmail's snooze here at once; the next
+    /// sync derive would, but until then the row stayed hidden.
+    mutating func endGmailSnoozeIfInboxed() {
+        if inInbox { gmailSnoozed = false }
+    }
+
     var labels: [String] { labelIds.split(separator: " ").map(String.init) }
 
     /// Sort key for inbox-style lists (inbox / promotions / social / per-account inbox).

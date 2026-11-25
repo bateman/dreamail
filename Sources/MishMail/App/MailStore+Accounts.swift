@@ -85,8 +85,8 @@ extension MailStore {
         // `accounts` now so late sync errors, reauth requests and attachment
         // downloads for it are ignored (see `isKnownAccount`).
         let engine = engines[id]
-        // Taken before the account leaves `accounts`; the sign-in is still in
-        // the Keychain until the purge, so the snooze release below can call.
+        // Taken now: the snooze release runs after the purge, with the
+        // sign-in still in the Keychain until `removeOutsideDatabase`.
         let gmail = client(for: id)
         let reachable = !isOffline
         accounts.removeAll { $0.id == id }
@@ -94,36 +94,35 @@ extension MailStore {
         leaveScope(ofRemovedAccount: id)
         Task { @MainActor [weak self] in
             await engine?.cancelSync()
-            // MishMail snoozes would stay archived on Gmail for good once
-            // the account is gone: put them back first. Never blocks the
-            // removal; what could not go back is reported after it.
-            let snoozed = (try? await pool.read { db in
-                try ThreadListQuery.snoozesToRelease(accountId: id)
-                    .select(Column("gmailThreadId"), as: String.self).fetchAll(db)
-            }) ?? []
-            let notReleased = await SnoozeRelease.release(snoozed, reachable: reachable) {
-                try await gmail.modifyThread(id: $0, add: ["INBOX"])
-            }
             // The database purge comes first because it is the step that can
             // fail. On failure nothing irreversible has happened yet: the
             // sign-in, notifications and attachment copies are still there,
             // the account comes back on reload, and the user is told. The
             // account row and its queued edits, offline drafts, scheduled
             // sends, triage rows, saved views and Ask Mish chats go in one
-            // transaction.
-            AccountLifecycle.markRemovalPending(id)
-            do {
-                try await pool.write { db in
-                    try AccountLifecycle.purgeAccount(db, id: id)
-                }
-            } catch {
-                AccountLifecycle.clearRemovalPending(id)
+            // transaction. Then the account's MishMail snoozes go back to
+            // Gmail's Inbox (they would stay archived for good), within a
+            // short deadline, before the sign-in is deleted.
+            let outcome = await AccountLifecycle.runRemoval(
+                markPending: { AccountLifecycle.markRemovalPending(id) },
+                purge: {
+                    try await pool.write { db in
+                        try AccountLifecycle.purgeAccountReturningSnoozes(db, id: id)
+                    }
+                },
+                clearPending: { AccountLifecycle.clearRemovalPending(id) },
+                release: { snoozed in
+                    await SnoozeRelease.release(snoozed, reachable: reachable) {
+                        try await gmail.modifyThread(id: $0, add: ["INBOX"])
+                    }
+                },
+                removeOutside: { await Self.removeOutsideDatabase(accountId: id) })
+            guard case .removed(let notReleased) = outcome else {
                 guard let self, !self.isShuttingDown else { return }
                 self.reloadAccounts()
                 self.lastError = AccountLifecycle.removalFailedMessage
                 return
             }
-            await Self.removeOutsideDatabase(accountId: id)
             // After the Keychain delete: the next token request finds no
             // refresh token and fails, instead of reusing the cached one.
             await GmailClient.shared(accountEmail: id).forgetAccessToken()

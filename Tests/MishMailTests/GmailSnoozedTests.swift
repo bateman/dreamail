@@ -91,11 +91,71 @@ final class GmailSnoozedTests: XCTestCase {
 
     func testCadenceAndBackoff() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertEqual(GmailSnoozed.nextCheck(after: now, succeeded: true),
-                       now.addingTimeInterval(15 * 60))
-        XCTAssertEqual(GmailSnoozed.nextCheck(after: now, succeeded: false),
-                       now.addingTimeInterval(6 * 60 * 60))
+        let normal = now.addingTimeInterval(15 * 60)
+        let long = now.addingTimeInterval(6 * 60 * 60)
+        XCTAssertEqual(GmailSnoozed.nextCheck(after: now, failure: nil), normal)
+        // Gmail refused the listing: long back-off.
+        XCTAssertEqual(GmailSnoozed.nextCheck(after: now, failure: GmailError.http(400, "")), long)
+        XCTAssertEqual(GmailSnoozed.nextCheck(after: now, failure: GmailError.http(403, "")), long)
+        // Offline, server error, rate limit, cancelled sync: normal cadence.
+        for error: Error in [URLError(.notConnectedToInternet), GmailError.http(503, ""),
+                             GmailError.http(429, ""), CancellationError()] {
+            XCTAssertEqual(GmailSnoozed.nextCheck(after: now, failure: error), normal, "\(error)")
+        }
         XCTAssertEqual(GmailSnoozed.query, "in:snoozed")
+    }
+
+    // MARK: - Listing pages
+
+    private func page(_ threads: [String], next: String?) -> GMessageList {
+        GMessageList(messages: threads.map { .init(id: "m-\($0)", threadId: $0) },
+                     nextPageToken: next)
+    }
+
+    func testListingFollowsPagesToTheEnd() async throws {
+        var asked: [String?] = []
+        let listing = try await GmailSnoozed.listThreadIds { token in
+            asked.append(token)
+            switch token {
+            case nil: return self.page(["t1", "t2"], next: "p2")
+            case "p2": return self.page(["t2", "t3"], next: nil)
+            default: XCTFail("unexpected \(String(describing: token))"); return self.page([], next: nil)
+            }
+        }
+        XCTAssertEqual(asked, [nil, "p2"])
+        XCTAssertEqual(listing.threadIds, ["t1", "t2", "t3"])
+        XCTAssertTrue(listing.complete)
+    }
+
+    func testListingStopsAtThePageCapAsIncomplete() async throws {
+        var calls = 0
+        let listing = try await GmailSnoozed.listThreadIds { _ in
+            calls += 1
+            return self.page(["t\(calls)"], next: "more")
+        }
+        XCTAssertEqual(calls, GmailSnoozed.maxPages)
+        XCTAssertFalse(listing.complete, "a cut-off listing must never unflag")
+    }
+
+    func testEmptyListingAndErrorsPropagate() async throws {
+        let empty = try await GmailSnoozed.listThreadIds { _ in GMessageList(messages: nil, nextPageToken: nil) }
+        XCTAssertEqual(empty.threadIds, [])
+        XCTAssertTrue(empty.complete)
+        do {
+            _ = try await GmailSnoozed.listThreadIds { _ in throw GmailError.http(400, "bad query") }
+            XCTFail("the caller backs off on the error")
+        } catch {}
+    }
+
+    /// A local MishMail snooze keeps its own wake: a (wrong or stale)
+    /// listing never turns it into a Gmail snooze that nothing wakes.
+    func testLocalSnoozeIsNeverFlagged() throws {
+        let q = try makeDB()
+        try q.write { db in
+            try self.thread("local", snoozeUntil: Date().addingTimeInterval(3600)).insert(db)
+            try GmailSnoozed.apply(db, accountId: self.account, threadIds: ["local"], complete: true)
+        }
+        XCTAssertEqual(try flagged(q), [])
     }
 
     // MARK: - Derive
@@ -121,6 +181,30 @@ final class GmailSnoozedTests: XCTestCase {
             XCTAssertFalse(try XCTUnwrap(derive(labels, existing: asleep)).gmailSnoozed, labels)
         }
         XCTAssertFalse(try XCTUnwrap(derive("", existing: nil)).gmailSnoozed)
+    }
+
+    // MARK: - Local edits
+
+    /// Unsnooze, move to Inbox, undo: a local edit that puts the thread in
+    /// the Inbox ends the Gmail snooze at once, and the write persists it.
+    func testLocalInboxEditEndsGmailSnooze() throws {
+        let q = try makeDB()
+        let asleep = thread("t1", gmailSnoozed: true)
+        try q.write { try asleep.insert($0) }
+        var woken = asleep
+        ThreadUndo.unsnooze(&woken)
+        XCTAssertTrue(woken.inInbox)
+        XCTAssertFalse(woken.gmailSnoozed)
+        try q.write { db in
+            try OptimisticThreadWrite.updateChangedColumns(db, from: asleep, to: woken)
+        }
+        XCTAssertEqual(try flagged(q), [])
+        XCTAssertEqual(try q.read { try ThreadListQuery.inbox().fetchCount($0) }, 1)
+
+        var stillArchived = asleep
+        stillArchived.isUnread = true
+        stillArchived.endGmailSnoozeIfInboxed()
+        XCTAssertTrue(stillArchived.gmailSnoozed, "only an Inbox edit ends it")
     }
 
     // MARK: - Lists, counts, notifications

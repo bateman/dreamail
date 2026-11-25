@@ -209,25 +209,18 @@ actor SyncEngine {
         let now = Date()
         guard now >= nextGmailSnoozedCheck else { return }
         do {
-            var threadIds = Set<String>()
-            var pageToken: String?
-            var pages = 0
-            repeat {
-                let page = try await client.listMessages(
+            let listing = try await GmailSnoozed.listThreadIds { [client] pageToken in
+                try await client.listMessages(
                     query: GmailSnoozed.query, pageToken: pageToken,
                     maxResults: GmailClient.maxListPageSize)
-                threadIds.formUnion((page.messages ?? []).map(\.threadId))
-                pageToken = page.nextPageToken
-                pages += 1
-            } while pageToken != nil && pages < GmailSnoozed.maxPages
-            let complete = pageToken == nil
-            try await db.write { [accountId, threadIds] db in
-                try GmailSnoozed.apply(db, accountId: accountId,
-                                       threadIds: threadIds, complete: complete)
             }
-            nextGmailSnoozedCheck = GmailSnoozed.nextCheck(after: now, succeeded: true)
+            try await db.write { [accountId] db in
+                try GmailSnoozed.apply(db, accountId: accountId,
+                                       threadIds: listing.threadIds, complete: listing.complete)
+            }
+            nextGmailSnoozedCheck = GmailSnoozed.nextCheck(after: now, failure: nil)
         } catch {
-            nextGmailSnoozedCheck = GmailSnoozed.nextCheck(after: now, succeeded: false)
+            nextGmailSnoozedCheck = GmailSnoozed.nextCheck(after: now, failure: error)
         }
     }
 

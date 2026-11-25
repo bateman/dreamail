@@ -279,6 +279,23 @@ final class ThreadDerivationTests: XCTestCase {
             existing: justSnoozed, messages: [m1], accountId: account), snooze)
     }
 
+    /// Wake (or unsnooze), then snooze again before the next sync. Gmail has
+    /// applied the wake's INBOX but not yet the new archive: that INBOX must
+    /// not read as "moved back to Inbox" and drop the new date.
+    func testResnoozeAfterWakeSurvivesTheSyncInBetween() throws {
+        let first = Date(timeIntervalSinceNow: -60)
+        let second = Date(timeIntervalSinceNow: 86_400)
+        let archived = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "")
+        var row = try XCTUnwrap(derive([archived]))
+        row.snoozeUntil = first  // confirmed snooze: labelIds without INBOX
+        ThreadUndo.unsnooze(&row)
+        XCTAssertTrue(row.labels.contains("INBOX"))
+        ThreadUndo.apply(.snooze(until: second), &row)
+        let woken = msg(id: "m1", from: "a@b.com", daysAgo: 1, labels: "INBOX")
+        let synced = try XCTUnwrap(derive([woken], existing: row))
+        XCTAssertEqual(synced.snoozeUntil, second)
+    }
+
     /// Trashed or reported as spam (here or in Gmail Web) while snoozed: the
     /// snooze must go, or the wake sweep would put INBOX back on discarded mail.
     func testTrashOrSpamClearsSnooze() throws {

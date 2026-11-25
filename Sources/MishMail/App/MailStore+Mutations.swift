@@ -18,6 +18,7 @@ extension MailStore {
         guard !isShuttingDown else { return thread }
         var copy = thread
         local(&copy)
+        copy.endGmailSnoozeIfInboxed()
         let updated = copy
 
         // Auto-advance before removing the selected row. `openDetail` changes
@@ -361,6 +362,7 @@ extension MailStore {
         for thread in targets {
             var copy = thread
             local(&copy)
+            copy.endGmailSnoozeIfInboxed()
             let current = live[thread.id] ?? thread
             applyOptimisticSidebarCountDelta(from: current, to: copy)
             badgeDelta += dockBadgeDelta(from: current, to: copy)
@@ -1086,13 +1088,17 @@ extension MailStore {
                 dismissSnoozePicker()
             }
             mutateThread(thread, remote: .modify(add: ["INBOX"])) {
-                $0.snoozeUntil = nil; $0.inInbox = true
+                ThreadUndo.unsnooze(&$0)
             }
             return
         }
         // Tear the picker down *before* the optimistic mutation so auto-advance
         // publishes into a visible window (same frame as archive/trash).
         dismissSnoozePicker()
+        // Snoozed in Gmail: Gmail wakes it, so a date set here would never
+        // be used (the wake sweep skips it). Menus hide the choice; this
+        // covers the keyboard and the palette.
+        guard !thread.gmailSnoozed else { return }
         let action = ThreadUndo.Action.snooze(until: date)
         let wasInInbox = thread.inInbox
         let acted = mutateThread(thread, autoAdvanceAction: "snooze",
@@ -1127,7 +1133,8 @@ extension MailStore {
         // guard: checked ids can outlive their rows (filtered out of the
         // current list), and a picker left open on a no-op pick looks stuck.
         dismissSnoozePicker()
-        let targets = checkedThreadsInOrder
+        // Gmail-snoozed rows are left to Gmail (see `snooze(_:until:)`).
+        let targets = checkedThreadsInOrder.filter { !$0.gmailSnoozed }
         guard !targets.isEmpty else { return }
         let focus = selectedThreadId
         let action = ThreadUndo.Action.snooze(until: date)

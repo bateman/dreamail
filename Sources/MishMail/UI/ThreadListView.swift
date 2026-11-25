@@ -724,17 +724,18 @@ private struct ThreadListSections: View, Equatable {
         }
         Menu("Snooze") {
             if thread.gmailSnoozed {
-                // No wake-up time is readable from Gmail; Gmail wakes it.
+                // No wake-up time is readable from Gmail, and Gmail wakes it:
+                // a date picked here would never be used.
                 Text("Snoozed in Gmail: Gmail brings it back")
-                Divider()
-            }
-            // Its own view so the presets (daypart math + one date format
-            // per preset) are computed when the submenu is materialized,
-            // not for every row whenever the section body runs.
-            SnoozePresetMenuItems(thread: thread)
-            Button("Pick date & time…") { store.mailboxOverlay = .snoozeThread(thread) }
-            if thread.snoozeUntil != nil {
-                Button("Unsnooze") { store.snooze(thread, until: nil) }
+            } else {
+                // Its own view so the presets (daypart math + one date format
+                // per preset) are computed when the submenu is materialized,
+                // not for every row whenever the section body runs.
+                SnoozePresetMenuItems(thread: thread)
+                Button("Pick date & time…") { store.mailboxOverlay = .snoozeThread(thread) }
+                if thread.snoozeUntil != nil {
+                    Button("Unsnooze") { store.snooze(thread, until: nil) }
+                }
             }
         }
         Menu("Remind me") {
