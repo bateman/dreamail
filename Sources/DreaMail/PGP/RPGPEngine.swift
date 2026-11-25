@@ -1,6 +1,6 @@
 import Foundation
-#if canImport(MishMailRPGP)
-import MishMailRPGP
+#if canImport(DreaMailRPGP)
+import DreaMailRPGP
 #endif
 
 /// `OpenPGPEngine` over rPGP, through the dreamail-openpgp package (step 4B,
@@ -10,7 +10,7 @@ import MishMailRPGP
 /// library: `RPGPEngine` turns calls into byte buffers and the library's
 /// JSON answers into the engine types, and is compiled and tested always;
 /// `LinkedRPGPBindings`, a few lines that call the C functions, is compiled
-/// only when the `MishMailRPGP` module is linked into the build.
+/// only when the `DreaMailRPGP` module is linked into the build.
 ///
 /// The library is stateless. Keys live in `PGPKeyStore` (secret keys in the
 /// Keychain, certificates in the encrypted database) and are read on every
@@ -199,7 +199,7 @@ private extension PGPKeySummary {
 /// one that refuses every call.
 enum PGPEngines {
     static func engine(store: any PGPKeyStore) -> any OpenPGPEngine {
-        #if canImport(MishMailRPGP)
+        #if canImport(DreaMailRPGP)
         RPGPEngine(bindings: LinkedRPGPBindings(), store: store)
         #else
         UnavailableOpenPGPEngine()
@@ -364,19 +364,19 @@ struct RPGPReply: Decodable, Equatable {
     }
 }
 
-#if canImport(MishMailRPGP)
+#if canImport(DreaMailRPGP)
 /// The linked library. Each call copies its result out and frees (and
 /// zeroes) the library's buffers before returning.
 struct LinkedRPGPBindings: RPGPBindings {
     func verifyDetached(_ data: Data, _ signature: Data, _ certs: Data, _ now: Int64) -> RPGPRawReply {
         Self.take(data.withUnsafeBytes { d in signature.withUnsafeBytes { s in certs.withUnsafeBytes { c in
-            mm_pgp_verify_detached(Self.ptr(d), d.count, Self.ptr(s), s.count, Self.ptr(c), c.count, now)
+            dm_pgp_verify_detached(Self.ptr(d), d.count, Self.ptr(s), s.count, Self.ptr(c), c.count, now)
         } } })
     }
 
     func verifyCleartext(_ message: Data, _ certs: Data, _ now: Int64) -> RPGPRawReply {
         Self.take(message.withUnsafeBytes { m in certs.withUnsafeBytes { c in
-            mm_pgp_verify_cleartext(Self.ptr(m), m.count, Self.ptr(c), c.count, now)
+            dm_pgp_verify_cleartext(Self.ptr(m), m.count, Self.ptr(c), c.count, now)
         } })
     }
 
@@ -384,31 +384,31 @@ struct LinkedRPGPBindings: RPGPBindings {
                  _ now: Int64) -> RPGPRawReply {
         Self.take(message.withUnsafeBytes { m in secretKeys.withUnsafeBytes { k in
             passphrase.withUnsafeBytes { p in certs.withUnsafeBytes { c in
-                mm_pgp_decrypt(Self.ptr(m), m.count, Self.ptr(k), k.count, Self.ptr(p), p.count,
+                dm_pgp_decrypt(Self.ptr(m), m.count, Self.ptr(k), k.count, Self.ptr(p), p.count,
                                Self.ptr(c), c.count, now)
             } }
         } })
     }
 
     func inspectKeys(_ data: Data, _ now: Int64) -> RPGPRawReply {
-        Self.take(data.withUnsafeBytes { d in mm_pgp_inspect_keys(Self.ptr(d), d.count, now) })
+        Self.take(data.withUnsafeBytes { d in dm_pgp_inspect_keys(Self.ptr(d), d.count, now) })
     }
 
     func importPublic(_ data: Data, _ now: Int64) -> RPGPRawReply {
-        Self.take(data.withUnsafeBytes { d in mm_pgp_import_public(Self.ptr(d), d.count, now) })
+        Self.take(data.withUnsafeBytes { d in dm_pgp_import_public(Self.ptr(d), d.count, now) })
     }
 
     func importSecret(_ data: Data, _ now: Int64) -> RPGPRawReply {
-        Self.take(data.withUnsafeBytes { d in mm_pgp_import_secret(Self.ptr(d), d.count, now) })
+        Self.take(data.withUnsafeBytes { d in dm_pgp_import_secret(Self.ptr(d), d.count, now) })
     }
 
     private static func ptr(_ buffer: UnsafeRawBufferPointer) -> UnsafePointer<UInt8>? {
         buffer.bindMemory(to: UInt8.self).baseAddress
     }
 
-    private static func take(_ result: MMResult) -> RPGPRawReply {
-        defer { mm_pgp_free(result) }
-        func copy(_ b: MMBuffer) -> Data {
+    private static func take(_ result: DMResult) -> RPGPRawReply {
+        defer { dm_pgp_free(result) }
+        func copy(_ b: DMBuffer) -> Data {
             guard let p = b.ptr, b.len > 0 else { return Data() }
             return Data(bytes: p, count: b.len)
         }

@@ -1,4 +1,4 @@
-#if canImport(MishMailRPGP)
+#if canImport(DreaMailRPGP)
 import XCTest
 import GRDB
 

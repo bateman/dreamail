@@ -39,8 +39,6 @@ final class OldProductNameTests: XCTestCase {
     private static let skippedFiles: Set<String> = [
         // This guard: its allow-list spells the lines it allows.
         "Tests/DreaMailTests/OldProductNameTests.swift",
-        // The one-off rename script: its rules name every old form.
-        "scripts/rename-dreamail.py",
     ]
 
     /// Lines that must still carry the old name, by file. Each is matched
@@ -73,18 +71,6 @@ final class OldProductNameTests: XCTestCase {
             "A `Config/Local.xcconfig` that still sets `\(name.uppercased())_…` switches is ignored:",
             "notarization profile stored as `\(name)-notary` must be stored again as",
             "rm -rf \(name).xcodeproj ~/Library/Developer/Xcode/DerivedData/\(name)-*",
-        ],
-        // TEMPORARY, until the OpenPGP library's v0.2.0 pin: the module of
-        // the pinned v0.1.1 still has the old name.
-        "Sources/DreaMail/PGP/RPGPEngine.swift": [
-            "#if canImport(\(name)RPGP)",
-            "import \(name)RPGP",
-            "/// only when the `\(name)RPGP` module is linked into the build.",
-        ],
-        "Tests/DreaMailTests/RPGPLinkedTests.swift": ["#if canImport(\(name)RPGP)"],
-        "project.yml": ["\(name)RPGP:", "- package: \(name)RPGP"],
-        "Sources/DreaMail/Licenses/OpenPGP-ThirdPartyLicenses.txt": [
-            "linked into `\(name)RPGP.xcframework` (macOS arm64 and x86_64), then the licence",
         ],
     ]
 

@@ -30,7 +30,9 @@ minor versions may still change behavior.
   revoked: they stay valid until they expire or you remove the app at
   myaccount.google.com/permissions. The About panel no longer has a "Support"
   link; it credits MishMail by Ron Boger, which DreaMail is derived from.
-  Nothing changes in Google Cloud Console.
+  Nothing changes in Google Cloud Console. The OpenPGP library moves to
+  v0.2.0, which only renames it (`DreaMailRPGP`); its behaviour is that of
+  v0.1.1.
 
 - **OpenPGP (off by default).** Signature check and decryption of PGP/MIME
   and cleartext-signed mail, with an indicator in the message header, and

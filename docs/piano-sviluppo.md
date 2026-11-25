@@ -442,5 +442,5 @@ Aggiornato il 25 novembre 2026.
 | — | `perf/remote-image-cache-regression` | #67 | Unito (livello basso rischio) |
 | — | `feature/openpgp-library-wiring` | #68 | Unito (dietro `MISHMAIL_PGP`) |
 | — | `chore/openpgp-library-0.1.1` | #72 | Unito (libreria v0.1.1: messaggi di GnuPG 2.4) |
-| — | `chore/rename-dreamail` | — | In lavorazione: rebranding a DreaMail (DEC-065), libreria v0.2.0 e rinomina dell'app |
+| — | `chore/rename-dreamail` | #73 | Rinomina dell'app in DreaMail con la libreria OpenPGP v0.2.0 (DEC-065, DEC-069); da provare sul Mac (C-56) |
 | — | `docs/study-google-chat`, `docs/study-google-calendar`, `docs/study-rebranding-dreamail` | #69, #70, #71 | Uniti (studi in `docs/studi/`; domande aperte per il proprietario in fondo a ciascuno) |
