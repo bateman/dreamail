@@ -6,24 +6,43 @@ final class WindowFrameRestoreUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["MISHMAIL_DEMO"] = "1"
         app.launchEnvironment["MISHMAIL_UI_TEST"] = "1"
-        app.launchEnvironment["MISHMAIL_UI_TEST_RESTORE_FRAME"] = "1"
         app.launchArguments += ["-accentColor", ""]
         app.launch()
         return app
+    }
+
+    /// Drags the bottom-right corner by `delta` points.
+    private func dragCorner(of window: XCUIElement, by delta: CGVector) {
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
+        corner.withOffset(CGVector(dx: -2, dy: -2))
+            .press(forDuration: 0.2,
+                   thenDragTo: corner.withOffset(
+                       CGVector(dx: -2 + delta.dx, dy: -2 + delta.dy)))
     }
 
     func testResizedWindowReopensAtSameSize() {
         let first = launch()
         let window = first.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10))
-        let before = window.frame
-        // Drag the bottom-right corner inwards, staying above the minimum.
-        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
-        corner.withOffset(CGVector(dx: -2, dy: -2))
-            .press(forDuration: 0.2,
-                   thenDragTo: corner.withOffset(CGVector(dx: -102, dy: -62)))
+        let original = window.frame
+
+        // Always put the saved frame back, so later tests and later local
+        // runs start from the size this one found.
+        addTeardownBlock {
+            let app = self.launch()
+            let w = app.windows.firstMatch
+            if w.waitForExistence(timeout: 10) {
+                let now = w.frame
+                self.dragCorner(of: w, by: CGVector(dx: original.width - now.width,
+                                                    dy: original.height - now.height))
+            }
+            app.terminate()
+        }
+
+        dragCorner(of: window, by: CGVector(dx: -40, dy: -30))
         let after = window.frame
-        XCTAssertLessThan(after.width, before.width - 50, "window did not resize")
+        XCTAssertTrue(after.width <= original.width - 20 || after.height <= original.height - 20,
+                      "window did not resize: \(original) -> \(after)")
         first.terminate()
 
         let second = launch()

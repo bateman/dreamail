@@ -138,7 +138,11 @@ struct MishMailApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        // A fixed id gives the window a stable frame autosave name
+        // ("main-AppWindow-1"). Without it SwiftUI derives the name from the
+        // root view's full type (module, every modifier, runtime addresses),
+        // which differs between launches, so the saved size is never found.
+        WindowGroup(id: "main") {
             ContentView()
                 .environment(store)
                 .environmentObject(store.listFocus)
@@ -146,7 +150,6 @@ struct MishMailApp: App {
                 // everything in the window, sheets and popovers included.
                 .mailAccentRoot(tintsDefault: true)
                 .frame(minWidth: 900 + AccountRail.width, minHeight: 560)
-                .background(MainWindowFrame())
                 .onChange(of: appThemeRaw) {
                     AppTheme.apply(.from(raw: appThemeRaw))
                 }
