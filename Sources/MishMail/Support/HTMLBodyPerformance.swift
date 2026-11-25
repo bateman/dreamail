@@ -356,36 +356,39 @@ struct HTMLNavigationIdentityGate {
     }
 }
 
-/// Suppresses no-op WebView height publications and declares an initial render
-/// stable after the same size has been observed repeatedly. ResizeObserver can
-/// remain installed for real later changes (for example, an image load).
-/// When the body's layout + measure script may run before window load.
+/// When the body's layout + measure script may run before window load, and
+/// when a load that never ends counts as ended.
 ///
 /// Window load (`didFinish`) waits for every remote image, so a slow or dead
 /// image host used to hold the body at its placeholder height (clipped,
 /// scrolling inside) for the network timeout. The document-end signal
 /// (`HTMLBodyLayout.domReadyJS`) arms a short grace instead: the measure runs
-/// at window load when that comes first, else when the grace ends. Only for
-/// the document whose own navigation committed, once per document.
-struct HTMLDOMReadyGate: Equatable {
+/// at window load when that comes first, else when the grace ends. It also
+/// arms `HTMLBodyLayout.loadBound`: past it, a page still loading counts as
+/// loaded (background fetch, height cache). Only for the document whose own
+/// navigation committed, once per document.
+struct HTMLDOMReadyGate {
     private(set) var generation = 0
     private var committed = false
     private var installed = false
     private var armed = false
+    private var loadEnded = false
 
-    /// A new navigation (or none): forget the previous document.
+    /// A new navigation, a failed one, or none: forget the document.
     mutating func reset() {
         generation &+= 1
         committed = false
         installed = false
         armed = false
+        loadEnded = false
     }
 
     /// The accepted navigation committed: its own DOM is the one in the view.
     mutating func didCommit() { committed = true }
 
     /// The DOM-ready signal arrived. Returns the generation to start the
-    /// grace for, or nil (not this document's, measured, or already armed).
+    /// grace and the load bound for, or nil (not this document's, already
+    /// loaded, or already armed).
     mutating func domReady() -> Int? {
         guard committed, !installed, !armed else { return nil }
         armed = true
@@ -399,11 +402,25 @@ struct HTMLDOMReadyGate: Equatable {
         return true
     }
 
-    /// Window load installed the measure (as before): the grace has nothing
-    /// left to do.
-    mutating func didFinishLoad() { installed = true }
+    /// The load bound passed: whether the load still had not ended (it
+    /// counts as ended from now).
+    mutating func loadBoundReached(generation g: Int) -> Bool {
+        guard g == generation, !loadEnded else { return false }
+        loadEnded = true
+        return true
+    }
+
+    /// Window load installed the measure (as before): the grace and the
+    /// bound have nothing left to do.
+    mutating func didFinishLoad() {
+        installed = true
+        loadEnded = true
+    }
 }
 
+/// Suppresses no-op WebView height publications and declares an initial render
+/// stable after the same size has been observed repeatedly. ResizeObserver can
+/// remain installed for real later changes (for example, an image load).
 struct HTMLHeightStability {
     struct Observation: Equatable {
         let shouldPublish: Bool

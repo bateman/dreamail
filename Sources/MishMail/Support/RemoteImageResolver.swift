@@ -240,6 +240,16 @@ enum RemoteImageRendering {
             + (remoteBody?.contentSuffix ?? "")
     }
 
+    /// Whether the card's body document has finished loading, for the
+    /// background fetch: the key the web view reported (`finished`, cleared
+    /// when the body leaves) is the one it loads now. A Load-images click, a
+    /// `cid:` base or a font change is a new load to wait for.
+    static func bodyLoaded(finished: HTMLBodyLoadKey?, contentID: String,
+                           allowRemoteImages: Bool, fontScale: Double) -> Bool {
+        finished == HTMLBodyLoadKey(contentID: contentID, allowRemoteImages: allowRemoteImages,
+                                    fontScale: fontScale)
+    }
+
     /// What the neighbour pre-render paints (always with the blocked CSP),
     /// or nil to skip: the document the open would claim, never one that
     /// needs the network.

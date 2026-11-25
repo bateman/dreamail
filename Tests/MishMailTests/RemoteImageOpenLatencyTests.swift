@@ -1,5 +1,6 @@
 import AppKit
 import GRDB
+import Network
 import WebKit
 import XCTest
 
@@ -53,6 +54,132 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertNil(swapped.domReady(), "not committed yet")
     }
 
+    func testLoadBoundEndsANeverEndingLoadOnceAndNotAFinishedOne() {
+        var stuck = HTMLDOMReadyGate()
+        stuck.didCommit()
+        let generation = stuck.domReady() ?? -1
+        XCTAssertTrue(stuck.loadBoundReached(generation: generation), "an image that never completes")
+        XCTAssertFalse(stuck.loadBoundReached(generation: generation), "once")
+
+        var finished = HTMLDOMReadyGate()
+        finished.didCommit()
+        let armed = finished.domReady() ?? -1
+        finished.didFinishLoad()
+        XCTAssertFalse(finished.loadBoundReached(generation: armed), "window load came first")
+
+        // A failed navigation resets the gate: no timer re-enables anything.
+        var failed = HTMLDOMReadyGate()
+        failed.didCommit()
+        let before = failed.domReady() ?? -1
+        failed.reset()
+        XCTAssertFalse(failed.graceEnded(generation: before))
+        XCTAssertFalse(failed.loadBoundReached(generation: before))
+        XCTAssertLessThan(HTMLBodyLayout.domReadyGrace, HTMLBodyLayout.loadBound)
+    }
+
+    /// R1: the fetch waits for the load of the document on screen, not of
+    /// an earlier one with the same content id.
+    func testTheBodyCountsAsLoadedOnlyForTheDocumentItLoads() {
+        let blocked = HTMLBodyLoadKey(contentID: "m:full", allowRemoteImages: false, fontScale: 1)
+        XCTAssertTrue(RemoteImageRendering.bodyLoaded(
+            finished: blocked, contentID: "m:full", allowRemoteImages: false, fontScale: 1))
+        XCTAssertFalse(RemoteImageRendering.bodyLoaded(
+            finished: blocked, contentID: "m:full", allowRemoteImages: true, fontScale: 1),
+                       "Load images: the allowed document is a new load")
+        XCTAssertFalse(RemoteImageRendering.bodyLoaded(
+            finished: blocked, contentID: "m:full:cid", allowRemoteImages: false, fontScale: 1),
+                       "the cid: base is a new load")
+        XCTAssertFalse(RemoteImageRendering.bodyLoaded(
+            finished: blocked, contentID: "m:full", allowRemoteImages: false, fontScale: 1.2))
+        XCTAssertFalse(RemoteImageRendering.bodyLoaded(
+            finished: nil, contentID: "m:full", allowRemoteImages: false, fontScale: 1),
+                       "collapsed and re-expanded: the new view's load is awaited")
+    }
+
+    // MARK: The real body coordinator
+
+    /// An https host that accepts the connection and never answers (the TLS
+    /// handshake never completes): a dead image host under the real CSP.
+    private final class SilentTLSHost: @unchecked Sendable {
+        private let listener: NWListener
+        private var connections: [NWConnection] = []
+        private(set) var accepted = 0
+
+        init() throws {
+            listener = try NWListener(using: .tcp, on: .any)
+            listener.newConnectionHandler = { [weak self] connection in
+                DispatchQueue.main.async {
+                    self?.accepted += 1
+                    self?.connections.append(connection)
+                }
+                connection.start(queue: .main)
+            }
+        }
+
+        func start() async throws -> UInt16 {
+            listener.start(queue: .main)
+            let deadline = Date().addingTimeInterval(5)
+            while listener.port == nil || listener.port?.rawValue == 0, Date() < deadline {
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            return try XCTUnwrap(listener.port?.rawValue)
+        }
+
+        func stop() {
+            for connection in connections { connection.cancel() }
+            listener.cancel()
+        }
+    }
+
+    /// The reading pane's own coordinator (`HTMLBodyView.Coordinator`), the
+    /// pool's web view (with its document-end scripts), the real CSP and
+    /// remote images allowed, and an image whose host never answers: the
+    /// body gets a height above the placeholder within about 2 s; the load
+    /// counts as ended only at the bound, and no height is cached before it.
+    func testRealCoordinatorMeasuresAMailWhoseImageHostNeverAnswers() async throws {
+        let host = SilentTLSHost()
+        let port = try await host.start()
+        defer { host.stop() }
+
+        let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 700, height: 900),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 120))
+        window.contentView?.addSubview(container)
+        let contentID = "latency-\(UUID().uuidString):full"
+        let key = HTMLBodyLoadKey(contentID: contentID, allowRemoteImages: true, fontScale: 1)
+
+        var heights: [CGFloat] = []
+        var finished: [HTMLBodyLoadKey] = []
+        let coordinator = HTMLBodyView.Coordinator()
+        coordinator.container = container
+        coordinator.contentID = contentID
+        coordinator.loadedKey = key
+        coordinator.setHeight = { heights.append($0) }
+        coordinator.onLoadFinished = { finished.append($0) }
+        defer { coordinator.dismantle() }
+
+        let webView = HTMLWebViewPool.dequeue()
+        coordinator.attach(webView, in: container, alreadyPainted: false, fade: false)
+        coordinator.beginRender(byteCount: 0, variant: "full", prerenderHit: false)
+        let html = "<p>Documentazione polizza</p>"
+            + "<img src=\"https://127.0.0.1:\(port)/logo.png\" width=\"600\" height=\"300\">"
+            + "<p>Tail</p>"
+        coordinator.loadDocument(html: html, allowRemoteImages: true, fontScale: 1, in: webView)
+
+        try await wait(seconds: 2.5) { heights.contains { $0 > MessageBodyHeight.placeholder } }
+        XCTAssertTrue(heights.contains { $0 > MessageBodyHeight.placeholder },
+                      "measured above the placeholder without window load: \(heights)")
+        XCTAssertGreaterThan(host.accepted, 0, "the web view asked the silent host")
+        XCTAssertTrue(finished.isEmpty, "the load has not ended")
+        XCTAssertNil(HTMLBodyHeightCacheStore.height(contentID: contentID, fontScale: 1, width: nil),
+                     "no mid-load height is cached for the next open")
+
+        try await wait(seconds: HTMLBodyLayout.loadBound + 3) { !finished.isEmpty }
+        XCTAssertEqual(finished, [key], "the bound ends a load that never ends, once")
+        XCTAssertNotNil(HTMLBodyHeightCacheStore.height(contentID: contentID, fontScale: 1, width: nil),
+                        "cached once the load counts as ended")
+    }
+
     /// An image host that answers only when told to (never, for a dead
     /// host: the longest timeout there is).
     private final class ImageHost: NSObject, WKURLSchemeHandler {
@@ -74,6 +201,11 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
                 task.didReceive(data)
                 task.didFinish()
             }
+            tasks = []
+        }
+        /// A host that finally refuses every pending request.
+        func fail() {
+            for task in tasks { task.didFailWithError(URLError(.cannotConnectToHost)) }
             tasks = []
         }
     }
@@ -119,6 +251,15 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
                 }
             }
             return HTMLBodyLayout.measuredHeight(fromScriptResult: result)
+        }
+
+        func className() async -> String {
+            let result: Any? = await withCheckedContinuation { done in
+                webView.evaluateJavaScript("document.querySelector('img').className") { value, _ in
+                    done.resume(returning: value)
+                }
+            }
+            return (result as? String) ?? ""
         }
     }
 
@@ -166,6 +307,26 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertGreaterThan(height, MessageBodyHeight.placeholder,
                              "measured to its content, not left at the placeholder")
         XCTAssertFalse(h.pane.finished)
+    }
+
+    /// R3: an image still loading keeps its box but is not painted as
+    /// failed; once its load fails it is.
+    func testPendingImagesAreNotPaintedAsFailed() async throws {
+        let h = load("<p>Receipt</p><img src=\"/card.png\" width=\"300\" height=\"200\">")
+        defer { h.close() }
+        try await wait { h.pane.domReady && h.images.started > 0 }
+        _ = await h.measure()
+        let pending = await h.className()
+        XCTAssertTrue(pending.contains(HTMLBodyLayout.layoutImageClass), pending)
+        XCTAssertFalse(pending.contains(HTMLBodyLayout.failedImageClass), pending)
+        h.images.fail()
+        var after = ""
+        let deadline = Date().addingTimeInterval(10)
+        while !after.contains(HTMLBodyLayout.failedImageClass), Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            after = await h.className()
+        }
+        XCTAssertTrue(after.contains(HTMLBodyLayout.failedImageClass), after)
     }
 
     /// A slow host: measured before the image, then re-measured when it
@@ -217,7 +378,8 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertEqual(step(&pane, mounted: true), .fetchForNextOpen(baseIsCIDInlined: false))
     }
 
-    func testAMessageWithoutRemoteImagesNeverWaitsNorFetches() async {
+    /// Guard (held before this change too): mail with no remote image.
+    func testGuardAMessageWithoutRemoteImagesNeverWaitsNorFetches() async {
         XCTAssertFalse(RemoteImagePaneState.awaitsCacheCheck(
             check: nil, allowRemoteImages: true, candidateCount: 0, hasRemoteBody: false))
         var pane = RemoteImagePaneState()

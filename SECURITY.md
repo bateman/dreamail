@@ -44,7 +44,10 @@ the background and keeps it in the encrypted database with the message (see
 "What deleting means"). On that first open the sender therefore sees two
 requests per image: one from WebKit, one from the app's client, which is
 distinguishable from WebKit (WebKit downloads in its own process and the
-app cannot read those bytes). What later opens do depends on whether every
+app cannot read those bytes). The app's requests start only once WebKit's
+load of the message has ended, or 5 seconds after its text is ready if it
+has not (an image that never completes cannot keep the rest of the message
+uncached), and never for a message that is closed before then. What later opens do depends on whether every
 cacheable image of the message is settled, that is stored, or refused and
 remembered as refused:
 
