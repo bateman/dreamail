@@ -42,8 +42,20 @@ jobs:
         working-directory: rust
         run: rustup toolchain install
 
+      # Crates are downloaded once against Cargo.lock; the builds below run
+      # with --offline (inside the build script).
+      - name: Fetch the locked crates
+        working-directory: rust
+        run: cargo fetch --locked
+
       - name: Check third-party licences
         run: python3 scripts/third_party_licenses.py --check
+
+      - name: Check advisories
+        working-directory: rust
+        run: |
+          cargo install cargo-deny --locked --version 0.20.2
+          cargo deny --manifest-path Cargo.toml check advisories
 
       - name: Build twice and compare
         run: |

@@ -37,8 +37,11 @@ export RUSTFLAGS="--remap-path-prefix=$crate=/dreamail-openpgp --remap-path-pref
 
 cd "$crate"
 rustup show active-toolchain
+# Download once against Cargo.lock, then build offline: nothing fetched
+# during the build can differ from what was checked.
+cargo fetch --locked
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
-	cargo build --locked --release --lib --target "$target"
+	cargo build --locked --offline --release --lib --target "$target"
 done
 
 rm -rf "$out"

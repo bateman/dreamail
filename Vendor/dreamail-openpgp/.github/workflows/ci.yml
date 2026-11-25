@@ -31,16 +31,30 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
 
+      # Every crate is downloaded once, checked against Cargo.lock; the
+      # build and tests then run offline.
+      - name: Fetch the locked crates
+        run: cargo fetch --locked
+
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked --offline
 
       - name: Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --offline --all-targets -- -D warnings
 
       # THIRD_PARTY_LICENSES.md must match Cargo.lock, and every linked crate
       # must have a licence text (or be acknowledged in licenses/README.md).
       - name: Check third-party licences
         run: python3 ../scripts/third_party_licenses.py --check
+
+      # Known vulnerabilities in the locked crates (RustSec advisory
+      # database). cargo-deny is pinned to an exact version and built from
+      # crates.io with its own lock file; exceptions live in deny.toml, each
+      # with its reason.
+      - name: Check advisories
+        run: |
+          cargo install cargo-deny --locked --version 0.20.2
+          cargo deny --manifest-path Cargo.toml check advisories
 
       - name: Shellcheck the build script
         run: shellcheck ../scripts/build-xcframework.sh

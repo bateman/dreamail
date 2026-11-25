@@ -2,19 +2,26 @@
 //!
 //! Every function takes byte buffers, returns an `MMResult` that the caller
 //! frees with `mm_pgp_free`, and never panics across the boundary (a panic
-//! is caught and reported as `internal`). The JSON metadata carries no
-//! message text and no key material; plaintext and signed text travel in
-//! `data` only. Nothing is logged and nothing is kept between calls.
+//! is caught, reported as `internal`, and not printed). The JSON metadata
+//! carries no message text and no key material; plaintext, signed text and
+//! re-serialized keys travel in `data` only, which is zeroed when freed.
+//! Nothing is logged and nothing is kept between calls.
 //!
-//! Scope B (owner's decision): verify, decrypt, read keys. Nothing here signs
-//! or encrypts.
+//! Scope B (owner's decision): verify, decrypt, read and import keys.
+//! Nothing here signs or encrypts.
+//!
+//! `now_unix` is the caller's clock in seconds; zero or negative is refused
+//! (`internal`) rather than read as 1970, which would make every expired key
+//! look valid.
 
 pub mod engine;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::Once;
 
 use engine::EngineError;
 use serde_json::json;
+use zeroize::Zeroize;
 
 /// A buffer owned by this library. `ptr` is null when `len` is 0.
 #[repr(C)]
@@ -35,33 +42,34 @@ impl MMBuffer {
         MMBuffer { ptr: std::ptr::null_mut(), len: 0 }
     }
 
-    fn from_vec(bytes: Vec<u8>) -> Self {
+    /// Takes the bytes into a buffer of exactly their length, so that
+    /// freeing can rebuild the allocation. The source is zeroed.
+    fn from_bytes(bytes: &mut Vec<u8>) -> Self {
         if bytes.is_empty() {
             return Self::empty();
         }
-        let boxed = bytes.into_boxed_slice();
+        let boxed: Box<[u8]> = bytes.as_slice().into();
+        bytes.zeroize();
         let len = boxed.len();
         let ptr = Box::into_raw(boxed) as *mut u8;
         MMBuffer { ptr, len }
     }
 
-    /// Frees and, for data that may be plaintext, zeroes first.
+    /// Zeroes, then frees.
     unsafe fn free(self) {
         if self.ptr.is_null() {
             return;
         }
         let slice = std::ptr::slice_from_raw_parts_mut(self.ptr, self.len);
         let mut boxed = Box::from_raw(slice);
-        boxed.iter_mut().for_each(|b| *b = 0);
+        boxed.zeroize();
         drop(boxed);
     }
 }
 
-fn ok(json: serde_json::Value, data: Vec<u8>) -> MMResult {
-    MMResult {
-        json: MMBuffer::from_vec(json.to_string().into_bytes()),
-        data: MMBuffer::from_vec(data),
-    }
+fn ok(json: serde_json::Value, mut data: Vec<u8>) -> MMResult {
+    let mut text = json.to_string().into_bytes();
+    MMResult { json: MMBuffer::from_bytes(&mut text), data: MMBuffer::from_bytes(&mut data) }
 }
 
 fn err(error: EngineError) -> MMResult {
@@ -78,8 +86,21 @@ unsafe fn bytes<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     }
 }
 
+/// Runs `f`, turning a panic into `internal`. The default panic hook would
+/// print the panic message (which can quote input) to stderr: it is
+/// replaced, once, by one that prints nothing.
 fn guarded(f: impl FnOnce() -> MMResult) -> MMResult {
+    static QUIET: Once = Once::new();
+    QUIET.call_once(|| std::panic::set_hook(Box::new(|_| {})));
     catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| err(EngineError::Internal))
+}
+
+/// Runs `f` with the caller's clock, refusing an invalid one.
+fn with_clock(now_unix: i64, f: impl FnOnce(std::time::SystemTime) -> MMResult) -> MMResult {
+    match engine::system_time(now_unix) {
+        Ok(now) => guarded(|| f(now)),
+        Err(e) => err(e),
+    }
 }
 
 /// # Safety
@@ -96,7 +117,7 @@ pub unsafe extern "C" fn mm_pgp_verify_detached(
 ) -> MMResult {
     let (data, signature, certs) =
         (bytes(data, data_len), bytes(signature, signature_len), bytes(certs, certs_len));
-    guarded(|| match engine::verify_detached(data, signature, certs, engine::system_time(now_unix)) {
+    with_clock(now_unix, |now| match engine::verify_detached(data, signature, certs, now) {
         Ok(sigs) => ok(json!({ "ok": true, "signatures": sigs }), Vec::new()),
         Err(e) => err(e),
     })
@@ -113,7 +134,7 @@ pub unsafe extern "C" fn mm_pgp_verify_cleartext(
     now_unix: i64,
 ) -> MMResult {
     let (message, certs) = (bytes(message, message_len), bytes(certs, certs_len));
-    guarded(|| match engine::verify_cleartext(message, certs, engine::system_time(now_unix)) {
+    with_clock(now_unix, |now| match engine::verify_cleartext(message, certs, now) {
         Ok(c) => ok(json!({ "ok": true, "signatures": c.signatures }), c.signed_text),
         Err(e) => err(e),
     })
@@ -137,30 +158,60 @@ pub unsafe extern "C" fn mm_pgp_decrypt(
     let secret_keys = bytes(secret_keys, secret_keys_len);
     let passphrase = bytes(passphrase, passphrase_len);
     let certs = bytes(certs, certs_len);
-    guarded(|| {
-        match engine::decrypt(message, secret_keys, passphrase, certs, engine::system_time(now_unix)) {
+    with_clock(now_unix, |now| {
+        match engine::decrypt(message, secret_keys, passphrase, certs, now) {
             Ok(d) => ok(
                 json!({ "ok": true, "integrity_protected": d.integrity_protected,
                         "signatures": d.signatures }),
-                d.plaintext,
+                d.plaintext.to_vec(),
             ),
             Err(e) => err(e),
         }
     })
 }
 
+/// What the keys are, with their validity. Nothing is returned in `data`.
+///
 /// # Safety
 /// `data` must be valid for `data_len` bytes (or the length 0).
 #[no_mangle]
 pub unsafe extern "C" fn mm_pgp_inspect_keys(data: *const u8, data_len: usize, now_unix: i64) -> MMResult {
     let data = bytes(data, data_len);
-    guarded(|| match engine::inspect_keys(data, engine::system_time(now_unix)) {
+    with_clock(now_unix, |now| match engine::inspect_keys(data, now) {
         Ok(keys) => ok(json!({ "ok": true, "keys": keys }), Vec::new()),
         Err(e) => err(e),
     })
 }
 
-/// Frees both buffers of a result (zeroing them first).
+/// The public keys that may be stored, re-serialized in `data` (armored);
+/// broken and unsupported keys are left out, secret material always.
+///
+/// # Safety
+/// `data` must be valid for `data_len` bytes (or the length 0).
+#[no_mangle]
+pub unsafe extern "C" fn mm_pgp_import_public(data: *const u8, data_len: usize, now_unix: i64) -> MMResult {
+    let data = bytes(data, data_len);
+    with_clock(now_unix, |now| match engine::import_public(data, now) {
+        Ok(import) => ok(json!({ "ok": true, "keys": import.keys }), import.armored.to_vec()),
+        Err(e) => err(e),
+    })
+}
+
+/// The secret keys that may be used (valid, supported), re-serialized in
+/// `data` (armored, still under their own passphrase).
+///
+/// # Safety
+/// `data` must be valid for `data_len` bytes (or the length 0).
+#[no_mangle]
+pub unsafe extern "C" fn mm_pgp_import_secret(data: *const u8, data_len: usize, now_unix: i64) -> MMResult {
+    let data = bytes(data, data_len);
+    with_clock(now_unix, |now| match engine::import_secret(data, now) {
+        Ok(import) => ok(json!({ "ok": true, "keys": import.keys }), import.armored.to_vec()),
+        Err(e) => err(e),
+    })
+}
+
+/// Zeroes and frees both buffers of a result.
 ///
 /// # Safety
 /// `result` must come from this library and be freed once.
@@ -168,10 +219,4 @@ pub unsafe extern "C" fn mm_pgp_inspect_keys(data: *const u8, data_len: usize, n
 pub unsafe extern "C" fn mm_pgp_free(result: MMResult) {
     result.json.free();
     result.data.free();
-}
-
-/// The rPGP version this library was built with, NUL-terminated, static.
-#[no_mangle]
-pub extern "C" fn mm_pgp_rpgp_version() -> *const std::ffi::c_char {
-    c"rpgp 0.21.1".as_ptr()
 }

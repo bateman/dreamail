@@ -4,7 +4,7 @@ import MishMailRPGP
 #endif
 
 /// `OpenPGPEngine` over rPGP, through the dreamail-openpgp package (step 4B,
-/// scope B: verify, decrypt, read keys).
+/// scope B: verify, decrypt, read and import keys).
 ///
 /// Split in two so the part that can be wrong is tested without the
 /// library: `RPGPEngine` turns calls into byte buffers and the library's
@@ -15,6 +15,12 @@ import MishMailRPGP
 /// The library is stateless. Keys live in `PGPKeyStore` (secret keys in the
 /// Keychain, certificates in the encrypted database, in the step that
 /// stores them) and are read on every call; nothing is cached here.
+///
+/// For the wiring step: the C calls are synchronous and can take a while;
+/// run them off the cooperative thread pool (a dedicated queue) and check
+/// for cancellation around them. Swift `Data` copies of the passphrase,
+/// secret keys and plaintext cannot be wiped reliably; the library zeroes
+/// its own buffers, the Swift side can only keep copies short-lived.
 struct RPGPEngine: OpenPGPEngine {
     let bindings: any RPGPBindings
     let store: any PGPKeyStore
@@ -47,21 +53,42 @@ struct RPGPEngine: OpenPGPEngine {
         return PGPDecryptionResult(plaintext: reply.data, signatures: try decoded.signatures())
     }
 
-    /// Reads the keys, then hands them to the store; returns what they are.
+    /// Stores the certificates the library re-serialized after checking
+    /// them, never `data` itself.
     func importKeys(_ data: Data) async throws -> [PGPKeySummary] {
-        let reply = bindings.inspectKeys(data, unixNow)
+        let reply = bindings.importPublic(data, unixNow)
         let keys = try RPGPReply.decode(reply.json).keys ?? []
-        try await store.add(data)
+        guard !keys.isEmpty, !reply.data.isEmpty else { throw PGPEngineError.malformed }
+        try await store.addCertificates(reply.data)
         return keys
     }
 
+    /// A separate, explicit action: valid secret keys, re-serialized, into
+    /// the secret store; their public halves into the certificates.
+    func importSecretKeys(_ data: Data) async throws -> [PGPKeySummary] {
+        let secret = bindings.importSecret(data, unixNow)
+        let keys = try RPGPReply.decode(secret.json).keys ?? []
+        guard !keys.isEmpty, !secret.data.isEmpty else { throw PGPEngineError.noSecretKey }
+        let publicHalves = bindings.importPublic(secret.data, unixNow)
+        _ = try RPGPReply.decode(publicHalves.json)
+        try await store.addSecretKeys(secret.data)
+        try await store.addCertificates(publicHalves.data)
+        return keys
+    }
+
+    /// Each store read on its own, merged by fingerprint: a key whose
+    /// secret half is stored is listed once, with `hasSecretKey`.
     func keys() async throws -> [PGPKeySummary] {
-        var all = Data()
-        all.append(try await store.certificates())
-        all.append(try await store.secretKeys())
-        guard !all.isEmpty else { return [] }
-        let reply = bindings.inspectKeys(all, unixNow)
-        return try RPGPReply.decode(reply.json).keys ?? []
+        var merged: [PGPKeySummary] = []
+        let secretKeys = try await store.secretKeys()
+        let certificates = try await store.certificates()
+        for (blob, secret) in [(secretKeys, true), (certificates, false)] where !blob.isEmpty {
+            let listed = try RPGPReply.decode(bindings.inspectKeys(blob, unixNow).json).keys ?? []
+            for key in listed where !merged.contains(where: { $0.key == key.key }) {
+                merged.append(secret && !key.hasSecretKey ? key.withSecret : key)
+            }
+        }
+        return merged
     }
 
     func deleteKey(_ key: PGPKeyReference) async throws {
@@ -71,9 +98,16 @@ struct RPGPEngine: OpenPGPEngine {
     private var unixNow: Int64 { Int64(now().timeIntervalSince1970) }
 }
 
+private extension PGPKeySummary {
+    var withSecret: PGPKeySummary {
+        PGPKeySummary(key: key, userIDs: userIDs, hasSecretKey: true, created: created,
+                      expires: expires, validity: validity)
+    }
+}
+
 /// Where the keys are. The store owns the passphrase prompt and deletion
 /// (`remove` leaves nothing behind, DEC-019); an account's keys go with the
-/// account.
+/// account. It only ever receives keys the library re-serialized.
 protocol PGPKeyStore: Sendable {
     /// Every certificate (public key), concatenated, armored or binary.
     func certificates() async throws -> Data
@@ -81,9 +115,8 @@ protocol PGPKeyStore: Sendable {
     func secretKeys() async throws -> Data
     /// The passphrase for the secret keys; empty when they have none.
     func passphrase() async throws -> Data
-    /// Stores keys the engine has read (public into certificates, secret
-    /// into the secret store).
-    func add(_ keys: Data) async throws
+    func addCertificates(_ armored: Data) async throws
+    func addSecretKeys(_ armored: Data) async throws
     /// Removes a key, public and secret parts.
     func remove(_ key: PGPKeyReference) async throws
 }
@@ -95,6 +128,8 @@ protocol RPGPBindings: Sendable {
     func decrypt(_ message: Data, _ secretKeys: Data, _ passphrase: Data, _ certs: Data,
                  _ now: Int64) -> RPGPRawReply
     func inspectKeys(_ data: Data, _ now: Int64) -> RPGPRawReply
+    func importPublic(_ data: Data, _ now: Int64) -> RPGPRawReply
+    func importSecret(_ data: Data, _ now: Int64) -> RPGPRawReply
 }
 
 struct RPGPRawReply: Sendable, Equatable {
@@ -110,10 +145,10 @@ struct RPGPReply: Decodable, Equatable {
         let hasSecret: Bool
         let created: Int64
         let expires: Int64?
-        let revoked: Bool
+        let validity: String
 
         enum CodingKeys: String, CodingKey {
-            case fingerprint, created, expires, revoked
+            case fingerprint, created, expires, validity
             case userIDs = "user_ids"
             case hasSecret = "has_secret"
         }
@@ -123,7 +158,8 @@ struct RPGPReply: Decodable, Equatable {
                           hasSecretKey: hasSecret,
                           created: Date(timeIntervalSince1970: TimeInterval(created)),
                           expires: expires.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-                          isRevoked: revoked)
+                          // An unknown state is not trusted.
+                          validity: PGPKeyValidity(rawValue: validity) ?? .unsupported)
         }
     }
 
@@ -180,6 +216,8 @@ struct RPGPReply: Decodable, Equatable {
             switch reply.error {
             case "no_secret_key": throw PGPEngineError.noSecretKey
             case "passphrase_required": throw PGPEngineError.passphraseRequired
+            case "not_integrity_protected": throw PGPEngineError.notIntegrityProtected
+            case "too_large": throw PGPEngineError.tooLarge
             case "unsupported": throw PGPEngineError.unsupported
             default: throw PGPEngineError.malformed
             }
@@ -216,6 +254,14 @@ struct LinkedRPGPBindings: RPGPBindings {
 
     func inspectKeys(_ data: Data, _ now: Int64) -> RPGPRawReply {
         Self.take(data.withUnsafeBytes { d in mm_pgp_inspect_keys(Self.ptr(d), d.count, now) })
+    }
+
+    func importPublic(_ data: Data, _ now: Int64) -> RPGPRawReply {
+        Self.take(data.withUnsafeBytes { d in mm_pgp_import_public(Self.ptr(d), d.count, now) })
+    }
+
+    func importSecret(_ data: Data, _ now: Int64) -> RPGPRawReply {
+        Self.take(data.withUnsafeBytes { d in mm_pgp_import_secret(Self.ptr(d), d.count, now) })
     }
 
     private static func ptr(_ buffer: UnsafeRawBufferPointer) -> UnsafePointer<UInt8>? {

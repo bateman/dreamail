@@ -40,10 +40,18 @@ protocol OpenPGPEngine: Sendable {
     /// the engine (EFAIL), so a caller has nothing it could show or log.
     func decrypt(_ message: Data) async throws -> PGPDecryptionResult
 
-    /// Reads keys from armored or binary data and stores them. Returns what
-    /// was imported; the import screen shows each fingerprint and every user
-    /// ID as unverified.
+    /// Reads public keys from armored or binary data and stores what the
+    /// engine parsed and checked (re-serialized, never the bytes handed in).
+    /// Broken keys and refused algorithms are not stored; secret material in
+    /// `data` is never stored by this call. Returns what was imported; the
+    /// import screen shows each fingerprint, every user ID as unverified,
+    /// and the validity.
     func importKeys(_ data: Data) async throws -> [PGPKeySummary]
+
+    /// Imports secret keys: a separate, explicit user action. Only valid
+    /// keys with a supported algorithm are stored, still under their own
+    /// passphrase; their public halves are stored as certificates too.
+    func importSecretKeys(_ data: Data) async throws -> [PGPKeySummary]
 
     /// Every stored key.
     func keys() async throws -> [PGPKeySummary]
@@ -70,7 +78,16 @@ struct PGPKeySummary: Sendable, Equatable {
     let hasSecretKey: Bool
     let created: Date?
     let expires: Date?
-    let isRevoked: Bool
+    let validity: PGPKeyValidity
+}
+
+/// A key's standing when the engine looked at it.
+enum PGPKeyValidity: String, Sendable, Equatable {
+    case valid, expired, revoked
+    /// A self-signature does not verify or uses a rejected hash: not stored.
+    case broken
+    /// An algorithm the engine refuses (Ed448, X448): not stored.
+    case unsupported
 }
 
 /// One signature's outcome, as the engine established it.
@@ -107,9 +124,11 @@ enum PGPEngineError: Error, Sendable, Equatable {
     case noSecretKey
     /// The secret key is locked and no (or a wrong) passphrase was given.
     case passphraseRequired
-    /// Decryption worked but there was no integrity check to verify: the
-    /// plaintext was discarded.
+    /// No integrity check (legacy SED), or it failed (MDC, AEAD tag): no
+    /// plaintext was released.
     case notIntegrityProtected
+    /// Input or plaintext above the engine's limits.
+    case tooLarge
     /// Not OpenPGP data, or damaged.
     case malformed
     case unsupported
@@ -127,6 +146,9 @@ struct UnavailableOpenPGPEngine: OpenPGPEngine {
         throw PGPEngineError.unavailable
     }
     func importKeys(_ data: Data) async throws -> [PGPKeySummary] {
+        throw PGPEngineError.unavailable
+    }
+    func importSecretKeys(_ data: Data) async throws -> [PGPKeySummary] {
         throw PGPEngineError.unavailable
     }
     func keys() async throws -> [PGPKeySummary] {

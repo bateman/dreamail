@@ -9,6 +9,7 @@ final class FakeOpenPGPEngine: OpenPGPEngine, @unchecked Sendable {
         case verifyCleartext(Data)
         case decrypt(Data)
         case importKeys(Data)
+        case importSecretKeys(Data)
         case keys
         case deleteKey(PGPKeyReference)
     }
@@ -61,6 +62,14 @@ final class FakeOpenPGPEngine: OpenPGPEngine, @unchecked Sendable {
         }
     }
 
+    func importSecretKeys(_ data: Data) async throws -> [PGPKeySummary] {
+        record(.importSecretKeys(data))
+        return locked {
+            stored += importable.filter { key in !stored.contains { $0.key == key.key } }
+            return importable
+        }
+    }
+
     func keys() async throws -> [PGPKeySummary] {
         record(.keys)
         return locked { stored }
@@ -75,7 +84,7 @@ final class FakeOpenPGPEngine: OpenPGPEngine, @unchecked Sendable {
 
     static func key(_ fingerprint: String, _ userIDs: [String]) -> PGPKeySummary {
         PGPKeySummary(key: PGPKeyReference(fingerprint: fingerprint), userIDs: userIDs,
-                      hasSecretKey: false, created: nil, expires: nil, isRevoked: false)
+                      hasSecretKey: false, created: nil, expires: nil, validity: .valid)
     }
 
     static let alice = key("AAAA 0000 TEST ONLY 0000 AAAA", ["Alice Example <alice@example.org>"])
