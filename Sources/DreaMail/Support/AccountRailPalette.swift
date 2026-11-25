@@ -25,13 +25,26 @@ enum AccountRailMetrics {
     /// Right edge of the zoom (green) window button, measured from the
     /// window's left edge. Measured on macOS 26 in CI (the UI test reports
     /// the frame): 80 pt; it was ~61 pt before macOS 26. The rail must cover
-    /// the three buttons entirely.
+    /// the three buttons entirely (the top band covers them).
     static let windowButtonsExtent: CGFloat = 80
     /// Visible margin right of the window buttons.
     static let windowButtonsMargin: CGFloat = 10
-    /// Rail width (90 pt): the window buttons plus a margin. Everything that
+    /// Avatar diameter and the rail's padding on each side of it.
+    static let avatarSize: CGFloat = 40
+    static let horizontalPadding: CGFloat = 12
+    /// Rail width (64 pt): just wide enough for the avatars. Everything that
     /// depends on the rail's width reads this constant.
-    static let width: CGFloat = windowButtonsExtent + windowButtonsMargin
+    static let width: CGFloat = avatarSize + 2 * horizontalPadding
+    /// The top band must reach at least this far from the window's left edge,
+    /// so it covers the three window buttons even when the sidebar is hidden.
+    static let bandMinimumWidth: CGFloat = windowButtonsExtent + windowButtonsMargin
+    /// Band width: from the window's left edge to the sidebar's right edge
+    /// (window coordinates) while the sidebar is on screen; otherwise just
+    /// `bandMinimumWidth`.
+    static func bandWidth(sidebarTrailing: CGFloat, sidebarVisible: Bool) -> CGFloat {
+        guard sidebarVisible else { return bandMinimumWidth }
+        return max(bandMinimumWidth, sidebarTrailing)
+    }
     /// Settings → Appearance: show the "+" (add account) entry. App-wide.
     static let showAddAccountKey = "showAddAccountInRail"
     static let showAddAccountDefault = true

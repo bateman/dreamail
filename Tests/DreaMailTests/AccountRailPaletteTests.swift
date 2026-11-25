@@ -59,11 +59,20 @@ final class AccountRailPaletteTests: XCTestCase {
                 .contrast(with: LabelRGB(hex: AccountRailPalette.backgroundDark)))
     }
 
-    func testRailCoversTheWindowButtonsWithAMargin() {
-        XCTAssertEqual(AccountRailMetrics.width, 90)
-        XCTAssertGreaterThanOrEqual(AccountRailMetrics.width,
+    func testRailIsNarrowAndBandCoversTheWindowButtons() {
+        XCTAssertEqual(AccountRailMetrics.width, 64)
+        XCTAssertEqual(AccountRailMetrics.bandMinimumWidth, 90)
+        XCTAssertGreaterThanOrEqual(AccountRailMetrics.bandMinimumWidth,
                                     AccountRailMetrics.windowButtonsExtent + AccountRailMetrics.windowButtonsMargin)
         XCTAssertGreaterThanOrEqual(AccountRailMetrics.windowButtonsMargin, 8)
+    }
+
+    func testBandWidth() {
+        // Sidebar on screen: up to its right edge.
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 304, sidebarVisible: true), 304)
+        // Hidden: still covers the three window buttons.
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 304, sidebarVisible: false), 90)
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 0, sidebarVisible: true), 90)
     }
 
     func testAddAccountEntryIsShownByDefault() {

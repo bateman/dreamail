@@ -68,6 +68,14 @@ struct ContentView: View {
     @State private var showDefaultMailPrompt = false
     @State private var settingDefaultMail = false
 
+    /// Whether a sidebar is on screen: not collapsed, not replaced by the
+    /// split compose or by a full-window conversation (the center peek keeps
+    /// the list layout underneath).
+    private var sidebarOnScreen: Bool {
+        guard !sidebarHidden, !splitComposeActive else { return false }
+        return layoutMode != .threadFocus || centerPeekThreads
+    }
+
     private var fullWindowThreads: Bool {
         // Center peek shares the whole open/close flow with full-window
         // (threadFocusMode, Esc ladder, compose placement) — only the
@@ -371,6 +379,9 @@ struct ContentView: View {
         HStack(spacing: 0) {
             AccountRail()
             interactionLayer
+        }
+        .overlay(alignment: .topLeading) {
+            AccountRailTopBand(sidebarVisible: sidebarOnScreen)
         }
         // Single ComposeView host for both floating and inline so presentation
         // flips keep editor state. Floating = bottom-trailing card; inline =
@@ -1971,6 +1982,7 @@ struct Sidebar: View {
             Color.clear.frame(height: 8)
         }
         .background(Color.mailSidebar)
+        .background(TrailingEdgeReader { store.sidebarTrailingEdge = $0 })
         .sheet(item: $newLabel) { request in
             NewLabelSheet(request: request)
         }
