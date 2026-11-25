@@ -25,7 +25,8 @@ enum PrioritySectionAdvance {
         mode: PrioritySplit.Mode,
         vipThreadIds: Set<String>,
         vipAlwaysPins: Bool,
-        newerThan: Date? = nil
+        newerThan: Date? = nil,
+        simulate: ((inout MailThread) -> Void)? = nil
     ) -> Set<String> {
         // .off means no Priority section exists, so no row can leave it.
         guard mode != .off else { return [] }
@@ -33,7 +34,9 @@ enum PrioritySectionAdvance {
         for target in targets {
             guard sectionIds.contains(target.id) else { continue }
             var unstarred = target
-            unstarred.isStarred = false
+            // Unstar unless the caller simulates another edit (`-` removes
+            // IMPORTANT, which drops rows under `.starredImportant`).
+            if let simulate { simulate(&unstarred) } else { unstarred.isStarred = false }
             if !PrioritySplit.qualifies(
                 unstarred, mode: mode,
                 vipThreadIds: vipThreadIds,

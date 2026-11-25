@@ -149,9 +149,8 @@ enum CalendarInvitePlan {
 
 /// The step 4A flows for one account, over the client: availability next to
 /// an invitation, finding the invitation's event, answering on the calendar,
-/// adding to the calendar. Results stay in memory except where the
-/// invitation's event is (`CalendarStore.saveInviteEvent`), which the
-/// caller stores.
+/// adding to the calendar. Nothing here is stored: the caller keeps the
+/// invitation's event (`CalendarInviteEventRecord`) in memory.
 struct CalendarInviteService: Sendable {
     let client: CalendarClient
     let grant: CalendarGrant

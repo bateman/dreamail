@@ -31,21 +31,13 @@ final class CalendarStoreTests: XCTestCase {
                            accessRole: role)
     }
 
-    private func inviteEvent(_ messageId: String, account: String) -> CalendarInviteEventRecord {
-        CalendarInviteEventRecord(messageId: messageId, accountId: account, calendarId: "primary",
-                                  eventId: "ev1", iCalUID: "uid-1", organizerEmail: "org@y.com",
-                                  span: nil, checkedAt: Date())
-    }
-
     private let scopes = CalendarScope.recommended.joined(separator: " ")
 
     private func seed(_ db: Database, account: String) throws -> String {
         try insertAccount(db, account)
         try CalendarStore.saveGrant(db, accountId: account, scopes: scopes, at: Date(),
                                     calendars: [entry(account, primary: true), entry("team@group")])
-        let message = try insertMessage(db, account: account, gmailId: "m1")
-        try CalendarStore.saveInviteEvent(db, inviteEvent(message, account: account))
-        return message
+        return try insertMessage(db, account: account, gmailId: "m1")
     }
 
     private func count(_ db: Database, _ table: String, account: String? = nil) throws -> Int {
@@ -61,15 +53,14 @@ final class CalendarStoreTests: XCTestCase {
     func testMigrationCreatesTheCalendarTablesWithCascades() throws {
         let q = try makeDB()
         try q.read { db in
-            for table in ["calendarGrant", "calendarSource", "calendarInviteEvent"] {
+            for table in ["calendarGrant", "calendarSource"] {
                 XCTAssertTrue(try db.tableExists(table), table)
                 let keys = try Row.fetchAll(db, sql: "PRAGMA foreign_key_list(\(table))")
                 XCTAssertTrue(keys.contains { $0["table"] as String? == "account" }, table)
                 XCTAssertEqual(Set(keys.map { $0["on_delete"] as String? }), ["CASCADE"], table)
             }
-            let inviteKeys = try Row.fetchAll(db, sql: "PRAGMA foreign_key_list(calendarInviteEvent)")
-            XCTAssertTrue(inviteKeys.contains { $0["table"] as String? == "message" })
             XCTAssertFalse(try db.tableExists("calendarEvent"), "no agenda events are stored")
+            XCTAssertFalse(try db.tableExists("calendarInviteEvent"), "invitation events stay in memory")
         }
     }
 
@@ -137,21 +128,35 @@ final class CalendarStoreTests: XCTestCase {
             try AccountLifecycle.purgeAccount(db, id: "a@x.com")
         }
         try q.read { db in
-            for table in ["calendarGrant", "calendarSource", "calendarInviteEvent"] {
+            for table in ["calendarGrant", "calendarSource"] {
                 XCTAssertEqual(try self.count(db, table, account: "a@x.com"), 0, table)
                 XCTAssertGreaterThan(try self.count(db, table, account: "b@x.com"), 0, table)
             }
         }
     }
 
-    func testDeletingTheMessageDeletesItsInvitationEvent() throws {
+    /// The launch sweep removes Calendar rows whose account is gone (a row
+    /// written while a removal was under way).
+    func testOrphanSweepRemovesRowsOfAccountsThatAreGone() throws {
         let q = try makeDB()
         try q.write { db in
-            let message = try self.seed(db, account: "a@x.com")
-            XCTAssertNotNil(try CalendarStore.inviteEvent(db, messageId: message))
-            _ = try Message.deleteOne(db, key: message)
-            XCTAssertNil(try CalendarStore.inviteEvent(db, messageId: message))
-            XCTAssertEqual(try self.count(db, "calendarGrant"), 1, "the grant is the account's")
+            _ = try self.seed(db, account: "a@x.com")
+            _ = try self.seed(db, account: "b@x.com")
+        }
+        // Outside a transaction, where the pragma takes effect: no cascade.
+        try q.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA foreign_keys = OFF")
+            try db.execute(sql: "DELETE FROM account WHERE id = 'a@x.com'")
+            try db.execute(sql: "PRAGMA foreign_keys = ON")
+        }
+        try q.write { db in
+            XCTAssertGreaterThan(try self.count(db, "calendarGrant", account: "a@x.com"), 0,
+                                 "the orphan is there before the sweep")
+            try AccountLifecycle.purgeOrphanRows(db)
+            for table in ["calendarGrant", "calendarSource"] {
+                XCTAssertEqual(try self.count(db, table, account: "a@x.com"), 0, table)
+                XCTAssertGreaterThan(try self.count(db, table, account: "b@x.com"), 0, table)
+            }
         }
     }
 
@@ -162,7 +167,7 @@ final class CalendarStoreTests: XCTestCase {
             XCTAssertEqual(try CalendarStore.grant(db, accountId: "a@x.com")?.canWriteEvents, true)
             try CalendarStore.forget(db, accountId: "a@x.com")
             XCTAssertNil(try CalendarStore.grant(db, accountId: "a@x.com"))
-            for table in ["calendarGrant", "calendarSource", "calendarInviteEvent"] {
+            for table in ["calendarGrant", "calendarSource"] {
                 XCTAssertEqual(try self.count(db, table), 0, table)
             }
             XCTAssertEqual(try Message.fetchCount(db), 1)

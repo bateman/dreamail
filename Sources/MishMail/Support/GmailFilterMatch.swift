@@ -64,14 +64,14 @@ enum GmailFilterMatch {
         guard let c = criteria else { return true }
 
         if let from = c.from, !from.isEmpty {
-            guard containsToken(message.from, token: from) else { return false }
+            guard fieldMatches(message.from, value: from) else { return false }
         }
         if let to = c.to, !to.isEmpty {
             let hay = [message.to, message.cc].joined(separator: " ")
-            guard containsToken(hay, token: to) else { return false }
+            guard fieldMatches(hay, value: to) else { return false }
         }
         if let subject = c.subject, !subject.isEmpty {
-            guard containsToken(message.subject, token: subject) else { return false }
+            guard fieldMatches(message.subject, value: subject) else { return false }
         }
         if c.hasAttachment == true, !message.hasAttachment { return false }
         if let size = c.size {
@@ -90,6 +90,17 @@ enum GmailFilterMatch {
             if matchesQuery(nq, message: message) { return false }
         }
         return true
+    }
+
+    /// A From / To / Subject criterion: top-level `OR` alternatives
+    /// (`a@x.com OR b@y.com`), each a set of words that must all appear.
+    static func fieldMatches(_ haystack: String, value: String) -> Bool {
+        splitTopLevelOR(value).contains { alternative in
+            tokenize(alternative).allSatisfy { token in
+                let lower = token.lowercased()
+                return lower == "or" || lower == "and" || containsToken(haystack, token: token)
+            }
+        }
     }
 
     // MARK: - Query tokens
@@ -193,6 +204,11 @@ enum GmailFilterMatch {
     private static func matchesQueryAND(_ query: String, message: MessageFields) -> Bool {
         let tokens = tokenize(query)
         guard !tokens.isEmpty else { return true }
+        // Built once per evaluation, not once per token.
+        let freeText = [
+            message.from, message.to, message.cc,
+            message.subject, message.snippet, message.bodyText
+        ].joined(separator: "\n")
         for token in tokens {
             let lower = token.lowercased()
             // Boolean operators left over after OR-splitting — never treat as
@@ -200,15 +216,16 @@ enum GmailFilterMatch {
             if lower == "or" || lower == "and" { continue }
             if token.hasPrefix("-"), token.count > 1 {
                 let positive = String(token.dropFirst())
-                if matchesToken(positive, message: message) { return false }
+                if matchesToken(positive, message: message, freeText: freeText) { return false }
                 continue
             }
-            if !matchesToken(token, message: message) { return false }
+            if !matchesToken(token, message: message, freeText: freeText) { return false }
         }
         return true
     }
 
-    private static func matchesToken(_ token: String, message: MessageFields) -> Bool {
+    private static func matchesToken(_ token: String, message: MessageFields,
+                                     freeText: String) -> Bool {
         let lower = token.lowercased()
         if lower == "has:attachment" { return message.hasAttachment }
         if lower.hasPrefix("from:") {
@@ -222,11 +239,7 @@ enum GmailFilterMatch {
             return containsToken(message.subject, token: String(token.dropFirst(8)))
         }
         // Free text: any of the usual header/body surfaces.
-        let hay = [
-            message.from, message.to, message.cc,
-            message.subject, message.snippet, message.bodyText
-        ].joined(separator: "\n")
-        return containsToken(hay, token: token)
+        return containsToken(freeText, token: token)
     }
 
     /// Case-insensitive substring. Empty token is a no-op match.

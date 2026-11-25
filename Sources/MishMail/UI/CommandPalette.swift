@@ -117,11 +117,13 @@ struct CommandPalette: View {
         let checkedIds = store.checkedThreadIds
         let context = PaletteCommands.Context(
             focused: store.selectedThread.map {
-                .init(isStarred: $0.isStarred, isUnread: $0.isUnread)
+                .init(isStarred: $0.isStarred, isUnread: $0.isUnread,
+                      isMuted: $0.isMuted, isImportant: $0.isImportant)
             },
             checked: checkedIds.isEmpty ? [] : store.threads
                 .filter { checkedIds.contains($0.id) }
-                .map { .init(isStarred: $0.isStarred, isUnread: $0.isUnread) },
+                .map { .init(isStarred: $0.isStarred, isUnread: $0.isUnread,
+                             isMuted: $0.isMuted, isImportant: $0.isImportant) },
             checkedCount: checkedIds.count,
             savedViews: store.savedViews.map { .init(id: $0.id ?? -1, name: $0.name) })
         return PaletteCommands.entries(context).map { entry in

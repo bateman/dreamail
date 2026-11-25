@@ -44,11 +44,10 @@ struct CalendarSourceRecord: Codable, FetchableRecord, PersistableRecord, Equata
 /// Where the event of one invitation message is in the user's Google
 /// Calendar, with the organizer and the time Google has for it, so an answer
 /// is written there only when the invitation describes that same event
-/// (`CalendarRSVPRoute`). One row per message; it goes with the message (and
-/// so with its thread and account). The answer the user gave is kept once,
-/// in #51's `calendarRSVP`, not here.
-struct CalendarInviteEventRecord: Codable, FetchableRecord, PersistableRecord, Equatable {
-    static let databaseTableName = "calendarInviteEvent"
+/// (`CalendarRSVPRoute`). In memory only: it is looked up again when needed
+/// and never stored (DEC-019). The answer the user gave is kept once, in
+/// #51's `calendarRSVP`.
+struct CalendarInviteEventRecord: Equatable, Sendable {
     var messageId: String
     var accountId: String
     var calendarId: String
@@ -93,13 +92,12 @@ struct CalendarInviteEventRecord: Codable, FetchableRecord, PersistableRecord, E
     }
 }
 
-/// The Calendar tables (migration v61) and their writes. Everything
-/// cascades from `account`, invitation events also from their `message`,
-/// so removing an account, a message or its thread, or disconnecting
-/// Calendar leaves nothing behind; the database's `secure_delete` and WAL
-/// scrub (`DeletionObserver`) then overwrite the deleted rows (DEC-019).
-/// No event of the agenda is stored: availability is computed in memory.
-/// Nothing here talks to Google.
+/// The Calendar tables (migration v61) and their writes: the grant and the
+/// chosen calendars. Both cascade from `account`, so removing an account or
+/// disconnecting Calendar leaves nothing behind; the database's
+/// `secure_delete` and WAL scrub (`DeletionObserver`) then overwrite the
+/// deleted rows (DEC-019). No event is stored: availability and the
+/// invitation's event are computed in memory. Nothing here talks to Google.
 enum CalendarStore {
     static func createTables(_ db: Database) throws {
         try db.create(table: CalendarGrantRecord.databaseTableName) { t in
@@ -117,20 +115,6 @@ enum CalendarStore {
             t.column("isPrimary", .boolean).notNull().defaults(to: false)
             t.column("accessRole", .text)
             t.primaryKey(["accountId", "calendarId"])
-        }
-        try db.create(table: CalendarInviteEventRecord.databaseTableName) { t in
-            t.primaryKey("messageId", .text)
-                .references("message", onDelete: .cascade)
-            t.column("accountId", .text).notNull().indexed()
-                .references("account", onDelete: .cascade)
-            t.column("calendarId", .text).notNull()
-            t.column("eventId", .text).notNull()
-            t.column("iCalUID", .text).notNull()
-            t.column("organizerEmail", .text)
-            t.column("startAt", .datetime)
-            t.column("endAt", .datetime)
-            t.column("isAllDay", .boolean).notNull().defaults(to: false)
-            t.column("checkedAt", .datetime).notNull()
         }
     }
 
@@ -151,12 +135,11 @@ enum CalendarStore {
     }
 
     /// The user disconnected Calendar (or Google refused the grant): the
-    /// grant, the chosen calendars and the invitation events of the account
-    /// go. The caller deletes the Keychain token.
+    /// grant and the chosen calendars of the account go. The caller deletes
+    /// the Keychain token.
     static func forget(_ db: Database, accountId: String) throws {
         _ = try CalendarGrantRecord.deleteOne(db, key: accountId)
         _ = try CalendarSourceRecord.filter(Column("accountId") == accountId).deleteAll(db)
-        _ = try CalendarInviteEventRecord.filter(Column("accountId") == accountId).deleteAll(db)
     }
 
     // MARK: Chosen calendars
@@ -205,32 +188,12 @@ enum CalendarStore {
         }
     }
 
-    /// Rows whose account (or message) is gone, for the launch sweep
+    /// Rows whose account is gone, for the launch sweep
     /// (`AccountLifecycle.purgeOrphanRows`): the cascades cover a normal
     /// delete, this covers rows written while a removal was under way.
     static func purgeOrphans(_ db: Database) throws {
         for table in [CalendarGrantRecord.databaseTableName, CalendarSourceRecord.databaseTableName] {
             try db.execute(sql: "DELETE FROM \(table) WHERE accountId NOT IN (SELECT id FROM account)")
         }
-        try db.execute(sql: """
-            DELETE FROM calendarInviteEvent
-            WHERE messageId NOT IN (SELECT id FROM message)
-               OR accountId NOT IN (SELECT id FROM account)
-            """)
-    }
-
-    // MARK: Invitation events
-
-    static func saveInviteEvent(_ db: Database, _ record: CalendarInviteEventRecord) throws {
-        try record.save(db)
-    }
-
-    static func inviteEvent(_ db: Database, messageId: String) throws -> CalendarInviteEventRecord? {
-        try CalendarInviteEventRecord.fetchOne(db, key: messageId)
-    }
-
-    /// The event was not (or no longer) found in Google Calendar.
-    static func forgetInviteEvent(_ db: Database, messageId: String) throws {
-        _ = try CalendarInviteEventRecord.deleteOne(db, key: messageId)
     }
 }

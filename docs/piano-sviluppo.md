@@ -293,6 +293,8 @@ Aggiornato il 25 novembre 2026.
 - ☐ **C-39** Cache delle immagini remote (PR #42): una newsletter riaperta, anche dopo un riavvio, mostra le immagini senza rete; sensazione della breve attesa prima del primo disegno (al massimo 150 ms); messaggi con immagini incorporate e remote insieme.
 - ☐ **C-40** Inviti di calendario (PR #51): invito da Google Calendar, da Outlook/Exchange e da Apple Calendar; Accetta, Forse, Rifiuta cambiano lo stato presso l'organizzatore; riga "Reply from … goes to …"; avviso arancione se l'organizzatore non è il mittente; evento spostato chiede di nuovo; occorrenza o serie annullata senza pulsanti; risposta da un alias. Passi completi nel corpo della PR #51.
 - ☐ **C-41** Colore delle label su Gmail (PR #48): MishMail → Organize Labels → clic sul pallino di una label utente → "Color on Gmail"; il colore compare subito e, entro un minuto, su Gmail web e telefono; dopo una sync non torna indietro; "No color on Gmail" toglie davvero il colore (non verificato: la documentazione non lo dice); senza rete torna il colore vecchio con un avviso; il colore solo-Mac resta prevalente. Passi completi nel corpo della PR #48.
+- ☐ **C-42** Shortcut di Gmail (PR #50): `m` silenzia davvero su un account reale e `m` di nuovo toglie il silenzio (non verificato: l'API di Gmail potrebbe rifiutare la label `MUTED`; in quel caso la conversazione torna con un avviso); `+` / `-` importanza; `v` sposta, anche da una vista label, dal Cestino, con righe spuntate di due account e dalla barra della conversazione con altre righe spuntate; `n` / `p` / `;` / `:` in una conversazione; tutti i tasti su tastiera italiana. Passi completi nel corpo della PR #50.
+- ☐ **C-43** Filtri Gmail (PR #49): MishMail → ⌘, → Gmail filters; creare un filtro, modificarlo, cancellarlo e ritrovare lo stesso risultato su Gmail web; anteprima dei messaggi corrispondenti; conferma prima di salvare un filtro che cancella o salta la Inbox; messaggio di Gmail per un filtro già esistente; un filtro con inoltro non è modificabile ma si può cancellare; soglia di dimensione in MB. Passi completi nel corpo della PR #49.
 
 ## Ondata 3 — parità Gmail
 
@@ -305,11 +307,11 @@ Avviata dal proprietario il 25 novembre 2026, prima che il cancello fosse comple
 
 | Step | Contenuto | Branch | Migrazione riservata |
 |---|---|---|---|
-| 3A | Creazione e modifica dei filtri lato server | `feature/gmail-server-filters` | v56 |
+| 3A | Creazione e modifica dei filtri lato server. Unito (#49), migrazione non usata. I filtri con inoltro restano da modificare su Gmail | `feature/gmail-server-filters` | v56 |
 | 3B | Modifica dei colori delle label su Gmail. Unito (#48), migrazione non usata | `feature/gmail-label-color-editing` | v57 |
 | 3C | Verifica ICS/RSVP e analisi delle lacune. Unito (#51) | `feature/ics-rsvp-verification` | v59 |
 | 3D | Snooze: variante B scelta dal proprietario (DEC-041) | `feature/snooze-gmail-alignment` | v60 |
-| 3E | Azioni mancanti degli shortcut di Gmail | `feature/gmail-shortcut-actions` | v58 |
+| 3E | Azioni mancanti degli shortcut di Gmail. Unito (#50), migrazione non usata. Non collegati: `g k`, `g c` (mancano le viste), ⌘U, ⌘⇧7, ⌘[ / ⌘], ⌘\ (servono funzioni nuove dell'editor) | `feature/gmail-shortcut-actions` | v58 |
 
 ## Ondata 4 — Calendar e PGP
 
@@ -408,3 +410,9 @@ Aggiornato il 25 novembre 2026.
 | — | `ci/skip-duplicate-runs` | #53 | Unito dal proprietario, fuori flusso |
 | 3C | `feature/ics-rsvp-verification` | #51 | Unito |
 | 3B | `feature/gmail-label-color-editing` | #48 | Unito |
+| 3E | `feature/gmail-shortcut-actions` | #50 | Unito |
+| 3A | `feature/gmail-server-filters` | #49 | Unito |
+| 4B | `feature/openpgp-support` | #54 | Unito (fondamenta senza libreria, dietro `MISHMAIL_PGP`) |
+| 4B | `feature/openpgp-rpgp-engine` | #56 | In review; libreria nel repository separato `bateman/dreamail-openpgp` (DEC-050), in attesa che le sessioni vi abbiano accesso |
+| 4A | `feature/google-calendar-integration` | #55 | In review (logica, dietro `MISHMAIL_CALENDAR`) |
+| 4A | `feature/google-calendar-ui` | #57 | In lavorazione (interfaccia) |
