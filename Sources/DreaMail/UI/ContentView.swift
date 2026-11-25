@@ -1979,12 +1979,7 @@ struct Sidebar: View {
             Color.clear.frame(height: 8)
         }
         .background(Color.mailSidebar)
-        .background(GeometryReader { proxy in
-            let width = proxy.size.width
-            Color.clear
-                .onAppear { store.sidebarWidth = width }
-                .onChange(of: width) { store.sidebarWidth = width }
-        })
+        .background(TrailingEdgeReader { store.sidebarTrailingEdge = $0 })
         .sheet(item: $newLabel) { request in
             NewLabelSheet(request: request)
         }

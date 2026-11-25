@@ -205,7 +205,7 @@ struct AccountRailTopBand: View {
         // Read here, not inside the GeometryReader closure, so the view
         // observes the store.
         let width = AccountRailMetrics.bandWidth(
-            sidebarWidth: store.sidebarWidth, sidebarVisible: sidebarVisible)
+            sidebarTrailing: store.sidebarTrailingEdge, sidebarVisible: sidebarVisible)
         GeometryReader { proxy in
             let top = proxy.safeAreaInsets.top
             AccountRailPalette.background
@@ -216,6 +216,42 @@ struct AccountRailTopBand: View {
                 .accessibilityIdentifier("accountRail.topBand")
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// Reports the right edge of the view it backs, in window coordinates. Measured
+/// in AppKit: the sidebar lives in a split-view column, where SwiftUI's own
+/// geometry (`GeometryReader`, `.global`) did not give the column's real edge.
+struct TrailingEdgeReader: NSViewRepresentable {
+    let onChange: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> EdgeView {
+        let view = EdgeView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ view: EdgeView, context: Context) {
+        view.onChange = onChange
+        view.report()
+    }
+
+    final class EdgeView: NSView {
+        var onChange: ((CGFloat) -> Void)?
+        private var last: CGFloat?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
+        override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); report() }
+        override func layout() { super.layout(); report() }
+
+        func report() {
+            guard window != nil else { return }
+            let edge = convert(bounds, to: nil).maxX.rounded()
+            guard edge != last else { return }
+            last = edge
+            DispatchQueue.main.async { [weak self] in self?.onChange?(edge) }
+        }
     }
 }
 

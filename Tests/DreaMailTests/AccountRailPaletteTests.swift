@@ -68,11 +68,11 @@ final class AccountRailPaletteTests: XCTestCase {
     }
 
     func testBandWidth() {
-        // Sidebar on screen: rail plus sidebar.
-        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarWidth: 240, sidebarVisible: true), 304)
+        // Sidebar on screen: up to its right edge.
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 304, sidebarVisible: true), 304)
         // Hidden: still covers the three window buttons.
-        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarWidth: 240, sidebarVisible: false), 90)
-        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarWidth: 0, sidebarVisible: true), 90)
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 304, sidebarVisible: false), 90)
+        XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 0, sidebarVisible: true), 90)
     }
 
     func testAddAccountEntryIsShownByDefault() {

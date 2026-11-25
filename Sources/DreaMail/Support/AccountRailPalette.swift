@@ -38,11 +38,12 @@ enum AccountRailMetrics {
     /// The top band must reach at least this far from the window's left edge,
     /// so it covers the three window buttons even when the sidebar is hidden.
     static let bandMinimumWidth: CGFloat = windowButtonsExtent + windowButtonsMargin
-    /// Band width: the rail plus the sidebar's width while the sidebar is on
-    /// screen; otherwise just `bandMinimumWidth`.
-    static func bandWidth(sidebarWidth: CGFloat, sidebarVisible: Bool) -> CGFloat {
+    /// Band width: from the window's left edge to the sidebar's right edge
+    /// (window coordinates) while the sidebar is on screen; otherwise just
+    /// `bandMinimumWidth`.
+    static func bandWidth(sidebarTrailing: CGFloat, sidebarVisible: Bool) -> CGFloat {
         guard sidebarVisible else { return bandMinimumWidth }
-        return max(bandMinimumWidth, width + sidebarWidth)
+        return max(bandMinimumWidth, sidebarTrailing)
     }
     /// Settings → Appearance: show the "+" (add account) entry. App-wide.
     static let showAddAccountKey = "showAddAccountInRail"
