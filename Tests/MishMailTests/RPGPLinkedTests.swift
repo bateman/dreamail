@@ -261,10 +261,13 @@ final class RPGPLinkedTests: XCTestCase {
         XCTAssertEqual(decrypted.plaintext, Data("secret".utf8))
     }
 
-    /// GnuPG wrote its own OCB packet (type 20), not SEIPD.
+    /// GnuPG wrote its own OCB packet (type 20), not SEIPD (type 18). By
+    /// tag: GnuPG versions name the packet differently ("aead" in 2.4.4,
+    /// "ocb" later).
     private func assertGnuPGOCB(_ message: Data, file: StaticString = #filePath, line: UInt = #line) throws {
         let packets = try gnupg.listPackets(message)
-        XCTAssertTrue(packets.contains(":aead encrypted packet:"), packets, file: file, line: line)
+        XCTAssertTrue(packets.contains(" tag=20 "), packets, file: file, line: line)
+        XCTAssertFalse(packets.contains(" tag=18 "), packets, file: file, line: line)
     }
 
     /// GnuPG's own OCB packet (type 20, not in RFC 9580), which GnuPG 2.4
