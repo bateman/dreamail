@@ -365,7 +365,7 @@ final class GmailLabelColorEditTests: XCTestCase {
 
     /// labels.patch answers with the label resource; its color decodes.
     func testPatchAnswerDecodes() throws {
-        let json = Data(#"{"id":"Label_1","name":"Work","type":"user","color":{"textColor":"#ffffff","backgroundColor":"#4a86e8"}}"#.utf8)
+        let json = Data(##"{"id":"Label_1","name":"Work","type":"user","color":{"textColor":"#ffffff","backgroundColor":"#4a86e8"}}"##.utf8)
         let label = try JSONDecoder().decode(GLabel.self, from: json)
         XCTAssertEqual(GmailLabelColorEdit.colors(of: label), blue.colors)
         let bare = try JSONDecoder().decode(GLabel.self, from: Data(#"{"id":"Label_1","name":"Work"}"#.utf8))
