@@ -2027,7 +2027,9 @@ struct ThreadRow: View, Equatable {
                 .padding(.horizontal, ThreadRowActionLayout.iconPaddingH)
                 .padding(.vertical, ThreadRowActionLayout.iconPaddingV)
                 // Dense row: expand hit without inflating the 18pt trailing strip.
-                .pmHitTarget(extra: ThreadRowActionLayout.hitExtra)
+                .padding(.vertical, ThreadRowActionLayout.hitExtraV)
+                .contentShape(Rectangle())
+                .padding(.vertical, -ThreadRowActionLayout.hitExtraV)
         }
         .buttonStyle(PressScaleButtonStyle())
         .help(title)

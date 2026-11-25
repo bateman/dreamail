@@ -43,8 +43,9 @@ enum ThreadRowActionLayout {
     static let iconPaddingH = 2.0
     static let iconPaddingV = 3.0
     static let spacing = 0.0
-    /// Extra hit area around each button, layout-neutral.
-    static let hitExtra = 1.0
+    /// Extra hit area above and below each button. It also sets the row
+    /// height (the section-spacing UI tests were written against 2 pt).
+    static let hitExtraV = 2.0
 
     /// Width of the four buttons at the list's font scale
     /// (68 pt at scale 1: four 17 pt buttons).

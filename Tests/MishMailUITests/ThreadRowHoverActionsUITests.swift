@@ -85,6 +85,9 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         XCTAssertTrue(subject.waitForExistence(timeout: 10), "the reading pane shows a conversation")
         let open = subject.label
         XCTAssertFalse(open.contains("CI passed"), "t3 is not the open conversation")
+        // The list re-lays out beside the reading pane: wait for the rows.
+        XCTAssertTrue(read.waitForExistence(timeout: 10), "t3 is still listed")
+        XCTAssertTrue(other.waitForExistence(timeout: 10), "t4 is still listed")
         XCTAssertTrue(read.label.hasPrefix("Read"), "t3 starts read: \(read.label)")
 
         read.hover()
