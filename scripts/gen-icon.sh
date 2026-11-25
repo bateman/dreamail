@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 
 SVG=Design/AppIcon.svg
 STAMP=Design/.AppIcon.sha256
-SET=Sources/MishMail/Assets.xcassets/AppIcon.appiconset
+SET=Sources/DreaMail/Assets.xcassets/AppIcon.appiconset
 SIZES="16 32 64 128 256 512 1024"
 
 want=$(shasum -a 256 "$SVG" | cut -d' ' -f1)

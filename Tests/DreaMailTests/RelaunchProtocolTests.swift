@@ -1,0 +1,62 @@
+import XCTest
+
+/// The app↔relauncher plan-file contract. The two processes compute the same
+/// paths from different starting points — the app from its sandboxed
+/// temporary directory, the helper from the real home directory — and argv
+/// is not available to reconcile them (macOS strips it for sandboxed
+/// launchers), so these derivations agreeing IS the protocol.
+final class RelaunchProtocolTests: XCTestCase {
+
+    func testHelperDerivesTheSandboxedAppsTempDirectory() {
+        let home = URL(fileURLWithPath: "/Users/ron")
+        XCTAssertEqual(
+            Relaunch.containerTemp(home: home).path,
+            "/Users/ron/Library/Containers/io.github.bateman.DreaMail/Data/tmp")
+    }
+
+    func testPlanAndMarkerLiveInTheSameDirectoryOnBothSides() {
+        let appSide = URL(fileURLWithPath: "/Users/ron/Library/Containers/io.github.bateman.DreaMail/Data/tmp")
+        let helperSide = Relaunch.containerTemp(home: URL(fileURLWithPath: "/Users/ron"))
+        XCTAssertEqual(Relaunch.planURL(inTemp: appSide).path,
+                       Relaunch.planURL(inTemp: helperSide).path)
+        XCTAssertEqual(Relaunch.markerURL(inTemp: appSide, nonce: "n1").path,
+                       Relaunch.markerURL(inTemp: helperSide, nonce: "n1").path)
+    }
+
+    func testMarkerNameCarriesTheNonce() {
+        let temp = URL(fileURLWithPath: "/tmp")
+        XCTAssertEqual(Relaunch.markerURL(inTemp: temp, nonce: "abc").lastPathComponent,
+                       "relauncher-ready-abc")
+        XCTAssertNotEqual(Relaunch.markerURL(inTemp: temp, nonce: "abc").path,
+                          Relaunch.markerURL(inTemp: temp, nonce: "def").path)
+    }
+
+    func testPlanRoundTripsThroughJSON() throws {
+        let plan = Relaunch.Plan(pid: 4242, appPath: "/Applications/DreaMail.app", nonce: "n")
+        let decoded = try JSONDecoder().decode(Relaunch.Plan.self,
+                                               from: JSONEncoder().encode(plan))
+        XCTAssertEqual(decoded.pid, 4242)
+        XCTAssertEqual(decoded.appPath, "/Applications/DreaMail.app")
+        XCTAssertEqual(decoded.nonce, "n")
+    }
+
+    func testPlanNonceMustBeAUUID() {
+        XCTAssertTrue(Relaunch.isValidNonce(UUID().uuidString))
+        XCTAssertFalse(Relaunch.isValidNonce("n"))
+        XCTAssertFalse(Relaunch.isValidNonce("../../relauncher-ready"))
+    }
+
+    func testTargetMustBeTheEnclosingInstalledAppBundle() {
+        let app = URL(fileURLWithPath: "/Applications/DreaMail.app", isDirectory: true)
+        let helper = app.appendingPathComponent(
+            "Contents/Library/DreaMailRelauncher.app", isDirectory: true)
+        // Compare paths: URL equality also compares the trailing slash, which
+        // `standardizedFileURL` keeps only when the bundle exists on this Mac.
+        XCTAssertEqual(Relaunch.enclosingAppBundle(forHelperBundle: helper)?.path, app.path)
+        XCTAssertEqual(
+            Relaunch.resolvedTargetAppURL(appPath: app.path, helperBundleURL: helper)?.path,
+            app.path)
+        XCTAssertNil(Relaunch.resolvedTargetAppURL(
+            appPath: "/Applications/Other.app", helperBundleURL: helper))
+    }
+}
