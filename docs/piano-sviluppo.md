@@ -305,6 +305,7 @@ Aggiornato il 25 novembre 2026.
 - ☐ **C-51** Immagini fallite nascoste (PR #67): aprire la ricevuta SumUp: al posto del "?" blu non compare nulla. Da guardare: un'immagine fallita con testo alternativo e dimensioni fisse potrebbe mostrare ancora il "?" (non verificato).
 - ☐ **C-52** Barra degli account (PR #62): striscia sempre visibile a sinistra della barra laterale. Un avatar per account con il suo numero di non letti; clic cambia account; "All accounts" in cima con più account; "+" aggiunge un account; ingranaggio in basso apre Settings. ⌘1…⌘9 come prima; trascinare un avatar riordina gli account; colori in modalità chiara e scura; gli avvisi in basso (annulla) non coprono l'ingranaggio; con un solo account l'avatar appare selezionato.
 - ☐ **C-53** Dimensione della finestra all'avvio (PR #65): ridimensionare e spostare la finestra principale, uscire con ⌘Q, riaprire: la finestra torna con la stessa dimensione e posizione. La prima volta dopo l'aggiornamento parte con la dimensione predefinita (il nome di salvataggio è cambiato). Provare anche con `make run` dopo una ricompilazione.
+- ☐ **C-54** Barra laterale come Gmail (PR #63): (1) viste di sistema nell'ordine di Gmail: Inbox, Starred, Snoozed, Important, Sent, Drafts, All Mail, Trash, poi "More"; (2) "More" apre Spam, Categories e, se presenti, Scheduled; resta com'era dopo ⌘Q; (3) sotto "Labels" le etichette ad albero come in Gmail, con colore e non letti; un genitore aperto resta aperto dopo il riavvio; (4) un'etichetta nascosta in Gmail sta sotto il "More" delle etichette; (5) "+" accanto a Labels: creare `test`, poi `test2` annidata sotto `test`; entrambe compaiono in Gmail web; (6) con tutti gli account: un albero per account; aprire un'etichetta dell'account A e passare a B dalla barra porta alla Inbox di B; (7) `g l` e Go ▸ Labels aprono ancora la vista di tutte le etichette; (8) Spam mostra solo lo spam arrivato da quando l'account è stato aggiunto. Non verificato senza Mac: etichette reali con "mostra se non lette"/"nascondi", resa in modalità scura, creazione reale su Gmail.
 
 ## Ondata 3 — parità Gmail
 
@@ -434,7 +435,7 @@ Aggiornato il 25 novembre 2026.
 | — | `chore/make-run-real-account-default` | #66 | Unito (livello semplice) |
 | — | `feature/account-signatures` | #61 | Unito |
 | — | `ux/account-rail` | #62 | Unito (livello basso rischio) |
-| — | `ux/gmail-style-sidebar` | #63 | In lavorazione |
+| — | `ux/gmail-style-sidebar` | #63 | Unito (migrazione v65) |
 | — | `ux/restore-window-size` | #65 | Unito (livello basso rischio) |
 | — | `perf/remote-image-cache-regression` | #67 | Unito (livello basso rischio) |
 | — | `feature/openpgp-library-wiring` | #68 | In lavorazione (libreria v0.1.0, commit `adad8a1`) |

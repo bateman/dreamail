@@ -6,6 +6,15 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Sidebar like Gmail.** System views in Gmail's order with Important, a
+  "More" row (Scheduled, Reminders, Spam, Categories), and your labels as a
+  tree with colours, unread counts and Gmail's show/hide setting. "+" next to
+  Labels creates a label, also nested. Outbox and Reminders stay visible when
+  they hold something. Spam shows what this Mac has: spam received since the
+  account was added; older spam stays on Gmail. The all-labels view moved to
+  Go ▸ Labels (`g l`). Switching account while a label is open goes to the
+  Inbox.
+
 - **The window reopens as you left it.** At launch the main window comes back
   with the size and position it had when it was closed.
 

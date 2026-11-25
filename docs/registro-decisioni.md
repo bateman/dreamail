@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.21
+Versione: 0.22
 Ultimo aggiornamento: 25 novembre 2026
 Stato: documento in evoluzione
 
@@ -74,6 +74,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-060 | **Libreria OpenPGP collegata anche a interruttore spento** | Con `MISHMAIL_PGP` spento la libreria resta collegata nell'app e la tabella delle chiavi esiste vuota; il comportamento non cambia e nessuna voce PGP è visibile. Dopo la verifica del funzionamento si valuta il caricamento dinamico, con un'opzione che da spenta non carica la libreria. |
 | DEC-061 | **Nomi del rebranding a DreaMail** | Decisi i nomi, non ancora la data: MishMail → DreaMail (D e M maiuscole; `dreamail` in percorsi e URL, `DREAMAIL_` per interruttori e variabili), prefisso C `mm_` → `dm_`, libreria `MishMailRPGP` → `DreaMailRPGP`, "Ask Mish" → "Ask AI". Le funzioni AI e MCP restano nel codice, spente (DEC-011): serviranno per il completamento delle e-mail e la riscrittura delle bozze. Studio in `docs/studi/rebranding-dreamail.md`. |
 | DEC-062 | **Chat e Calendar integrati: solo studio per ora** | Chat di Gmail e Google Calendar completo non si costruiscono finché il client di posta non è completo e stabile per l'uso quotidiano. Studi in `docs/studi/google-chat.md` e `docs/studi/google-calendar.md`. |
+| DEC-063 | **Barra laterale come Gmail: scostamenti** | Spam mostra solo ciò che il Mac ha (spam arrivato dopo l'aggiunta dell'account o segnalato dall'app): lo spam più vecchio resta su Gmail. La vista di tutte le etichette esce dalla barra laterale e resta su `g l`, Go ▸ Labels e palette. "Purchases" di Gmail non è offerta: l'API non ha quell'etichetta. Outbox e Reminders restano visibili fuori da "More" quando non sono vuoti. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -474,6 +475,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-25 | **0.19** | Aggiunte DEC-057 (barra laterale come Gmail e barra degli account), DEC-058 (`make run` con l'account reale), DEC-059 (rilasci della libreria OpenPGP). |
 | 2026-11-25 | **0.20** | Aggiunta DEC-060 (libreria OpenPGP collegata anche a interruttore spento; caricamento dinamico da valutare). |
 | 2026-11-25 | **0.21** | Aggiunte DEC-061 (nomi del rebranding a DreaMail) e DEC-062 (Chat e Calendar integrati: solo studio). |
+| 2026-11-25 | **0.22** | Aggiunta DEC-063 (barra laterale come Gmail: scostamenti). |
 
 ---
 
