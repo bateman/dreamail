@@ -56,9 +56,12 @@ jobs:
 
   # Whether the macOS job below has anything to do: not when every changed
   # file is documentation that neither the build nor a test reads
-  # (.github/scripts/needs-build.py has the list). A pull request compares
-  # its merge commit with main; a push to main compares with the commit
-  # main pointed at before the push. Any other run builds.
+  # (.github/scripts/needs-build.py has the list). A pull request into main
+  # compares its merge commit with main; a push to main compares with the
+  # commit main pointed at before the push. Any other run builds, a pull
+  # request into another branch included: its skipped check would stay on
+  # the head commit and could pass main's required check once the pull
+  # request is retargeted to main, which does not start a new run.
   changes:
     name: Changed files
     runs-on: ubuntu-24.04
@@ -75,7 +78,7 @@ jobs:
       - name: Decide whether to build and test
         id: decide
         env:
-          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event_name == 'push' && github.event.before || '' }}
+          BASE: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && 'HEAD^1' || github.event_name == 'push' && github.event.before || '' }}
         run: python3 .github/scripts/needs-build.py "$BASE" >> "$GITHUB_OUTPUT"
 
   test:
