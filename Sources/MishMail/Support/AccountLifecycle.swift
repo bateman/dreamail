@@ -107,6 +107,8 @@ enum AccountLifecycle {
         // Cached inline images: same (they cascade with the account, its
         // messages and attachment rows).
         try InlineImageCache.forget(db, account: id)
+        // Calendar grant, calendars and events: same.
+        try CalendarStore.forget(db, accountId: id)
         // The account's mail cascades with the account row.
         let messages = try Int.fetchOne(
             db, sql: "SELECT count(*) FROM message WHERE accountId = ?", arguments: [id]) ?? 0

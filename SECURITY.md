@@ -67,6 +67,26 @@ A 2026-07 source review (findings SEC-001–003, all fixed) lives in
 [docs/security-review.md](docs/security-review.md); a second pass later that
 month (SEC-004–007, all fixed) lives in
 [docs/security-review-2026-07-29.md](docs/security-review-2026-07-29.md).
+
+## Google Calendar (off in this build)
+
+The Calendar integration is being designed and is compiled in only when the
+build sets `MISHMAIL_CALENDAR = YES` (empty in `Config/Signing.xcconfig`;
+`make install` and `make release` take the tracked value). With it off:
+
+- **No new network destination.** Nothing reaches the Calendar API
+  (`https://www.googleapis.com/calendar/v3/`); its one network path refuses
+  before sending, and the tests check it.
+- **No new scope.** The Gmail sign-in never asks for a Calendar scope.
+
+With it on, Calendar is a **separate consent**, asked for only when the user
+connects Calendar for an account: desktop apps cannot extend an existing
+grant, so it has its own refresh token in the Keychain
+(`calendarRefreshToken.<account>`). The token is kept only when Google says
+it belongs to that same account. Calendars and events are stored in the
+encrypted database and are deleted with the account, or when Calendar is
+disconnected, under the rules below.
+
 ## What deleting means
 
 When mail leaves MishMail's local cache (a message deleted or trashed and

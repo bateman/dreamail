@@ -40,4 +40,10 @@ MISHMAIL_UPDATE_CHANNEL =
 // the AI features in:  MISHMAIL_AI_FEATURES = YES
 MISHMAIL_AI_FEATURES =
 
+// Google Calendar integration (step 4A, in design), expanded into Info.plist
+// as MishMailCalendar. Deliberately empty: with it off nothing is shown, no
+// Calendar scope is requested and no request reaches the Calendar API. Set it
+// in Local.xcconfig to build it in:  MISHMAIL_CALENDAR = YES
+MISHMAIL_CALENDAR =
+
 #include? "Local.xcconfig"

@@ -39,5 +39,9 @@
 	     both are off. -->
 	<key>MishMailAIFeatures</key>
 	<string>$(MISHMAIL_AI_FEATURES)</string>
+	<!-- Google Calendar integration (step 4A). Empty unless the build sets
+	     MISHMAIL_CALENDAR = YES (see Config/Signing.xcconfig); empty means off. -->
+	<key>MishMailCalendar</key>
+	<string>$(MISHMAIL_CALENDAR)</string>
 </dict>
 </plist>

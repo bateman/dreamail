@@ -162,6 +162,7 @@ targets:
       - path: Sources/MishMail/Gmail
       - path: Sources/MishMail/Store
       - path: Sources/MishMail/Auth
+      - path: Sources/MishMail/Calendar
       - path: Sources/MishMail/MCP
         excludes:
           # MailStore-backed bridge + NWListener stay app-only.
