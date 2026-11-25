@@ -412,3 +412,7 @@ Aggiornato il 25 novembre 2026.
 | 3B | `feature/gmail-label-color-editing` | #48 | Unito |
 | 3E | `feature/gmail-shortcut-actions` | #50 | Unito |
 | 3A | `feature/gmail-server-filters` | #49 | Unito |
+| 4B | `feature/openpgp-support` | #54 | Unito (fondamenta senza libreria, dietro `MISHMAIL_PGP`) |
+| 4B | `feature/openpgp-rpgp-engine` | #56 | In review; non collegata all'app finché il proprietario non sceglie come distribuire la libreria |
+| 4A | `feature/google-calendar-integration` | #55 | In review (logica, dietro `MISHMAIL_CALENDAR`) |
+| 4A | `feature/google-calendar-ui` | #57 | In lavorazione (interfaccia) |
