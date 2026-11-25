@@ -227,65 +227,65 @@ Aggiornato il 25 novembre 2026.
 
 ### Avvio, build, aggiornamenti
 
-☑ **C-01** Build locale e avvio (`make run DEMO=0` o `make install`).
-☑ **C-02** Account Gmail reale collegato e in uso.
-☐ **C-03** Pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub.
-☐ **C-04** `make install`: controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto).
-☐ **C-05** Nessuna interfaccia AI visibile: impostazioni, palette, barra di composizione, vista del thread.
-☐ **C-06** Impostazioni, onboarding e palette senza le voci Notion.
-☐ **C-07** Eliminazione del vecchio file di log all'avvio.
+- ☑ **C-01** Build locale e avvio (`make run DEMO=0` o `make install`).
+- ☑ **C-02** Account Gmail reale collegato e in uso.
+- ☐ **C-03** Pannello Aggiornamenti disabilitato e nessuna richiesta verso GitHub.
+- ☐ **C-04** `make install`: controllo dell'interruttore AI sull'app costruita (comportamento di `plutil` con valore vuoto).
+- ☐ **C-05** Nessuna interfaccia AI visibile: impostazioni, palette, barra di composizione, vista del thread.
+- ☐ **C-06** Impostazioni, onboarding e palette senza le voci Notion.
+- ☐ **C-07** Eliminazione del vecchio file di log all'avvio.
 
 ### Accesso e account
 
-☐ **C-08** Nuovo accesso a Google con il listener limitato, da Safari e da Chrome.
-☐ **C-09** Avvio con un vecchio database in chiaro e una seconda copia aperta: striscia di sola lettura, schermata "Finish encrypting your mail".
-☐ **C-10** Finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche).
-☐ **C-11** Foto profilo con un account reale: download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione.
-☐ **C-12** Avviso con un errore reale di Gmail.
+- ☐ **C-08** Nuovo accesso a Google con il listener limitato, da Safari e da Chrome.
+- ☐ **C-09** Avvio con un vecchio database in chiaro e una seconda copia aperta: striscia di sola lettura, schermata "Finish encrypting your mail".
+- ☐ **C-10** Finestra di conferma della rimozione di un account e rimozione reale (allegati, notifiche).
+- ☐ **C-11** Foto profilo con un account reale: download, aspetto, account senza foto, uscita dall'app subito dopo una sincronizzazione.
+- ☐ **C-12** Avviso con un errore reale di Gmail.
 
 ### Notifiche e badge
 
-☑ **C-13** Il badge delle non lette compare sull'icona nel Dock. Causa del badge assente: notifiche disattivate per l'app in macOS; la riga "Shown by macOS" lo segnala (25 novembre 2026).
-☐ **C-14** Il numero del badge cambia subito dopo lettura, archiviazione e cancellazione.
-☐ **C-15** Il pulsante "Open Notification Settings…" apre il pannello Notifiche.
-☐ **C-16** Interruttore "Show sender and subject in notifications" e testo delle notifiche.
-☐ **C-17** Ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio.
+- ☑ **C-13** Il badge delle non lette compare sull'icona nel Dock. Causa del badge assente: notifiche disattivate per l'app in macOS; la riga "Shown by macOS" lo segnala (25 novembre 2026).
+- ☐ **C-14** Il numero del badge cambia subito dopo lettura, archiviazione e cancellazione.
+- ☐ **C-15** Il pulsante "Open Notification Settings…" apre il pannello Notifiche.
+- ☐ **C-16** Interruttore "Show sender and subject in notifications" e testo delle notifiche.
+- ☐ **C-17** Ritiro delle notifiche e rimozione delle copie degli allegati alla cancellazione di un messaggio.
 
 ### Tastiera e composizione
 
-☐ **C-18** Shortcut su tastiera italiana: `]`, `[`, `#`, `*`.
-☐ **C-19** Cursore nei campi Cc e Bcc e scelta del mittente in composizione.
-☐ **C-20** Lettura anticipata scorrendo con `j` e `k`; tasto freccia tenuto premuto apre solo la conversazione su cui ci si ferma.
-☐ **C-21** Correttore con English e Italian scelti: menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta.
+- ☐ **C-18** Shortcut su tastiera italiana: `]`, `[`, `#`, `*`.
+- ☐ **C-19** Cursore nei campi Cc e Bcc e scelta del mittente in composizione.
+- ☐ **C-20** Lettura anticipata scorrendo con `j` e `k`; tasto freccia tenuto premuto apre solo la conversazione su cui ci si ferma.
+- ☐ **C-21** Correttore con English e Italian scelti: menu contestuale, lingua specifica con il sistema su "Automatica per lingua", Cmd-; e pannello Ortografia, reattività con una lunga citazione in una lingua non scelta.
 
 ### Lista e barra laterale
 
-☐ **C-22** Icone monocromatiche e voce selezionata; modalità scura; dimensione della barra laterale piccola e grande.
-☐ **C-23** Colori e forma delle label in lista, pannello di lettura e menu: testo centrato, troncamento al limite.
-☐ **C-24** Intestazioni di sezione, intestazione fissa durante lo scorrimento, vista Labels.
-☐ **C-25** Anello dell'account su barra laterale, popover e impostazioni; centratura del testo dell'intestazione; altezza delle righe del popover.
-☐ **C-26** Editor del colore della label dell'account: pannello colori di sistema, chiusura all'uscita.
-☐ **C-27** Colore d'accento personalizzato: modalità scura, pannello colori reale (anche colori P3), barra laterale delle impostazioni, contatori sulla riga selezionata, lampi dell'evidenziazione di sistema mentre la selezione si sposta, raggio della capsula.
+- ☐ **C-22** Icone monocromatiche e voce selezionata; modalità scura; dimensione della barra laterale piccola e grande.
+- ☐ **C-23** Colori e forma delle label in lista, pannello di lettura e menu: testo centrato, troncamento al limite.
+- ☐ **C-24** Intestazioni di sezione, intestazione fissa durante lo scorrimento, vista Labels.
+- ☐ **C-25** Anello dell'account su barra laterale, popover e impostazioni; centratura del testo dell'intestazione; altezza delle righe del popover.
+- ☐ **C-26** Editor del colore della label dell'account: pannello colori di sistema, chiusura all'uscita.
+- ☐ **C-27** Colore d'accento personalizzato: modalità scura, pannello colori reale (anche colori P3), barra laterale delle impostazioni, contatori sulla riga selezionata, lampi dell'evidenziazione di sistema mentre la selezione si sposta, raggio della capsula.
 
 ### Pannello di lettura e immagini
 
-☐ **C-28** Pannello di lettura su finestra stretta e su schermo da 13 pollici.
-☐ **C-29** Email singola espansa, anche in "center peek" e vista compatta; restringimento per email HTML corte.
-☐ **C-30** Righe dei messaggi di una conversazione: modalità scura con posta HTML, pannelli stretti con testo grande, pannello di 400–450 pt con un mittente dal nome lungo.
-☐ **C-31** Riapertura di email con loghi senza sfarfallio; velocità della prima apertura e di `j`/`k`.
-☐ **C-32** Immagini incorporate dopo un riavvio con posta reale.
-☐ **C-33** Immagini remote: piè di pagina delle impostazioni, messaggio in Spam con "Load images", comportamento reale di rete all'apertura.
-☐ **C-34** Prova di `preconnect` e `dns-prefetch` a immagini bloccate (ricetta nel corpo della PR #40).
+- ☐ **C-28** Pannello di lettura su finestra stretta e su schermo da 13 pollici.
+- ☐ **C-29** Email singola espansa, anche in "center peek" e vista compatta; restringimento per email HTML corte.
+- ☐ **C-30** Righe dei messaggi di una conversazione: modalità scura con posta HTML, pannelli stretti con testo grande, pannello di 400–450 pt con un mittente dal nome lungo.
+- ☐ **C-31** Riapertura di email con loghi senza sfarfallio; velocità della prima apertura e di `j`/`k`.
+- ☐ **C-32** Immagini incorporate dopo un riavvio con posta reale.
+- ☐ **C-33** Immagini remote: piè di pagina delle impostazioni, messaggio in Spam con "Load images", comportamento reale di rete all'apertura.
+- ☐ **C-34** Prova di `preconnect` e `dns-prefetch` a immagini bloccate (ricetta nel corpo della PR #40).
 
 ### Dati e cancellazione
 
-☐ **C-35** Tempo della ricostruzione dell'indice di ricerca al primo avvio.
-☐ **C-36** Nessun `Cache.db` che cresce nella cartella Caches.
+- ☐ **C-35** Tempo della ricostruzione dell'indice di ricerca al primo avvio.
+- ☐ **C-36** Nessun `Cache.db` che cresce nella cartella Caches.
 
 ### Accessibilità e altre versioni di macOS
 
-☐ **C-37** VoiceOver: menu degli account, righe dei messaggi, anello dell'account.
-☐ **C-38** macOS 14 e 15: intestazioni di sezione, icone, selezione con accento personalizzato (lì resta quella di sistema).
+- ☐ **C-37** VoiceOver: menu degli account, righe dei messaggi, anello dell'account.
+- ☐ **C-38** macOS 14 e 15: intestazioni di sezione, icone, selezione con accento personalizzato (lì resta quella di sistema).
 
 ## Ondata 3 — parità Gmail
 
