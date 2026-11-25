@@ -6,6 +6,17 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **A remote image that fails to load is hidden.** With remote images allowed,
+  a failed image without alternative text now shows nothing, as in Gmail,
+  instead of a blue "?" icon. Images with alternative text are unchanged.
+
+- **Signatures per account.** MishMail → Settings (⌘,) → Signatures: several
+  signatures per account, a default for new messages and one for replies per
+  sending address, and import of the signatures already set in Gmail. The
+  compose window inserts the right one, replaces it when From changes, and
+  has a menu to pick another or none. Text typed under the signature is never
+  removed.
+
 - **Fixed: messages with slow or missing remote images.** A message whose
   remote images are slow or gone now opens at its full height at once, instead
   of a clipped box for up to 30 seconds. Images still loading are no longer
