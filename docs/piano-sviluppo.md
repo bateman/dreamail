@@ -413,6 +413,6 @@ Aggiornato il 25 novembre 2026.
 | 3E | `feature/gmail-shortcut-actions` | #50 | Unito |
 | 3A | `feature/gmail-server-filters` | #49 | Unito |
 | 4B | `feature/openpgp-support` | #54 | Unito (fondamenta senza libreria, dietro `MISHMAIL_PGP`) |
-| 4B | `feature/openpgp-rpgp-engine` | #56 | In review; non collegata all'app finché il proprietario non sceglie come distribuire la libreria |
+| 4B | `feature/openpgp-rpgp-engine` | #56 | In review; libreria nel repository separato `bateman/dreamail-openpgp` (DEC-050), in attesa che le sessioni vi abbiano accesso |
 | 4A | `feature/google-calendar-integration` | #55 | In review (logica, dietro `MISHMAIL_CALENDAR`) |
 | 4A | `feature/google-calendar-ui` | #57 | In lavorazione (interfaccia) |

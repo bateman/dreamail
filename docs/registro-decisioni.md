@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.15
+Versione: 0.16
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -61,6 +61,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-047 | **Libreria OpenPGP: rPGP (Rust), se non esiste una soluzione già pronta** | Sì a rPGP, a condizione che la sessione verifichi prima che non esista una soluzione già pronta all'uso (ad esempio una libreria in Swift). Se ne esiste una adeguata, decide il proprietario. Motivo della preferenza per Rust rispetto a Go: nessun runtime nell'app e chiavi azzerabili in memoria. GnuPG scartato: programma esterno, incompatibile con la sandbox e con "cancellato vuol dire sparito". |
 | DEC-048 | **Calendar: permesso ampio** | A Google si chiede `calendar.events`: lettura e scrittura sugli eventi di tutti i calendari, condivisi inclusi, così i conflitti mostrano anche i titoli dei calendari condivisi. Scartata l'alternativa stretta (solo eventi propri più libero/occupato). |
 | DEC-049 | **Risposta agli inviti: sempre calendario più e-mail** | Con Calendar collegato la risposta va sul calendario (senza notifiche di Google) e sempre anche per e-mail all'organizzatore. Sostituisce la regola "solo calendario per gli organizzatori Google": i segnali per riconoscerli sono scritti dal mittente e un invito falsificato sarebbe risultato accettato senza avvisare l'organizzatore. Decisione dell'orchestratore dopo le review della PR #55, comunicata al proprietario, ribaltabile dopo la prova con account reali. |
+| DEC-050 | **Libreria OpenPGP in un repository separato** | La libreria rPGP compilata sta nel repository `bateman/dreamail-openpgp`, creato dal proprietario; MishMail la fissa per versione e checksum come già fa con GRDB. Scartata la compilazione in CI da `Vendor/`, che avrebbe richiesto di modificare il controllo `check-package-pins`. La verifica delle alternative richiesta da DEC-047 è fatta: nessuna soluzione Swift o Objective-C pronta è adeguata (tabella con le fonti nella PR #56). |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -455,6 +456,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-25 | **0.13** | Aggiunte DEC-041–046: snooze variante B, Google Calendar perimetro B, prima apertura delle immagini remote, avvio dell'ondata 4, PGP perimetro B, calendari per i conflitti scelti dall'utente. |
 | 2026-11-25 | **0.14** | Aggiunta DEC-047: libreria OpenPGP rPGP (Rust), previa verifica che non esista una soluzione già pronta. |
 | 2026-11-25 | **0.15** | Aggiunte DEC-048 (Calendar: permesso ampio) e DEC-049 (risposta agli inviti sempre su calendario e per e-mail). |
+| 2026-11-25 | **0.16** | Aggiunta DEC-050: libreria OpenPGP in un repository separato. |
 
 ---
 
