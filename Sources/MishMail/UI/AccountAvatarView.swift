@@ -31,11 +31,17 @@ struct AccountAvatarView: View {
     /// Unread count of this account; 0 draws no badge. The badge overlays
     /// the top-trailing edge and adds nothing to the layout.
     var unread = 0
+    /// The selected entry of the account rail: a thicker ring, same frame.
+    var emphasized = false
+    /// An unselected entry of the account rail: ring and photo are drawn
+    /// dimmed; the unread badge stays at full strength.
+    var dimmed = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let metrics = AccountRingMetrics(size: Double(size))
-        let inner = ring == nil ? size : CGFloat(metrics.photoDiameter)
+        let ringWidth = emphasized ? Self.emphasizedRingWidth : CGFloat(AccountRingMetrics.ringWidth)
+        let inner = ring == nil ? size
+            : size - 2 * (ringWidth + CGFloat(AccountRingMetrics.gap))
         ZStack {
             if let ring {
                 let style = AccountRingStyle.resolve(
@@ -43,7 +49,7 @@ struct AccountAvatarView: View {
                     appearance: colorScheme == .dark ? .dark : .light, surface: ring.surface)
                 Circle()
                     .strokeBorder(ringColor(ring, style),
-                                  lineWidth: CGFloat(AccountRingMetrics.ringWidth))
+                                  lineWidth: ringWidth)
                 if style.needsHairline {
                     Circle()
                         .strokeBorder(Self.color(style.hairline),
@@ -52,6 +58,7 @@ struct AccountAvatarView: View {
             }
             disc(diameter: inner)
         }
+        .opacity(dimmed ? 0.6 : 1)
         .frame(width: size, height: size)
         .overlay(alignment: .topTrailing) {
             if unread > 0 { unreadBadge }
@@ -61,6 +68,9 @@ struct AccountAvatarView: View {
         .accessibilityAddTraits(.isImage)
         .accessibilityHidden(decorative)
     }
+
+    /// Ring width of the selected rail entry (the normal ring is 3 pt).
+    static let emphasizedRingWidth: CGFloat = 4.5
 
     private var accessibilityText: String {
         let base = photo == nil ? "\(name) account" : "\(name) account photo"

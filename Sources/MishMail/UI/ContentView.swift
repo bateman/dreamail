@@ -365,7 +365,13 @@ struct ContentView: View {
     }
 
     var body: some View {
-        interactionLayer
+        // The account rail sits outside the mailbox layout, so it stays
+        // visible whatever the sidebar does, and the layout mode is derived
+        // from the width that is left of it.
+        HStack(spacing: 0) {
+            AccountRail()
+            interactionLayer
+        }
         // Single ComposeView host for both floating and inline so presentation
         // flips keep editor state. Floating = bottom-trailing card; inline =
         // bottom of the reading-pane column (leading inset skips sidebar/list).
@@ -1819,7 +1825,8 @@ struct Sidebar: View {
             // Header: account (avatar, name, address) with
             // compose right next to it, search on its own row below.
             HStack(spacing: 6) {
-                AccountSwitcher()
+                // The account switcher lives in the rail (AccountRail).
+                Spacer(minLength: 0)
                 Button {
                     store.openCompose(.init(replyTo: nil))
                 } label: {
@@ -1906,7 +1913,6 @@ struct Sidebar: View {
             .environment(\.defaultMinListRowHeight, 30)
             .scrollContentBackground(.hidden)
 
-            // Settings pinned at the bottom (also Cmd-, from anywhere).
             Divider()
             if store.demoMode {
                 HStack(spacing: 7) {
@@ -1942,22 +1948,8 @@ struct Sidebar: View {
                 .disabled(updates.activity != .idle)
                 .help("Install MishMail \(release.version) and relaunch")
             }
-            SettingsLink {
-                HStack(spacing: 7) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 12))
-                    Text("Settings")
-                        .font(.system(size: 12.5))
-                    Spacer()
-                    Text("⌘,")
-                        .font(.caption).foregroundStyle(.tertiary)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .help("Settings (⌘,)")
+            // Settings moved to the account rail (AccountRail).
+            Color.clear.frame(height: 8)
         }
         .background(Color.mailSidebar)
         .confirmationDialog(
@@ -2387,252 +2379,6 @@ struct SearchResultsPanel: View {
             guard !Task.isCancelled else { return }
             threadPreview = matches
         }
-    }
-}
-
-/// Account scope switcher: unified, or one account only.
-/// Accounts carry user-defined labels ("Personal", "Fund", …).
-/// A Button + popover, NOT a Menu: macOS flattens custom views in Menu
-/// labels, which drops the avatar and name entirely.
-struct AccountSwitcher: View {
-    @Environment(MailStore.self) var store
-    /// `@Environment` has no projected value, so controls that need two-way
-    /// access to the store go through this instead of `$store`.
-    private var bound: Bindable<MailStore> { Bindable(store) }
-    @State private var showMenu = false
-    /// Id of the account row currently being dragged, for the fade feedback
-    /// and to resolve source/destination indices on drop.
-    @State private var draggingAccountId: String?
-
-    var body: some View {
-        Button {
-            showMenu = true
-        } label: {
-            HStack(spacing: 8) {
-                if let account = activeAccount {
-                    avatar(for: account, size: 35, surface: .sidebar)
-                } else {
-                    allInboxesIcon(size: 35)
-                }
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 3) {
-                        Text(title)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                    Text(subtitle)
-                        .font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title), \(subtitle)")
-        .accessibilityValue(Self.unreadValue(activeUnread))
-        .accessibilityIdentifier("accountSwitcher")
-        .popover(isPresented: $showMenu, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 1) {
-                accountRow(nil, shortcut: 1)
-                ForEach(Array(store.accounts.enumerated()), id: \.element.id) { index, account in
-                    accountRow(account, shortcut: index + 2)
-                        .opacity(draggingAccountId == account.id ? 0.4 : 1)
-                        .animation(.easeInOut(duration: 0.08), value: draggingAccountId)
-                        .onDrag {
-                            draggingAccountId = account.id
-                            return NSItemProvider(object: account.id as NSString)
-                        }
-                        .onDrop(of: [.text], delegate: AccountDropDelegate(
-                            target: account, draggingId: $draggingAccountId, store: store))
-                }
-                // Discoverability: grips alone can read as decoration; a
-                // one-line caption matches LabelOrganizer and only appears
-                // when reorder is possible (2+ accounts).
-                if canReorderAccounts {
-                    Text("Drag to reorder")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.top, 4)
-                        .padding(.bottom, 2)
-                }
-                Divider().padding(.vertical, 4)
-                FilterMenuRow(icon: "plus", title: store.connectingAccount ? "Connecting…" : "Add Google Account…") {
-                    showMenu = false
-                    store.addAccount()
-                }
-                .disabled(store.connectingAccount)
-                FilterMenuRow(icon: "pencil", title: "Edit Account Labels…") {
-                    showMenu = false
-                    store.editingAccountLabels = true
-                }
-                .accessibilityIdentifier("editAccountLabels")
-            }
-            .padding(8)
-            .frame(width: 280)
-            // Catch-all: a drop that lands on the divider, "Add Google
-            // Account…" row, or empty padding (not an account row) still
-            // needs to clear the fade — the per-row AccountDropDelegate
-            // only fires when the drop lands on another account row.
-            .onDrop(of: [.text], isTargeted: nil) { _ in
-                draggingAccountId = nil
-                return true
-            }
-        }
-        // A drag that ends outside the popover (or the popover closing
-        // mid-drag) never reaches any onDrop — clear the fade so the source
-        // row isn't stuck dimmed after reopening.
-        .onChange(of: showMenu) { if !showMenu { draggingAccountId = nil } }
-        .sheet(isPresented: bound.editingAccountLabels) {
-            AccountLabelsEditor()
-        }
-    }
-
-    /// True when the switcher can reorder — needs at least two real accounts.
-    /// "All accounts" stays pinned and never shows a grip.
-    private var canReorderAccounts: Bool { store.accounts.count > 1 }
-
-    /// One row of the account popover: optional drag grip, avatar, name +
-    /// address, checkmark. `shortcut` is the ⌘-digit that switches to this
-    /// scope from anywhere.
-    private func accountRow(_ account: Account?, shortcut: Int? = nil) -> some View {
-        let selected = store.activeAccountId == account?.id
-        return Button {
-            store.setActiveAccount(account?.id)
-            showMenu = false
-        } label: {
-            HStack(spacing: 8) {
-                // Leading grip on reorderable account rows; matching spacer
-                // on "All accounts" so avatars stay column-aligned.
-                if canReorderAccounts {
-                    if account != nil {
-                        // Visual + pointer-tooltip only — hide from AX so the
-                        // row button's name stays "Name, address…" instead of
-                        // leading with "Drag to reorder". Hint lives on the
-                        // Button below; caption text covers static discovery.
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 12)
-                            .help("Drag to reorder")
-                            .accessibilityHidden(true)
-                    } else {
-                        Color.clear.frame(width: 12)
-                    }
-                }
-                if let account {
-                    avatar(for: account, size: 29, surface: .popover)
-                } else {
-                    allInboxesIcon(size: 29)
-                }
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(account.map { AccountLabelColor.title($0) } ?? "All accounts")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .lineLimit(1)
-                    Text(account?.id ?? inboxCountLabel)
-                        .font(.system(size: 10.5)).foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.accentForeground)
-                }
-                if let shortcut, shortcut <= 9 {
-                    Text("⌘\(shortcut)")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 6).padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint(account != nil && canReorderAccounts ? "Drag to reorder" : "")
-        .accessibilityValue(account.map { Self.unreadValue(unread(for: $0)) } ?? "")
-        .hoverTint()
-    }
-
-    /// Stacked-trays icon for the unified "All accounts" scope, in the
-    /// avatar column. The frame matches the ringed avatars; the glyph keeps
-    /// its size from before the ring (frame 7 pt larger).
-    private func allInboxesIcon(size: CGFloat) -> some View {
-        Image(systemName: "tray.2.fill")
-            .font(.system(size: (size - 7) * 0.54)).foregroundStyle(.secondary)
-            .frame(width: size, height: size)
-    }
-
-    /// The account's Google photo, or the colored circle with the first
-    /// initial, ringed in the account's label color.
-    private func avatar(for account: Account, size: CGFloat,
-                        surface: AccountRingStyle.Surface) -> some View {
-        AccountAvatarView(name: AccountLabelColor.title(account), key: account.id, size: size,
-                          photo: store.accountPhotos[account.id],
-                          ring: .init(storedHex: account.labelColor, surface: surface),
-                          decorative: true,
-                          unread: unread(for: account))
-    }
-
-    /// Unread of one account, for its avatar badge and the row's value.
-    private func unread(for account: Account) -> Int {
-        store.accountUnread[account.id] ?? 0
-    }
-
-    /// VoiceOver value of a switcher button; empty without unread mail.
-    private static func unreadValue(_ count: Int) -> String {
-        count > 0 ? "\(count) unread" : ""
-    }
-
-    private var activeUnread: Int {
-        activeAccount.map { unread(for: $0) } ?? 0
-    }
-
-    private var activeAccount: Account? {
-        store.activeAccountId.flatMap { id in store.accounts.first { $0.id == id } }
-    }
-
-    /// The account's label, else its sender name, else its address
-    /// (`AccountLabelColor.title`); the address is the second line.
-    private var title: String {
-        activeAccount.map { AccountLabelColor.title($0) } ?? "All accounts"
-    }
-
-    private var inboxCountLabel: String {
-        store.accounts.count == 1 ? "1 inbox" : "\(store.accounts.count) inboxes"
-    }
-
-    private var subtitle: String {
-        store.activeAccountId ?? inboxCountLabel
-    }
-}
-
-/// Live-reorders the account switcher as a dragged row crosses a neighbor —
-/// the standard SwiftUI reorderable-list pattern (List's `.onMove` isn't
-/// available here since the popover is a plain VStack, not a List).
-private struct AccountDropDelegate: DropDelegate {
-    let target: Account
-    @Binding var draggingId: String?
-    let store: MailStore
-
-    func dropEntered(info: DropInfo) {
-        guard let draggingId, draggingId != target.id,
-              let from = store.accounts.firstIndex(where: { $0.id == draggingId }),
-              let to = store.accounts.firstIndex(where: { $0.id == target.id }) else { return }
-        store.reorderAccounts(from: IndexSet(integer: from), to: to > from ? to + 1 : to)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        draggingId = nil
-        return true
     }
 }
 

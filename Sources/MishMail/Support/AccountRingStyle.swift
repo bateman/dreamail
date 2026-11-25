@@ -15,6 +15,8 @@ struct AccountRingStyle: Equatable, Sendable {
         case sidebar
         /// The account switcher popover.
         case popover
+        /// The account rail left of the sidebar (`AccountRailPalette`).
+        case rail
         /// A grouped form: Settings → Accounts and "Edit Account Labels…".
         case groupedForm
     }
@@ -38,6 +40,8 @@ struct AccountRingStyle: Equatable, Sendable {
         switch (surface, appearance) {
         case (.sidebar, .light): return [LabelRGB(hex: 0xF7F7F5)]
         case (.sidebar, .dark): return [LabelRGB(hex: 0x232323)]
+        case (.rail, .light): return [LabelRGB(hex: AccountRailPalette.backgroundLight)]
+        case (.rail, .dark): return [LabelRGB(hex: AccountRailPalette.backgroundDark)]
         case (.popover, .light): return [LabelRGB(hex: 0xFFFFFF), LabelRGB(hex: 0xECECEC)]
         case (.popover, .dark): return [LabelRGB(hex: 0x191919), LabelRGB(hex: 0x2C2C2C)]
         case (.groupedForm, .light): return [LabelRGB(hex: 0xFFFFFF), LabelRGB(hex: 0xF2F2F2)]
