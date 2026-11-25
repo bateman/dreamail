@@ -2839,7 +2839,7 @@ final class AppDatabase: @unchecked Sendable {
         m.registerMigration("v61") { db in
             try CalendarStore.createTables(db)
         }
-        // v63 (v62 is reserved for OpenPGP): the signatures of each account
+        // v63 (v62 is reserved for the encryption work): the signatures of each account
         // and the default of each sending address, cascading from the
         // account (`SignatureStore`).
         m.registerMigration("v63") { db in
