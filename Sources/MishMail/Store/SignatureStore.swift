@@ -6,7 +6,7 @@ import GRDB
 /// recipient sees is rendered from it at send time by the same code as the
 /// rest of the message (`ComposeQuote.authoredHeadHTML`), which escapes
 /// every character it does not itself emit.
-struct SignatureRecord: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
+struct SignatureRecord: Codable, Identifiable, Hashable, FetchableRecord, MutablePersistableRecord {
     static let databaseTableName = "signature"
     var id: Int64?
     var accountId: String
