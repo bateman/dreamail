@@ -168,8 +168,9 @@ jobs:
     # `make ui-test-ci` starts one on any pushed branch.
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
-    # About twelve minutes with setup.
-    timeout-minutes: 25
+    # About 25 minutes with setup as of November 2026 (main took 22 for the
+    # tests alone on 113c76c); the budget leaves room for a slow runner.
+    timeout-minutes: 35
     # Separate job so a UI hang or desktop hijack cannot hide unit-test results.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

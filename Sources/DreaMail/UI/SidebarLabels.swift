@@ -159,8 +159,9 @@ struct SidebarLabelRow: View {
             SidebarLabelTag(colors: node.colors)
         }
         .listItemTint(.monochrome)
-        // The full width up to the count, so the "⋮" sits right before it.
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // While "⋮" shows: the full width up to the count, so it sits right
+        // before it. At rest the row is the plain sidebar label.
+        .modifier(LabelRowFill(active: showsMenuButton(selected)))
         // Gmail's "⋮" takes the count's place on hover; on the open label it
         // is drawn beside the count, which stays.
         .modifier(SidebarCount(count: hidesCount ? 0 : unread,
@@ -173,11 +174,9 @@ struct SidebarLabelRow: View {
         .simultaneousGesture(
             TapGesture().onEnded { store.goTo(view) },
             including: reselect ? .gesture : .subviews)
-        .overlay(alignment: .trailing) {
-            if showsMenuButton(selected) {
-                LabelMenuButton(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
-            }
-        }
+        .modifier(LabelRowDots(active: showsMenuButton(selected)) {
+            LabelMenuButton(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
+        })
         .onHover { hovering = $0 }
         .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
         .contextMenu {
@@ -197,6 +196,34 @@ extension SidebarLabelRow {
     }
     /// The count gives way to "⋮" only while the pointer is on the row.
     fileprivate var hidesCount: Bool { hovering }
+}
+
+/// The label row's width while "⋮" shows; nothing at rest.
+private struct LabelRowFill: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if active {
+            content.frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            content
+        }
+    }
+}
+
+/// The "⋮" over the trailing end of the row, only while it shows, so a
+/// row at rest has no overlay at all.
+private struct LabelRowDots<Dots: View>: ViewModifier {
+    let active: Bool
+    @ViewBuilder let dots: () -> Dots
+
+    func body(content: Content) -> some View {
+        if active {
+            content.overlay(alignment: .trailing) { dots() }
+        } else {
+            content
+        }
+    }
 }
 
 /// Gmail's label glyph: a tag filled with the label's color (the Mac-only

@@ -67,7 +67,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         return !element.exists
     }
 
-    func testMenuOpensFromTheDotsAndFromRightClickWithGmailsItems() {
+    func testMenuFromDotsAndRightClickAndDotsDoNotReopenTheLabel() {
         let app = launch()
         let research = label("Label_research", in: app)
         XCTAssertTrue(research.waitForExistence(timeout: 10))
@@ -97,15 +97,11 @@ final class SidebarLabelMenuUITests: XCTestCase {
                           "\(title) must be in the context menu")
         }
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-    }
 
-    /// On the open label, "⋮" opens the menu only: it must not also run
-    /// the row's tap, which would reopen the label and close the open
-    /// conversation.
-    func testDotsOnTheOpenLabelDoNotReopenIt() {
-        let app = launch()
-        let research = label("Label_research", in: app)
-        XCTAssertTrue(research.waitForExistence(timeout: 10))
+        // On the open label, "⋮" opens the menu only: it must not also run
+        // the row's tap, which would reopen the label and close the open
+        // conversation. (One launch for both checks: the UI job has a time
+        // budget.)
         research.click()
         let row = element("threadRow.\(account):t2", in: app)
         XCTAssertTrue(row.waitForExistence(timeout: 5))
@@ -114,7 +110,6 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(subject.waitForExistence(timeout: 5), "the conversation is open")
 
         research.hover()
-        let dots = element("sidebar.label.menu.\(account).Label_research", in: app)
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label shows its ⋮")
         dots.click()
         XCTAssertTrue(menuItem("labelMenu.edit", "Edit", in: app).waitForExistence(timeout: 5))
@@ -122,7 +117,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(subject.exists, "the ⋮ click did not reopen the label")
     }
 
-    func testParentColorGoesToItsSublabels() {
+    func testParentColorGoesToItsSublabelsAndRemoveAsksFirst() {
         let app = launch()
         let vendors = label("Label_vendors", in: app)
         let aws = label("Label_vendors_aws", in: app)
@@ -152,6 +147,23 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(red.waitForExistence(timeout: 5))
         XCTAssertTrue(red.isSelected, "the parent's color went to Vendors/AWS")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitForAbsence(red))
+
+        // Remove asks first, and Cancel keeps the label (same launch: the UI
+        // job has a time budget).
+        XCTAssertTrue(reveal(vendors, in: app))
+        vendors.rightClick()
+        let remove = menuItem("labelMenu.remove", "Remove label", in: app)
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.click()
+        let cancel = app.buttons.matching(NSPredicate(
+            format: "identifier == %@ OR title == %@", "labelRemove.cancel", "Cancel")).firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "Remove asks for confirmation")
+        // Return presses the default button, Cancel.
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitForAbsence(cancel))
+        XCTAssertTrue(vendors.exists, "Cancel keeps the label")
+        XCTAssertTrue(aws.exists, "and its sublabel")
     }
 
     func testHideInLabelListMovesTheLabelUnderMore() {
@@ -171,26 +183,5 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(reveal(more, in: app), "the labels' More row can be scrolled to")
         more.click()
         XCTAssertTrue(research.waitForExistence(timeout: 5), "More shows it")
-    }
-
-    /// Remove asks first, and Cancel keeps the label.
-    func testRemoveAsksAndCancelKeepsTheLabel() {
-        let app = launch()
-        let vendors = label("Label_vendors", in: app)
-        XCTAssertTrue(vendors.waitForExistence(timeout: 10))
-        XCTAssertTrue(reveal(vendors, in: app))
-        vendors.rightClick()
-        let remove = menuItem("labelMenu.remove", "Remove label", in: app)
-        XCTAssertTrue(remove.waitForExistence(timeout: 5))
-        remove.click()
-        let cancel = app.buttons.matching(NSPredicate(
-            format: "identifier == %@ OR title == %@", "labelRemove.cancel", "Cancel")).firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "Remove asks for confirmation")
-        // Return presses the default button, Cancel.
-        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
-        XCTAssertTrue(waitForAbsence(cancel))
-        XCTAssertTrue(vendors.exists, "Cancel keeps the label")
-        XCTAssertTrue(reveal(vendors, in: app))
-        XCTAssertTrue(label("Label_vendors_aws", in: app).exists)
     }
 }
