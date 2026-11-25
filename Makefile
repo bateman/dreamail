@@ -289,11 +289,12 @@ build: gen
 		$(WARNING_FLAGS)
 
 # Build the test app and launch it in place — the "let me look at my change"
-# verb. Launches with the fictional demo inbox by default (see DemoSeed.swift)
-# so debugging never involves real mail; `make run DEMO=0` gets the empty
-# real-account Debug app for testing sign-in/sync.
-DEMO ?= 1
-# Perf harness console logs: PERF=1 make run DEMO=0
+# verb. Launches the real-account Debug app by default (isolated data, needs a
+# stable signing identity: `make signing-doctor`). `make run DEMO=1` (or
+# `make demo`) launches the fictional demo inbox instead (see DemoSeed.swift),
+# for screenshots and for debugging without real mail.
+DEMO ?= 0
+# Perf harness console logs: PERF=1 make run
 # (signposts always emit; Console.app subsystem io.github.bateman.MishMail.perf)
 PERF ?= 0
 # Check signing before the build so a refusal doesn't cost a full compile.
@@ -301,7 +302,8 @@ require-run-signing:
 	@if [ "$(DEMO)" != "1" ] && [ "$(VALID_SIGNING_IDENTITY)" != "yes" ]; then \
 		echo "Refusing to launch a real inbox with an ad-hoc signature."; \
 		echo "Ad-hoc rebuilds repeatedly ask for Keychain access."; \
-		echo "Run 'make signing-doctor' for the free Personal Team setup."; \
+		echo "Set up signing: run 'make signing-doctor' (free Personal Team)."; \
+		echo "Or launch the fictional demo inbox without signing: make run DEMO=1"; \
 		exit 1; \
 	fi
 
@@ -348,7 +350,7 @@ signing-doctor:
 		echo "  3. Click + → Apple Development"; \
 		echo "  4. Put that Team ID in Config/Local.xcconfig (see README)"; \
 		echo ""; \
-		echo "The fictional demo remains available with: make run"; \
+		echo "The fictional demo remains available with: make run DEMO=1"; \
 		exit 1; \
 	fi
 
