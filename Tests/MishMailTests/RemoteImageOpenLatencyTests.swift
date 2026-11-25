@@ -97,6 +97,7 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         }
     }
 
+    @MainActor
     private struct Harness {
         let webView: WKWebView
         let pane: Pane
