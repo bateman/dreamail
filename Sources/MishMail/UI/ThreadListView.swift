@@ -376,7 +376,7 @@ struct ThreadListView: View {
                     .help("Back to \(store.selectedView.title) (Esc)")
                 }
                 .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(Color.mailAccent.opacity(0.08))
+                .background(.accentFill.opacity(0.08))
                 Divider()
             }
             FilterBar()
@@ -485,7 +485,7 @@ struct ThreadListView: View {
         }
         .font(.system(size: 12 * fontScale))
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(Color.mailAccent.opacity(0.08))
+        .background(.accentFill.opacity(0.08))
     }
 }
 
@@ -599,14 +599,12 @@ private struct ThreadListSections: View, Equatable {
                         .tag(thread.id)
                         .id(thread.id)
                         .accessibilityIdentifier("threadRow.\(thread.id)")
-                        // READ rows recede on a
-                        // grey wash (adapts to dark mode); unread rows
-                        // sit on the plain background and pop.
+                        // Read-row wash, checked wash, and with a custom accent the focused row's highlight
+                        // is drawn here (`AccentSelectionBackground`).
                         .listRowBackground(
-                            checked
-                                ? Color.mailAccent.opacity(0.10)
-                                : (thread.isUnread
-                                    ? Color.clear : Color.primary.opacity(0.05)))
+                            ThreadRowBackground(
+                                focus: store.listFocus, threadId: thread.id,
+                                checked: checked, unread: thread.isUnread))
                         .swipeActions(edge: .trailing) {
                             Button { store.archive(thread) } label: {
                                 Label("Archive", systemImage: "archivebox")
@@ -1510,7 +1508,7 @@ struct FilterBar: View {
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.mailAccent)
+                        .foregroundStyle(.accentForeground)
                 }
             }
             .padding(.horizontal, 6).padding(.vertical, 4)
@@ -1534,6 +1532,7 @@ struct FilterBar: View {
 /// with a slightly brighter pill fill. Active chips stay accent-tinted and
 /// only lift the fill so the blue doesn't fight the hover cue.
 private struct FilterChipLabel: View {
+    @Environment(\.mailAccent) private var accent
     let title: String
     let icon: String
     let active: Bool
@@ -1558,19 +1557,19 @@ private struct FilterChipLabel: View {
     }
 
     private var iconColor: Color {
-        if active { return .mailAccent }
+        if active { return accent.foreground }
         // Rest muted → primary on hover: the "icons light up" feedback.
         return hovering ? .primary : .secondary
     }
 
     private var textColor: Color {
-        if active { return .mailAccent }
+        if active { return accent.text }
         return hovering ? .primary : .secondary
     }
 
     private var fill: Color {
         if active {
-            return Color.mailAccent.opacity(hovering ? 0.22 : 0.16)
+            return accent.fill.opacity(hovering ? 0.22 : 0.16)
         }
         return Color.secondary.opacity(hovering ? 0.16 : 0.10)
     }
@@ -1585,7 +1584,7 @@ private struct ActiveFilterChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(Color.mailAccent)
+            Text(title).font(.caption).foregroundStyle(.accentText)
             Button(action: remove) {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
                     .pmHitTarget(extra: 8)
@@ -1593,7 +1592,7 @@ private struct ActiveFilterChip: View {
             .buttonStyle(PressScaleButtonStyle()).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(Color.mailAccent.opacity(hovering ? 0.22 : 0.16), in: Capsule())
+        .background(.accentFill.opacity(hovering ? 0.22 : 0.16), in: Capsule())
         .contentShape(Capsule())
         .animation(PMMotion.interactive, value: hovering)
         .onHover { hovering = $0 }
@@ -1612,9 +1611,9 @@ private struct ActiveLabelChipLabel: View {
             LabelDot(colors: colors, size: 8)
             Text(name).font(.caption)
         }
-        .foregroundStyle(Color.mailAccent)
+        .foregroundStyle(.accentText)
         .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(Color.mailAccent.opacity(hovering ? 0.22 : 0.16), in: Capsule())
+        .background(.accentFill.opacity(hovering ? 0.22 : 0.16), in: Capsule())
         .contentShape(Capsule())
         .animation(PMMotion.interactive, value: hovering)
         .onHover { hovering = $0 }
@@ -1680,9 +1679,9 @@ struct FaviconView: View {
     var body: some View {
         Text(letter)
             .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(Color.mailAccent)
+            .foregroundStyle(.accentText)
             .frame(width: 16, height: 16)
-            .background(Color.mailAccent.opacity(0.12), in: Circle())
+            .background(.accentFill.opacity(0.12), in: Circle())
     }
 
     private var letter: String {
@@ -1755,6 +1754,10 @@ struct ThreadRow: View, Equatable {
     let onSnooze: () -> Void
     let onTrash: () -> Void
     @State private var hovering = false
+    /// `.increased` while the row is the emphasized selection.
+    @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.mailAccent) private var accent
+    @Environment(\.colorScheme) private var colorScheme
 
     // Closures are deliberately excluded: a skipped body keeps the OLD
     // captures, which is safe only because they capture `store` (stable
@@ -1764,6 +1767,20 @@ struct ThreadRow: View, Equatable {
     // through the dynamic-property path and are not gated by ==.)
     static func == (lhs: ThreadRow, rhs: ThreadRow) -> Bool {
         lhs.model == rhs.model
+    }
+
+    /// On a selection painted in a custom accent: the rule's white or
+    /// black for every text and glyph of the row; nil elsewhere (AppKit
+    /// already turns the usual colours white on its own highlight).
+    private var ink: Color? {
+        model.isFocused ? SelectionInk.color(prominence: prominence, accent: accent) : nil
+    }
+
+    /// `normal`, or the selection ink at the same emphasis, as long as the
+    /// dimmed ink still reaches 4.5:1 on the accent (else full strength).
+    private func inked(_ normal: Color, emphasis: Double = 1) -> Color {
+        guard let ink else { return normal }
+        return ink.opacity(accent.palette(scheme: colorScheme).inkOpacity(emphasis))
     }
 
     private var thread: MailThread { model.thread }
@@ -1782,7 +1799,7 @@ struct ThreadRow: View, Equatable {
             } label: {
                 Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 14 * fontScale))
-                    .foregroundStyle(isChecked ? Color.mailAccent : Color.secondary.opacity(0.55))
+                    .foregroundStyle(isChecked ? inked(accent.foreground) : inked(Color.secondary.opacity(0.55), emphasis: 0.7))
                     .frame(width: 16 * fontScale, height: 16 * fontScale)
                     .contentShape(Rectangle())
             }
@@ -1791,7 +1808,7 @@ struct ThreadRow: View, Equatable {
             .help(isChecked ? "Deselect (x)" : "Select (x). Shift-click for a range.")
 
             Circle()
-                .fill(thread.isUnread ? Color.mailAccent : .clear)
+                .fill(thread.isUnread ? inked(accent.foreground) : .clear)
                 .frame(width: 7, height: 7)
 
             // Middle content: when this row is already selected (e.g. the
@@ -1809,16 +1826,16 @@ struct ThreadRow: View, Equatable {
                     if thread.messageCount > 1 {
                         Text("\(thread.messageCount)")
                             .font(.system(size: 11.5 * fontScale).monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(inked(.secondary, emphasis: 0.8))
                     }
                 }
                 .frame(width: 168 * fontScale, alignment: .leading)
 
                 (Text(model.display.subject)
                     .fontWeight(thread.isUnread ? .semibold : .medium)
-                    .foregroundColor(thread.isUnread ? .primary : .primary.opacity(0.65))
+                    .foregroundColor(thread.isUnread ? inked(.primary) : inked(.primary.opacity(0.65), emphasis: 0.9))
                  + Text("  \(model.display.snippet)")
-                    .foregroundColor(.secondary))
+                    .foregroundColor(inked(.secondary, emphasis: 0.8)))
                     .font(.system(size: 14 * fontScale))
                     .lineLimit(1)
 
@@ -1826,13 +1843,20 @@ struct ThreadRow: View, Equatable {
                 if let category = model.category {
                     let tint = Color.aiCategory(category)
                     let chrome = ThreadRowPillChrome.forFocused(model.isFocused)
-                    // AI palette is mid/dark semantic colors — white on selection.
-                    let fg: Color = chrome == .onSelection ? .white : tint
+                    // AI palette is mid/dark semantic colors — white on the
+                    // system selection. On a selection painted in a custom
+                    // accent the tint could match it: the pill becomes an
+                    // outline in the selection ink.
+                    let fg: Color = ink ?? (chrome == .onSelection ? .white : tint)
                     Text(category)
                         .font(.system(size: 10.5 * fontScale, weight: .medium))
                         .foregroundStyle(fg)
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(tint.opacity(chrome.fillOpacity), in: Capsule())
+                        .background(ink == nil ? tint.opacity(chrome.fillOpacity) : .clear,
+                                    in: Capsule())
+                        .overlay {
+                            if let ink { Capsule().strokeBorder(ink, lineWidth: 1) }
+                        }
                         .fixedSize()
                 }
 
@@ -1861,24 +1885,24 @@ struct ThreadRow: View, Equatable {
                     if model.userLabels.count > 2 {
                         Text("+\(model.userLabels.count - 2)")
                             .font(.system(size: 11 * fontScale).monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(inked(.secondary, emphasis: 0.8))
                     }
                     if thread.hasAttachment {
                         Image(systemName: "paperclip")
-                            .font(.system(size: 12 * fontScale)).foregroundStyle(.secondary)
+                            .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.secondary, emphasis: 0.8))
                     }
                     if thread.reminderAt != nil {
                         // Neutral like the paperclip: the glyph is the cue.
                         Image(systemName: "bell.fill")
-                            .font(.system(size: 12 * fontScale)).foregroundStyle(.secondary)
+                            .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.secondary, emphasis: 0.8))
                     }
                     if thread.isStarred {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 12 * fontScale)).foregroundStyle(.yellow)
+                            .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.yellow))
                     }
                     Text(thread.lastDate, format: relativeFormat)
                         .font(.system(size: 12 * fontScale).monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(inked(.secondary, emphasis: 0.8))
                         .frame(minWidth: 52, alignment: .trailing)
                 }
                 .opacity(hovering ? 0 : 1)
@@ -1931,15 +1955,15 @@ struct ThreadRow: View, Equatable {
     private var participantsText: Text {
         let names = Text(participantsDisplay)
             .fontWeight(thread.isUnread ? .semibold : .regular)
-            .foregroundColor(thread.isUnread ? Color.primary : Color.primary.opacity(0.65))
+            .foregroundColor(thread.isUnread ? inked(.primary) : inked(Color.primary.opacity(0.65), emphasis: 0.9))
         let style = ThreadListDraftCue.showsMarker(
             inDrafts: thread.inDrafts,
             messageCount: thread.messageCount,
             participants: participantsDisplay)
         guard style != .none else { return names }
-        let marker = Text("Draft").fontWeight(.medium).foregroundColor(.orange)
+        let marker = Text("Draft").fontWeight(.medium).foregroundColor(inked(.orange))
         if style == .draftOnly { return marker }
-        return marker + Text(", ").foregroundColor(.secondary) + names
+        return marker + Text(", ").foregroundColor(inked(.secondary, emphasis: 0.8)) + names
     }
 
     /// Label chip in the label's Gmail color, solid, with readable text.
@@ -1963,7 +1987,7 @@ struct ThreadRow: View, Equatable {
         Button(action: action) {
             Image(systemName: filled ? "\(icon).fill" : icon)
                 .font(.system(size: 13 * fontScale))
-                .foregroundStyle(filled && icon == "star" ? .yellow : .secondary)
+                .foregroundStyle(filled && icon == "star" ? inked(.yellow) : inked(.secondary, emphasis: 0.8))
                 .padding(3)
                 // Dense row: expand hit without inflating the 18pt trailing strip
                 // (full 40×40 would collide with neighbors — skill allows shrink).
@@ -2060,7 +2084,7 @@ struct CategoriesPopover: View {
                 if on {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.mailAccent)
+                        .foregroundStyle(.accentForeground)
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 7)
@@ -2083,5 +2107,26 @@ struct CategoriesPopover: View {
         .help(on
               ? "Stop \(filter.wrappedValue.exclude ? "excluding" : "requiring") \(name)"
               : "\(filter.wrappedValue.exclude ? "Exclude" : "Require") \(name)")
+    }
+}
+
+/// A thread row's list background: the read-row wash, the checked-row
+/// accent wash, and (custom accent only) the selection highlight. Observes
+/// list focus itself so `ThreadListSections` never rebuilds on ↓.
+private struct ThreadRowBackground: View {
+    @ObservedObject var focus: ListFocusState
+    let threadId: String
+    let checked: Bool
+    let unread: Bool
+    @Environment(\.mailAccent) private var accent
+
+    var body: some View {
+        // READ rows recede on a grey wash (adapts to dark mode); unread
+        // rows sit on the plain background and pop.
+        let base: Color = checked
+            ? accent.fill.opacity(0.10)
+            : (unread ? Color.clear : Color.primary.opacity(0.05))
+        AccentSelectionBackground(selected: focus.id == threadId, accent: accent,
+                                  cornerRadius: 0, unselected: base)
     }
 }

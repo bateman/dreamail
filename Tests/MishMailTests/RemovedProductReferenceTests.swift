@@ -86,6 +86,6 @@ final class RemovedProductReferenceTests: XCTestCase {
     /// The scan must actually see the tree, or an empty result proves nothing.
     func testScanReachesTheSources() throws {
         let colors = try ForkIdentityTests.repoFile("Sources/MishMail/Support/Colors.swift")
-        XCTAssertTrue(colors.contains("static let mailAccent"))
+        XCTAssertTrue(colors.contains("static let mailSidebar"))
     }
 }

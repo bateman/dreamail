@@ -2,7 +2,6 @@ import SwiftUI
 import AppKit
 
 extension NSColor {
-    static let mailAccent = adaptive(light: 0x2383E2, dark: 0x2E9BE8)
     static let mailSidebar = adaptive(light: 0xF7F7F5, dark: 0x232323)
 
     /// Theme-adaptive color from light/dark sRGB hex values.
@@ -19,11 +18,10 @@ extension NSColor {
 
 extension Color {
     // MARK: App palette
-    // Warm near-blacks in dark mode, warm off-whites in light mode, and the
-    // blue accent. Everything theme-adaptive via NSColor providers.
-
-    /// The blue accent, used everywhere the app previously used the system accent.
-    static let mailAccent = Color(nsColor: NSColor.mailAccent)
+    // Warm near-blacks in dark mode, warm off-whites in light mode.
+    // Everything theme-adaptive via NSColor providers. The accent is not
+    // here: it is a setting, provided per window (`MailAccent`,
+    // `.accentFill` / `.accentForeground`).
     /// Main content background (thread list, reading pane).
     static let mailContent = Color(nsColor: .adaptive(light: 0xFFFFFF, dark: 0x191919))
     /// Sidebar background, a step warmer/lighter than the content.
@@ -154,6 +152,21 @@ extension ShapeStyle where Self == Color {
     /// Row title colour for the navigation sidebars, by the same rule.
     static func mailRowTitle(prominence: BackgroundProminence) -> Color {
         prominence == .increased ? .mailOnEmphasizedSelection : Color(nsColor: .labelColor)
+    }
+
+    /// The glyph tint with the accent in effect: on an emphasized selection
+    /// painted in a custom accent (`AccentSelectionBackground`), the
+    /// accent's `onFill` (white or black), else as above.
+    static func mailIcon(selected: Bool, prominence: BackgroundProminence,
+                         accent: MailAccent) -> Color {
+        SelectionInk.color(prominence: prominence, accent: accent)
+            ?? mailIcon(selected: selected, prominence: prominence)
+    }
+
+    /// The row title colour with the accent in effect, by the same rule.
+    static func mailRowTitle(prominence: BackgroundProminence, accent: MailAccent) -> Color {
+        SelectionInk.color(prominence: prominence, accent: accent)
+            ?? mailRowTitle(prominence: prominence)
     }
 
     static var mailOnEmphasizedSelection: Color {

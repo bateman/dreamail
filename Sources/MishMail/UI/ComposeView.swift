@@ -1360,7 +1360,7 @@ struct ComposeView: View {
                                     .font(.system(size: 12))
                                     .lineLimit(1)
                             }
-                            .foregroundStyle(accessory == .snippets ? Color.mailAccent : Color.secondary)
+                            .foregroundStyle(accessory == .snippets ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
                         }
                         .buttonStyle(.plain)
                         // Same as Send: never wrap/compress when "Draft saved" appears.
@@ -1477,13 +1477,13 @@ struct ComposeView: View {
                         } label: {
                             Text("Send")
                                 .font(.system(size: 12.5, weight: .medium))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.onAccentFill)
                                 .padding(.horizontal, 12)
                                 .frame(height: ComposeDraftStatusLayout.rowHeight)
                                 .background(UnevenRoundedRectangle(
                                     topLeadingRadius: 6, bottomLeadingRadius: 6,
                                     bottomTrailingRadius: 0, topTrailingRadius: 0)
-                                    .fill(Color.mailAccent))
+                                    .fill(.accentFill))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -1500,13 +1500,13 @@ struct ComposeView: View {
                         } label: {
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.onAccentFill)
                                 .padding(.horizontal, 7)
                                 .frame(height: ComposeDraftStatusLayout.rowHeight)
                                 .background(UnevenRoundedRectangle(
                                     topLeadingRadius: 0, bottomLeadingRadius: 0,
                                     bottomTrailingRadius: 6, topTrailingRadius: 6)
-                                    .fill(Color.mailAccent))
+                                    .fill(.accentFill))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -2178,7 +2178,7 @@ struct ComposeView: View {
     private var composeAIProposalPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles").foregroundStyle(Color.mailAccent)
+                Image(systemName: "sparkles").foregroundStyle(.accentForeground)
                 TextField("What should this email say?", text: $aiInstructions)
                     .textFieldStyle(.plain)
                     .focused($aiInstructionsFocused)
@@ -2194,7 +2194,7 @@ struct ComposeView: View {
                 } else {
                     Button(proposalPhase.proposal == nil ? "Draft" : "Regenerate") { regenerateAIProposal() }
                         .buttonStyle(.plain)
-                        .foregroundStyle(Color.mailAccent)
+                        .foregroundStyle(.accentText)
                 }
                 Button {
                     stopAIProposal()
@@ -2220,7 +2220,7 @@ struct ComposeView: View {
                     HStack(spacing: 12) {
                         Button("Use draft") { applyAIProposal() }
                             .buttonStyle(PressScaleButtonStyle())
-                            .foregroundStyle(Color.mailAccent)
+                            .foregroundStyle(.accentText)
                             .disabled(!canApplyProposal)
                             .accessibilityIdentifier("compose.aiApply")
                         Button("Copy") {
@@ -2242,7 +2242,7 @@ struct ComposeView: View {
             }
         }
         .padding(10)
-        .background(Color.mailAccent.opacity(0.06),
+        .background(.accentFill.opacity(0.06),
                     in: RoundedRectangle(cornerRadius: PMRadius.md))
         .accessibilityIdentifier("compose.aiPreview")
     }

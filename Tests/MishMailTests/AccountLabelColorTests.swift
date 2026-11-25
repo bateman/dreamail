@@ -137,7 +137,7 @@ final class AccountLabelColorTests: XCTestCase {
     private static func lightHex(_ color: Color) throws -> String {
         let aqua = try XCTUnwrap(NSAppearance(named: .aqua))
         var hex: String?
-        aqua.performAsCurrentDrawingAppearance { hex = AccountLabelColor.hex(from: NSColor(color)) }
+        aqua.performAsCurrentDrawingAppearance { hex = PickedColor.hex(from: NSColor(color)) }
         return try XCTUnwrap(hex)
     }
 
@@ -172,11 +172,11 @@ final class AccountLabelColorTests: XCTestCase {
     }
 
     func testSRGBColorsConvertExactly() {
-        XCTAssertEqual(AccountLabelColor.hex(from: NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6,
+        XCTAssertEqual(PickedColor.hex(from: NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6,
                                                            alpha: 1)), "#336699")
-        XCTAssertEqual(AccountLabelColor.hex(from: Color(.sRGB, red: 0.2, green: 0.4, blue: 0.6)),
+        XCTAssertEqual(PickedColor.hex(from: Color(.sRGB, red: 0.2, green: 0.4, blue: 0.6)),
                        "#336699")
-        XCTAssertEqual(AccountLabelColor.hex(from: NSColor(srgbRed: 1, green: 0, blue: 0,
+        XCTAssertEqual(PickedColor.hex(from: NSColor(srgbRed: 1, green: 0, blue: 0,
                                                            alpha: 0.3)), "#ff0000",
                        "alpha is ignored: rings are opaque")
     }
@@ -185,11 +185,11 @@ final class AccountLabelColorTests: XCTestCase {
         for hex in Self.sampleColors {
             let normalized = LabelRGB.normalizedHex(hex)
             let ns = AccountLabelColor.nsColor(hex: hex, accountId: "a@x.com")
-            XCTAssertEqual(AccountLabelColor.hex(from: ns), normalized, hex)
-            XCTAssertEqual(AccountLabelColor.hex(from: Color(nsColor: ns)), normalized, hex)
+            XCTAssertEqual(PickedColor.hex(from: ns), normalized, hex)
+            XCTAssertEqual(PickedColor.hex(from: Color(nsColor: ns)), normalized, hex)
         }
         // The default (nil) shows the default color in the picker.
-        XCTAssertEqual(AccountLabelColor.hex(from: AccountLabelColor.nsColor(hex: nil,
+        XCTAssertEqual(PickedColor.hex(from: AccountLabelColor.nsColor(hex: nil,
                                                                              accountId: "a@x.com")),
                        AccountLabelColor.defaultHex(for: "a@x.com"))
     }
@@ -197,13 +197,13 @@ final class AccountLabelColorTests: XCTestCase {
     func testWideGamutColorsClampToTheSRGBEdge() throws {
         let extended = NSColor(colorSpace: .extendedSRGB,
                                components: [1.2, -0.1, 0.5, 1], count: 4)
-        let clamped = try XCTUnwrap(LabelRGB(hexString: AccountLabelColor.hex(from: extended)))
+        let clamped = try XCTUnwrap(LabelRGB(hexString: PickedColor.hex(from: extended)))
         XCTAssertEqual(clamped.r, 1, accuracy: 0.001)
         XCTAssertEqual(clamped.g, 0, accuracy: 0.001)
         XCTAssertEqual(clamped.b, 0.5, accuracy: 0.05)
 
         let p3Red = NSColor(displayP3Red: 1, green: 0, blue: 0, alpha: 1)
-        let hex = try XCTUnwrap(AccountLabelColor.hex(from: p3Red))
+        let hex = try XCTUnwrap(PickedColor.hex(from: p3Red))
         let rgb = try XCTUnwrap(LabelRGB(hexString: hex))
         XCTAssertEqual(rgb.r, 1, accuracy: 0.001)
         XCTAssertLessThan(rgb.g, 0.05)
@@ -211,10 +211,10 @@ final class AccountLabelColorTests: XCTestCase {
     }
 
     func testGreysStayGrey() throws {
-        XCTAssertEqual(AccountLabelColor.hex(from: NSColor(white: 0, alpha: 1)), "#000000")
-        XCTAssertEqual(AccountLabelColor.hex(from: NSColor(white: 1, alpha: 1)), "#ffffff")
+        XCTAssertEqual(PickedColor.hex(from: NSColor(white: 0, alpha: 1)), "#000000")
+        XCTAssertEqual(PickedColor.hex(from: NSColor(white: 1, alpha: 1)), "#ffffff")
         for white in [0.25, 0.5, 0.75] {
-            let hex = try XCTUnwrap(AccountLabelColor.hex(from: NSColor(white: white, alpha: 1)))
+            let hex = try XCTUnwrap(PickedColor.hex(from: NSColor(white: white, alpha: 1)))
             let rgb = try XCTUnwrap(LabelRGB(hexString: hex))
             XCTAssertEqual(rgb.r, rgb.g, accuracy: 1.5 / 255, hex)
             XCTAssertEqual(rgb.g, rgb.b, accuracy: 1.5 / 255, hex)
@@ -224,17 +224,17 @@ final class AccountLabelColorTests: XCTestCase {
     func testPickerEchoOfTheShownColorIsNotAPick() {
         let shown = "#336699"
         let same = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 1)
-        XCTAssertNil(AccountLabelColor.pickedHex(same, shown: shown))
-        XCTAssertNil(AccountLabelColor.pickedHex(same, shown: "#336699".uppercased()))
-        XCTAssertNil(AccountLabelColor.pickedHex(Color(nsColor: same), shown: shown))
+        XCTAssertNil(PickedColor.pickedHex(same, shown: shown))
+        XCTAssertNil(PickedColor.pickedHex(same, shown: "#336699".uppercased()))
+        XCTAssertNil(PickedColor.pickedHex(Color(nsColor: same), shown: shown))
         // The default shown in the well, echoed back: still the default.
         let defaultHex = AccountLabelColor.defaultHex(for: "a@x.com")
         let defaultColor = AccountLabelColor.nsColor(hex: nil, accountId: "a@x.com")
-        XCTAssertNil(AccountLabelColor.pickedHex(defaultColor, shown: defaultHex))
+        XCTAssertNil(PickedColor.pickedHex(defaultColor, shown: defaultHex))
         // A different color is a pick.
         let other = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.62, alpha: 1)
-        XCTAssertEqual(AccountLabelColor.pickedHex(other, shown: shown), "#33669e")
-        XCTAssertEqual(AccountLabelColor.pickedHex(Color(nsColor: other), shown: shown), "#33669e")
+        XCTAssertEqual(PickedColor.pickedHex(other, shown: shown), "#33669e")
+        XCTAssertEqual(PickedColor.pickedHex(Color(nsColor: other), shown: shown), "#33669e")
     }
 
     func testEveryResultIsAValidStoredValue() {
@@ -244,7 +244,7 @@ final class AccountLabelColorTests: XCTestCase {
             NSColor(deviceCyan: 1, magenta: 0, yellow: 0, black: 0, alpha: 1),
         ]
         for color in samples {
-            guard let hex = AccountLabelColor.hex(from: color) else {
+            guard let hex = PickedColor.hex(from: color) else {
                 XCTFail("\(color) has an RGB form"); continue
             }
             XCTAssertEqual(LabelRGB.normalizedHex(hex), hex)
