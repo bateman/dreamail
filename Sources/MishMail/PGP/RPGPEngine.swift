@@ -12,69 +12,80 @@ import MishMailRPGP
 /// `LinkedRPGPBindings`, a few lines that call the C functions, is compiled
 /// only when the `MishMailRPGP` module is linked into the build.
 ///
-/// The library is stateless. Keys come from `PGPKeyMaterial` on every call
-/// (private keys from the Keychain, certificates from the encrypted
-/// database, in the step that stores them); nothing is cached here.
+/// The library is stateless. Keys live in `PGPKeyStore` (secret keys in the
+/// Keychain, certificates in the encrypted database, in the step that
+/// stores them) and are read on every call; nothing is cached here.
 struct RPGPEngine: OpenPGPEngine {
     let bindings: any RPGPBindings
-    let keys: PGPKeyMaterial
+    let store: any PGPKeyStore
     var now: @Sendable () -> Date = { Date() }
 
     func verifyDetached(signedData: Data, signature: Data) async throws -> [PGPSignatureResult] {
-        let certs = try await keys.certificates()
+        let certs = try await store.certificates()
         let reply = bindings.verifyDetached(signedData, signature, certs, unixNow)
         return try RPGPReply.decode(reply.json).signatures()
     }
 
     func verifyCleartext(_ message: Data) async throws -> PGPCleartextResult {
-        let certs = try await keys.certificates()
+        let certs = try await store.certificates()
         let reply = bindings.verifyCleartext(message, certs, unixNow)
         let decoded = try RPGPReply.decode(reply.json)
         return PGPCleartextResult(signedText: reply.data, signatures: try decoded.signatures())
     }
 
+    /// Plaintext leaves only with the library's explicit statement that an
+    /// integrity check was verified; anything else is discarded and reported
+    /// as `.notIntegrityProtected`.
     func decrypt(_ message: Data) async throws -> PGPDecryptionResult {
-        let secrets = try await keys.secretKeys()
+        let secrets = try await store.secretKeys()
         guard !secrets.isEmpty else { throw PGPEngineError.noSecretKey }
-        let certs = try await keys.certificates()
-        let passphrase = try await keys.passphrase()
+        let certs = try await store.certificates()
+        let passphrase = try await store.passphrase()
         let reply = bindings.decrypt(message, secrets, passphrase, certs, unixNow)
         let decoded = try RPGPReply.decode(reply.json)
-        return PGPDecryptionResult(plaintext: reply.data,
-                                   integrityProtected: decoded.integrityProtected == true,
-                                   signatures: try decoded.signatures())
+        guard decoded.integrityProtected == true else { throw PGPEngineError.notIntegrityProtected }
+        return PGPDecryptionResult(plaintext: reply.data, signatures: try decoded.signatures())
     }
 
-    /// Scope B: not offered. The protocol keeps the method for scope C.
-    func sign(_ data: Data, as signer: PGPKeyReference, detached: Bool) async throws -> Data {
-        throw PGPEngineError.unsupported
-    }
-
-    /// Scope B: not offered. The protocol keeps the method for scope C.
-    func encrypt(_ data: Data, to recipients: [PGPKeyReference],
-                 signedBy signer: PGPKeyReference?) async throws -> Data {
-        throw PGPEngineError.unsupported
-    }
-
-    /// Reads the keys and says what they are. Storing them (Keychain for
-    /// secret keys, the database for certificates) is the caller's step.
+    /// Reads the keys, then hands them to the store; returns what they are.
     func importKeys(_ data: Data) async throws -> [PGPKeySummary] {
         let reply = bindings.inspectKeys(data, unixNow)
+        let keys = try RPGPReply.decode(reply.json).keys ?? []
+        try await store.add(data)
+        return keys
+    }
+
+    func keys() async throws -> [PGPKeySummary] {
+        var all = Data()
+        all.append(try await store.certificates())
+        all.append(try await store.secretKeys())
+        guard !all.isEmpty else { return [] }
+        let reply = bindings.inspectKeys(all, unixNow)
         return try RPGPReply.decode(reply.json).keys ?? []
+    }
+
+    func deleteKey(_ key: PGPKeyReference) async throws {
+        try await store.remove(key)
     }
 
     private var unixNow: Int64 { Int64(now().timeIntervalSince1970) }
 }
 
-/// Where the engine gets keys for one call.
-struct PGPKeyMaterial: Sendable {
-    /// Every certificate (public key) the user has, concatenated, armored or
-    /// binary.
-    let certificates: @Sendable () async throws -> Data
+/// Where the keys are. The store owns the passphrase prompt and deletion
+/// (`remove` leaves nothing behind, DEC-019); an account's keys go with the
+/// account.
+protocol PGPKeyStore: Sendable {
+    /// Every certificate (public key), concatenated, armored or binary.
+    func certificates() async throws -> Data
     /// Every secret key, concatenated.
-    let secretKeys: @Sendable () async throws -> Data
+    func secretKeys() async throws -> Data
     /// The passphrase for the secret keys; empty when they have none.
-    let passphrase: @Sendable () async throws -> Data
+    func passphrase() async throws -> Data
+    /// Stores keys the engine has read (public into certificates, secret
+    /// into the secret store).
+    func add(_ keys: Data) async throws
+    /// Removes a key, public and secret parts.
+    func remove(_ key: PGPKeyReference) async throws
 }
 
 /// The C functions as Swift closures, so tests can stand in for them.

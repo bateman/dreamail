@@ -6,8 +6,8 @@
 //! message text and no key material; plaintext and signed text travel in
 //! `data` only. Nothing is logged and nothing is kept between calls.
 //!
-//! Scope B: verify, decrypt, read keys. `mm_pgp_sign` and `mm_pgp_encrypt`
-//! are declared so the Swift protocol is complete, and answer `unsupported`.
+//! Scope B (owner's decision): verify, decrypt, read keys. Nothing here signs
+//! or encrypts.
 
 pub mod engine;
 
@@ -158,18 +158,6 @@ pub unsafe extern "C" fn mm_pgp_inspect_keys(data: *const u8, data_len: usize, n
         Ok(keys) => ok(json!({ "ok": true, "keys": keys }), Vec::new()),
         Err(e) => err(e),
     })
-}
-
-/// Not in scope B.
-#[no_mangle]
-pub extern "C" fn mm_pgp_sign() -> MMResult {
-    err(EngineError::Unsupported)
-}
-
-/// Not in scope B.
-#[no_mangle]
-pub extern "C" fn mm_pgp_encrypt() -> MMResult {
-    err(EngineError::Unsupported)
 }
 
 /// Frees both buffers of a result (zeroing them first).

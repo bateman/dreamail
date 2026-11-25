@@ -5,6 +5,9 @@ Run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
 import importlib.util
 import io
+import re
+import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -26,6 +29,7 @@ def load(name: str):
 check_workflows = load("check-workflows")
 check_test_skips = load("check-test-skips")
 check_package_pins = load("check-package-pins")
+needs_build = load("needs-build")
 
 
 class TempFiles(unittest.TestCase):
@@ -331,6 +335,78 @@ class CheckPackagePinsTests(TempFiles):
         with redirect_stdout(out):
             self.assertEqual(check_package_pins.main([str(path)]), 1)
         self.assertIn("package pin violation", out.getvalue())
+
+
+class NeedsBuildTests(TempFiles):
+    def test_docs_only_changes_skip_the_build(self):
+        for paths in (["docs/piano-sviluppo.md"], ["CHANGELOG.md", "CLAUDE.md"],
+                      ["reviews/r.md", ".claude/skills/x/SKILL.md", "docs/screenshots/a.png"]):
+            with self.subTest(paths=paths):
+                self.assertFalse(needs_build.needs_build(paths))
+
+    def test_anything_else_builds(self):
+        # The unit tests read the top-level README, CONTRIBUTING and SECURITY,
+        # and everything under scripts/ and .github/.
+        for paths in ([], ["README.md"], ["CONTRIBUTING.md"], ["SECURITY.md"],
+                      ["scripts/README.md"], [".github/workflows/ci.yml"],
+                      ["docs/a.md", "Sources/MishMail/App/MailStore.swift"],
+                      ["docsx/a.md"], ["Tests/docs/a.md"], ["sub/CHANGELOG.md"]):
+            with self.subTest(paths=paths):
+                self.assertTrue(needs_build.needs_build(paths))
+
+    def git(self, *args: str):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+                        "-c", "commit.gpgsign=false", *args],
+                       cwd=self._dir.name, check=True, capture_output=True)
+
+    def commit(self, files: dict[str, str]):
+        for name, text in files.items():
+            path = Path(self._dir.name) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "change")
+
+    def run_script(self, base: str) -> str:
+        return subprocess.run([sys.executable, str(HERE / "needs-build.py"), base],
+                              cwd=self._dir.name, check=True, capture_output=True,
+                              text=True).stdout
+
+    def test_diff_in_a_repository(self):
+        self.git("init", "-q")
+        self.commit({"Sources/a.swift": "let a = 1\n", "docs/a.md": "# A\n"})
+        self.commit({"docs/a.md": "# A, revised\n"})
+        self.assertEqual(self.run_script("HEAD~1"), "build=false\n")
+        # A move out of Sources/ must count as a change to Sources/.
+        self.git("mv", "Sources/a.swift", "docs/a.swift")
+        self.git("commit", "-q", "-m", "move")
+        self.assertEqual(self.run_script("HEAD~1"), "build=true\n")
+
+    def test_unusable_base_builds(self):
+        self.git("init", "-q")
+        self.commit({"docs/a.md": "# A\n"})
+        for base in ("", "0" * 40, "HEAD", "no-such-commit"):
+            with self.subTest(base=base):
+                self.assertEqual(self.run_script(base), "build=true\n")
+
+    def test_no_repository_reading_test_names_a_skipped_path(self):
+        dirs = "|".join(re.escape(d.rstrip("/")) for d in needs_build.SKIP_DIRS)
+        files = "|".join(re.escape(f) for f in needs_build.SKIP_FILES)
+        pattern = re.compile(rf'"(?:{dirs})(?:/|")|"(?:{files})"')
+        for text in ('repoFile("docs/RELEASING.md")', 'for dir in ["Sources", "docs"]',
+                     '"CHANGELOG.md"'):
+            self.assertTrue(pattern.search(text), text)
+
+        scanned, offenders = 0, []
+        for path in sorted((REPO / "Tests").rglob("*.swift")):
+            text = path.read_text()
+            if not any(key in text for key in ("repoRoot", "repoFile(", "#filePath")):
+                continue
+            scanned += 1
+            offenders += [f"{path.relative_to(REPO)}: {m.group()}"
+                          for m in pattern.finditer(text)]
+        self.assertGreater(scanned, 0)
+        self.assertEqual(offenders, [], "a test reads a path that needs-build.py skips")
 
 
 if __name__ == "__main__":

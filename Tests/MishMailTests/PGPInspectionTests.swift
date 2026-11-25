@@ -3,19 +3,33 @@ import XCTest
 /// The path from a raw message to the engine and back (step 4B), and the
 /// build switch that keeps all of it off.
 final class PGPInspectionTests: XCTestCase {
-    private let from = "Alice Example <alice@example.org>"
 
-    // MARK: - Pipeline
+    private func security(_ message: String, _ engine: any OpenPGPEngine,
+                          decryptPartOnRequest: Bool = false) async -> PGPMessageSecurity? {
+        await PGPInspection.security(ofRaw: PGPCorpus.crlf(message), engine: engine, enabled: true,
+                                     decryptPartOnRequest: decryptPartOnRequest)
+    }
 
-    func testEngineReceivesExactlyTheCanonicalSignedBytes() async throws {
+    private func reason(_ security: PGPMessageSecurity?) throws -> PGPIndicator.Reason {
+        PGPSecurityRules.indicator(for: try XCTUnwrap(security)).reason
+    }
+
+    private func aliceSigned() -> FakeOpenPGPEngine {
         let engine = FakeOpenPGPEngine()
         engine.detachedResults[PGPCorpus.signedPartCanonical] = [.good(signer: FakeOpenPGPEngine.alice)]
+        return engine
+    }
 
+    // MARK: - Signatures
+
+    func testEngineReceivesExactlyTheCanonicalSignedBytes() async throws {
+        let engine = aliceSigned()
         for raw in [PGPCorpus.crlf(PGPCorpus.signedSimple()), PGPCorpus.lf(PGPCorpus.signedSimple())] {
-            let security = await PGPInspection.security(ofRaw: raw, fromHeader: from,
-                                                        engine: engine, enabled: true)
-            let indicator = PGPSecurityRules.indicator(for: try XCTUnwrap(security))
-            XCTAssertEqual(indicator.reason, .signed(address: "alice@example.org"))
+            let result = await PGPInspection.security(ofRaw: raw, engine: engine, enabled: true)
+            XCTAssertEqual(try reason(result), .signed(address: "alice@example.org"))
+            XCTAssertEqual(result?.fromHeader, "Alice Example <alice@example.org>", "From from the raw bytes")
+            XCTAssertEqual(result?.signedContent, PGPCorpus.signedPartCanonical,
+                           "the only content that may be shown as signed")
         }
         XCTAssertEqual(engine.calls.count, 2)
         for case .verifyDetached(let signedData, let signature) in engine.calls {
@@ -28,77 +42,131 @@ final class PGPInspectionTests: XCTestCase {
     /// One changed byte in the signed part: the engine sees different bytes
     /// and the message is not signed.
     func testAChangedSignedPartIsNotSigned() async throws {
-        let engine = FakeOpenPGPEngine()
-        engine.detachedResults[PGPCorpus.signedPartCanonical] = [.good(signer: FakeOpenPGPEngine.alice)]
         let tampered = PGPCorpus.signedSimple().replacingOccurrences(of: "Hello Bob", with: "Hello Bab")
-        let security = await PGPInspection.security(ofRaw: PGPCorpus.crlf(tampered), fromHeader: from,
-                                                    engine: engine, enabled: true)
-        XCTAssertEqual(PGPSecurityRules.indicator(for: try XCTUnwrap(security)).reason, .badSignature)
+        let result1 = await security(tampered, aliceSigned())
+        XCTAssertEqual(try reason(result1), .badSignature)
+    }
+
+    /// The sender is whoever the raw message names, whatever a caller thinks.
+    func testFromComesFromTheRawMessage() async throws {
+        let mallory = PGPCorpus.signedSimple().replacingOccurrences(
+            of: "From: Alice Example <alice@example.org>", with: "From: Mallory <mallory@example.net>")
+        let result2 = await security(mallory, aliceSigned())
+        XCTAssertEqual(try reason(result2), .signerIsNotSender)
+    }
+
+    /// Two From headers: which one is "the sender" depends on the reader.
+    func testTwoFromHeadersAreNotChecked() async throws {
+        let engine = aliceSigned()
+        let result = await security(PGPCorpus.signedAmbiguous("two-froms"), engine)
+        XCTAssertEqual(result?.signature, .notChecked(.malformed))
+        XCTAssertFalse(PGPSecurityRules.indicator(for: try XCTUnwrap(result)).showsSignedMark)
+        XCTAssertEqual(engine.calls, [])
+    }
+
+    func testAmbiguousOrTruncatedStructuresAreNotChecked() async throws {
+        let engine = aliceSigned()
+        for message in ["two-content-types", "two-boundaries", "rfc2231-boundary"]
+            .map(PGPCorpus.signedAmbiguous) + [PGPCorpus.signedTooDeep(depth: RawMIME.maxDepth + 2)] {
+            let result = await security(message, engine)
+            XCTAssertEqual(result?.signature, .notChecked(.malformed))
+        }
+        XCTAssertEqual(engine.calls, [])
     }
 
     func testListFooterMakesAGoodSignaturePartial() async throws {
         let engine = FakeOpenPGPEngine()
         let signedPart = Data("Content-Type: text/plain; charset=utf-8\r\n\r\nThe signed post.".utf8)
         engine.detachedResults[signedPart] = [.good(signer: FakeOpenPGPEngine.alice)]
-        let security = await PGPInspection.security(ofRaw: PGPCorpus.crlf(PGPCorpus.listWrapped),
-                                                    fromHeader: from, engine: engine, enabled: true)
-        let indicator = PGPSecurityRules.indicator(for: try XCTUnwrap(security))
+        let result = await security(PGPCorpus.listWrapped, engine)
+        let indicator = PGPSecurityRules.indicator(for: try XCTUnwrap(result))
         XCTAssertEqual(indicator.reason, .partlySigned)
         XCTAssertFalse(indicator.showsSignedMark)
         XCTAssertEqual(engine.calls, [.verifyDetached(signedData: signedPart,
                                                       signature: PGPCorpus.crlf(PGPCorpus.fakeSignature))])
     }
 
-    func testEncryptedMessageGoesToDecrypt() async throws {
-        let engine = FakeOpenPGPEngine()
-        engine.decryption = .success(PGPDecryptionResult(plaintext: Data("hi".utf8),
-                                                         integrityProtected: true, signatures: []))
-        let raw = PGPCorpus.crlf(PGPCorpus.encrypted)
-        let security = await PGPInspection.security(ofRaw: raw, fromHeader: from,
-                                                    engine: engine, enabled: true)
-        XCTAssertEqual(PGPSecurityRules.indicator(for: try XCTUnwrap(security)).reason, .encrypted)
-        XCTAssertEqual(engine.calls, [.decrypt(PGPCorpus.crlf(PGPCorpus.fakeMessage + "\n"))])
-
-        engine.decryption = .failure(.noSecretKey)
-        let failed = await PGPInspection.security(ofRaw: raw, fromHeader: from,
-                                                  engine: engine, enabled: true)
-        XCTAssertEqual(failed?.encryption, .failed(.noSecretKey))
-    }
-
     func testWithoutALibraryNothingIsClaimed() async throws {
-        let security = await PGPInspection.security(
-            ofRaw: PGPCorpus.crlf(PGPCorpus.signedSimple()), fromHeader: from,
-            engine: UnavailableOpenPGPEngine(), enabled: true)
-        XCTAssertEqual(security?.signature, .notChecked(.unavailable))
-        XCTAssertFalse(PGPSecurityRules.indicator(for: try XCTUnwrap(security)).showsSignedMark)
+        let result = await security(PGPCorpus.signedSimple(), UnavailableOpenPGPEngine())
+        XCTAssertEqual(result?.signature, .notChecked(.unavailable))
+        XCTAssertFalse(PGPSecurityRules.indicator(for: try XCTUnwrap(result)).showsSignedMark)
+
+        let encrypted = await security(PGPCorpus.encrypted, UnavailableOpenPGPEngine())
+        XCTAssertEqual(try reason(encrypted), .decryptionUnavailable)
     }
 
     func testMalformedAndPlainMessages() async {
         let engine = FakeOpenPGPEngine()
-        let malformed = await PGPInspection.security(ofRaw: PGPCorpus.crlf(PGPCorpus.malformedSigned),
-                                                     fromHeader: from, engine: engine, enabled: true)
+        let malformed = await security(PGPCorpus.malformedSigned, engine)
         XCTAssertEqual(malformed?.signature, .notChecked(.malformed))
         for message in [PGPCorpus.plain, PGPCorpus.smimeSigned, PGPCorpus.plainLookingSigned] {
-            let none = await PGPInspection.security(ofRaw: PGPCorpus.crlf(message), fromHeader: from,
-                                                    engine: engine, enabled: true)
+            let none = await security(message, engine)
             XCTAssertNil(none)
         }
         XCTAssertEqual(engine.calls, [])
+    }
+
+    // MARK: - Encryption
+
+    func testEncryptedMessageGoesToDecrypt() async throws {
+        let engine = FakeOpenPGPEngine()
+        engine.decryption = .success(PGPDecryptionResult(plaintext: Data("hi".utf8), signatures: []))
+        let result3 = await security(PGPCorpus.encrypted, engine)
+        XCTAssertEqual(try reason(result3), .encrypted)
+        XCTAssertEqual(engine.calls, [.decrypt(PGPCorpus.crlf(PGPCorpus.fakeMessage + "\n"))])
+
+        engine.decryption = .failure(.noSecretKey)
+        let failed = await security(PGPCorpus.encrypted, engine)
+        XCTAssertEqual(failed?.encryption, .failed(.noSecretKey))
+
+        engine.decryption = .failure(.notIntegrityProtected)
+        let result4 = await security(PGPCorpus.encrypted, engine)
+        XCTAssertEqual(try reason(result4), .notIntegrityProtected)
+    }
+
+    /// EFAIL direct exfiltration: the engine is not even called for an
+    /// encrypted part of a larger message until the user asks.
+    func testPartlyEncryptedIsDecryptedOnlyOnRequest() async throws {
+        let engine = FakeOpenPGPEngine()
+        engine.decryption = .success(PGPDecryptionResult(plaintext: Data("hi".utf8), signatures: []))
+        let automatic = await security(PGPCorpus.partlyEncrypted, engine)
+        XCTAssertEqual(automatic?.encryption, .notDecrypted)
+        XCTAssertEqual(engine.calls, [])
+        XCTAssertEqual(PGPSecurityRules.indicator(for: try XCTUnwrap(automatic)).render.decryptedContent,
+                       .onRequest)
+
+        let asked = await security(PGPCorpus.partlyEncrypted, engine, decryptPartOnRequest: true)
+        let indicator = PGPSecurityRules.indicator(for: try XCTUnwrap(asked))
+        XCTAssertEqual(indicator.render, PGPRenderPolicy(decryptedContent: .separateView,
+                                                         blocksRemoteContent: true))
+        XCTAssertEqual(engine.calls.count, 1)
+    }
+
+    // MARK: - Keys
+
+    func testKeysCanBeListedAndDeleted() async throws {
+        let engine = FakeOpenPGPEngine()
+        engine.importable = [FakeOpenPGPEngine.alice, FakeOpenPGPEngine.mallory]
+        _ = try await engine.importKeys(Data("k".utf8))
+        let listed = try await engine.keys()
+        XCTAssertEqual(listed.count, 2)
+        try await engine.deleteKey(FakeOpenPGPEngine.alice.key)
+        let remaining = try await engine.keys()
+        XCTAssertEqual(remaining, [FakeOpenPGPEngine.mallory])
     }
 
     // MARK: - The switch
 
     /// Off: nothing is parsed, found or sent to an engine, for any message.
     func testSwitchedOffDoesNothing() async {
-        let engine = FakeOpenPGPEngine()
-        engine.detachedResults[PGPCorpus.signedPartCanonical] = [.good(signer: FakeOpenPGPEngine.alice)]
+        let engine = aliceSigned()
         for message in [PGPCorpus.signedSimple(), PGPCorpus.encrypted, PGPCorpus.inlineSigned,
-                        PGPCorpus.keyAttachment, PGPCorpus.malformedSigned] {
+                        PGPCorpus.keyAttachment, PGPCorpus.malformedSigned, PGPCorpus.partlyEncrypted] {
             let raw = PGPCorpus.crlf(message)
             XCTAssertEqual(PGPInspection.findings(inRaw: raw, enabled: false), [])
-            let security = await PGPInspection.security(ofRaw: raw, fromHeader: from,
-                                                        engine: engine, enabled: false)
-            XCTAssertNil(security)
+            let result = await PGPInspection.security(ofRaw: raw, engine: engine, enabled: false,
+                                                      decryptPartOnRequest: true)
+            XCTAssertNil(result)
             XCTAssertEqual(PGPStructure.findings(in: MIMEOutline(raw: RawMIME.parse(raw), in: raw),
                                                  enabled: false), [])
         }
@@ -146,18 +214,21 @@ final class PGPInspectionTests: XCTestCase {
     }
 
     /// Nothing outside `PGP/` uses this code yet: with the switch in either
-    /// state the app behaves as before. The step that wires it in changes
-    /// this list on purpose.
+    /// state the app behaves as before. Any identifier with the `PGP`,
+    /// `OpenPGP` or `RPGP` prefix, or one of the MIME types defined in
+    /// `PGP/`, counts. The step that wires it in changes this on purpose.
     func testNoAppCodeOutsidePGPUsesIt() throws {
+        let pattern = try NSRegularExpression(
+            pattern: #"\b(?:PGP[A-Z]\w*|OpenPGP\w*|RPGP\w*|RawMIME\w*|MIMEContentType|MIMEOutline)\b"#)
         let sources = ForkIdentityTests.repoRoot.appendingPathComponent("Sources")
-        let names = ["PGPFeatures", "PGPInspection", "PGPStructure", "PGPSecurityRules",
-                     "OpenPGPEngine", "RawMIME", "PGPArmor", "MIMEOutline"]
         let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
         var users: [String] = []
         for case let url as URL in files where url.pathExtension == "swift"
             && !url.path.contains("/Sources/MishMail/PGP/") {
             let text = try String(contentsOf: url, encoding: .utf8)
-            users += names.filter { text.contains($0) }.map { "\(url.lastPathComponent): \($0)" }
+            let range = NSRange(text.startIndex..., in: text)
+            users += pattern.matches(in: text, range: range).compactMap { Range($0.range, in: text) }
+                .map { "\(url.lastPathComponent): \(text[$0])" }
         }
         XCTAssertEqual(users, [])
     }

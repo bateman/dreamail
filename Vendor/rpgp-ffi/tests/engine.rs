@@ -9,17 +9,23 @@ use pgp::composed::{
     MessageBuilder, SecretKeyParamsBuilder, SignedSecretKey, SubkeyParamsBuilder,
 };
 use pgp::crypto::{ecc_curve::ECCCurve, hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
+use pgp::packet::SignatureType;
 use pgp::types::Password;
 use rand::thread_rng;
 use smallvec::smallvec;
 
 fn generate(uid: &str, passphrase: Option<&str>) -> SignedSecretKey {
+    generate_with(uid, &[], passphrase)
+}
+
+fn generate_with(uid: &str, more_uids: &[&str], passphrase: Option<&str>) -> SignedSecretKey {
     let mut params = SecretKeyParamsBuilder::default();
     params
         .key_type(KeyType::Ed25519Legacy)
         .can_certify(true)
         .can_sign(true)
         .primary_user_id(uid.into())
+        .user_ids(more_uids.iter().map(|s| (*s).to_owned()).collect())
         .passphrase(passphrase.map(str::to_owned))
         .preferred_symmetric_algorithms(smallvec![SymmetricKeyAlgorithm::AES256])
         .preferred_hash_algorithms(smallvec![HashAlgorithm::Sha256])
@@ -220,7 +226,7 @@ fn base64_decode(s: &str) -> Vec<u8> {
 
 #[test]
 fn ffi_round_trip_and_garbage() {
-    use mishmail_rpgp::{mm_pgp_free, mm_pgp_inspect_keys, mm_pgp_sign, mm_pgp_verify_detached};
+    use mishmail_rpgp::{mm_pgp_free, mm_pgp_inspect_keys, mm_pgp_verify_detached};
     let alice = generate("Alice <alice@example.org>", None);
     let certs = public_armor(&alice);
     let data = b"payload";
@@ -241,9 +247,71 @@ fn ffi_round_trip_and_garbage() {
         let r = mm_pgp_verify_detached(std::ptr::null(), 0, std::ptr::null(), 0, std::ptr::null(), 0, 0);
         mm_pgp_free(r);
 
-        let r = mm_pgp_sign();
-        let json = std::str::from_utf8(std::slice::from_raw_parts(r.json.ptr, r.json.len)).unwrap().to_owned();
-        assert!(json.contains("unsupported"));
-        mm_pgp_free(r);
     }
+}
+
+/// A third-party certification on a user ID (common in GnuPG exports) must
+/// not make a valid key look broken: rPGP's `verify_bindings` would reject
+/// it, our policy ignores signatures not made by the primary key.
+#[test]
+fn third_party_certifications_do_not_break_a_key() {
+    let alice = generate("Alice <alice@example.org>", None);
+    let bob = generate("Bob <bob@example.net>", None);
+    let mut cert = alice.to_public_key();
+    let certified = cert.details.users[0]
+        .id
+        .sign_third_party(thread_rng(), &bob.primary_key, &Password::empty(), &cert.primary_key,
+                          SignatureType::CertGeneric)
+        .unwrap();
+    cert.details.users[0].signatures.extend(certified.signatures);
+    assert!(cert.verify_bindings().is_err(), "rPGP alone would call this key broken");
+
+    let data = b"payload";
+    let sig = detached(&alice, "", data);
+    let certs = cert.to_armored_bytes(ArmorOptions::default()).unwrap();
+    let result = engine::verify_detached(data, &sig, &certs, now()).unwrap();
+    assert!(matches!(&result[..], [SignatureResult::Good { .. }]), "{result:?}");
+}
+
+/// A user ID revoked by the key owner is not listed, so it cannot vouch for
+/// a sender; the other user IDs stay.
+#[test]
+fn revoked_user_ids_are_left_out() {
+    let alice = generate_with("Alice <alice@example.org>", &["Old <old@example.org>"], None);
+    let mut cert = alice.to_public_key();
+    let index = cert.details.users.iter().position(|u| u.id.as_str() == Some("Old <old@example.org>")).unwrap();
+    use pgp::packet::{SignatureConfig, Subpacket, SubpacketData};
+    use pgp::types::{KeyDetails, Tag, Timestamp};
+    let mut config = SignatureConfig::from_key(thread_rng(), &alice.primary_key,
+                                               SignatureType::CertRevocation).unwrap();
+    config.hashed_subpackets = vec![
+        Subpacket::regular(SubpacketData::SignatureCreationTime(Timestamp::now())).unwrap(),
+        Subpacket::regular(SubpacketData::IssuerFingerprint(alice.primary_key.fingerprint())).unwrap(),
+    ];
+    config.unhashed_subpackets =
+        vec![Subpacket::regular(SubpacketData::IssuerKeyId(alice.primary_key.legacy_key_id())).unwrap()];
+    let revocation = config
+        .sign_certification(&alice.primary_key, &cert.primary_key, &Password::empty(), Tag::UserId,
+                            &cert.details.users[index].id)
+        .unwrap();
+    cert.details.users[index].signatures.push(revocation);
+    let keys = engine::inspect_keys(&cert.to_armored_bytes(ArmorOptions::default()).unwrap(), now()).unwrap();
+    assert_eq!(keys[0].user_ids, vec!["Alice <alice@example.org>".to_owned()]);
+    assert!(!keys[0].revoked, "a revoked user ID is not a revoked key");
+}
+
+/// A self-signature that does not verify makes the key broken: a good
+/// detached signature by it reads as bad, not good.
+#[test]
+fn a_broken_self_signature_makes_signatures_bad() {
+    let alice = generate("Alice <alice@example.org>", None);
+    let mut cert = alice.to_public_key();
+    // Move Alice's self-signature onto a user ID it was not made for.
+    let sig = cert.details.users[0].signatures[0].clone();
+    cert.details.users[0].id = pgp::packet::UserId::from_str(Default::default(), "Mallory <mallory@example.net>").unwrap();
+    cert.details.users[0].signatures = vec![sig];
+    let data = b"payload";
+    let certs = cert.to_armored_bytes(ArmorOptions::default()).unwrap();
+    let result = engine::verify_detached(data, &detached(&alice, "", data), &certs, now()).unwrap();
+    assert_eq!(result, vec![SignatureResult::Bad]);
 }

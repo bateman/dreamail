@@ -30,8 +30,6 @@ MMResult mm_pgp_decrypt(const uint8_t *message, size_t message_len,
                         const uint8_t *certs, size_t certs_len,
                         int64_t now_unix);
 MMResult mm_pgp_inspect_keys(const uint8_t *data, size_t data_len, int64_t now_unix);
-MMResult mm_pgp_sign(void);     // scope B: always {"ok":false,"error":"unsupported"}
-MMResult mm_pgp_encrypt(void);  // scope B: always {"ok":false,"error":"unsupported"}
 // Zeroes and frees both buffers. Call exactly once per result.
 void mm_pgp_free(MMResult result);
 const char *mm_pgp_rpgp_version(void);

@@ -1,9 +1,10 @@
 import XCTest
 
-/// What the security bar may say (step 4B). Pure rules over engine results:
-/// never "signed" for part of a message, never a positive mark the sender
-/// can produce without the signer's key, and no decrypted content without
-/// an integrity check.
+/// What the security bar may say and how the view must render (step 4B).
+/// Pure rules over engine results: never "signed" for part of a message,
+/// never a positive mark the sender can produce without the signer's key,
+/// no decrypted content without an integrity check, and remote content
+/// blocked wherever something was encrypted.
 final class PGPSecurityRulesTests: XCTestCase {
     private let alice = FakeOpenPGPEngine.alice
     private let mallory = FakeOpenPGPEngine.mallory
@@ -16,21 +17,24 @@ final class PGPSecurityRulesTests: XCTestCase {
             fromHeader: from ?? self.from))
     }
 
-    private func decrypted(integrity: Bool = true, whole: Bool = true,
-                           signatures: [PGPSignatureResult] = []) -> PGPIndicator {
+    private func decrypted(whole: Bool = true, signatures: [PGPSignatureResult] = []) -> PGPIndicator {
         PGPSecurityRules.indicator(for: PGPMessageSecurity(
             encryption: .decrypted(PGPDecryptionResult(plaintext: Data("secret".utf8),
-                                                       integrityProtected: integrity,
                                                        signatures: signatures),
                                    coversWholeMessage: whole),
             signature: .unsigned, fromHeader: from))
+    }
+
+    private func encryption(_ state: PGPMessageSecurity.Encryption) -> PGPIndicator {
+        PGPSecurityRules.indicator(for: PGPMessageSecurity(encryption: state, signature: .unsigned,
+                                                           fromHeader: from))
     }
 
     func testNothingToSayForAPlainMessage() {
         let plain = PGPSecurityRules.indicator(for: PGPMessageSecurity(
             encryption: .notEncrypted, signature: .unsigned, fromHeader: from))
         XCTAssertEqual(plain, PGPIndicator(tone: .none, reason: .none, showsSignedMark: false,
-                                           showsLock: false, mayShowDecryptedContent: true))
+                                           showsLock: false, render: .plain))
     }
 
     func testGoodSignatureByTheSenderOverTheWholeMessage() {
@@ -39,6 +43,7 @@ final class PGPSecurityRulesTests: XCTestCase {
         XCTAssertEqual(indicator.tone, .positive)
         XCTAssertTrue(indicator.showsSignedMark)
         XCTAssertFalse(indicator.showsLock)
+        XCTAssertEqual(indicator.render, .plain, "signing alone changes nothing in rendering")
         XCTAssertEqual(signed([.good(signer: alice)], from: "ALICE@Example.ORG").reason,
                        .signed(address: "alice@example.org"))
     }
@@ -78,8 +83,7 @@ final class PGPSecurityRulesTests: XCTestCase {
     func testUnknownExpiredAndUnsupported() {
         XCTAssertEqual(signed([.unknownKey(keyID: "0x1234")]),
                        PGPIndicator(tone: .neutral, reason: .unknownKey(keyID: "0x1234"),
-                                    showsSignedMark: false, showsLock: false,
-                                    mayShowDecryptedContent: true))
+                                    showsSignedMark: false, showsLock: false, render: .plain))
         XCTAssertEqual(signed([.keyNotValid(signer: alice)]).reason, .keyNotValid)
         XCTAssertEqual(signed([.unsupported]).reason, .unsupported)
         XCTAssertEqual(signed([.unknownKey(keyID: "X"), .good(signer: alice)]).reason,
@@ -91,49 +95,65 @@ final class PGPSecurityRulesTests: XCTestCase {
         XCTAssertFalse(unchecked.showsSignedMark)
     }
 
-    func testEncryption() {
+    func testWholeEncryption() {
+        let inline = PGPRenderPolicy(decryptedContent: .inline, blocksRemoteContent: true)
         XCTAssertEqual(decrypted(), PGPIndicator(tone: .positive, reason: .encrypted,
                                                  showsSignedMark: false, showsLock: true,
-                                                 mayShowDecryptedContent: true))
+                                                 render: inline))
         let both = decrypted(signatures: [.good(signer: alice)])
         XCTAssertEqual(both.reason, .encryptedAndSigned(address: "alice@example.org"))
         XCTAssertTrue(both.showsLock)
         XCTAssertTrue(both.showsSignedMark)
+        XCTAssertEqual(both.render, inline)
 
         let badInside = decrypted(signatures: [.bad])
         XCTAssertEqual(badInside.reason, .badSignature)
         XCTAssertTrue(badInside.showsLock, "still encrypted")
         XCTAssertFalse(badInside.showsSignedMark)
+        XCTAssertEqual(badInside.render, inline)
     }
 
-    func testPartialEncryptionShowsNoLockAndNoSignature() {
-        let indicator = decrypted(whole: false, signatures: [.good(signer: alice)])
-        XCTAssertEqual(indicator.reason, .partlyEncrypted)
-        XCTAssertFalse(indicator.showsLock)
-        XCTAssertFalse(indicator.showsSignedMark)
+    /// EFAIL direct exfiltration: an encrypted part inside a message the
+    /// attacker built. Not decrypted unless asked; when asked, shown apart,
+    /// and remote content stays blocked for the whole message.
+    func testPartialEncryptionIsOnRequestSeparateAndBlocksRemoteContent() {
+        let notYet = encryption(.notDecrypted)
+        XCTAssertEqual(notYet, PGPIndicator(tone: .warning, reason: .partlyEncrypted,
+                                            showsSignedMark: false, showsLock: false,
+                                            render: PGPRenderPolicy(decryptedContent: .onRequest,
+                                                                    blocksRemoteContent: true)))
+
+        let asked = decrypted(whole: false, signatures: [.good(signer: alice)])
+        XCTAssertEqual(asked.reason, .partlyEncrypted)
+        XCTAssertFalse(asked.showsLock)
+        XCTAssertFalse(asked.showsSignedMark)
+        XCTAssertEqual(asked.render, PGPRenderPolicy(decryptedContent: .separateView,
+                                                     blocksRemoteContent: true))
     }
 
-    /// EFAIL: plaintext without an integrity check is not shown at all.
-    func testNoIntegrityProtectionWithholdsTheContent() {
-        let indicator = decrypted(integrity: false, signatures: [.good(signer: alice)])
-        XCTAssertEqual(indicator.reason, .notIntegrityProtected)
-        XCTAssertEqual(indicator.tone, .error)
-        XCTAssertFalse(indicator.mayShowDecryptedContent)
-        XCTAssertFalse(indicator.showsLock)
-        XCTAssertFalse(indicator.showsSignedMark)
+    func testFailuresWithholdContent() {
+        let withheld = PGPRenderPolicy(decryptedContent: .withheld, blocksRemoteContent: true)
+        let noIntegrity = encryption(.failed(.notIntegrityProtected))
+        XCTAssertEqual(noIntegrity.reason, .notIntegrityProtected)
+        XCTAssertEqual(noIntegrity.tone, .error)
+        XCTAssertEqual(noIntegrity.render, withheld)
+
+        for error in [PGPEngineError.noSecretKey, .passphraseRequired, .malformed, .unsupported] {
+            let failed = encryption(.failed(error))
+            XCTAssertEqual(failed.reason, .decryptionFailed, "\(error)")
+            XCTAssertEqual(failed.tone, .error)
+            XCTAssertEqual(failed.render, withheld)
+            XCTAssertFalse(failed.showsLock)
+        }
     }
 
-    func testDecryptionFailure() {
-        let indicator = PGPSecurityRules.indicator(for: PGPMessageSecurity(
-            encryption: .failed(.noSecretKey), signature: .unsigned, fromHeader: from))
-        XCTAssertEqual(indicator.reason, .decryptionFailed)
-        XCTAssertFalse(indicator.mayShowDecryptedContent)
-    }
-
-    func testDecryptedContentPolicyIsFixed() {
-        XCTAssertFalse(PGPRenderPolicy.decrypted.allowsRemoteContent)
-        XCTAssertFalse(PGPRenderPolicy.decrypted.allowsHTML)
-        XCTAssertFalse(PGPRenderPolicy.decrypted.mayLeaveTheMessageView)
+    /// A build without a library is not an error the sender caused.
+    func testNoLibraryIsNeutral() {
+        let indicator = encryption(.failed(.unavailable))
+        XCTAssertEqual(indicator.reason, .decryptionUnavailable)
+        XCTAssertEqual(indicator.tone, .neutral)
+        XCTAssertEqual(indicator.render.decryptedContent, .withheld)
+        XCTAssertTrue(indicator.render.blocksRemoteContent)
     }
 
     func testSenderAndSignerAddresses() {

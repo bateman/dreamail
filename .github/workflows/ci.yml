@@ -14,8 +14,13 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run it replaces. On main, runs
+# for different commits never cancel each other: each push run decides from
+# its own commits whether to build (see the `changes` job), so a cancelled
+# run would leave its commits untested. Two runs for the same main commit
+# (a push and a manual run) still collapse into the later one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -49,6 +54,33 @@ jobs:
       - name: Shellcheck the shell scripts
         run: make shellcheck
 
+  # Whether the macOS job below has anything to do: not when every changed
+  # file is documentation that neither the build nor a test reads
+  # (.github/scripts/needs-build.py has the list). A pull request into main
+  # compares its merge commit with main; a push to main compares with the
+  # commit main pointed at before the push. Any other run builds, a pull
+  # request into another branch included: its skipped check would stay on
+  # the head commit and could pass main's required check once the pull
+  # request is retargeted to main, which does not start a new run.
+  changes:
+    name: Changed files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: a push can carry several commits.
+          fetch-depth: 0
+
+      - name: Decide whether to build and test
+        id: decide
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && 'HEAD^1' || github.event_name == 'push' && github.event.before || '' }}
+        run: python3 .github/scripts/needs-build.py "$BASE" >> "$GITHUB_OUTPUT"
+
   # The OpenPGP engine's C ABI over rPGP (Vendor/rpgp-ffi, step 4B). Its
   # own tests, with keys generated at test time; the compiler comes from
   # rust-toolchain.toml and every crate from Cargo.lock (--locked). The
@@ -75,7 +107,13 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
 
   test:
+    # A fixed name: GitHub does not evaluate the name of a skipped job.
     name: Unit tests & build
+    needs: changes
+    # A skipped job counts as passed for a required check. The job runs
+    # unless `changes` positively found a docs-only change: if `changes`
+    # failed, its output is empty and the tests run.
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
     runs-on: macos-26
     # A cold build and test run takes about six minutes.
     timeout-minutes: 25
@@ -101,7 +139,8 @@ jobs:
           echo "xcode=$(xcodebuild -version | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
 
       # DerivedData. Runs read the newest cache for this Xcode and project
-      # file; only main (and manual runs) write one.
+      # file; only main writes one, the only branch whose cache every
+      # pull request can read.
       - name: Restore the build cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -140,7 +179,7 @@ jobs:
         run: python3 .github/scripts/check-test-skips.py "$RUNNER_TEMP/unit-tests.log"
 
       - name: Save the build cache
-        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/dd.noindex
@@ -150,7 +189,8 @@ jobs:
     name: UI smoke tests
     # About eleven minutes, so not on every push or pull request. Runs when a
     # release is published and on a manual run; `make release` starts a
-    # manual run and waits for it before it publishes (`make ui-test-ci`).
+    # manual run on main and waits for it before it publishes, and
+    # `make ui-test-ci` starts one on any pushed branch.
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     # About twelve minutes with setup.

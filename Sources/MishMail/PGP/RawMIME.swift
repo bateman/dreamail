@@ -11,9 +11,10 @@ import Foundation
 /// parameters; it does not decode charsets, RFC 2047 words or RFC 2231
 /// continuations, and it knows nothing about OpenPGP packets.
 ///
-/// Limits keep a hostile message from costing more than a linear scan:
-/// nesting depth and the total number of parts are bounded, and a part
-/// beyond them is kept as an opaque leaf.
+/// Cost: one linear scan of the bytes per nesting level, and nesting is
+/// bounded (`maxDepth`), as is the total number of parts (`maxParts`). A
+/// multipart whose children were not all read because a limit was hit is
+/// marked `truncated`; nothing may be trusted about its structure.
 struct RawMIMEPart: Sendable, Equatable {
     /// Header name (lowercased) and unfolded value, in source order.
     struct Header: Sendable, Equatable {
@@ -32,6 +33,17 @@ struct RawMIMEPart: Sendable, Equatable {
     let contentType: MIMEContentType
     /// Body parts of a multipart entity, empty otherwise.
     let children: [RawMIMEPart]
+    /// A multipart whose body parts were not all read (depth or part limit).
+    let truncated: Bool
+
+    /// The structure can be read in more than one way: `Content-Type`
+    /// appears more than once, a parameter is repeated, or a parameter uses
+    /// RFC 2231 syntax (`boundary*=`), which this reader does not decode but
+    /// another one might. An OpenPGP entity with any of these is malformed.
+    var isAmbiguous: Bool {
+        headers.filter { $0.name == "content-type" }.count > 1
+            || contentType.hasDuplicateParameters || contentType.hasExtendedParameters
+    }
 
     func header(_ name: String) -> String? {
         let key = name.lowercased()
@@ -60,14 +72,21 @@ struct RawMIMEPart: Sendable, Equatable {
 struct MIMEContentType: Sendable, Equatable {
     let mimeType: String
     let parameters: [String: String]
+    /// A parameter name appeared more than once (the first value is kept).
+    let hasDuplicateParameters: Bool
+    /// A parameter name ends in `*` or `*<n>` (RFC 2231), e.g. `boundary*0=`.
+    let hasExtendedParameters: Bool
 
     static let defaultText = MIMEContentType(mimeType: "text/plain", parameters: [:])
 
     var isMultipart: Bool { mimeType.hasPrefix("multipart/") }
 
-    init(mimeType: String, parameters: [String: String]) {
+    init(mimeType: String, parameters: [String: String],
+         hasDuplicateParameters: Bool = false, hasExtendedParameters: Bool = false) {
         self.mimeType = mimeType
         self.parameters = parameters
+        self.hasDuplicateParameters = hasDuplicateParameters
+        self.hasExtendedParameters = hasExtendedParameters
     }
 
     /// Parses a `Content-Type` value. A value without a well-formed
@@ -82,17 +101,21 @@ struct MIMEContentType: Sendable, Equatable {
             self = .defaultText
             return
         }
-        self.mimeType = type
-        self.parameters = Self.parameters(fromFields: fields.dropFirst())
+        let parsed = Self.parsedParameters(fields.dropFirst())
+        self.init(mimeType: type, parameters: parsed.values,
+                  hasDuplicateParameters: parsed.duplicates,
+                  hasExtendedParameters: parsed.values.keys.contains { $0.contains("*") })
     }
 
     /// The `key=value` parameters after the first `;` of a header value.
     static func parameters(of headerValue: String) -> [String: String] {
-        parameters(fromFields: splitFields(headerValue).dropFirst())
+        parsedParameters(splitFields(headerValue).dropFirst()).values
     }
 
-    private static func parameters(fromFields fields: ArraySlice<String>) -> [String: String] {
+    private static func parsedParameters(_ fields: ArraySlice<String>)
+        -> (values: [String: String], duplicates: Bool) {
         var out: [String: String] = [:]
+        var duplicates = false
         for field in fields {
             guard let eq = field.firstIndex(of: "=") else { continue }
             let key = field[..<eq].trimmingCharacters(in: .whitespaces).lowercased()
@@ -100,11 +123,12 @@ struct MIMEContentType: Sendable, Equatable {
             if value.hasPrefix("\"") {
                 value = unquote(value)
             }
-            // First occurrence wins: a repeated parameter is ambiguous, and a
-            // later duplicate must not be able to replace the boundary.
-            if !key.isEmpty, out[key] == nil { out[key] = value }
+            // First occurrence wins, and the repetition is recorded: a later
+            // duplicate must not be able to replace the boundary silently.
+            guard !key.isEmpty else { continue }
+            if out[key] == nil { out[key] = value } else { duplicates = true }
         }
-        return out
+        return (out, duplicates)
     }
 
     /// Splits on `;` outside quoted strings.
@@ -163,15 +187,17 @@ enum RawMIME {
     /// break in RFC 5322 and an engine must see it as sent). Nothing else
     /// changes: no trailing-whitespace stripping, no charset conversion.
     static func canonicalCRLF(_ data: Data) -> Data {
-        var out = Data()
-        out.reserveCapacity(data.count + data.count / 32)
-        var previous: UInt8 = 0
-        for byte in data {
-            if byte == 0x0A && previous != 0x0D { out.append(0x0D) }
-            out.append(byte)
-            previous = byte
+        let bytes = [UInt8](data)
+        var out = [UInt8]()
+        out.reserveCapacity(bytes.count + bytes.count / 32)
+        var runStart = 0
+        for i in bytes.indices where bytes[i] == 0x0A && (i == 0 || bytes[i - 1] != 0x0D) {
+            out.append(contentsOf: bytes[runStart..<i])
+            out.append(0x0D)
+            runStart = i
         }
-        return out
+        out.append(contentsOf: bytes[runStart...])
+        return Data(out)
     }
 
     /// The body of `part` with its Content-Transfer-Encoding undone (base64,
@@ -200,15 +226,20 @@ enum RawMIME {
         let bodyRange = bodyStart..<range.upperBound
 
         var children: [RawMIMEPart] = []
-        if contentType.isMultipart, depth < maxDepth, budget > 0,
+        var truncated = false
+        if contentType.isMultipart,
            let boundary = contentType.parameters["boundary"], isUsableBoundary(boundary) {
-            for childRange in bodyPartRanges(b, bodyRange, boundary: Array(boundary.utf8)) {
-                guard budget > 0 else { break }
-                children.append(parseEntity(b, childRange, depth: depth + 1, budget: &budget))
+            if depth < maxDepth, budget > 0 {
+                for childRange in bodyPartRanges(b, bodyRange, boundary: Array(boundary.utf8)) {
+                    guard budget > 0 else { truncated = true; break }
+                    children.append(parseEntity(b, childRange, depth: depth + 1, budget: &budget))
+                }
+            } else {
+                truncated = true
             }
         }
         return RawMIMEPart(range: range, bodyRange: bodyRange, headers: headers,
-                           contentType: contentType, children: children)
+                           contentType: contentType, children: children, truncated: truncated)
     }
 
     /// RFC 2046: 1–70 characters. Anything else is not split.

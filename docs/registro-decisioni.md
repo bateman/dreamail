@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.13
+Versione: 0.14
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -58,6 +58,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-044 | **Ondata 4 avviata** | Avviata dal proprietario il 25 novembre 2026 in parallelo all'ondata 3. |
 | DEC-045 | **PGP: perimetro B** | Verifica delle firme, decifratura e import manuale delle chiavi. Invio firmato o cifrato, generazione di chiavi, ricerca di chiavi in rete e Autocrypt (perimetri C e D) restano lavoro futuro. La libreria crittografica si adotta solo con il sì esplicito del proprietario. |
 | DEC-046 | **Calendari per i conflitti scelti dall'utente** | Per ogni account l'utente sceglie quali calendari contano per disponibilità e conflitti; il principale è selezionato per impostazione predefinita. |
+| DEC-047 | **Libreria OpenPGP: rPGP (Rust), se non esiste una soluzione già pronta** | Sì a rPGP, a condizione che la sessione verifichi prima che non esista una soluzione già pronta all'uso (ad esempio una libreria in Swift). Se ne esiste una adeguata, decide il proprietario. Motivo della preferenza per Rust rispetto a Go: nessun runtime nell'app e chiavi azzerabili in memoria. GnuPG scartato: programma esterno, incompatibile con la sandbox e con "cancellato vuol dire sparito". |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -450,6 +451,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-24 | 0.11 | Terzo giro di richieste: aggiunte DEC-025–028 (colore della label dell'account, foto profilo Google, warning come errori in CI, icone della barra laterale). L'ondata 3 non è avviata. |
 | 2026-11-24 | 0.12 | Quarto giro di richieste: aggiunte DEC-029–040 (forma delle label, anello e titolo dell'account, righe dei messaggi, cache cifrata delle immagini incorporate, immagini remote attive per impostazione predefinita, cache delle immagini remote, colore d'accento configurabile, modifiche semplici senza review, archiviazione e subentro dell'orchestratore, livelli di review, segnalazione di F-01 annullata, avvio dell'ondata 3). Aggiornata DEC-028. DEC-034 è decisa ma ancora in lavorazione (PR #42). L'ondata 3 non è avviata. |
 | 2026-11-25 | **0.13** | Aggiunte DEC-041–046: snooze variante B, Google Calendar perimetro B, prima apertura delle immagini remote, avvio dell'ondata 4, PGP perimetro B, calendari per i conflitti scelti dall'utente. |
+| 2026-11-25 | **0.14** | Aggiunta DEC-047: libreria OpenPGP rPGP (Rust), previa verifica che non esista una soluzione già pronta. |
 
 ---
 

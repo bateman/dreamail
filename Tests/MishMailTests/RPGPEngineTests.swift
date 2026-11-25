@@ -32,19 +32,29 @@ final class RPGPEngineTests: XCTestCase {
         }
     }
 
+    private final class MemoryStore: PGPKeyStore, @unchecked Sendable {
+        var certs = Data("certs".utf8)
+        var secrets = Data("sk".utf8)
+        private(set) var added: [Data] = []
+        private(set) var removed: [PGPKeyReference] = []
+        func certificates() async throws -> Data { certs }
+        func secretKeys() async throws -> Data { secrets }
+        func passphrase() async throws -> Data { Data("pw".utf8) }
+        func add(_ keys: Data) async throws { added.append(keys) }
+        func remove(_ key: PGPKeyReference) async throws { removed.append(key) }
+    }
+
     private let aliceJSON = """
         {"fingerprint":"AAAA0000","user_ids":["Alice <alice@example.org>"],"has_secret":false,
          "created":1700000000,"expires":null,"revoked":false}
         """
 
-    private func engine(_ json: String, data: Data = Data(), secrets: Data = Data("sk".utf8))
-        -> (RPGPEngine, Canned) {
+    private func engine(_ json: String, data: Data = Data(), secrets: Data = Data("sk".utf8),
+                        store: MemoryStore = MemoryStore()) -> (RPGPEngine, Canned) {
         let canned = Canned()
         canned.reply = RPGPRawReply(json: Data(json.utf8), data: data)
-        let keys = PGPKeyMaterial(certificates: { Data("certs".utf8) },
-                                  secretKeys: { secrets },
-                                  passphrase: { Data("pw".utf8) })
-        return (RPGPEngine(bindings: canned, keys: keys,
+        store.secrets = secrets
+        return (RPGPEngine(bindings: canned, store: store,
                            now: { Date(timeIntervalSince1970: 1_800_000_000) }), canned)
     }
 
@@ -90,18 +100,23 @@ final class RPGPEngineTests: XCTestCase {
         }
     }
 
-    func testDecryptReturnsPlaintextIntegrityAndInnerSignatures() async throws {
+    func testDecryptReturnsPlaintextAndInnerSignatures() async throws {
         let (engine, canned) = engine(#"""
             {"ok":true,"integrity_protected":true,"signatures":[{"status":"bad"}]}
             """#, data: Data("plain".utf8))
         let result = try await engine.decrypt(Data("m".utf8))
-        XCTAssertEqual(result, PGPDecryptionResult(plaintext: Data("plain".utf8),
-                                                   integrityProtected: true, signatures: [.bad]))
+        XCTAssertEqual(result, PGPDecryptionResult(plaintext: Data("plain".utf8), signatures: [.bad]))
         XCTAssertEqual(canned.lastPassphrase, Data("pw".utf8))
+    }
 
-        let (unprotected, _) = self.engine(#"{"ok":true,"signatures":[]}"#, data: Data("p".utf8))
-        let missing = try await unprotected.decrypt(Data("m".utf8))
-        XCTAssertFalse(missing.integrityProtected, "absent means not protected")
+    /// Engine contract: no plaintext without a verified integrity check.
+    /// An answer that does not say so explicitly is discarded.
+    func testPlaintextWithoutIntegrityProtectionNeverLeaves() async {
+        for json in [#"{"ok":true,"signatures":[]}"#,
+                     #"{"ok":true,"integrity_protected":false,"signatures":[]}"#] {
+            let (engine, _) = engine(json, data: Data("tampered plaintext".utf8))
+            await assertThrows(.notIntegrityProtected) { _ = try await engine.decrypt(Data("m".utf8)) }
+        }
     }
 
     func testDecryptWithoutSecretKeysDoesNotCallTheLibrary() async {
@@ -128,15 +143,32 @@ final class RPGPEngineTests: XCTestCase {
         XCTAssertEqual(imported.first?.expires, Date(timeIntervalSince1970: 1_900_000_000))
     }
 
-    func testSigningAndEncryptionAreNotOfferedInScopeB() async {
-        let (engine, canned) = engine(#"{"ok":true}"#)
-        await assertThrows(.unsupported) {
-            _ = try await engine.sign(Data(), as: PGPKeyReference(fingerprint: "A"), detached: true)
-        }
-        await assertThrows(.unsupported) {
-            _ = try await engine.encrypt(Data(), to: [], signedBy: nil)
-        }
-        XCTAssertEqual(canned.calls, [])
+    func testImportListAndDelete() async throws {
+        let store = MemoryStore()
+        let (engine, canned) = engine(#"""
+            {"ok":true,"keys":[\#(aliceJSON)]}
+            """#, store: store)
+        let imported = try await engine.importKeys(Data("armored".utf8))
+        XCTAssertEqual(imported.map(\.key.fingerprint), ["AAAA0000"])
+        XCTAssertEqual(store.added, [Data("armored".utf8)])
+        let listed = try await engine.keys()
+        XCTAssertEqual(listed.map(\.key.fingerprint), ["AAAA0000"])
+        XCTAssertEqual(canned.calls, ["inspectKeys", "inspectKeys"])
+        try await engine.deleteKey(PGPKeyReference(fingerprint: "aaaa 0000"))
+        XCTAssertEqual(store.removed, [PGPKeyReference(fingerprint: "AAAA0000")])
+
+        store.certs = Data()
+        store.secrets = Data()
+        let none = try await engine.keys()
+        XCTAssertEqual(none, [])
+        XCTAssertEqual(canned.calls.count, 2, "an empty store is not sent to the library")
+    }
+
+    func testAKeyThatDoesNotParseIsNotStored() async {
+        let store = MemoryStore()
+        let (engine, _) = engine(#"{"ok":false,"error":"malformed"}"#, store: store)
+        await assertThrows(.malformed) { _ = try await engine.importKeys(Data("junk".utf8)) }
+        XCTAssertEqual(store.added, [])
     }
 
     /// The whole pipeline: a raw message, the engine over canned bindings,
@@ -144,8 +176,7 @@ final class RPGPEngineTests: XCTestCase {
     func testPipelineWithTheRPGPEngine() async throws {
         let (engine, _) = engine(#"{"ok":true,"signatures":[{"status":"good","signer":\#(aliceJSON)}]}"#)
         let security = await PGPInspection.security(
-            ofRaw: PGPCorpus.crlf(PGPCorpus.signedSimple()),
-            fromHeader: "Alice Example <alice@example.org>", engine: engine, enabled: true)
+            ofRaw: PGPCorpus.crlf(PGPCorpus.signedSimple()), engine: engine, enabled: true)
         XCTAssertEqual(PGPSecurityRules.indicator(for: try XCTUnwrap(security)).reason,
                        .signed(address: "alice@example.org"))
     }

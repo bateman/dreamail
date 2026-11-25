@@ -34,8 +34,11 @@ crates.io API; tag and commit from `git ls-remote`; licences of the tree from
 - A panic is caught at the boundary and reported as `internal`.
 - rPGP leaves certificate policy to the application. The policy here
   (`cert_state` in `src/engine.rs`) is strict:
-  - every self-signature must verify;
-  - any revocation means revoked;
+  - every self-signature must verify and at least one user ID must be
+    bound; third-party certifications are ignored (rPGP's `verify_bindings`
+    would reject a key that carries one);
+  - a user ID revoked by its owner is not listed;
+  - any key revocation by the primary key means revoked;
   - the newest self-signature decides expiry, judged at the time of the
     check, not at the time of signing;
   - a signing subkey needs a verifying binding that allows signing, and no
