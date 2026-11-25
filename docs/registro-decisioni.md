@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.17
+Versione: 0.18
 Ultimo aggiornamento: 24 novembre 2026
 Stato: documento in evoluzione
 
@@ -65,6 +65,9 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-051 | **OpenPGP: chiavi Ed448/X448 rifiutate** | Chiavi, firme e messaggi Ed448/X448 risultano "non supportati": la dipendenza che li implementa (`cx448`) si dichiara non verificata e non pubblica un testo di licenza, e non si può togliere dalla compilazione di rPGP 0.21.1. Rifiutati anche MD5, RIPEMD-160 e SHA-1 nelle firme dei messaggi. Due avvisi sui tempi di calcolo (RUSTSEC-2023-0071 su `rsa`, RUSTSEC-2026-0387 su `crypto-bigint`) sono accettati come limiti noti, senza correzione disponibile per rPGP 0.21.1. Decisione dell'orchestratore, comunicata al proprietario, ribaltabile. |
 | DEC-052 | **Risposta agli inviti: prima l'e-mail, poi il calendario** | Con Calendar collegato l'e-mail di risposta parte per prima; il calendario viene scritto solo dopo, e un suo errore produce solo un avviso. Precisa DEC-049. |
 | DEC-053 | **Badge dei non letti sulla foto profilo** | Ogni foto profilo nel selettore degli account mostra i non letti del suo account, nell'angolo in alto a destra, anche sopra l'anello colorato; stesso criterio del badge del Dock; tetto "99+"; nessun badge sulla voce "tutti gli account". |
+| DEC-054 | **Nel dubbio, come fa Gmail** | Quando una richiesta lascia aperta una scelta e serve un'assunzione, si prende il comportamento di Gmail (prima il web) e la si dichiara nel messaggio che avvia il lavoro, senza fermarsi a chiedere. Le decisioni già registrate che si scostano da Gmail di proposito restano valide. Regola scritta anche in `CLAUDE.md`. |
+| DEC-055 | **Firme per account** | Più firme con nome per account, una predefinita per i nuovi messaggi e una per risposte e inoltri; nel database cifrato, cancellate con l'account; "Importa da Gmail" copia la firma di Gmail senza riscriverla su Gmail; in composizione la firma del mittente entra da sola, segue il cambio di mittente se non è stata modificata a mano, e si sceglie da un menu che include "Nessuna firma". |
+| DEC-056 | **Impostazioni per account** | "Show sender and subject in notifications" diventa un'impostazione di ciascun account: gli account esistenti ereditano il valore globale, i nuovi partono spenti (DEC-014). I filtri Gmail si vedono e si modificano per account. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -461,6 +464,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-25 | **0.15** | Aggiunte DEC-048 (Calendar: permesso ampio) e DEC-049 (risposta agli inviti sempre su calendario e per e-mail). |
 | 2026-11-25 | **0.16** | Aggiunta DEC-050: libreria OpenPGP in un repository separato. |
 | 2026-11-25 | **0.17** | Aggiunte DEC-051 (Ed448/X448 e algoritmi deboli rifiutati, avvisi accettati), DEC-052 (e-mail prima del calendario), DEC-053 (badge dei non letti sulla foto profilo). |
+| 2026-11-25 | **0.18** | Aggiunte DEC-054 (nel dubbio, come fa Gmail), DEC-055 (firme per account), DEC-056 (impostazioni per account). |
 
 ---
 
