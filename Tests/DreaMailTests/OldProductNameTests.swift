@@ -71,7 +71,8 @@ final class OldProductNameTests: XCTestCase {
             "`launchctl bootout gui/$(id -u)/io.github.bateman.\(name.lowercased())-summarize` and",
             "delete `~/Library/LaunchAgents/io.github.bateman.\(name.lowercased())-summarize.plist`.",
             "A `Config/Local.xcconfig` that still sets `\(name.uppercased())_…` switches is ignored:",
-            "`\(name)-notary` must be stored again as `DreaMail-notary`.",
+            "notarization profile stored as `\(name)-notary` must be stored again as",
+            "rm -rf \(name).xcodeproj ~/Library/Developer/Xcode/DerivedData/\(name)-*",
         ],
         // TEMPORARY, until the OpenPGP library's v0.2.0 pin: the module of
         // the pinned v0.1.1 still has the old name.

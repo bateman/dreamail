@@ -384,8 +384,22 @@ If you installed the daily-summary agent, unload it with
 `launchctl bootout gui/$(id -u)/io.github.bateman.mishmail-summarize` and
 delete `~/Library/LaunchAgents/io.github.bateman.mishmail-summarize.plist`.
 A `Config/Local.xcconfig` that still sets `MISHMAIL_…` switches is ignored:
-rename them to `DREAMAIL_…`. A notarization profile stored as
-`MishMail-notary` must be stored again as `DreaMail-notary`.
+rename them to `DREAMAIL_…` (same suffix: `DREAMAIL_AI_FEATURES`,
+`DREAMAIL_CALENDAR`, `DREAMAIL_PGP`, `DREAMAIL_UPDATE_CHANNEL`). A
+notarization profile stored as `MishMail-notary` must be stored again as
+`DreaMail-notary`.
+
+In a development checkout, git leaves behind the folders of the old names
+when they still hold untracked or ignored files, and the unit tests scan the
+disk: `make test` fails until they are gone. After pulling the rename:
+
+```sh
+git clean -ndX Sources Tests   # check what would be deleted
+git clean -fdX Sources Tests
+find Sources Tests -type d -empty -delete
+rm -rf MishMail.xcodeproj ~/Library/Developer/Xcode/DerivedData/MishMail-*
+make gen
+```
 
 ### Coming from an upstream (`dev.ronboger.MishMail`) install
 
