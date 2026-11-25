@@ -263,22 +263,20 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
             return HTMLBodyLayout.measuredHeight(fromScriptResult: result)
         }
 
-        /// Per image: failed class, computed `content` and `display`, and
-        /// the alt-text box shown in its place (text, width).
+        /// Per image: failed class, computed `visibility` and `display`, and
+        /// the width of its box.
         func imageStates() async throws -> (allowed: Bool, images: [String: [String: Any]]) {
             let script = """
             (function(){
               var out = {};
               var imgs = document.querySelectorAll('img');
               for (var i = 0; i < imgs.length; i++) {
-                var img = imgs[i], cs = getComputedStyle(img), next = img.nextSibling;
-                var box = next && next.classList && next.classList.contains('\(HTMLBodyLayout.altTextClass)') ? next : null;
+                var img = imgs[i], cs = getComputedStyle(img);
                 out[img.id] = {
                   failed: img.classList.contains('\(HTMLBodyLayout.failedImageClass)'),
-                  content: String(cs.content),
+                  visibility: cs.visibility,
                   display: cs.display,
-                  alt: box ? box.textContent : '',
-                  altWidth: box ? Math.round(box.getBoundingClientRect().width) : 0
+                  width: Math.round(img.getBoundingClientRect().width)
                 };
               }
               return JSON.stringify({
@@ -395,51 +393,52 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         return states
     }
 
-    /// With images allowed, an image that fails (404, a body that is not an
-    /// image, an `http:` URL the CSP blocks, a `cid:` part that is missing)
-    /// draws a transparent pixel instead of WebKit's "?", shows its alt text
-    /// when it has one, in a box of its authored width; an image still
-    /// loading from a dead host is left alone.
-    func testFailedImagesShowNothingOrTheirAltText() async throws {
+    /// With images allowed, a failed image without alt text (404, a body
+    /// that is not an image, an `http:` URL the CSP blocks, a `cid:` part
+    /// that is missing) is hidden with its box kept, so WebKit draws no
+    /// broken-image icon; an image with alt text keeps WebKit's drawing, as
+    /// in Gmail on the web; an image still loading from a dead host is left
+    /// alone.
+    func testFailedImagesWithoutAltAreHiddenWithTheirBoxKept() async throws {
         let html = """
         <p>Grazie per il tuo acquisto!</p>
-        <img id="missing" src="mmimg://images.example/404.png" alt="SumUp" width="80" height="30">
-        <img id="notimage" src="mmimg://images.example/page.png" width="60" height="20">
+        <img id="missing" src="mmimg://images.example/404.png" width="80" height="30">
+        <img id="notimage" src="mmimg://images.example/page.png" alt="" width="60" height="20">
         <img id="http" src="http://images.example/logo.png" width="120" height="40">
-        <img id="cid" src="cid:missing-part@example" alt="Logo">
+        <img id="cid" src="cid:missing-part@example">
+        <img id="withalt" src="mmimg://images.example/gone.png" alt="SumUp" width="90" height="30">
         <img id="dead" src="mmimg://images.example/dead.png" width="50" height="50">
         <p>Totale</p>
         """
         let h = load(html, cspMeta: allowedCSPWithTestScheme, immediate: [
             "/404.png": (404, "text/plain", Data()),
             "/page.png": (200, "text/html", Data("<html>not an image</html>".utf8)),
+            "/gone.png": (404, "text/plain", Data()),
         ])
         defer { h.close() }
         try await wait { h.pane.domReady }
         _ = await h.measure()
-        let failing = ["missing", "notimage", "http", "cid"]
-        let states = try await waitForFailures(h, ids: failing)
+        let hidden = ["missing", "notimage", "http", "cid"]
+        let states = try await waitForFailures(h, ids: hidden + ["withalt"])
         XCTAssertTrue(states.allowed, "the allowed CSP is detected")
-        for id in failing {
+        for id in hidden {
             let image = try XCTUnwrap(states.images[id], id)
             XCTAssertEqual(image["failed"] as? Bool, true, "\(id) failed: \(image)")
-            XCTAssertTrue((image["content"] as? String ?? "").contains("data:image/gif"),
-                          "\(id) draws the transparent pixel, not the broken-image icon: \(image)")
+            XCTAssertEqual(image["visibility"] as? String, "hidden", "\(id): no broken-image icon: \(image)")
+            XCTAssertNotEqual(image["display"] as? String, "none", "\(id): its box stays")
         }
-        XCTAssertEqual(states.images["missing"]?["alt"] as? String, "SumUp")
-        XCTAssertEqual(states.images["missing"]?["display"] as? String, "none", "the alt text replaces it")
-        XCTAssertEqual(states.images["missing"]?["altWidth"] as? Int, 80, "at its authored width")
-        XCTAssertEqual(states.images["cid"]?["alt"] as? String, "Logo")
-        XCTAssertEqual(states.images["http"]?["alt"] as? String, "", "no alt: nothing shown")
-        XCTAssertNotEqual(states.images["http"]?["display"] as? String, "none", "its box stays")
+        XCTAssertEqual(states.images["http"]?["width"] as? Int, 120, "the authored width is kept")
+        let withAlt = try XCTUnwrap(states.images["withalt"])
+        XCTAssertEqual(withAlt["failed"] as? Bool, true)
+        XCTAssertEqual(withAlt["visibility"] as? String, "visible", "alt text: WebKit draws it")
         let dead = try XCTUnwrap(states.images["dead"])
         XCTAssertEqual(dead["failed"] as? Bool, false, "still loading: not failed")
-        XCTAssertFalse((dead["content"] as? String ?? "").contains("data:image/gif"))
+        XCTAssertEqual(dead["visibility"] as? String, "visible")
     }
 
     /// With images blocked (Ask each time, Spam), a blocked image keeps the
-    /// blocked-image placeholder but no broken-image icon either.
-    func testBlockedImagesKeepThePlaceholderWithoutTheIcon() async throws {
+    /// dashed blocked-image placeholder.
+    func testBlockedImagesKeepTheirPlaceholder() async throws {
         let html = """
         <p>Newsletter</p>
         <img id="blocked" src="https://images.example/hero.png" width="300" height="100">
@@ -452,8 +451,8 @@ final class RemoteImageOpenLatencyTests: XCTestCase {
         XCTAssertFalse(states.allowed)
         let image = try XCTUnwrap(states.images["blocked"])
         XCTAssertEqual(image["failed"] as? Bool, true, "\(image)")
-        XCTAssertTrue((image["content"] as? String ?? "").contains("data:image/gif"), "\(image)")
-        XCTAssertNotEqual(image["display"] as? String, "none")
+        XCTAssertEqual(image["visibility"] as? String, "visible", "the placeholder is shown")
+        XCTAssertEqual(image["width"] as? Int, 300)
     }
 
     /// A slow host: measured before the image, then re-measured when it
