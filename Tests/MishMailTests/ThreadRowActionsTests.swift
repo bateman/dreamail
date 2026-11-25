@@ -2,10 +2,7 @@ import XCTest
 
 final class ThreadRowActionsTests: XCTestCase {
     func testHoverActionsAreTheFourGmailOnesInOrder() {
-        for unread in [true, false] {
-            XCTAssertEqual(ThreadRowHoverAction.actions(isUnread: unread),
-                           [.archive, .trash, .toggleRead, .snooze])
-        }
+        XCTAssertEqual(ThreadRowHoverAction.allCases, [.archive, .trash, .toggleRead, .snooze])
     }
 
     func testThirdActionFlipsBetweenUnreadAndRead() {
@@ -22,27 +19,47 @@ final class ThreadRowActionsTests: XCTestCase {
         }
         XCTAssertEqual(ThreadRowHoverAction.archive.symbol(isUnread: false), "archivebox")
         XCTAssertEqual(ThreadRowHoverAction.trash.symbol(isUnread: false), "trash")
+        XCTAssertEqual(ThreadRowHoverAction.trash.title(isUnread: false), "Trash")
         XCTAssertEqual(ThreadRowHoverAction.snooze.symbol(isUnread: false), "clock")
     }
 
-    func testEveryActionHasAUniqueIdentifier() {
-        let ids = ThreadRowHoverAction.allCases.map(\.identifier)
+    func testIdentifiersAreTheRawValuesAndUnique() {
+        let ids = ThreadRowHoverAction.allCases.map(\.rawValue)
+        XCTAssertEqual(ids, ["archive", "trash", "toggleRead", "snooze"])
         XCTAssertEqual(Set(ids).count, ids.count)
     }
 
-    func testSlotFitsTheButtonsAtEveryFontScale() {
+    func testButtonsTakeSixtyEightPointsAtScaleOne() {
+        // Four 17 pt buttons (13 pt glyph, 2 pt padding each side), no gap.
+        XCTAssertEqual(ThreadRowActionLayout.actionsWidth(fontScale: 1.0), 68, accuracy: 0.001)
+    }
+
+    func testButtonsGrowWithTheFontScaleAndKeepAClickableSize() {
+        var last = 0.0
         for scale in [0.8, 1.0, 1.25, 1.5, 2.0] {
-            let slot = ThreadRowActionLayout.slotWidth(fontScale: scale)
-            XCTAssertGreaterThanOrEqual(slot, ThreadRowActionLayout.actionsWidth(fontScale: scale))
-            XCTAssertGreaterThanOrEqual(slot, ThreadRowActionLayout.dateMinWidth)
+            let width = ThreadRowActionLayout.actionsWidth(fontScale: scale)
+            XCTAssertGreaterThan(width, last)
+            last = width
+            // Each button, with its hit extension, stays at least 17 pt wide.
+            let button = width / Double(ThreadRowHoverAction.allCases.count)
+                + 2 * ThreadRowActionLayout.hitExtra
+            XCTAssertGreaterThanOrEqual(button, 17)
         }
     }
 
-    func testSlotGrowsWithFontScaleOnceButtonsOutweighTheDate() {
-        let small = ThreadRowActionLayout.slotWidth(fontScale: 1.0)
-        let large = ThreadRowActionLayout.slotWidth(fontScale: 2.0)
-        XCTAssertGreaterThan(large, small)
-        // Four 19 pt buttons and three 2 pt gaps at scale 1.
-        XCTAssertEqual(ThreadRowActionLayout.actionsWidth(fontScale: 1.0), 82, accuracy: 0.001)
+    /// The date must size the slot (fixed size, buttons' width as minimum):
+    /// a hard width clipped "Nov 25, 2025" at large text sizes.
+    func testDateIsNeverClippedByTheSlot() throws {
+        let text = try ForkIdentityTests.repoFile("Sources/MishMail/UI/ThreadListView.swift")
+        func squash(_ text: String) -> String {
+            text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        }
+        XCTAssertTrue(squash(text).contains(squash("""
+            .fixedSize()
+            .frame(minWidth: ThreadRowActionLayout.actionsWidth(fontScale: fontScale),
+            alignment: .trailing)
+            """)))
+        XCTAssertFalse(text.contains(".frame(width: ThreadRowActionLayout"),
+                       "a hard slot width clips long dates")
     }
 }

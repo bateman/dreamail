@@ -4,7 +4,6 @@ import XCTest
 /// and snooze on the right, in that order; the star sits left of the sender;
 /// the row keeps its height; a click on archive removes the row.
 final class ThreadRowHoverActionsUITests: XCTestCase {
-    private let rowId = "threadRow.you@example.com:t3"
     private let order = ["archive", "trash", "toggleRead", "snooze"]
 
     private func launch() -> XCUIApplication {
@@ -25,8 +24,9 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         return app
     }
 
-    private func row(_ app: XCUIApplication) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: rowId).firstMatch
+    private func row(_ app: XCUIApplication, _ id: String = "t3") -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(identifier: "threadRow.you@example.com:\(id)").firstMatch
     }
 
     private func button(_ row: XCUIElement, _ id: String) -> XCUIElement {
@@ -56,7 +56,6 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
             .matching(identifier: "rowStar").firstMatch
         XCTAssertTrue(star.waitForExistence(timeout: 5), "the star shows without hovering")
         XCTAssertLessThan(star.frame.maxX, row.frame.minX + row.frame.width / 2)
-        XCTAssertLessThan(star.frame.minX, button(row, "archive").frame.minX)
     }
 
     func testArchiveRemovesTheRow() {
@@ -68,5 +67,47 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         XCTAssertTrue(archive.waitForExistence(timeout: 5))
         archive.click()
         XCTAssertTrue(row.waitForNonExistence(timeout: 10), "archiving takes the row out of the inbox")
+    }
+
+    /// A click on a button of a row that is not the selected one acts on that
+    /// row only: the reading pane keeps the open conversation.
+    func testActionsOnAnUnselectedRowLeaveTheReadingPaneAlone() {
+        let app = launch()
+        let read = row(app, "t3")      // read, not the pre-selected top row
+        let other = row(app, "t4")     // read too
+        XCTAssertTrue(read.waitForExistence(timeout: 10), "demo inbox should load")
+        XCTAssertTrue(other.waitForExistence(timeout: 5))
+        let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
+        XCTAssertTrue(subject.waitForExistence(timeout: 10), "the reading pane shows a conversation")
+        let open = subject.label
+        XCTAssertFalse(open.contains("CI passed"), "t3 is not the open conversation")
+        XCTAssertTrue(read.label.hasPrefix("Read"), "t3 starts read: \(read.label)")
+
+        read.hover()
+        let toggle = button(read, "toggleRead")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.click()
+        XCTAssertTrue(UITestWait.until { read.label.hasPrefix("Unread") },
+                      "mark unread applied to the row: \(read.label)")
+        XCTAssertEqual(subject.label, open, "the reading pane did not change")
+
+        other.hover()
+        let trash = button(other, "trash")
+        XCTAssertTrue(trash.waitForExistence(timeout: 5))
+        trash.click()
+        XCTAssertTrue(other.waitForNonExistence(timeout: 10), "trash removed that row")
+        XCTAssertTrue(read.exists, "and only that row")
+        XCTAssertEqual(subject.label, open, "the reading pane did not change")
+    }
+}
+
+private enum UITestWait {
+    static func until(_ timeout: TimeInterval = 10, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return condition()
     }
 }

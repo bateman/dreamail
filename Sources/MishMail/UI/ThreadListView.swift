@@ -1912,13 +1912,19 @@ struct ThreadRow: View, Equatable {
                     Image(systemName: "bell.fill")
                         .font(.system(size: 12 * fontScale)).foregroundStyle(inked(.secondary, emphasis: 0.8))
                 }
+                // The date sets the slot's width when it is wider than the
+                // buttons (a prior-year date, a long locale, a large text
+                // size); `fixedSize` keeps it from being clipped.
                 ZStack(alignment: .trailing) {
                     Text(thread.lastDate, format: relativeFormat)
                         .font(.system(size: 12 * fontScale).monospacedDigit())
                         .foregroundStyle(inked(.secondary, emphasis: 0.8))
+                        .fixedSize()
+                        .frame(minWidth: ThreadRowActionLayout.actionsWidth(fontScale: fontScale),
+                               alignment: .trailing)
                         .opacity(hovering ? 0 : 1)
                     HStack(spacing: ThreadRowActionLayout.spacing) {
-                        ForEach(ThreadRowHoverAction.actions(isUnread: thread.isUnread), id: \.self) { action in
+                        ForEach(ThreadRowHoverAction.allCases, id: \.self) { action in
                             hoverButton(action)
                         }
                     }
@@ -1927,7 +1933,6 @@ struct ThreadRow: View, Equatable {
                     .allowsHitTesting(hovering)
                     .accessibilityHidden(!hovering)
                 }
-                .frame(width: ThreadRowActionLayout.slotWidth(fontScale: fontScale), alignment: .trailing)
             }
             // Match the visual icon size (~13pt + small pad). Hit expansion is
             // layout-neutral via pmHitTarget so rows stay dense.
@@ -1957,7 +1962,8 @@ struct ThreadRow: View, Equatable {
     /// Set only by the hover-actions UI tests. `.contain` changes the row's
     /// accessibility frame, which the section-spacing tests measure.
     private static let exposesButtons =
-        ProcessInfo.processInfo.environment["MISHMAIL_UI_ROW_BUTTONS"] == "1"
+        ProcessInfo.processInfo.environment["MISHMAIL_UI_TEST"] == "1"
+        && ProcessInfo.processInfo.environment["MISHMAIL_UI_ROW_BUTTONS"] == "1"
 
     private var participantsDisplay: String {
         thread.participants.isEmpty ? thread.fromDisplay : thread.participants
@@ -2020,12 +2026,12 @@ struct ThreadRow: View, Equatable {
                 .foregroundStyle(inked(.secondary, emphasis: 0.8))
                 .padding(ThreadRowActionLayout.iconPadding)
                 // Dense row: expand hit without inflating the 18pt trailing strip.
-                .pmHitTarget(extra: 2)
+                .pmHitTarget(extra: ThreadRowActionLayout.hitExtra)
         }
         .buttonStyle(PressScaleButtonStyle())
         .help(title)
         .accessibilityLabel(title)
-        .accessibilityIdentifier("rowAction.\(action.identifier)")
+        .accessibilityIdentifier("rowAction.\(action.rawValue)")
     }
 
     private var relativeFormat: Date.FormatStyle {
