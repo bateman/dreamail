@@ -197,7 +197,7 @@ final class PGPKeyStoreTests: XCTestCase {
         let q = try makeDB()
         try await store(a, q, MemorySecretKeys()).addCertificates([PGPArmoredKey(key: k1, armored: cert("1"))])
         // Outside a transaction, or the pragma does nothing.
-        try q.writeWithoutTransaction { db in
+        try await q.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA foreign_keys = OFF")
             try db.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [self.a])
             XCTAssertEqual(try PGPKeyRecord.fetchCount(db), 1)
