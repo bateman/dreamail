@@ -65,6 +65,8 @@ final class MailStore {
     /// (see `lastSyncByAccount`) — never write these values back to the
     /// database; re-fetch inside the write transaction instead.
     var accounts: [Account] = [] { didSet { rebuildOwnDisplayNames() } }
+    /// Orders account reloads, so an older snapshot never replaces a newer one.
+    @ObservationIgnored var accountReloads = LatestOnly()
     /// Each account's own Google profile photo, decoded from the database
     /// (`loadAccountPhotos`). Missing: the initial disc is drawn.
     var accountPhotos: [String: NSImage] = [:]
@@ -1191,10 +1193,17 @@ final class MailStore {
     /// subject (`NotificationContent`). Local only; goes with the account.
     func setNotificationDetails(_ id: String, _ on: Bool) {
         try? db.write { db in
-            try db.execute(sql: "UPDATE account SET notificationDetails = ? WHERE id = ?",
-                           arguments: [on, id])
+            try NotificationContent.setDetails(db, accountId: id, on: on) {
+                Notifier.removeNotifications(forAccount: $0)
+            }
         }
         reloadAccounts()
+    }
+
+    /// `NotificationContent.detailAccounts`, read now, off main.
+    func notificationDetailAccounts() async -> Set<String> {
+        let pool = db
+        return (try? await pool.read { NotificationContent.detailAccounts($0) }) ?? []
     }
 
     /// Name recipients see on outgoing mail ("Ron Boger <ron@…>").
@@ -2641,15 +2650,19 @@ struct ComposeRequest: Identifiable {
     /// line) and the one-off user mutations (rename, add, remove) where a
     /// deferred publish would show a stale name for a frame.
     func reloadAccounts() {
+        _ = accountReloads.begin()
         let snapshot = (try? db.read { try Self.fetchAccounts($0) }) ?? .empty
         applyAccounts(snapshot)
     }
 
     /// Off-main reload for the post-sync tail, which runs once a minute
-    /// whether or not anything changed.
+    /// whether or not anything changed. A reload started after this one
+    /// (a setting just changed) wins: this older snapshot is dropped.
     func reloadAccountsOffMain() async {
+        let ticket = accountReloads.begin()
         let pool = db
         let snapshot = (try? await pool.read { try Self.fetchAccounts($0) }) ?? .empty
+        guard accountReloads.isCurrent(ticket) else { return }
         applyAccounts(snapshot)
     }
 

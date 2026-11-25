@@ -417,7 +417,8 @@ struct AccountsSettings: View {
                                 store.settingsFiltersAccount = account.id
                                 pane = .filters
                             }
-                            .accessibilityIdentifier("settings.account.filters")
+                            .accessibilityIdentifier("settings.account.filters.\(account.id)")
+                            .accessibilityLabel("Show Gmail filters of \(account.id)")
                         }
                         // HOOK(signatures): the per-account signature view of
                         // branch feature/account-signatures
@@ -468,8 +469,9 @@ struct AccountsSettings: View {
             Toggle("Show sender and subject in notifications", isOn: Binding(
                 get: { account.notificationDetails },
                 set: { store.setNotificationDetails(account.id, $0) }))
-                .accessibilityIdentifier("settings.account.notificationDetails")
-            Text("Off: notifications about this account only say “New mail”, so none of its mail details are kept in Notification Center.")
+                .accessibilityIdentifier("settings.account.notificationDetails.\(account.id)")
+                .accessibilityLabel("Show sender and subject in notifications for \(account.id)")
+            Text("Off: notifications about this account only say “New mail”, so none of its mail details are kept in Notification Center. Turning it off also removes this account's notifications already there.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -483,12 +485,12 @@ struct GmailFiltersSettings: View {
     @State private var deleting: GmailFilterEditTarget?
     @State private var deleteError: String?
 
-    /// Filters are per account: the pane shows one account's at a time,
-    /// the one chosen here or from Settings ▸ Accounts.
+    /// Filters are per account: the pane shows one account's at a time
+    /// (`FiltersPaneAccount`).
     private var shownAccount: String? {
-        let ids = store.accounts.map(\.id)
-        if let chosen = store.settingsFiltersAccount, ids.contains(chosen) { return chosen }
-        return ids.first
+        FiltersPaneAccount.shown(chosen: store.settingsFiltersAccount,
+                                 active: store.activeAccountId,
+                                 accounts: store.accounts.map(\.id))
     }
 
     private var anyLoading: Bool {

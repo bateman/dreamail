@@ -96,4 +96,94 @@ final class AccountNotificationDetailsTests: XCTestCase {
         try q.write { db in _ = try Account.deleteOne(db, key: "w@x.com") }
         XCTAssertEqual(try flags(q), ["h@x.com": true])
     }
+
+    // MARK: - The decision is read from the database (R1)
+
+    private func migrated() throws -> DatabaseQueue {
+        let q = try legacyDatabase()
+        try AppDatabase.migrator(defaults: defaults).migrate(q)
+        return q
+    }
+
+    func testDetailAccountsAreReadFromTheAccountRows() throws {
+        let q = try migrated()
+        try q.read { db in XCTAssertEqual(NotificationContent.detailAccounts(db), []) }
+        XCTAssertEqual(try setDetails(q, "w@x.com", true), [])
+        try q.read { db in XCTAssertEqual(NotificationContent.detailAccounts(db), ["w@x.com"]) }
+    }
+
+    /// A read that fails decides "generic", never "detailed".
+    func testAFailedReadGivesGenericNotifications() throws {
+        let q = try legacyDatabase()   // no notificationDetails column yet
+        try q.read { db in XCTAssertEqual(NotificationContent.detailAccounts(db), []) }
+    }
+
+    /// An off-main account reload that started before a change and ends
+    /// after it is dropped, so the published toggle does not jump back.
+    func testAnOlderAccountReloadNeverReplacesANewerOne() {
+        var reloads = LatestOnly()
+        let offMain = reloads.begin()      // post-sync reload, read pending
+        _ = reloads.begin()                // the toggle's own reload
+        XCTAssertFalse(reloads.isCurrent(offMain))
+        let next = reloads.begin()
+        XCTAssertTrue(reloads.isCurrent(next))
+    }
+
+    // MARK: - Turning it off withdraws delivered notifications (R2)
+
+    private func setDetails(_ q: DatabaseQueue, _ id: String, _ on: Bool) throws -> [String] {
+        try q.write { db -> [String] in
+            var withdrawn: [String] = []
+            try NotificationContent.setDetails(db, accountId: id, on: on) { withdrawn.append($0) }
+            return withdrawn
+        }
+    }
+
+    func testTurningOffWithdrawsTheAccountsNotifications() throws {
+        let q = try migrated()
+        XCTAssertEqual(try setDetails(q, "w@x.com", true), [], "turning it on removes nothing")
+        XCTAssertEqual(try flags(q), ["w@x.com": true, "h@x.com": false])
+        XCTAssertEqual(try setDetails(q, "w@x.com", false), ["w@x.com"])
+        XCTAssertEqual(try flags(q), ["w@x.com": false, "h@x.com": false])
+    }
+
+    // MARK: - The old switch is retired by the real mailbox only (S3)
+
+    func testOnlyAMigratedRealMailboxRetiresTheOldSwitch() {
+        XCTAssertTrue(NotificationContent.retiresLegacySwitch(isRealMailbox: true, migrated: true))
+        XCTAssertFalse(NotificationContent.retiresLegacySwitch(isRealMailbox: true, migrated: false),
+                       "a read-only plaintext cache has not run v64 yet")
+        XCTAssertFalse(NotificationContent.retiresLegacySwitch(isRealMailbox: false, migrated: true),
+                       "demo and UI-test databases leave it for the real one")
+    }
+
+    /// Once retired, a restored older database migrates to generic: the
+    /// frozen old value cannot turn its accounts back on.
+    func testARestoredOlderDatabaseAfterRetirementStaysGeneric() throws {
+        defaults.set(true, forKey: NotificationContent.legacyShowDetailsKey)
+        let real = try migrated()
+        XCTAssertEqual(try flags(real), ["w@x.com": true, "h@x.com": true])
+        NotificationContent.retireLegacySwitch(defaults)
+        let restored = try migrated()
+        XCTAssertEqual(try flags(restored), ["w@x.com": false, "h@x.com": false])
+    }
+
+    // MARK: - Which account the filters pane shows (R4)
+
+    func testFiltersPaneAccount() {
+        let ids = ["a@x.com", "b@x.com"]
+        XCTAssertEqual(FiltersPaneAccount.shown(chosen: "b@x.com", active: "a@x.com",
+                                                accounts: ids), "b@x.com")
+        XCTAssertEqual(FiltersPaneAccount.shown(chosen: "gone@x.com", active: nil,
+                                                accounts: ids), "a@x.com",
+                       "a removed account falls back to the first")
+        XCTAssertEqual(FiltersPaneAccount.shown(chosen: nil, active: "b@x.com",
+                                                accounts: ids), "b@x.com",
+                       "nothing chosen: the account open in the main window")
+        XCTAssertEqual(FiltersPaneAccount.shown(chosen: nil, active: nil, accounts: ids),
+                       "a@x.com", "unified inbox: the first")
+        XCTAssertEqual(FiltersPaneAccount.shown(chosen: "gone@x.com", active: "gone@x.com",
+                                                accounts: ids), "a@x.com")
+        XCTAssertNil(FiltersPaneAccount.shown(chosen: nil, active: nil, accounts: []))
+    }
 }

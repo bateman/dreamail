@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import GRDB
 
 /// What a system notification says, and the identifier it is posted under
 /// (F-11).
@@ -25,14 +26,41 @@ enum NotificationContent {
     /// account then; nothing writes it any more.
     static let legacyShowDetailsKey = "notifications.showSenderAndSubject"
 
-    static func legacyShowsDetails(defaults: UserDefaults = .standard) -> Bool {
+    static func legacyShowsDetails(defaults: UserDefaults) -> Bool {
         defaults.bool(forKey: legacyShowDetailsKey)
     }
 
+    /// Only the real mailbox retires the old switch, once it has run v64:
+    /// a restored older copy of it must not turn accounts back on from a
+    /// key no screen can change any more. The demo and UI-test databases
+    /// leave it for the real one, which may migrate after them.
+    static func retiresLegacySwitch(isRealMailbox: Bool, migrated: Bool) -> Bool {
+        isRealMailbox && migrated
+    }
+
+    static func retireLegacySwitch(_ defaults: UserDefaults) {
+        defaults.removeObject(forKey: legacyShowDetailsKey)
+    }
+
     /// The ids of the accounts whose notifications may show sender and
-    /// subject.
-    static func detailAccounts(_ accounts: [Account]) -> Set<String> {
-        Set(accounts.filter(\.notificationDetails).map(\.id))
+    /// subject, read from the database at the time of notifying, never
+    /// from a published copy that can lag behind a change. Every place that
+    /// posts a notification decides through this. A failed read gives no
+    /// account: generic.
+    static func detailAccounts(_ db: Database) -> Set<String> {
+        (try? Set(String.fetchAll(
+            db, sql: "SELECT id FROM account WHERE notificationDetails = 1"))) ?? []
+    }
+
+    /// Stores an account's choice. Turning it off also withdraws what
+    /// Notification Center still holds for the account (`withdraw`,
+    /// `Notifier.removeNotifications(forAccount:)`), so no detail stays
+    /// there after the user said none should.
+    static func setDetails(_ db: Database, accountId: String, on: Bool,
+                           withdraw: (String) -> Void) throws {
+        try db.execute(sql: "UPDATE account SET notificationDetails = ? WHERE id = ?",
+                       arguments: [on, accountId])
+        if !on { withdraw(accountId) }
     }
 
     struct Request: Equatable {

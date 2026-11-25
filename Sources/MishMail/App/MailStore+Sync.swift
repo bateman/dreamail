@@ -427,9 +427,11 @@ extension MailStore {
             isBlocked: { self.isBlocked($0) })
         guard !fresh.isEmpty else { return }
         let pool = db
-        let newThreads = (try? await pool.read { db in
-            try MailThread.filter(fresh.contains(Column("id"))).order(Column("lastDate").desc).fetchAll(db)
-        }) ?? []
+        let (newThreads, detailAccounts) = (try? await pool.read { db in
+            (try MailThread.filter(fresh.contains(Column("id")))
+                .order(Column("lastDate").desc).fetchAll(db),
+             NotificationContent.detailAccounts(db))
+        }) ?? ([], [])
         // Generic text unless the thread's account opted in to sender and
         // subject (F-11).
         let items = newThreads.map {
@@ -437,7 +439,7 @@ extension MailStore {
                                          sender: $0.fromDisplay, subject: $0.subject)
         }
         for request in NotificationContent.newMail(
-            items, detailAccounts: NotificationContent.detailAccounts(accounts)) {
+            items, detailAccounts: detailAccounts) {
             Notifier.notify(request)
         }
     }

@@ -24,16 +24,14 @@ final class NotificationContentTests: XCTestCase {
         }
     }
 
-    /// DEC-014: an account starts with generic notifications.
+    /// DEC-014: an account starts with generic notifications, and
+    /// reauthorizing keeps what the user chose.
     func testSettingIsOffForANewAccount() {
         let fresh = AccountLifecycle.accountAfterSignIn(email: "n@x.com", name: "N", existing: nil)
         XCTAssertFalse(fresh.notificationDetails)
-        XCTAssertEqual(NotificationContent.detailAccounts([fresh]), [])
         var chosen = fresh
-        chosen.id = "w@x.com"
         chosen.notificationDetails = true
-        XCTAssertEqual(NotificationContent.detailAccounts([fresh, chosen]), ["w@x.com"])
-        let again = AccountLifecycle.accountAfterSignIn(email: "w@x.com", name: "W",
+        let again = AccountLifecycle.accountAfterSignIn(email: "n@x.com", name: "N",
                                                         existing: chosen)
         XCTAssertTrue(again.notificationDetails, "reauthorizing keeps the account's choice")
     }
@@ -206,13 +204,9 @@ final class NotificationContentTests: XCTestCase {
         XCTAssertEqual(none.map(\.title), ["2 follow-up reminders"])
     }
 
-    /// The scheduled-send notice follows the account that sent it, as
-    /// `MailStore` decides it from that account's row.
+    /// The scheduled-send notice follows the account that sent it.
     func testScheduledSendFollowsTheSendingAccount() {
-        let allowed = NotificationContent.detailAccounts([
-            Account(id: work, displayName: "Work", historyId: nil, lastSyncAt: nil,
-                    notificationDetails: true),
-            Account(id: home, displayName: "Home", historyId: nil, lastSyncAt: nil)])
+        let allowed: Set<String> = [work]
         let fromWork = NotificationContent.scheduledSent(
             accountId: work, rowId: 1, subject: subject, showDetails: allowed.contains(work))
         let fromHome = NotificationContent.scheduledSent(

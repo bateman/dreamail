@@ -63,8 +63,10 @@ extension MailStore {
         }
         // Generic text unless the thread's account opted in to sender and
         // subject (F-11).
+        var detailAccounts: Set<String> = []
+        if !reminded.isEmpty { detailAccounts = await notificationDetailAccounts() }
         for request in NotificationContent.reminders(
-            reminded, detailAccounts: NotificationContent.detailAccounts(accounts)) {
+            reminded, detailAccounts: detailAccounts) {
             Notifier.notify(request)
         }
         if changed { reloadThreads() }

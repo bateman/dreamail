@@ -719,6 +719,11 @@ final class AppDatabase: @unchecked Sendable {
         try self.init(path: dir.appendingPathComponent("mail.sqlite").path,
                       key: try AppDatabase.databaseKey(),
                       allowConversion: !AppDatabase.anotherInstanceIsRunning())
+        // Writable means migrated, v64 included.
+        if NotificationContent.retiresLegacySwitch(
+            isRealMailbox: !isUITest && !isDeveloperDemo, migrated: allowsWrites) {
+            NotificationContent.retireLegacySwitch(.standard)
+        }
     }
 
     /// When the maintenance that keeps deleted content out of the files
