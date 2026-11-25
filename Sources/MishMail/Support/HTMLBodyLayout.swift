@@ -45,6 +45,11 @@ enum HTMLBodyLayout {
     static let layoutImageClass = "mm-img-layout"
     /// Class stamped when the image failed or is blocked (no natural size).
     static let failedImageClass = "mm-img-failed"
+    /// Set on `<html>` when the document's CSP lets remote images load: a
+    /// failed image without alt text is then hidden (its box kept) instead
+    /// of showing WebKit's broken-image icon, as Gmail on the web shows
+    /// nothing there. Blocked images keep their placeholder.
+    static let imagesAllowedClass = "mm-images-allowed"
     /// Class stamped on nodes whose viewport-tied height/min-height was neutralized.
     static let heightNeutralizedClass = "mm-h-neutralized"
 
@@ -343,6 +348,7 @@ enum HTMLBodyLayout {
     static var imageCSS: String {
         let layout = layoutImageClass
         let failed = failedImageClass
+        let allowed = imagesAllowedClass
         return """
         img.\(layout) {
           max-width: 100%;
@@ -353,6 +359,10 @@ enum HTMLBodyLayout {
           background-color: rgba(127, 127, 127, 0.10);
           outline: 1px dashed rgba(127, 127, 127, 0.35);
           outline-offset: -1px;
+        }
+        html.\(allowed) img.\(failed):not([alt]),
+        html.\(allowed) img.\(failed)[alt=""] {
+          visibility: hidden;
         }
         """
     }
@@ -445,6 +455,7 @@ enum HTMLBodyLayout {
     static let installLayoutAndMeasureJS: String = {
         let layout = layoutImageClass
         let failed = failedImageClass
+        let allowedClass = imagesAllowedClass
         let neutral = heightNeutralizedClass
         let maxW = maxPreservedWidth
         let maxH = maxPreservedHeight
@@ -462,6 +473,7 @@ enum HTMLBodyLayout {
         (function(){
           var LAYOUT='\(layout)';
           var FAILED='\(failed)';
+          var ALLOWED='\(allowedClass)';
           var NEUTRAL='\(neutral)';
           var MAX_W=\(maxW);
           var MAX_H=\(maxH);
@@ -982,6 +994,18 @@ enum HTMLBodyLayout {
           window.__mmPass = null;
           window.__mmPassGen = (window.__mmPassGen || 0) + 1;
           window.__mmReflowW = viewportWidth();
+
+          /* The CSP this app injected says whether remote images may load:
+             with them allowed a failed image without alt text is hidden
+             (imageCSS); blocked, it keeps the blocked-image placeholder. */
+          try {
+            var csp = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+            var allowsRemote = !!csp && /img-src[^;]*https:/.test(csp.getAttribute('content') || '');
+            if (document.documentElement) {
+              if (allowsRemote) document.documentElement.classList.add(ALLOWED);
+              else document.documentElement.classList.remove(ALLOWED);
+            }
+          } catch (e) {}
 
           pinViewportUnits();
           neutralizeViewportHeights();
