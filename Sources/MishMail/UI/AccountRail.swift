@@ -9,9 +9,6 @@ extension AccountRailPalette {
 /// The always-visible strip left of the sidebar: one avatar per account
 /// (ring, unread badge), "All accounts" first when there are several, a "+"
 /// to add an account, and at the bottom the Settings button.
-///
-/// Bottom links (contacts, chat, calendar…) go in `bottomLinks`, one line
-/// each; the stack grows upward from the gear.
 struct AccountRail: View {
     /// Avatar 40 pt + 12 pt padding on each side.
     static let avatarSize: CGFloat = 40
@@ -19,7 +16,7 @@ struct AccountRail: View {
 
     @Environment(MailStore.self) var store
     private var bound: Bindable<MailStore> { Bindable(store) }
-    /// Id of the account being dragged, for the fade and the reorder.
+    /// Id of the account being dragged, for the live reorder.
     @State private var draggingAccountId: String?
 
     var body: some View {
@@ -30,8 +27,6 @@ struct AccountRail: View {
                     if store.accounts.count > 1 { allEntry }
                     ForEach(Array(store.accounts.enumerated()), id: \.element.id) { index, account in
                         accountEntry(account, shortcut: index + 2)
-                            .opacity(draggingAccountId == account.id ? 0.4 : 1)
-                            .animation(.easeInOut(duration: 0.08), value: draggingAccountId)
                             .onDrag {
                                 draggingAccountId = account.id
                                 return NSItemProvider(object: account.id as NSString)
@@ -51,8 +46,7 @@ struct AccountRail: View {
         // Behind the title bar too, so there is no seam under the traffic
         // lights.
         .background(AccountRailPalette.background.ignoresSafeArea())
-        // A drop outside an account avatar (or a drag that ends elsewhere)
-        // still has to clear the fade.
+        // A drop outside an account avatar still clears the dragged id.
         .onDrop(of: [.text], isTargeted: nil) { _ in
             draggingAccountId = nil
             return true
@@ -91,7 +85,8 @@ struct AccountRail: View {
     }
 
     private func accountEntry(_ account: Account, shortcut: Int) -> some View {
-        let selected = store.activeAccountId == account.id
+        // With one account the unified entry is hidden, so it is the selection.
+        let selected = store.activeAccountId == account.id || store.accounts.count == 1
         let unread = store.accountUnread[account.id] ?? 0
         let title = AccountLabelColor.title(account)
         let needsReauth = store.accountsNeedingReauth.contains(account.id)
@@ -163,13 +158,13 @@ struct AccountRail: View {
 
     // MARK: - Bottom area
 
-    /// Grows upward: the gear is last; further links go in `bottomLinks`.
+    /// Grows upward: the gear is last; a later link (contacts, chat,
+    /// calendar) goes in the stack above it, one line each.
     private var bottomArea: some View {
         VStack(spacing: 8) {
             Rectangle()
                 .fill(AccountRailPalette.glyph.opacity(0.15))
                 .frame(width: Self.avatarSize, height: 1)
-            bottomLinks
             SettingsLink {
                 Image(systemName: "gearshape")
                     .font(.system(size: 18))
@@ -183,11 +178,6 @@ struct AccountRail: View {
             .accessibilityIdentifier("accountRail.settings")
         }
         .padding(.bottom, 10)
-    }
-
-    /// Later: contacts, chat, calendar… one `railLink(...)` line each.
-    @ViewBuilder private var bottomLinks: some View {
-        EmptyView()
     }
 }
 

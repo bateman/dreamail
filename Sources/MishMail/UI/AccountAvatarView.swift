@@ -26,7 +26,7 @@ struct AccountAvatarView: View {
     var photo: NSImage?
     var ring: Ring?
     /// Hidden from VoiceOver where the surrounding control already reads the
-    /// account's name (the switcher rows and header).
+    /// account's name (the rail buttons).
     var decorative = false
     /// Unread count of this account; 0 draws no badge. The badge overlays
     /// the top-trailing edge and adds nothing to the layout.
@@ -40,8 +40,9 @@ struct AccountAvatarView: View {
 
     var body: some View {
         let ringWidth = emphasized ? Self.emphasizedRingWidth : CGFloat(AccountRingMetrics.ringWidth)
-        let inner = ring == nil ? size
-            : size - 2 * (ringWidth + CGFloat(AccountRingMetrics.gap))
+        let inner: CGFloat = ring == nil ? size
+            : emphasized ? size - 2 * (ringWidth + CGFloat(AccountRingMetrics.gap))
+            : CGFloat(AccountRingMetrics(size: Double(size)).photoDiameter)
         ZStack {
             if let ring {
                 let style = AccountRingStyle.resolve(

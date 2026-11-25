@@ -434,7 +434,7 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .padding(.leading, 20).padding(.bottom, 20)
+            .padding(.leading, 20 + AccountRail.width).padding(.bottom, 20)
         }
         // Presence only — not `undoAction?.id` — so rapid keyboard archive/
         // trash updates the label in place instead of re-sliding every time.
@@ -1219,7 +1219,7 @@ private extension ContentView {
                 store.jumpSelection(toEnd: event.keyCode == 125)
                 return nil
             }
-            // ⌘1 = All accounts, ⌘2… = individual accounts, in popover order
+            // ⌘1 = All accounts, ⌘2… = individual accounts, in rail order
             // (one shortcut per inbox).
             if mods == .command, let chars = event.charactersIgnoringModifiers,
                chars.count == 1, let digit = Int(chars), (1...9).contains(digit) {
