@@ -4,15 +4,29 @@ import AppKit
 extension AccountRailPalette {
     static let background = Color(nsColor: .adaptive(light: backgroundLight, dark: backgroundDark))
     static let glyph = Color(nsColor: .adaptive(light: glyphLight, dark: glyphDark))
+    static let idleRing = Color(nsColor: .adaptive(light: idleRingLight, dark: idleRingDark))
 }
 
 /// The always-visible strip left of the sidebar: one avatar per account
 /// (ring, unread badge), "All accounts" first when there are several, a "+"
 /// to add an account, and at the bottom the Settings button.
 struct AccountRail: View {
-    /// Avatar 40 pt + 12 pt padding on each side.
     static let avatarSize: CGFloat = 40
-    static let width: CGFloat = 64
+    /// Right edge of the zoom (green) window button, measured from the window's
+    /// left edge: ~70 pt with the larger macOS 26 buttons, ~61 pt before. The
+    /// rail must cover the three buttons entirely.
+    static let windowButtonsExtent: CGFloat = 70
+    /// Visible margin right of the window buttons.
+    static let windowButtonsMargin: CGFloat = 10
+    /// Rail width: the window buttons plus a margin (80 pt). Everything that
+    /// depends on the rail's width reads this constant.
+    static let width: CGFloat = windowButtonsExtent + windowButtonsMargin
+    /// Settings → Appearance: show the "+" (add account) entry. App-wide.
+    static let showAddAccountKey = "showAddAccountInRail"
+    static let showAddAccountDefault = true
+
+    @AppStorage(AccountRail.showAddAccountKey) private var showAddAccount =
+        AccountRail.showAddAccountDefault
 
     @Environment(MailStore.self) var store
     private var bound: Bindable<MailStore> { Bindable(store) }
@@ -34,7 +48,7 @@ struct AccountRail: View {
                             .onDrop(of: [.text], delegate: AccountDropDelegate(
                                 target: account, draggingId: $draggingAccountId, store: store))
                     }
-                    addButton
+                    if showAddAccount { addButton }
                 }
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
@@ -75,6 +89,12 @@ struct AccountRail: View {
                     }
                 }
                 .opacity(selected ? 1 : 0.6)
+                // After the dimming, so the ring keeps its full contrast.
+                .overlay {
+                    if !selected {
+                        Circle().strokeBorder(AccountRailPalette.idleRing, lineWidth: 1)
+                    }
+                }
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

@@ -1210,6 +1210,8 @@ struct AppearanceSettings: View {
     @AppStorage(ComposeToolbarVisibility.storageKey) private var composeToolbarHidden = ""
     @AppStorage(ComposeSpellCheck.spellingKey) private var composeSpellCheck = true
     @AppStorage(ComposeSpellCheck.grammarKey) private var composeGrammarCheck = true
+    @AppStorage(AccountRail.showAddAccountKey) private var showAddAccountInRail =
+        AccountRail.showAddAccountDefault
     @State private var showVIPManager = false
 
     private var priorityMode: PrioritySplit.Mode {
@@ -1233,6 +1235,14 @@ struct AppearanceSettings: View {
                     }
                 } footer: {
                     Text("System follows your Mac's light/dark appearance; Light and Dark keep MishMail fixed regardless of macOS.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Toggle("Show Add Account button in the account rail", isOn: $showAddAccountInRail)
+                        .accessibilityIdentifier("settings.showAddAccountInRail")
+                } footer: {
+                    Text("You can always add an account in Settings → Accounts.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
