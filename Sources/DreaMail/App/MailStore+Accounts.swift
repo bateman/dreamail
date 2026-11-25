@@ -60,6 +60,7 @@ extension MailStore {
                 let picture = info.picture
                 refreshAccountPhoto(accountId: info.email, force: true) { picture }
                 await refreshSendIdentities(accountId: info.email)
+                await refreshGmailSignatures(accountId: info.email, force: true)
                 // Own addresses are filtered at rank time. The new primary is
                 // already in `ownEmailAddresses` before send-as returns, so
                 // setSendIdentities sees no change and would not re-rank.
@@ -92,6 +93,7 @@ extension MailStore {
         accounts.removeAll { $0.id == id }
         forgetAccountPhoto(id)
         forgetSignatureSettingsAccount(id)
+        signatureSync[id] = nil
         // OpenPGP passphrase and results of the account leave memory.
         openPGP.forget(accountId: id)
         // DEC-019: the account's Gmail filters leave memory with it.

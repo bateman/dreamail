@@ -2049,6 +2049,13 @@ struct ComposeRequest: Identifiable {
             await self?.refreshSendIdentities()
             await self?.fireDueScheduledSends()
         }
+        // Signatures set in Gmail show up by themselves (no dialog on error).
+        Task { [weak self] in
+            guard let self else { return }
+            for account in self.accounts {
+                await self.refreshGmailSignatures(accountId: account.id, force: true)
+            }
+        }
         // Last, and off the main actor: the one-time post-v24 VACUUM can take
         // tens of seconds on a large mailbox. Re-check shut-down: the entry
         // guard was before startPolling and friends, and reclaimSpaceIfNeeded
@@ -5077,6 +5084,9 @@ struct ComposeRequest: Identifiable {
     /// Every account's signatures and defaults (`SignatureStore`). Written
     /// only by `MailStore+Signatures`.
     var signatureBook: SignatureBook = .empty
+    /// Each account's last refresh of its signatures from Gmail, in memory
+    /// only (`SignatureSyncPolicy`). Written only by `MailStore+Signatures`.
+    var signatureSync: [String: SignatureSyncState] = [:]
 
     private func reloadSnippets() {
         allSnippets = (try? db.read { try Snippet.order(Column("name")).fetchAll($0) }) ?? []
