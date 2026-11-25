@@ -2781,7 +2781,7 @@ struct ComposeRequest: Identifiable {
         let fetchLimit = ThreadListPaging.probeLimit(pageSize: windowLimit)
         let badgeAccount = DockBadge.account(for: Self.badgeScope, focused: activeAccount)
         let badgeTicket = dockBadgeTicket(account: badgeAccount)
-        let accountUnreadEpoch = accountUnread.epoch
+        let accountUnreadEpoch = self.accountUnreadEpoch
         // Primary badge tracks the inbox category hide set (Updates/Forums),
         // not only the fixed promo/social tab split.
         let inboxHideCategories = inboxBadgeHideCategories
@@ -2881,13 +2881,13 @@ struct ComposeRequest: Identifiable {
                     try MailStore.computeVIPThreadIds(
                         threads: listPage, activeVIP: activeVIP, db: db)
                 }
-                let (counts, badge) = try PerfMetrics.measure(.reloadCounts) {
-                    try MailStore.fetchSidebarCounts(
+                let ((counts, badge), accountUnread) = try PerfMetrics.measure(.reloadCounts) {
+                    (try MailStore.fetchSidebarCounts(
                         db: db, activeAccount: activeAccount, badgeAccount: badgeAccount,
-                        hideCategories: inboxHideCategories)
+                        hideCategories: inboxHideCategories),
+                     try SidebarCounts.fetchUnreadByAccount(
+                        db: db, hideCategories: inboxHideCategories))
                 }
-                let accountUnread = try SidebarCounts.fetchUnreadByAccount(
-                    db: db, hideCategories: inboxHideCategories)
                 return ReloadPayload(threads: listPage, vipHits: vipHits,
                                      counts: counts, badge: badge,
                                      accountUnread: accountUnread, hasMore: hasMore,
@@ -3453,7 +3453,7 @@ struct ComposeRequest: Identifiable {
         // follows the sidebar (unified view = every account).
         let badgeAccount = DockBadge.account(for: Self.badgeScope, focused: activeAccount)
         let badgeTicket = dockBadgeTicket(account: badgeAccount)
-        let accountUnreadEpoch = accountUnread.epoch
+        let accountUnreadEpoch = self.accountUnreadEpoch
         let hideCategories = inboxBadgeHideCategories
         // Off-main: the aggregate is ~8 COUNTs, and on SQLCipher every page
         // miss is an AES decrypt + HMAC. Kept as separate per-predicate
@@ -3502,20 +3502,33 @@ struct ComposeRequest: Identifiable {
     /// through it; only what it accepts is painted.
     @ObservationIgnored private(set) var dockBadge = DockBadge.Counter()
 
-    /// Unread per account for the avatar badges (see `DockBadge.AccountCounts`).
-    private(set) var accountUnread = DockBadge.AccountCounts()
+    /// Epoch and loaded flag of the per-account counts (see
+    /// `DockBadge.AccountCounts`). Not observed: it changes on every local
+    /// action, and only the counts below drive views.
+    @ObservationIgnored private var accountUnreadState = DockBadge.AccountCounts()
 
-    /// A database recount of `accountUnread`. Guarded: an Observation setter
-    /// publishes even for an equal value.
+    /// Unread per account for the avatar badges. Assigned only when it
+    /// changes: an Observation setter publishes even for an equal value.
+    private(set) var accountUnread: [String: Int] = [:]
+
+    /// Taken when a recount's read starts.
+    var accountUnreadEpoch: Int { accountUnreadState.epoch }
+
+    /// A database recount of the per-account counts.
     func applyAccountUnreadRecount(_ counts: [String: Int], epoch: Int) {
-        var next = accountUnread
-        guard next.applyRecount(counts, epoch: epoch), next != accountUnread else { return }
-        accountUnread = next
+        guard accountUnreadState.applyRecount(counts, epoch: epoch) else { return }
+        publishAccountUnread()
     }
 
     /// The per-account change of one local action.
     func applyAccountUnreadDelta(_ delta: [String: Int]) {
-        accountUnread.applyDelta(delta)
+        accountUnreadState.applyDelta(delta)
+        publishAccountUnread()
+    }
+
+    private func publishAccountUnread() {
+        let counts = accountUnreadState.counts
+        if counts != accountUnread { accountUnread = counts }
     }
 
     /// What macOS settings allow for the badge; shown in Settings.

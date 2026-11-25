@@ -2433,8 +2433,8 @@ struct AccountSwitcher: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(activeUnread > 0
-            ? "\(title), \(subtitle), \(activeUnread) unread" : "\(title), \(subtitle)")
+        .accessibilityLabel("\(title), \(subtitle)")
+        .accessibilityValue(Self.unreadValue(activeUnread))
         .accessibilityIdentifier("accountSwitcher")
         .popover(isPresented: $showMenu, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 1) {
@@ -2554,6 +2554,7 @@ struct AccountSwitcher: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint(account != nil && canReorderAccounts ? "Drag to reorder" : "")
+        .accessibilityValue(account.map { Self.unreadValue(unread(for: $0)) } ?? "")
         .hoverTint()
     }
 
@@ -2574,11 +2575,21 @@ struct AccountSwitcher: View {
                           photo: store.accountPhotos[account.id],
                           ring: .init(storedHex: account.labelColor, surface: surface),
                           decorative: true,
-                          unread: store.accountUnread.unread(for: account.id))
+                          unread: unread(for: account))
+    }
+
+    /// Unread of one account, for its avatar badge and the row's value.
+    private func unread(for account: Account) -> Int {
+        store.accountUnread[account.id] ?? 0
+    }
+
+    /// VoiceOver value of a switcher button; empty without unread mail.
+    private static func unreadValue(_ count: Int) -> String {
+        count > 0 ? "\(count) unread" : ""
     }
 
     private var activeUnread: Int {
-        activeAccount.map { store.accountUnread.unread(for: $0.id) } ?? 0
+        activeAccount.map { unread(for: $0) } ?? 0
     }
 
     private var activeAccount: Account? {

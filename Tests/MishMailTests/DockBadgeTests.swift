@@ -378,6 +378,30 @@ final class DockBadgeTests: XCTestCase {
         XCTAssertEqual(state.counts, try perAccount(q))
     }
 
+    /// Before the first recount there is nothing to move: a delta only
+    /// bumps the epoch (as `Counter` does), so no wrong number appears.
+    func testAccountDeltaBeforeTheFirstRecountIsIgnored() {
+        var state = DockBadge.AccountCounts()
+        state.applyDelta([a: -1])
+        state.applyDelta([b: 1])
+        XCTAssertEqual(state.counts, [:])
+        XCTAssertEqual(state.epoch, 2)
+        XCTAssertFalse(state.loaded)
+        XCTAssertTrue(state.applyRecount([a: 2], epoch: state.epoch))
+        XCTAssertTrue(state.loaded)
+        XCTAssertEqual(state.unread(for: a), 2)
+    }
+
+    /// The avatar badge caps at 99+, lower than the Dock's 999+.
+    func testAvatarBadgeLabelCapsAtNinetyNine() {
+        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 0), "")
+        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 7), "7")
+        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 99), "99")
+        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 100), "99+")
+        XCTAssertEqual(AccountAvatarView.badgeLabel(for: 5000), "99+")
+        XCTAssertEqual(DockBadge.label(for: 100), "100", "the Dock cap is unchanged")
+    }
+
     func testAccountCountsClampAndDropAtZero() {
         var state = DockBadge.AccountCounts()
         state.applyRecount([a: 1], epoch: state.epoch)

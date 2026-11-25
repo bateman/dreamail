@@ -156,6 +156,9 @@ enum DockBadge {
         /// Bumped by every local action, so a recount whose read started
         /// before it cannot undo its delta.
         private(set) var epoch = 0
+        /// Set by the first recount. Before it the counts are unknown, so a
+        /// delta has nothing to move (as for `Counter`).
+        private(set) var loaded = false
 
         /// Unread for one account; 0 when unknown or none.
         func unread(for account: String) -> Int { counts[account] ?? 0 }
@@ -166,12 +169,14 @@ enum DockBadge {
         mutating func applyRecount(_ new: [String: Int], epoch: Int) -> Bool {
             guard epoch == self.epoch else { return false }
             counts = new.filter { $0.value > 0 }
+            loaded = true
             return true
         }
 
         /// A local action: `delta` per account, summed over its threads.
         mutating func applyDelta(_ delta: [String: Int]) {
             epoch += 1
+            guard loaded else { return }
             for (account, d) in delta where d != 0 {
                 let value = max(0, (counts[account] ?? 0) + d)
                 counts[account] = value > 0 ? value : nil

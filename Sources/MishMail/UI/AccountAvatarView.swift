@@ -59,7 +59,7 @@ struct AccountAvatarView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isImage)
-        .accessibilityHidden(decorative && unread <= 0)
+        .accessibilityHidden(decorative)
     }
 
     private var accessibilityText: String {
@@ -67,16 +67,33 @@ struct AccountAvatarView: View {
         return unread > 0 ? "\(base), \(unread) unread" : base
     }
 
-    /// Same number format as the Dock badge. White on a dark red passes
-    /// contrast in both appearances; the outline separates it from the ring.
+    /// Largest number the avatar badge shows; above it reads "99+". Lower
+    /// than the Dock's cap so the capsule stays small on a 29-35 pt avatar.
+    static let badgeCap = 99
+
+    static func badgeLabel(for count: Int) -> String {
+        if count <= 0 { return "" }
+        return count > badgeCap ? "\(badgeCap)+" : String(count)
+    }
+
+    /// Outline in the surface's own color, so the badge reads as cut out of
+    /// it; the window color where the avatar has no ring (no known surface).
+    private var badgeOutline: Color {
+        guard let surface = ring?.surface else { return Color(nsColor: .windowBackgroundColor) }
+        let behind = AccountRingStyle.surfaceColors(
+            surface, colorScheme == .dark ? .dark : .light)[0]
+        return Self.color(behind)
+    }
+
+    /// White on a dark red passes contrast in both appearances.
     private var unreadBadge: some View {
-        Text(DockBadge.label(for: unread))
+        Text(Self.badgeLabel(for: unread))
             .font(.system(size: 9.5, weight: .bold).monospacedDigit())
             .foregroundStyle(.white)
             .padding(.horizontal, 4)
             .frame(minWidth: 15, minHeight: 15)
             .background(Capsule().fill(Color(red: 0.78, green: 0.13, blue: 0.11)))
-            .overlay(Capsule().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+            .overlay(Capsule().strokeBorder(badgeOutline, lineWidth: 1.5))
             .fixedSize()
             .offset(x: 5, y: -5)
             .accessibilityHidden(true)
