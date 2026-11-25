@@ -64,13 +64,20 @@ final class RPGPLinkedTests: XCTestCase {
         }
 
         /// A new key (Ed25519 signing primary, Curve25519 encryption subkey);
-        /// returns its fingerprint.
-        func makeKey(_ userID: String, passphrase: String = "") throws -> String {
+        /// returns its fingerprint. GnuPG 2.4 marks its keys as taking its
+        /// own OCB packet (type 20, not in RFC 9580) and then encrypts to
+        /// them with it; unless `gnupgAEAD`, the preferences are reset so it
+        /// writes standard SEIPD v1, as other clients do.
+        func makeKey(_ userID: String, passphrase: String = "", gnupgAEAD: Bool = false) throws -> String {
             try run(unlock(passphrase) + ["--quick-gen-key", userID, "ed25519", "sign,cert", "never"])
             let listing = String(decoding: try run(["--with-colons", "--list-keys", userID]), as: UTF8.self)
             let fingerprint = try XCTUnwrap(listing.split(separator: "\n")
                 .first { $0.hasPrefix("fpr:") }?.split(separator: ":", omittingEmptySubsequences: false)[9])
             try run(unlock(passphrase) + ["--quick-add-key", String(fingerprint), "cv25519", "encr", "never"])
+            if !gnupgAEAD {
+                try run(unlock(passphrase) + ["--command-fd", "0", "--edit-key", String(fingerprint)],
+                        input: Data("setpref AES256 AES128 SHA256 ZLIB\ny\nsave\n".utf8))
+            }
             return String(fingerprint)
         }
 
@@ -248,6 +255,21 @@ final class RPGPLinkedTests: XCTestCase {
         passphrases.set(Data("correct horse".utf8), accountId: account)
         let decrypted = try await engine.decrypt(message)
         XCTAssertEqual(decrypted.plaintext, Data("secret".utf8))
+    }
+
+    /// GnuPG's own OCB packet (type 20) is not RFC 9580 and the library
+    /// refuses it: an error, never plaintext.
+    func testAGnuPGOCBMessageIsRefusedWithoutPlaintext() async throws {
+        let bob = try gnupg.makeKey("Bob <bob@example.org>", gnupgAEAD: true)
+        let (engine, _, _, _) = try makeEngine()
+        _ = try await engine.importSecretKeys(try gnupg.secretKey(bob))
+        let message = try gnupg.encrypt(Data("secret".utf8), to: bob, signedBy: nil)
+        do {
+            let leaked = try await engine.decrypt(message)
+            XCTFail("decrypted \(leaked.plaintext.count) bytes of a non-standard packet")
+        } catch {
+            XCTAssertNotNil(error as? PGPEngineError)
+        }
     }
 
     func testTheLibraryRefusesJunk() async throws {
