@@ -201,16 +201,19 @@ struct AccountRailTopBand: View {
     let sidebarVisible: Bool
 
     var body: some View {
+        // Read here, not inside the GeometryReader closure, so the view
+        // observes the store.
+        let width = AccountRailMetrics.bandWidth(
+            sidebarTrailing: store.sidebarTrailingEdge, sidebarVisible: sidebarVisible)
         GeometryReader { proxy in
             let top = proxy.safeAreaInsets.top
             AccountRailPalette.background
-                .frame(width: AccountRailMetrics.bandWidth(
-                           sidebarTrailing: store.sidebarTrailingEdge,
-                           sidebarVisible: sidebarVisible),
+                .frame(width: width,
                        height: AccountRailMetrics.bandHeight(safeAreaTop: top))
                 .offset(y: -top)
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("accountRail.topBand")
+                .accessibilityValue("sidebar edge \(store.sidebarTrailingEdge.map { String(Int($0)) } ?? "none")")
         }
         .allowsHitTesting(false)
     }
