@@ -34,6 +34,10 @@ final class LabelOrganizerOrderUITests: XCTestCase {
         addTeardownBlock { app.terminate() }
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
         app.activate()
+        // Sidebar starts collapsed; → reveals it (see SidebarNavUITests).
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
+        XCTAssertTrue(element("threadRow.\(account):t3", in: app).waitForExistence(timeout: 10),
+                      "demo inbox should load")
 
         let research = element("sidebar.label.\(account).Label_research", in: app)
         XCTAssertTrue(research.waitForExistence(timeout: 10))
