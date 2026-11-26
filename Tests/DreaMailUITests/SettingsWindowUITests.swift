@@ -209,7 +209,10 @@ final class SettingsWindowUITests: XCTestCase {
             // Sidebar: the first row and the section header lie inside the window.
             let first = element(ids[0], in: settings).frame
             XCTAssertGreaterThanOrEqual(first.minX, window.minX - 0.5, "\(id): first sidebar row cut on the left")
-            let header = settings.staticTexts["Per account"].firstMatch
+            // A sidebar section header is not always a static text: match any
+            // element that carries the title, in any case.
+            let header = settings.descendants(matching: .any).matching(NSPredicate(
+                format: "label ==[c] 'Per account' OR title ==[c] 'Per account' OR value ==[c] 'Per account'")).firstMatch
             XCTAssertTrue(header.exists, "\(id): the 'Per account' header")
             XCTAssertGreaterThanOrEqual(header.frame.minX, window.minX - 0.5, "\(id): section header cut on the left")
             XCTAssertLessThanOrEqual(row.frame.maxX, window.maxX + 0.5, "\(id): sidebar row outside the window")
