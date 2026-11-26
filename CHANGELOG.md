@@ -105,6 +105,25 @@ minor versions may still change behavior.
 - **Categories without a sub-menu.** Under "More", Promotions and Social are
   plain rows just above Spam; the "Categories" group is gone.
 
+- **Reorder the sidebar; a closed "More" hides everything under it.** Drag
+  the system views (Inbox, Starred, Sent, Promotions, Reminders...) to
+  reorder them, also across the "More" row: drop one above "More" to keep
+  it always listed, below to tuck it away. The order is kept per account
+  (the all-accounts view has its own); "Reset Sidebar Order" (View menu, or
+  right-click a view) restores Gmail's. With "More" closed nothing under it
+  is listed, the open view included; the same holds for the labels' "More".
+  Reminders is still listed above "More" while something has a reminder.
+
+- **List and sidebar density.** Settings → Appearance has "List density"
+  and "Sidebar density", each Comfortable (as before) or Compact. Compact
+  trims the space above and below each row (a conversation row is 8 pt
+  shorter, a sidebar row 22 pt instead of 30 pt); fonts, icons and the
+  section headers ("Today", "Yesterday"...) keep their size.
+
+- **The Dock badge goes away when you quit.** The unread count stayed on
+  the Dock icon after quitting; it is now cleared at quit, and at launch if
+  a crash or force quit left one behind.
+
 - **Organize Labels keeps families together.** In Organize Labels the
   sublabels are listed under their label, indented. Dragging a label moves
   it with all its sublabels; a sublabel can be reordered among its siblings
