@@ -261,12 +261,14 @@ final class AccentColorUITests: XCTestCase {
     /// every state; the bar is the only difference between states.
     private static func sidebarEdge(row: XCUIElement, window: XCUIElement) -> CGRect {
         let r = row.frame
-        return CGRect(x: r.minX - 24, y: r.minY + 2, width: 30, height: max(1, r.height - 4))
+        return CGRect(x: r.minX - 40, y: r.minY + 2, width: 46, height: max(1, r.height - 4))
     }
 
-    /// The first points of the selected thread row's strip.
+    /// The selected thread row's leading edge. The row's accessibility frame
+    /// is its content, inside the list's own padding, which the row's
+    /// background (and the bar at its edge) covers: so start well left of it.
     private static func threadEdge(strip: CGRect) -> CGRect {
-        CGRect(x: strip.minX, y: strip.minY, width: min(10, strip.width), height: strip.height)
+        CGRect(x: strip.minX - 40, y: strip.minY, width: 50, height: strip.height)
     }
 
     /// Pixels that differ clearly between two captures of the same rect.
