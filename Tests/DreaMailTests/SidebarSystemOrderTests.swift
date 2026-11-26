@@ -1,5 +1,4 @@
 import XCTest
-@testable import DreaMail
 
 /// The sidebar's system views: default order, dragging (also across the
 /// "More" row), what is stored, and what a closed "More" lists.
