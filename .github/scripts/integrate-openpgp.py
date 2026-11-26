@@ -15,8 +15,9 @@ release (docs/DEPENDENCIES.md, "OpenPGP library").
   5. Writes the pull request body to build/openpgp-integration.md and, under
      GitHub Actions, the outputs (changed, version, commit, review).
 
-`review=true` means a change needs a person: the accepted advisories
-(DEC-051) differ from the table's. The workflow then does not merge.
+`review=true` means a change needs a person, and the workflow does not
+merge: Package.swift changed beyond its version and checksum, rust/deny.toml
+changed, or the accepted advisories (DEC-051) differ from the table's.
 
 Usage: .github/scripts/integrate-openpgp.py [VERSION]
 Exit status: 0 done or already integrated, 1 a check failed, 2 bad input.
@@ -31,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import tomllib
 import urllib.request
 from pathlib import Path
 
@@ -41,7 +43,11 @@ PROJECT = REPO / "project.yml"
 DEPENDENCIES = REPO / "docs" / "DEPENDENCIES.md"
 CHANGELOG = REPO / "CHANGELOG.md"
 BODY = REPO / "build" / "openpgp-integration.md"
-SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+# ASCII digits only: \d would also take other scripts' digits.
+SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+# What an rPGP licence expression may contain; anything else is refused
+# before it reaches a document or the pull request body.
+LICENCE = re.compile(r"^[A-Za-z0-9.+() -]+$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -71,7 +77,7 @@ def release_tags() -> list[str]:
     tags = []
     for line in git("ls-remote", "--tags", UPSTREAM).splitlines():
         ref = line.split("\t")[1]
-        match = re.fullmatch(r"refs/tags/v(\d+\.\d+\.\d+)", ref)
+        match = re.fullmatch(r"refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)", ref)
         if match:
             tags.append(match.group(1))
     return sorted(tags, key=version_key)
@@ -85,13 +91,40 @@ def package_fields(manifest: str) -> tuple[str, str]:
     return version.group(1), checksum.group(1)
 
 
-def pinning_commit(clone: Path, version: str) -> str:
-    """The newest commit on main whose Package.swift declares `version`."""
-    for commit in git("log", "--format=%H", "origin/main", "--", "Package.swift", cwd=clone).split():
-        if package_fields(git("show", f"{commit}:Package.swift", cwd=clone))[0] == version:
-            return commit
-    raise Failure(f"no commit on dreamail-openpgp main points Package.swift at v{version} "
-                  "(is its Package.swift pull request merged?)")
+def declared_version(manifest: str) -> str | None:
+    match = re.search(r'^let version = "([^"]+)"', manifest, re.M)
+    return match.group(1) if match else None
+
+
+def pinning_commit(clone: Path, version: str, ref: str = "origin/main") -> str:
+    """The commit on `ref` that set Package.swift to `version`: in the newest
+    run of commits declaring it, the oldest. Later commits that touch the
+    manifest without changing the version do not move the pin."""
+    found = None
+    for commit in git("log", "--format=%H", ref, "--", "Package.swift", cwd=clone).split():
+        if declared_version(git("show", f"{commit}:Package.swift", cwd=clone)) == version:
+            found = commit
+        elif found:
+            break
+    if not found:
+        raise Failure(f"no commit on dreamail-openpgp main points Package.swift at v{version} "
+                      "(is its Package.swift pull request merged?)")
+    return found
+
+
+def manifest_shape(manifest: str) -> str:
+    """The manifest without its version and checksum lines: what must not
+    change for the pull request to merge by itself."""
+    return re.sub(r'^let (version|checksum) = .*\n', "", manifest, flags=re.M)
+
+
+def deny_advisories(text: str) -> list[str]:
+    """The ignored advisories, in both forms cargo-deny accepts."""
+    try:
+        ignore = tomllib.loads(text).get("advisories", {}).get("ignore", [])
+    except tomllib.TOMLDecodeError as error:
+        raise Failure(f"rust/deny.toml does not parse: {error}") from error
+    return sorted({entry if isinstance(entry, str) else entry.get("id", "?") for entry in ignore})
 
 
 def library_facts(clone: Path, commit: str) -> dict:
@@ -101,18 +134,23 @@ def library_facts(clone: Path, commit: str) -> dict:
     licence = re.search(r"^\| rPGP \| crate `pgp` `=[^`]+` \([^)]*\), (.+) \|$", show("README.md"), re.M)
     if not (pgp and crates and licence):
         raise Failure("cannot read the rPGP version, crate count or licence at that commit")
+    if not SEMVER.match(pgp.group(1)) or not LICENCE.match(licence.group(1)):
+        raise Failure(f"unexpected rPGP version {pgp.group(1)!r} or licence {licence.group(1)!r}")
     return {
         "pgp": pgp.group(1),
         "crates": int(crates.group(1)),
         "licence": licence.group(1),
-        "advisories": sorted(set(re.findall(r'id = "(RUSTSEC-\d{4}-\d{4})"', show("rust/deny.toml")))),
+        "advisories": deny_advisories(show("rust/deny.toml")),
     }
 
 
 # Editing DreaMail -----------------------------------------------------------
 
-def sub_once(pattern: str, replacement: str, text: str, what: str) -> str:
-    new, count = re.subn(pattern, replacement, text, count=0, flags=re.M)
+def sub_once(pattern: str, value: str, text: str, what: str) -> str:
+    """Replaces the one match of `pattern`, which has two groups around the
+    part to change, with group 1 + `value` + group 2. `value` is inserted as
+    is: never read as a replacement template."""
+    new, count = re.subn(pattern, lambda m: m.group(1) + value + m.group(2), text, flags=re.M)
     if count != 1:
         raise Failure(f"expected one {what}, found {count}")
     return new
@@ -126,10 +164,10 @@ def current_pin(project: str) -> str:
 
 
 def edit_project(project: str, version: str, commit: str) -> str:
-    project = sub_once(r"(^  DreaMailRPGP:\n    url: \S+\n    revision: )[0-9a-f]{40}$",
-                       rf"\g<1>{commit}", project, "DreaMailRPGP revision")
-    return sub_once(r"(checksummed static xcframework\. Release )v\d+\.\d+\.\d+(, pinned)",
-                    rf"\g<1>v{version}\g<2>", project, "release comment in project.yml")
+    project = sub_once(r"(^  DreaMailRPGP:\n    url: \S+\n    revision: )[0-9a-f]{40}()$",
+                       commit, project, "DreaMailRPGP revision")
+    return sub_once(r"(checksummed static xcframework\. Release )v[0-9]+\.[0-9]+\.[0-9]+(, pinned)",
+                    f"v{version}", project, "release comment in project.yml")
 
 
 def openpgp_section(dependencies: str) -> tuple[int, int]:
@@ -164,19 +202,21 @@ def edit_dependencies(dependencies: str, old: dict, new: dict) -> str:
     start, end = openpgp_section(dependencies)
     text = dependencies[start:end]
     v = new["version"]
-    text = sub_once(r"^(\| Release \| )`v[^`]+`( \|)$", rf"\g<1>`v{v}`\g<2>", text, "Release row")
+    text = sub_once(r"^(\| Release \| )`v[^`]+`( \|)$", f"`v{v}`", text, "Release row")
     text = sub_once(r"^(\| Commit \(`revision:` in `project.yml`\) \| )`[0-9a-f]{40}`( \|)$",
-                    rf"\g<1>`{new['commit']}`\g<2>", text, "Commit row")
+                    f"`{new['commit']}`", text, "Commit row")
     text = sub_once(r"^(\| Binary \| `DreaMailRPGP\.xcframework\.zip` from the )`v[^`]+`( GitHub release)",
-                    rf"\g<1>`v{v}`\g<2>", text, "Binary row")
+                    f"`v{v}`", text, "Binary row")
     text = sub_once(r"^(\| Binary SHA-256 \(declared in `Package.swift` at that commit\) \| )`[0-9a-f]{64}`( \|)$",
-                    rf"\g<1>`{new['checksum']}`\g<2>", text, "Binary SHA-256 row")
-    text = sub_once(r"^(\| Recorded \| ).+( \|)$", rf"\g<1>{new['date']}\g<2>", text, "Recorded row")
-    text = sub_once(r"^(\| Contents \| rPGP \(`pgp` =)[^,]+, [^)]+(\) and )\d+( crates in all)",
-                    rf"\g<1>{new['pgp']}, {new['licence']}\g<2>{new['crates']}\g<3>", text, "Contents row")
+                    f"`{new['checksum']}`", text, "Binary SHA-256 row")
+    text = sub_once(r"^(\| Recorded \| ).+( \|)$", new["date"], text, "Recorded row")
+    text = sub_once(r"^(\| Contents \| rPGP \(`pgp` =)[^)]+(\) and )",
+                    f"{new['pgp']}, {new['licence']}", text, "Contents row")
+    text = sub_once(r"^(\| Contents \| rPGP \(`pgp` =[^)]+\) and )[0-9]+( crates in all)",
+                    str(new["crates"]), text, "Contents crate count")
     note = (f"Recorded for `v{v}`: the checksum in `Package.swift` at the commit, the release's "
             f"`.sha256` asset and the SHA-256 of the downloaded zip all matched ({new['date']}, "
-            f"Integrate dreamail-openpgp workflow), and CI passed with it, UI tests included. "
+            f"Integrate dreamail-openpgp workflow). "
             f"The previous pin, `v{old['version']}`, was commit `{old['commit']}`, checksum "
             f"`{old['checksum']}`.")
     note = textwrap.fill(note, width=76, break_on_hyphens=False) + "\n\n"
@@ -190,7 +230,7 @@ def edit_changelog(text: str, version: str, pgp: str) -> str:
     entry = textwrap.fill(f"- The OpenPGP library moves to v{version} (rPGP `pgp` {pgp}); "
                           "docs/DEPENDENCIES.md has the pin and its checks.",
                           width=76, subsequent_indent="  ", break_on_hyphens=False) + "\n"
-    return sub_once(r"^(## \[Unreleased\]\n\n)", rf"\g<1>{entry}", text, "[Unreleased] heading")
+    return sub_once(r"^(## \[Unreleased\]\n\n)()", entry, text, "[Unreleased] heading")
 
 
 # Main -----------------------------------------------------------------------
@@ -229,9 +269,12 @@ def main(argv: list[str]) -> int:
             print(f"v{version} (commit {commit}) is already pinned: nothing to do.")
             outputs(changed="false")
             return 0
-        _, checksum = package_fields(git("show", f"{commit}:Package.swift", cwd=clone))
-        old_checksum = package_fields(git("show", f"{pinned}:Package.swift", cwd=clone))[1]
+        manifest = git("show", f"{commit}:Package.swift", cwd=clone)
+        old_manifest = git("show", f"{pinned}:Package.swift", cwd=clone)
+        _, checksum = package_fields(manifest)
+        old_checksum = package_fields(old_manifest)[1]
         facts = library_facts(clone, commit)
+        deny_changed = bool(git("diff", "--name-only", pinned, commit, "--", "rust/deny.toml", cwd=clone).strip())
 
     base = f"{UPSTREAM}/releases/download/v{version}/{ASSET}"
     asset_sum = download(base + ".sha256").decode().split()[0]
@@ -256,7 +299,17 @@ def main(argv: list[str]) -> int:
     for path, text in edited.items():
         path.write_text(text, encoding="utf-8")
 
-    review = was != now
+    # What makes the pull request wait for a person instead of merging.
+    reasons = []
+    if manifest_shape(manifest) != manifest_shape(old_manifest):
+        reasons.append("Package.swift changed beyond `version` and `checksum` (products, targets or "
+                       "dependencies may differ; `check-package-pins.py` does not see inside it)")
+    if deny_changed:
+        reasons.append("rust/deny.toml changed (advisory, licence, ban or source policy)")
+    if was != now:
+        reasons.append(f"the accepted advisories changed (table: {', '.join(was) or 'none'}; "
+                       f"library: {', '.join(now) or 'none'}): update the row and DEC-051 in "
+                       "docs/registro-decisioni.md")
     body = [
         f"Integrates dreamail-openpgp [v{version}]({UPSTREAM}/releases/tag/v{version}) "
         f"(rPGP `pgp` {facts['pgp']}, {facts['crates']} crates), replacing v{old_version}.",
@@ -269,13 +322,11 @@ def main(argv: list[str]) -> int:
         "as errors, unit tests including the linked-library tests, test-skip check, both UI shards) "
         "ran on this branch with only this pin changed, after CI was green on main.",
     ]
-    if review:
-        body += ["", "**Needs a person:** the accepted advisories changed "
-                 f"(table: {', '.join(was) or 'none'}; library: {', '.join(now) or 'none'}). "
-                 "Update the row and DEC-051 in docs/registro-decisioni.md before merging."]
+    if reasons:
+        body += ["", "**Needs a person, not merged by the workflow:**", *[f"- {r}" for r in reasons]]
     BODY.parent.mkdir(exist_ok=True)
     BODY.write_text("\n".join(body) + "\n", encoding="utf-8")
-    outputs(changed="true", version=version, commit=commit, review=str(review).lower())
+    outputs(changed="true", version=version, commit=commit, review=str(bool(reasons)).lower())
     return 0
 
 

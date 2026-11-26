@@ -3,8 +3,9 @@ name: Integrate dreamail-openpgp
 # Manual only: integrates a dreamail-openpgp release (the newest, or the
 # version given) and checks that it introduces no regression.
 #
-#   1. CI must be green on main's head, so that a failure on the branch can
-#      only come from the new pin.
+#   1. The whole CI (a manual run, UI shards included) must be green on
+#      main's head, reused if one already passed there, so that a failure
+#      on the branch can only come from the new pin.
 #   2. .github/scripts/integrate-openpgp.py picks the release, checks that
 #      Package.swift, the release's .sha256 asset and the downloaded zip
 #      agree, and edits project.yml, docs/DEPENDENCIES.md and CHANGELOG.md.
@@ -16,8 +17,14 @@ name: Integrate dreamail-openpgp
 #   4. CI green: the pull request is opened and squash-merged, then CI runs
 #      on main (a merge made with GITHUB_TOKEN starts no workflow). It stays
 #      open instead when `merge` is off or the accepted advisories changed
-#      (DEC-051 needs a person). CI red: a draft pull request with the
-#      failed run, and this job fails.
+#      (DEC-051 needs a person), Package.swift changed beyond its version and
+#      checksum, or rust/deny.toml changed. CI red: a draft pull request
+#      with the failed run, and this job fails.
+#
+# Trust: the three checksums all come from the dreamail-openpgp release
+# workflow, so they prove the files agree, not who made them. Running this
+# workflow with `merge` on accepts that release without reading its diff
+# (the pull request links it).
 #
 # Pull requests opened with GITHUB_TOKEN start no CI either, hence the
 # manual CI runs. Needs "Allow GitHub Actions to create and approve pull
@@ -45,14 +52,16 @@ jobs:
   integrate:
     name: Integrate and check for regressions
     runs-on: ubuntu-24.04
-    # CI with the UI shards takes about 25 minutes; twice with main's run.
+    # CI with the UI shards takes about 25 minutes: up to twice, plus main's
+    # run after the merge, which this job only starts.
     timeout-minutes: 90
     permissions:
       contents: write       # push the branch, merge
       pull-requests: write  # open and merge the pull request
       actions: write        # start CI on the branch and on main
+    # GH_TOKEN is given only to the steps that call GitHub, never to the
+    # one that reads the upstream repository's files.
     env:
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       BASE: ${{ github.event.repository.default_branch }}
     steps:
@@ -61,17 +70,18 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Check that CI is green on main
+      # The baseline: the same whole CI (UI shards included) green on main's
+      # head, so that a red branch can only come from the new pin. A manual
+      # run that already passed on that commit counts; otherwise one runs.
+      - name: Run CI on main as the baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           sha=$(git rev-parse HEAD)
-          conclusion=$(gh run list --workflow ci.yml --commit "$sha" --limit 20 \
-            --json status,conclusion \
-            --jq '[.[] | select(.status == "completed")][0].conclusion // empty')
-          if [ "$conclusion" != "success" ]; then
-            echo "CI on $BASE ($sha) is '${conclusion:-not run}': a failure on the branch could not be told from a regression. Fix $BASE first, or run CI on it." >&2
+          if ! run=$(.github/scripts/run-ci.sh --reuse "$BASE" "$sha"); then
+            echo "CI is not green on $BASE ($sha)${run:+, run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run}: a failure on the branch could not be told from a regression. Fix $BASE first." | tee -a "$GITHUB_STEP_SUMMARY" >&2
             exit 1
           fi
-          echo "CI is green on $BASE ($sha)."
 
       - name: Prepare the integration
         id: integrate
@@ -88,6 +98,7 @@ jobs:
         id: ci
         if: steps.integrate.outputs.changed == 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.integrate.outputs.version }}
         run: |
           branch="deps/dreamail-openpgp-v$VERSION"
@@ -102,37 +113,24 @@ jobs:
             -m "Made by the Integrate dreamail-openpgp workflow (.github/scripts/integrate-openpgp.py)."
           git push -q "$remote" "HEAD:refs/heads/$branch"
           sha=$(git rev-parse HEAD)
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-
-          start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run ci.yml --ref "$branch"
-          run=""
-          for _ in $(seq 1 36); do
-            sleep 5
-            run=$(gh run list --workflow ci.yml --event workflow_dispatch --commit "$sha" \
-              --limit 5 --json databaseId,createdAt \
-              --jq "[.[] | select(.createdAt >= \"$start\")][0].databaseId // empty")
-            if [ -n "$run" ]; then
-              break
-            fi
-          done
-          if [ -z "$run" ]; then
-            echo "Could not find the CI run on $branch." >&2
-            exit 1
-          fi
+          {
+            echo "branch=$branch"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+          status=0
+          run=$(.github/scripts/run-ci.sh "$branch" "$sha") || status=$?
           echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "CI on $branch: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run"
-          if gh run watch "$run" --exit-status --interval 30 > /dev/null; then
-            echo "passed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "passed=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "passed=$([ "$status" -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
+      # Also after a failed or timed-out step above, once the branch exists:
+      # never a pushed branch without a pull request.
       - name: Open the pull request, merge if CI passed
-        if: steps.ci.outputs.branch != ''
+        if: always() && steps.ci.outputs.branch != ''
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.integrate.outputs.version }}
           BRANCH: ${{ steps.ci.outputs.branch }}
+          SHA: ${{ steps.ci.outputs.sha }}
           RUN: ${{ steps.ci.outputs.run }}
           PASSED: ${{ steps.ci.outputs.passed }}
           REVIEW: ${{ steps.integrate.outputs.review }}
@@ -141,8 +139,15 @@ jobs:
           body=build/openpgp-integration.md
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN"
           title="Integrate dreamail-openpgp v$VERSION"
+          if [ -z "$RUN" ]; then
+            printf '\n**CI could not be started or found on this branch** (%s/%s/actions/runs/%s). Not merged.\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$body"
+            gh pr create --base "$BASE" --head "$BRANCH" --draft --title "$title" --body-file "$body"
+            echo "CI did not run on $BRANCH: draft pull request opened, nothing merged." | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit 1
+          fi
           if [ "$PASSED" != "true" ]; then
-            printf '\n**CI failed on this branch** (%s): the release introduces a regression, or the run failed for another reason. Not merged.\n' "$run_url" >> "$body"
+            printf '\n**CI failed on this branch** (%s), while it passed on main with the previous pin: the release introduces a regression. Not merged.\n' "$run_url" >> "$body"
             gh pr create --base "$BASE" --head "$BRANCH" --draft --title "$title" --body-file "$body"
             echo "CI failed on $BRANCH: draft pull request opened, nothing merged." | tee -a "$GITHUB_STEP_SUMMARY" >&2
             exit 1
@@ -154,6 +159,20 @@ jobs:
             echo "CI passed; pull request left open (review: $REVIEW, merge: $MERGE)." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          gh pr merge "$BRANCH" --squash --delete-branch
+          # Only the commit CI tested: a push to the branch meanwhile fails this.
+          gh pr merge "$BRANCH" --squash --delete-branch --match-head-commit "$SHA"
           gh workflow run ci.yml --ref "$BASE"
           echo "CI passed; v$VERSION merged into $BASE, and CI started there." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # If even the pull request could not be opened, remove the branch, so
+      # the next run is not refused because it exists.
+      - name: Remove a branch left without a pull request
+        if: failure() && steps.ci.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.ci.outputs.branch }}
+        run: |
+          if [ "$(gh pr list --head "$BRANCH" --state all --json number --jq length)" = "0" ]; then
+            git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" --delete "$BRANCH"
+            echo "Removed $BRANCH, which had no pull request." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi

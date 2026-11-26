@@ -474,5 +474,49 @@ class IntegrateOpenPGPTests(unittest.TestCase):
             integrate_openpgp.package_fields("let version = v\n")
 
 
+    def test_pinning_commit_is_the_one_that_set_the_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+
+            def commit(manifest):
+                (repo / "Package.swift").write_text(manifest)
+                subprocess.run(["git", "add", "Package.swift"], cwd=repo, check=True)
+                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                "commit", "-qm", "c"], cwd=repo, check=True)
+                return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            commit('let version = "0.0.0"  // no release yet\n')
+            setter = commit('let version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\n')
+            commit('// renamed\nlet version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\n')
+            self.assertEqual(integrate_openpgp.pinning_commit(repo, "1.0.0", "HEAD"), setter)
+            with self.assertRaisesRegex(integrate_openpgp.Failure, "pull request merged"):
+                integrate_openpgp.pinning_commit(repo, "2.0.0", "HEAD")
+
+    def test_manifest_shape_ignores_only_version_and_checksum(self):
+        a = 'let version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\nproducts\n'
+        b = 'let version = "1.0.1"\nlet checksum = "' + "d" * 64 + '"\nproducts\n'
+        self.assertEqual(integrate_openpgp.manifest_shape(a), integrate_openpgp.manifest_shape(b))
+        self.assertNotEqual(integrate_openpgp.manifest_shape(a),
+                            integrate_openpgp.manifest_shape(b + '.package(url: "x", branch: "main")\n'))
+
+    def test_deny_advisories_both_forms(self):
+        text = ('[advisories]\nignore = [\n  { id = "RUSTSEC-2023-0071", reason = "r" },\n'
+                '  "RUSTSEC-2026-0001",\n  # { id = "RUSTSEC-1999-0001" },\n]\n')
+        self.assertEqual(integrate_openpgp.deny_advisories(text),
+                         ["RUSTSEC-2023-0071", "RUSTSEC-2026-0001"])
+
+    def test_values_are_inserted_literally(self):
+        edited = integrate_openpgp.edit_dependencies(
+            self.dependencies, self.old(), self.new(licence="MIT \\g<0> \\n"))
+        self.assertIn("(`pgp` =1.2.3, MIT \\g<0> \\n) and 150 crates", edited)
+
+    def test_licence_and_version_patterns(self):
+        self.assertTrue(integrate_openpgp.LICENCE.match("MIT OR Apache-2.0"))
+        self.assertFalse(integrate_openpgp.LICENCE.match("MIT\n## Injected"))
+        self.assertFalse(integrate_openpgp.LICENCE.match("MIT [x](https://e.invalid) @someone"))
+        self.assertFalse(integrate_openpgp.SEMVER.match("\u0663.0.0"))
+
 if __name__ == "__main__":
     unittest.main()
