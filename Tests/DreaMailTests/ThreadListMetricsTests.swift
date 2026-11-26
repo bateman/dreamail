@@ -29,6 +29,7 @@ final class ThreadListMetricsTests: XCTestCase {
         XCTAssertEqual(SidebarDensity.comfortable.minRowHeight, 30)
         XCTAssertLessThan(SidebarDensity.compact.minRowHeight, 30)
         XCTAssertEqual(SidebarDensity.from(raw: "nope"), .comfortable)
+        XCTAssertEqual(SidebarDensity.from(raw: ""), .comfortable)
         XCTAssertEqual(SidebarDensity.from(raw: "compact"), .compact)
     }
 }
