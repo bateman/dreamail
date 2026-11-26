@@ -321,6 +321,13 @@ private struct SignatureEditor: View {
     @State private var selection = NSRange(location: 0, length: 0)
     @State private var formatTarget = ComposeBodyFormatTarget()
     @State private var saveError: String?
+    /// The last rich paste (`SignaturePaste`): its text, and its look while
+    /// the text is still that text.
+    @State private var pastedBody: String?
+    @State private var pastedLook: String?
+    /// "Remove formatting" on the signature's own look.
+    @State private var lookRemoved = false
+    @State private var pasteNote: String?
 
     init(signature: SignatureRecord) {
         self.signature = signature
@@ -338,20 +345,98 @@ private struct SignatureEditor: View {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && problem == nil
     }
 
+    /// The look that will be sent: a pasted one, or the signature's own,
+    /// only while the text is the one it came with. Editing the text drops
+    /// it, as in compose, and the preview goes away.
+    private var shownLook: String? {
+        if let pastedBody {
+            return text == pastedBody ? pastedLook : nil
+        }
+        guard !lookRemoved, text == signature.body else { return nil }
+        return signature.html
+    }
+
+    /// A paste carrying HTML: when it replaces the whole text, the text and
+    /// the look come from it (`SignaturePaste`). A paste into part of the
+    /// text, or one with no readable text, goes in as plain text.
+    private func pasteRich(_ html: String) -> Bool {
+        let length = (text as NSString).length
+        let replacesAll = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (selection.location == 0 && selection.length >= length)
+        guard replacesAll else { return false }
+        guard let pasted = SignaturePaste.read(html: html) else {
+            pasteNote = SignaturePaste.unreadableNote
+            return false
+        }
+        pastedBody = pasted.body
+        pastedLook = pasted.html
+        lookRemoved = false
+        pasteNote = pasted.note
+        text = pasted.body
+        caret = (pasted.body as NSString).length
+        return true
+    }
+
+    private func removeFormatting() {
+        pastedLook = nil
+        if pastedBody == nil { lookRemoved = true }
+    }
+
+    private func save() throws {
+        let look = shownLook
+        if let id = signature.id {
+            let change: SignatureStore.LookChange
+            if let look, pastedBody != nil {
+                change = .set(look)
+            } else if lookRemoved || (pastedBody != nil && look == nil && signature.html != nil) {
+                // Removed, or replaced by a paste whose look was not kept.
+                change = .remove
+            } else {
+                change = .keep
+            }
+            try store.updateSignature(id: id, name: name, body: text, look: change)
+        } else {
+            try store.addSignature(accountId: signature.accountId, name: name, body: text,
+                                   html: look)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(signature.id == nil ? "New signature" : "Edit signature").font(.headline)
             TextField("Name (only you see it)", text: $name)
                 .accessibilityIdentifier("settings.signatures.name")
+            if let look = shownLook,
+               let rich = SignatureHTML.cachedSanitize(look)?.html {
+                VStack(alignment: .leading, spacing: 4) {
+                    SignaturePreviewBox(html: ComposeSignature.htmlBlock(innerHTML: rich))
+                        .accessibilityIdentifier("settings.signatures.look")
+                    HStack(spacing: 8) {
+                        Text("Sent like this. Editing the text below drops this formatting.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Button("Remove formatting") { removeFormatting() }
+                            .controlSize(.small)
+                            .accessibilityIdentifier("settings.signatures.removeFormatting")
+                    }
+                }
+            }
             ComposeBodyEditor(text: $text, isFocused: $focused, caretUTF16: $caret,
-                              selection: $selection, formatTarget: formatTarget, fontSize: 13)
+                              selection: $selection, formatTarget: formatTarget, fontSize: 13,
+                              onPasteHTML: { pasteRich($0) })
                 .frame(minHeight: 140)
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
                 .accessibilityIdentifier("settings.signatures.body")
-            Text("Written like a message: **bold** (⌘B), *italic* (⌘I), [link](https://…), lists with “- ”. DreaMail adds the “-- ” line above it. No images.")
+            Text("Written like a message: **bold** (⌘B), *italic* (⌘I), [link](https://…), lists with “- ”. DreaMail adds the “-- ” line above it. You can paste a signature copied from Gmail; images are dropped.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if signature.html != nil {
+            if let pasteNote {
+                Text(pasteNote).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.signatures.pasteNote")
+            }
+            if signature.html != nil, pastedBody == nil, !lookRemoved {
                 Text("This signature has Gmail's layout and colours. A change to its text here sends it as text, without them; “Use Gmail's” brings them back.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -367,12 +452,7 @@ private struct SignatureEditor: View {
                 Button("Save") {
                     // Closes only once the signature is stored.
                     do {
-                        if let id = signature.id {
-                            try store.updateSignature(id: id, name: name, body: text)
-                        } else {
-                            try store.addSignature(accountId: signature.accountId,
-                                                   name: name, body: text)
-                        }
+                        try save()
                         dismiss()
                     } catch {
                         saveError = error.localizedDescription

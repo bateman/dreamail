@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// The compose signature menu, as in Gmail (Manage signatures, No
@@ -144,5 +145,29 @@ final class SignatureMenuUITests: XCTestCase {
         XCTAssertTrue(settings.staticTexts["Short"].exists)
         refresh.click()
         XCTAssertTrue(settings.staticTexts["From Gmail."].waitForExistence(timeout: 10))
+
+        // A signature copied from Gmail keeps its look when pasted.
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString("<meta charset='utf-8'><!--StartFragment--><div class=\"x\">"
+                             + "<div style=\"color:#1a73e8\"><b>Ada Example</b></div>"
+                             + "<div>Example Lab</div></div><!--EndFragment-->", forType: .html)
+        pasteboard.setString("Ada Example\nExample Lab", forType: .string)
+        let new = settings.descendants(matching: .any)
+            .matching(identifier: "settings.signatures.new").firstMatch
+        XCTAssertTrue(new.waitForExistence(timeout: 5))
+        new.click()
+        let editor = app.textViews.matching(identifier: "settings.signatures.body").firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.click()
+        app.typeKey("v", modifierFlags: .command)
+        let look = app.descendants(matching: .any)
+            .matching(identifier: "settings.signatures.look").firstMatch
+        XCTAssertTrue(look.waitForExistence(timeout: 5), "a rich paste shows how it is sent")
+        XCTAssertTrue((editor.value as? String ?? "").contains("**Ada Example**"))
+        app.buttons["Remove formatting"].click()
+        XCTAssertFalse(look.waitForExistence(timeout: 1), "Remove formatting leaves the text only")
+        XCTAssertTrue((editor.value as? String ?? "").contains("Ada Example"))
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
     }
 }

@@ -41,6 +41,10 @@ struct ComposeBodyEditor: NSViewRepresentable {
     /// Compose sizes the editor from this instead of estimating from the
     /// character count.
     var onTextHeightChange: ((CGFloat) -> Void)? = nil
+    /// A paste whose pasteboard holds HTML (or RTF, converted) is offered
+    /// here first, as HTML; true means it was handled. Settings' signature
+    /// editor only: compose leaves it nil and pastes plain text.
+    var onPasteHTML: ((String) -> Bool)? = nil
     /// System spelling / grammar checks (Settings ▸ Appearance ▸ Spelling).
     @AppStorage(ComposeSpellCheck.spellingKey) private var spellCheck = true
     @AppStorage(ComposeSpellCheck.grammarKey) private var grammarCheck = true
@@ -109,6 +113,7 @@ struct ComposeBodyEditor: NSViewRepresentable {
         textView.onFilesDropped = { [weak coord = context.coordinator] urls in
             coord?.onFilesDropped?(urls)
         }
+        textView.onPasteHTML = onPasteHTML
         // Do NOT call registerForDraggedTypes here — NSView replaces (not
         // merges) the type set, which would wipe NSTextView's built-in
         // string/RTF/image registrations and break text drags into the body.
@@ -150,6 +155,7 @@ struct ComposeBodyEditor: NSViewRepresentable {
         textView.onFilesDropped = { [weak coord = context.coordinator] urls in
             coord?.onFilesDropped?(urls)
         }
+        textView.onPasteHTML = onPasteHTML
         // Only on a Settings change: re-applying every update would undo a
         // per-view Edit ▸ Spelling and Grammar toggle on the next keystroke.
         if context.coordinator.appliedSpellOptions != spellOptions {
@@ -630,6 +636,8 @@ final class ComposeBodyTextView: ComposeCaretSettlingTextView {
     var onFocusChange: ((Bool) -> Void)?
     /// Finder / other-app file drops → compose attachments (not path text).
     var onFilesDropped: (([URL]) -> Void)?
+    /// See `ComposeBodyEditor.onPasteHTML`.
+    var onPasteHTML: ((String) -> Bool)?
     /// Grey ghost suffix after the caret (greeting autocomplete). Drawn only;
     /// never part of `string` / the SwiftUI binding.
     var ghostText: String = "" {
@@ -796,6 +804,27 @@ final class ComposeBodyTextView: ComposeCaretSettlingTextView {
         // Never insert file paths / NSTextAttachments into the markdown body.
         onFilesDropped?(urls)
         return true
+    }
+
+    /// ⌘V: HTML (or RTF) on the pasteboard goes to `onPasteHTML` when set;
+    /// otherwise, or when it declines, the usual plain-text paste.
+    override func paste(_ sender: Any?) {
+        if let onPasteHTML, let html = Self.pastedHTML(from: .general), onPasteHTML(html) { return }
+        super.paste(sender)
+    }
+
+    /// The pasteboard's HTML, or its RTF converted to HTML by AppKit (most
+    /// of RTF's look then sits in CSS classes, which the signature filter
+    /// drops). Nil when it has neither.
+    static func pastedHTML(from pasteboard: NSPasteboard) -> String? {
+        if let html = pasteboard.string(forType: .html) { return html }
+        guard let rtf = pasteboard.data(forType: .rtf),
+              let text = NSAttributedString(rtf: rtf, documentAttributes: nil),
+              let data = try? text.data(
+                from: NSRange(location: 0, length: text.length),
+                documentAttributes: [.documentType: NSAttributedString.DocumentType.html])
+        else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
