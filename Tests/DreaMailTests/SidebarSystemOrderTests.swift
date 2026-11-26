@@ -259,7 +259,12 @@ final class SidebarSystemOrderTests: XCTestCase {
     }
 
     func testListedHonoursTheStoredOrderAndMore() {
-        let stored = ["sent", "inbox", "more", "trash", "starred"]
+        // A complete stored order (a partial one gets the missing ids after
+        // their default predecessors): Sent dragged first, Trash under More.
+        let stored = ["sent", "inbox", "starred", "snoozed", "important", "drafts", "allMail",
+                      "outbox", "more", "trash", "scheduled", "reminders", "promotions",
+                      "social", "spam"]
+        XCTAssertEqual(Order.resolve(stored, hasReminders: false), stored)
         XCTAssertEqual(Array(Order.listed(stored: stored, hasReminders: false, moreOpen: false,
                                           exists: always).prefix(2)), ["sent", "inbox"],
                        "the stored order comes first")
