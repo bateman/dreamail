@@ -18,6 +18,12 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         return !element.exists
     }
 
+    private func rowIds(_ app: XCUIApplication) -> [String] {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'"))
+            .allElementsBoundByIndex.map(\.identifier).sorted()
+    }
+
     func testNewLabelSheetKeepsShortcutsAndEscapeCloses() {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
@@ -44,6 +50,8 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch
             .waitForExistence(timeout: 5), "the conversation is open")
 
+        let before = rowIds(app)
+        XCTAssertFalse(before.isEmpty)
         let add = element("sidebar.labels.add", in: app)
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         // The identifier lands on the whole "Labels" header row (UI test
@@ -56,11 +64,12 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         // Shortcut keys, and Escape's own ladder (reading pane, selection).
         field.typeText("e#j")
         XCTAssertEqual(field.value as? String, "e#j", "the keys went into the field")
-        XCTAssertTrue(row.exists, "typing in the sheet did not archive or delete the conversation")
 
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         XCTAssertTrue(waitForAbsence(field), "Escape closes the new label sheet")
-        XCTAssertTrue(row.exists, "closing the sheet left the list alone")
+        // Nothing the keys stand for ("e" archive, "#" delete, "j" next)
+        // happened to the list.
+        XCTAssertEqual(rowIds(app), before, "typing in the sheet left the list alone")
         XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch.exists,
                       "Escape closed the sheet only, not the open conversation")
     }
