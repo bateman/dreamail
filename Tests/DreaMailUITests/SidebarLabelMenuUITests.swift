@@ -74,9 +74,6 @@ final class SidebarLabelMenuUITests: XCTestCase {
         research.hover()
         let dots = element("sidebar.label.menu.\(account).Label_research", in: app)
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "hovering a label shows its ⋮")
-        // Gmail's "⋮" is vertical: its box is taller than wide (the old
-        // horizontal ellipsis, drawn by AppKit, was wider than tall).
-        XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
         dots.click()
         let items: [(String, String)] = [
             ("labelMenu.color", "Label color"),
@@ -117,6 +114,12 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(menuItem("labelMenu.edit", "Edit", in: app).waitForExistence(timeout: 5))
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         XCTAssertTrue(subject.exists, "the ⋮ click did not reopen the label")
+        // Gmail's "⋮" is vertical: its box is taller than wide (the old
+        // horizontal ellipsis, drawn by AppKit, was wider than tall). Read
+        // last, on the open label (which keeps its ⋮ without hover): reading
+        // the frame before a click left the click "not hittable" in CI.
+        XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label keeps its ⋮")
+        XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
     }
 
     func testParentColorGoesToItsSublabelsAndRemoveAsksFirst() {
