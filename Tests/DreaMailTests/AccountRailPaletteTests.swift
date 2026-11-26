@@ -75,6 +75,21 @@ final class AccountRailPaletteTests: XCTestCase {
         XCTAssertEqual(AccountRailMetrics.bandWidth(sidebarTrailing: 0, sidebarVisible: true), 90)
     }
 
+    func testCollapsedSidebarStripFillsTheBandStep() {
+        typealias M = AccountRailMetrics
+        XCTAssertEqual(M.stripWidth, 40)
+        XCTAssertEqual(M.stripBandWidth, 104)
+        // Collapsed: the band ends where the strip does, rail 64 + strip 40.
+        XCTAssertEqual(M.bandWidth(sidebarTrailing: 304, sidebarVisible: false, stripVisible: true), 104)
+        // Still covers the window buttons.
+        XCTAssertGreaterThanOrEqual(M.stripBandWidth, M.bandMinimumWidth)
+        // The largest sidebar glyph (15 pt) fits the capsule with room.
+        XCTAssertGreaterThanOrEqual(M.stripItemWidth, 15 + 2 * 8)
+        XCTAssertGreaterThanOrEqual(M.stripItemHeight, 24)
+        // Full sidebar on screen: the strip changes nothing.
+        XCTAssertEqual(M.bandWidth(sidebarTrailing: 304, sidebarVisible: true, stripVisible: false), 304)
+    }
+
     func testAddAccountEntryIsShownByDefault() {
         let key = AccountRailMetrics.showAddAccountKey
         let saved = UserDefaults.standard.object(forKey: key)

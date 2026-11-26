@@ -100,6 +100,32 @@ enum SidebarSystemOrder {
         return Layout(above: above, under: under)
     }
 
+    /// The system rows a sidebar lists now, for a stored order: one call for
+    /// both presentations (the full sidebar and the icon strip), so they
+    /// always agree. Reminders is lifted above "More" while one exists
+    /// (DEC-063).
+    static func listed(stored: [String]?, hasReminders: Bool, moreOpen: Bool,
+                       exists: (String) -> Bool) -> [String] {
+        layout(resolve(stored, hasReminders: hasReminders), exists: exists,
+               aboveMore: hasReminders ? ["reminders"] : [])
+            .rows(moreOpen: moreOpen)
+    }
+
+    /// Tooltip and VoiceOver text of an icon in the strip, which shows no
+    /// numbers: the view's name, then its count. `total`: the count is not
+    /// of unread mail (Drafts, Scheduled, Outbox, Reminders).
+    static func stripHelp(title: String, count: Int?, total: Bool) -> String {
+        let text = stripCount(count, total: total)
+        return text.isEmpty ? title : "\(title), \(text)"
+    }
+
+    /// The count alone, VoiceOver's value for the icon: "12 unread", "3",
+    /// empty at zero.
+    static func stripCount(_ count: Int?, total: Bool) -> String {
+        guard let count, count > 0 else { return "" }
+        return total ? "\(count)" : "\(count) unread"
+    }
+
     /// The order after the listed rows `rows` (as `List.onMove` reports:
     /// offsets in `rows`, destination before the row now at `to`) are moved.
     /// Rows that are not listed keep their slot, and stay on their side of

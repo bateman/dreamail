@@ -53,8 +53,12 @@ struct ContentView: View {
     // the centered card.
     @AppStorage(ThreadOpenStyle.storageKey) private var threadOpenStyleRaw =
         ThreadOpenStyle.defaultStyle.rawValue
-    // Sidebar starts collapsed; ← hides it, → brings it back (persisted).
+    // Sidebar starts collapsed to its icon strip; ← collapses it, → expands
+    // it (persisted).
     @AppStorage("sidebarHidden") private var sidebarHidden = true
+    /// "More" and the order of the system views, shared by the full sidebar
+    /// and its collapsed icon strip.
+    @State private var sidebarDisclosure = SidebarDisclosureModel()
     /// Measured frames for PreferenceKey-aligned inline compose.
     @State private var readingPaneFrame: CGRect = .zero
     @State private var composeHostFrame: CGRect = .zero
@@ -72,8 +76,35 @@ struct ContentView: View {
     /// split compose or by a full-window conversation (the center peek keeps
     /// the list layout underneath).
     private var sidebarOnScreen: Bool {
-        guard !sidebarHidden, !splitComposeActive else { return false }
+        !sidebarHidden && sidebarSlotShown
+    }
+
+    /// Whether the collapsed sidebar (the icon strip) is on screen: where the
+    /// full one would be.
+    private var sidebarStripOnScreen: Bool {
+        sidebarHidden && sidebarSlotShown
+    }
+
+    /// Where a sidebar, full or collapsed, has room: not replaced by the
+    /// split compose or by a full-window conversation (the center peek keeps
+    /// the list layout underneath).
+    private var sidebarSlotShown: Bool {
+        guard !splitComposeActive else { return false }
         return layoutMode != .threadFocus || centerPeekThreads
+    }
+
+    /// Gmail's `/` (and the strip's search icon): focus the sidebar search
+    /// field. A collapsed sidebar has no field to focus — reveal it first and
+    /// focus once the column is installed.
+    private func revealSearch() {
+        if sidebarHidden {
+            withAnimation { sidebarHidden = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                store.focusSearch()
+            }
+        } else {
+            store.focusSearch()
+        }
     }
 
     private var fullWindowThreads: Bool {
@@ -123,7 +154,8 @@ struct ContentView: View {
             let panelWidth = askAIVisible
                 ? AskAILayout.panelWidth(hostWidth: proxy.size.width) : 0
             let mode = MailLayout.mode(
-                width: proxy.size.width - panelWidth,
+                width: MailLayout.modeWidth(host: proxy.size.width, askAIPanel: panelWidth,
+                                            stripShown: sidebarStripOnScreen),
                 readingPaneHidden: readingPaneHidden,
                 hasSelection: store.openedThreadId != nil,
                 threadFocus: store.threadFocusMode,
@@ -378,10 +410,28 @@ struct ContentView: View {
         // from the width that is left of it.
         HStack(spacing: 0) {
             AccountRail()
+            if sidebarStripOnScreen {
+                SidebarIconStrip(onSearch: revealSearch)
+                    // Under the center peek's backdrop, as the full
+                    // sidebar is (`centerPeekOverlay`).
+                    .overlay {
+                        if centerPeekThreads, layoutMode == .threadFocus {
+                            Color.black.opacity(CenterPeekLayout.backdropOpacity)
+                                .contentShape(Rectangle())
+                                .onTapGesture { store.threadFocusMode = false }
+                        }
+                    }
+            }
             interactionLayer
         }
+        .environment(sidebarDisclosure)
+        // "Deleted means gone" (DEC-019): a removed account's disclosure
+        // state leaves memory with its defaults.
+        .onChange(of: store.accounts.map(\.id)) { old, new in
+            for id in Set(old).subtracting(new) { sidebarDisclosure.forget(accountId: id) }
+        }
         .overlay(alignment: .topLeading) {
-            AccountRailTopBand(sidebarVisible: sidebarOnScreen)
+            AccountRailTopBand(sidebarVisible: sidebarOnScreen, stripVisible: sidebarStripOnScreen)
         }
         // Single ComposeView host for both floating and inline so presentation
         // flips keep editor state. Floating = bottom-trailing card; inline =
@@ -695,7 +745,7 @@ struct ContentView: View {
         GeometryReader { host in
             let card = CenterPeekLayout.cardSize(host: host.size)
             ZStack {
-                Color.black.opacity(0.30)
+                Color.black.opacity(CenterPeekLayout.backdropOpacity)
                     .contentShape(Rectangle())
                     .onTapGesture { store.threadFocusMode = false }
                 detailPane(compact: false)
@@ -1526,18 +1576,9 @@ private extension ContentView {
                 _ = store.handleKey(chars)
                 return nil
             }
-            // Gmail's `/`: jump focus to the sidebar search field. A
-            // collapsed sidebar has no field to focus — reveal it first and
-            // focus once the column is installed.
+            // Gmail's `/`: jump focus to the sidebar search field.
             if event.charactersIgnoringModifiers == "/" {
-                if sidebarHidden {
-                    withAnimation { sidebarHidden = false }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        store.focusSearch()
-                    }
-                } else {
-                    store.focusSearch()
-                }
+                revealSearch()
                 return nil
             }
             // Arrow keys: ↑/↓ browse the list without opening the pane
@@ -1830,7 +1871,8 @@ struct Sidebar: View {
     // Driven by `/` (Gmail-style) via store.searchFocusToken.
     @FocusState private var searchFocused: Bool
     @State private var viewToDelete: SavedView?
-    @State private var disclosure = SidebarDisclosureModel()
+    /// Shared with the icon strip (`ContentView` owns it).
+    @Environment(SidebarDisclosureModel.self) private var disclosure
     @State private var newLabel: NewLabelRequest?
     @AppStorage(SidebarDensity.storageKey) private var sidebarDensityRaw =
         SidebarDensity.comfortable.rawValue
@@ -2025,36 +2067,12 @@ struct Sidebar: View {
     }
 
 
-    /// Whose order the sidebar shows: the account in scope (the only one, as
-    /// for the labels), else the all-accounts view's own.
-    private var orderScope: SidebarSystemOrder.Scope {
-        if let account = store.activeAccountId { return .account(account) }
-        if store.accounts.count == 1, let only = store.accounts.first { return .account(only.id) }
-        return .all
-    }
-
-    /// The full order of the system views, with the "More" row.
-    private var systemOrder: [String] {
-        SidebarSystemOrder.resolve(disclosure.systemOrder(orderScope), hasReminders: hasReminders)
-    }
-
-    /// The rows listed now: nothing under a closed "More", the open view
-    /// included (the list on the right keeps showing it).
-    private var systemRows: [String] {
-        SidebarSystemOrder.layout(systemOrder, exists: systemRowExists,
-                                  aboveMore: hasReminders ? ["reminders"] : [])
-            .rows(moreOpen: disclosure.moreOpen)
-    }
-
-    /// Outbox and Scheduled exist only while they hold something (or are
-    /// open); Reminders is always listed, wherever it sits.
-    private func systemRowExists(_ id: String) -> Bool {
-        switch id {
-        case "outbox": return outboxShown
-        case "scheduled": return !store.scheduledSends.isEmpty || store.selectedView == .scheduled
-        default: return true
-        }
-    }
+    /// Order, rows and counts of the system views, shared with the icon
+    /// strip (`SidebarIconStrip`) so both list the same views.
+    private var system: SidebarSystemRows { SidebarSystemRows(store: store, disclosure: disclosure) }
+    private var orderScope: SidebarSystemOrder.Scope { system.scope }
+    private var systemOrder: [String] { system.order }
+    private var systemRows: [String] { system.rows }
 
     @ViewBuilder private func systemRow(_ id: String) -> some View {
         if id == SidebarSystemOrder.moreId {
@@ -2062,34 +2080,7 @@ struct Sidebar: View {
                 disclosure.moreOpen.toggle()
             }
         } else if let view = SidebarSystemOrder.view(for: id) {
-            sidebarItem(view, badge: systemBadge(view))
-        }
-    }
-
-    /// Drafts kept locally while offline; gone once uploaded.
-    private var outboxShown: Bool {
-        !store.localDrafts.isEmpty || store.selectedView == .outbox
-    }
-
-    /// Any conversation with a reminder (the Reminders count).
-    private var hasReminders: Bool {
-        (store.unreadCounts["reminders"] ?? 0) > 0
-    }
-
-    private func systemBadge(_ view: MailboxView) -> Int? {
-        switch view {
-        case .inbox: return store.unreadCounts["inbox"]
-        case .starred: return store.unreadCounts["starred"]
-        case .snoozed: return store.unreadCounts["snoozed"]
-        // Count is total drafts (not unread).
-        case .drafts: return store.unreadCounts["drafts"]
-        case .scheduled: return store.scheduledSends.count
-        case .outbox: return store.localDrafts.count
-        case .reminders: return store.unreadCounts["reminders"]
-        case .spam: return store.unreadCounts["spam"]
-        case .promotions: return store.unreadCounts["promotions"]
-        case .social: return store.unreadCounts["social"]
-        default: return nil
+            sidebarItem(view, badge: system.badge(view))
         }
     }
 

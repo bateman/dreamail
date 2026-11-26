@@ -59,4 +59,14 @@ enum MailLayout {
         }
         return .threePane
     }
+
+    /// Width the layout mode is computed from: the mailbox host, less the
+    /// Ask AI panel, plus the collapsed sidebar's icon strip when it is on
+    /// screen. The strip sits outside the host (right of the account rail)
+    /// but stands in for a sidebar that is collapsed, so it must not move
+    /// the three-pane threshold: collapsing the sidebar never drops the
+    /// reading pane.
+    static func modeWidth(host: CGFloat, askAIPanel: CGFloat, stripShown: Bool) -> CGFloat {
+        host - askAIPanel + (stripShown ? AccountRailMetrics.stripWidth : 0)
+    }
 }
