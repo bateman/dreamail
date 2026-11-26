@@ -97,6 +97,24 @@ final class SettingsWindowUITests: XCTestCase {
             .min()
     }
 
+    /// "Add view" sits below the fold: scroll to it, read its text height,
+    /// scroll back to the top.
+    private func addViewHeight(_ app: XCUIApplication) -> CGFloat? {
+        let sidebar = app.outlines.firstMatch
+        var tries = 0
+        while titleHeight("Add view", in: app) == nil, tries < 15 {
+            sidebar.scroll(byDeltaX: 0, deltaY: -300)
+            tries += 1
+        }
+        let height = titleHeight("Add view", in: app)
+        tries = 0
+        while !element("sidebar.inbox", in: app).isHittable, tries < 15 {
+            sidebar.scroll(byDeltaX: 0, deltaY: 300)
+            tries += 1
+        }
+        return height
+    }
+
     func testSidebarDensityShortensEverySidebarRowAndComfortableRestoresThem() {
         let app = launch(sidebar: true)
         let systemUpper = "sidebar.inbox", systemLower = "sidebar.starred"
@@ -109,7 +127,8 @@ final class SettingsWindowUITests: XCTestCase {
         // row and "Add view" keeps its height. (Icons and tags are not
         // exposed as elements: only a Mac shows them.)
         let titles = ["Inbox", "Work", "Research", "Add view"]
-        let before = titles.map { titleHeight($0, in: app) }
+        var before = titles.dropLast().map { titleHeight($0, in: app) }
+        before.append(addViewHeight(app))
         print("SidebarDensity: title heights before \(before)")
         XCTAssertFalse(before.contains { $0 == nil }, "every title is exposed: \(before)")
         let systemBase = pitch(app, systemUpper, systemLower)
@@ -120,7 +139,8 @@ final class SettingsWindowUITests: XCTestCase {
                       "compact system rows: \(systemBase) → \(pitch(app, systemUpper, systemLower)) pt")
         XCTAssertTrue(waitUntil { labelBase - self.pitch(app, labelUpper, labelLower) >= 4 },
                       "compact label rows: \(labelBase) → \(pitch(app, labelUpper, labelLower)) pt")
-        let after = titles.map { titleHeight($0, in: app) }
+        var after = titles.dropLast().map { titleHeight($0, in: app) }
+        after.append(addViewHeight(app))
         print("SidebarDensity: title heights compact \(after)")
         for (title, (was, now)) in zip(titles, zip(before, after)) {
             guard let was, let now else { continue }
