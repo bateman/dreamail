@@ -171,6 +171,9 @@ actor SyncEngine {
             UserDefaults.standard.removeObject(
                 forKey: Self.firstSyncHistoryKey(accountId: accountId))
         }
+        // After the history read: a conversation trashed here and already
+        // sent to Gmail has its messages marked TRASH by now.
+        try await repairRevivedTrashThreadsOnce()
 
         // When the configured window changed: backfill anything newly inside
         // it, and remove local copies of mail that fell outside it (starred
@@ -544,6 +547,45 @@ actor SyncEngine {
     /// page when `firstPageSize` is set. At least 1.
     static func listPageSize(cap: Int, firstPageSize: Int?) -> Int {
         max(1, min(cap, firstPageSize ?? cap))
+    }
+
+    /// Rows derived before mail arriving in a trashed conversation brought
+    /// it back (`trashDraftFlags`) stay hidden until a message of theirs
+    /// changes: re-derive them once.
+    private func repairRevivedTrashThreadsOnce() async throws {
+        let key = Self.revivedTrashRepairKey(accountId: accountId)
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let keys = try await db.read { [accountId] db in
+            try Self.trashedThreadKeysWithLiveMail(db, accountId: accountId)
+        }
+        try await deriveThreads(for: keys)
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// UserDefaults key of that one-time repair (removed with the account).
+    static func revivedTrashRepairKey(accountId: String) -> String {
+        "repair.revivedTrashThreads.v1.\(accountId)"
+    }
+
+    /// Threads stored as trashed that hold a message outside the trash,
+    /// and only where the old rule fired: the thread also has a trashed
+    /// non-draft message. A trash made here and not yet confirmed by Gmail
+    /// leaves no TRASH on any message row, so it is never selected; one
+    /// with a queued offline edit is left alone too. Pure SQL — tested.
+    static func trashedThreadKeysWithLiveMail(_ db: Database, accountId: String) throws -> Set<String> {
+        Set(try String.fetchAll(db, sql: """
+            SELECT DISTINCT thread.id FROM thread
+            JOIN message ON message.threadId = thread.id
+            WHERE thread.accountId = ? AND thread.inTrash = 1
+              AND (' ' || message.labelIds || ' ') NOT LIKE '% TRASH %'
+              AND EXISTS (
+                  SELECT 1 FROM message AS trashed
+                  WHERE trashed.threadId = thread.id
+                    AND (' ' || trashed.labelIds || ' ') LIKE '% TRASH %'
+                    AND (' ' || trashed.labelIds || ' ') NOT LIKE '% DRAFT %')
+              AND thread.gmailThreadId NOT IN (
+                  SELECT gmailThreadId FROM pendingThreadOp WHERE accountId = ?)
+            """, arguments: [accountId, accountId]))
     }
 
     /// Thread keys of this account's messages that have no thread row.
@@ -1815,8 +1857,17 @@ actor SyncEngine {
     /// Derives a thread row from its messages (sorted newest first).
     /// Pure — exercised directly by the test suite.
     static func deriveThread(threadKey: String, gmailThreadId: String, accountId: String,
-                             messages: [Message], existing: MailThread?) -> MailThread? {
+                             messages every: [Message], existing: MailThread?) -> MailThread? {
+        guard !every.isEmpty else { return nil }
+        // Discarded drafts are DRAFT+TRASH on individual messages. A naive
+        // union would pin inTrash and hide the live conversation from Inbox
+        // (Anna / Fund Expense case). Same for inDrafts — only live drafts.
+        let trashDraft = trashDraftFlags(messages: every)
+        // A live conversation is shown and counted without its trashed
+        // messages (`TrashedMessages`); only the label union keeps them.
+        let messages = TrashedMessages.shown(every, threadInTrash: trashDraft.inTrash)
         guard let newest = messages.first else { return nil }
+        let unionLabels = Set(every.flatMap { $0.labelIds.split(separator: " ").map(String.init) })
         let allLabels = Set(messages.flatMap { $0.labelIds.split(separator: " ").map(String.init) })
         // Primary vs Promotions/Social tabs: newest INBOX-bearing message wins.
         // Union of all historical labels would pin a personal reply under
@@ -1834,11 +1885,6 @@ actor SyncEngine {
             if seen.insert(short).inserted { participants.append(short) }
         }
 
-        // Discarded drafts are DRAFT+TRASH on individual messages. A naive
-        // union would pin inTrash and hide the live conversation from Inbox
-        // (Anna / Fund Expense case). Same for inDrafts — only live drafts.
-        let trashDraft = trashDraftFlags(messages: messages)
-
         return MailThread(
             id: threadKey,
             accountId: accountId,
@@ -1853,7 +1899,7 @@ actor SyncEngine {
             inInbox: allLabels.contains("INBOX"),
             inTrash: trashDraft.inTrash,
             // Full union still powers search / label chips; tab denorm is separate.
-            labelIds: allLabels.sorted().joined(separator: " "),
+            labelIds: unionLabels.sorted().joined(separator: " "),
             // Local snooze; Gmail-style wake on new *inbound* activity only.
             snoozeUntil: preservedSnoozeUntil(
                 existing: existing, messages: messages, accountId: accountId),
@@ -1886,8 +1932,12 @@ actor SyncEngine {
     /// the conversation stays in Inbox. A historical union of TRASH would hide
     /// the thread from Inbox / All Mail / badges (`inInbox && !inTrash`).
     ///
-    /// - **inTrash**: any non-draft TRASH message, or every message is trashed
-    ///   (covers discarded-compose-only threads that never left drafts).
+    /// - **inTrash**: every message is trashed (also discarded-compose-only
+    ///   threads that never left drafts). As in Gmail, any message outside
+    ///   the trash keeps the conversation live: mail arriving in a trashed
+    ///   conversation brings it back to the Inbox, and a draft left outside
+    ///   the trash stays in Drafts. Its trashed messages stay trashed and are
+    ///   left out of the live conversation (`TrashedMessages`).
     /// - **inDrafts**: any live draft (`DRAFT` without `TRASH`).
     /// Pure — unit-tested. Also used by migration v30.
     static func trashDraftFlags(messages: [Message]) -> (inTrash: Bool, inDrafts: Bool) {
@@ -1900,21 +1950,14 @@ actor SyncEngine {
     static func trashDraftFlags(labelIdStrings: [String]) -> (inTrash: Bool, inDrafts: Bool) {
         guard !labelIdStrings.isEmpty else { return (false, false) }
         var anyLiveDraft = false
-        var anyNonDraftTrash = false
-        var anyTrash = false
         var allTrashed = true
         for s in labelIdStrings {
             let labs = Set(s.split(whereSeparator: \.isWhitespace).map(String.init))
             let hasTrash = labs.contains("TRASH")
-            let hasDraft = labs.contains("DRAFT")
-            if hasDraft && !hasTrash { anyLiveDraft = true }
-            if hasTrash && !hasDraft { anyNonDraftTrash = true }
-            if hasTrash { anyTrash = true } else { allTrashed = false }
+            if labs.contains("DRAFT") && !hasTrash { anyLiveDraft = true }
+            if !hasTrash { allTrashed = false }
         }
-        return (
-            inTrash: anyNonDraftTrash || (anyTrash && allTrashed),
-            inDrafts: anyLiveDraft
-        )
+        return (inTrash: allTrashed, inDrafts: anyLiveDraft)
     }
 
     /// Local `snoozeUntil` across re-derives, with Gmail-style wake-on-reply.

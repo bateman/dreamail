@@ -174,6 +174,7 @@ extension MailStore {
         openPGP.forget(accountId: id)
         // DEC-019: the account's Gmail filters leave memory with it.
         filterCache.forget(account: id)
+        syncHealth.forget(account: id)
         // Same for the Google Calendar integration's memory of it (again
         // after the purge, below).
         forgetCalendar(accountId: id)

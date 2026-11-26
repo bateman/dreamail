@@ -978,9 +978,19 @@ struct FilterBar: View {
                             pendingEdits: store.pendingThreadOpCount))
                             .accessibilityIdentifier("syncStatusOffline")
                     } else if store.syncStatus.isEmpty {
-                        Image(systemName: "arrow.clockwise")
-                        if let last = lastSync {
-                            Text(last, format: .relative(presentation: .named))
+                        // Redrawn on a clock: a relative time drawn once
+                        // read "now" for hours while no pass ended.
+                        TimelineView(.periodic(from: .now, by: SyncHealth.refreshInterval)) { context in
+                            HStack(spacing: 4) {
+                                Image(systemName: lastSyncFailed
+                                      ? "exclamationmark.triangle" : "arrow.clockwise")
+                                if let text = SyncHealth.toolbarText(
+                                    lastSuccess: lastSyncFailed ? lastSyncOfFailing : lastSync,
+                                    failed: lastSyncFailed, now: context.date) {
+                                    Text(text)
+                                        .accessibilityIdentifier("syncStatusLastSync")
+                                }
+                            }
                         }
                     } else {
                         ProgressView().controlSize(.mini)
@@ -992,6 +1002,7 @@ struct FilterBar: View {
             .buttonStyle(.plain)
             .help(store.demoMode ? "Fictional mail — syncing is disabled"
                   : store.isOffline ? "Offline — showing cached mail. Queued edits, drafts and sends go out when you're back online. Click to retry."
+                  : lastSyncFailed ? "The last sync did not complete. Click to try again (Cmd-Shift-R)."
                   : "Sync now (Cmd-Shift-R)")
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .disabled(store.demoMode)
@@ -1408,6 +1419,20 @@ struct FilterBar: View {
 
     private func activeChip(_ title: String, remove: @escaping () -> Void) -> some View {
         ActiveFilterChip(title: title, remove: remove)
+    }
+
+    /// Any account whose latest pass failed or whose sign-in Google refuses.
+    private var lastSyncFailed: Bool {
+        store.syncHealth.anyFailed(
+            accounts: store.accounts.map(\.id), needingReauth: store.accountsNeedingReauth)
+    }
+
+    /// Oldest last completed pass among the failing accounts only, so the
+    /// failure line never borrows another account's fresh stamp.
+    private var lastSyncOfFailing: Date? {
+        store.syncHealth.failing(
+            accounts: store.accounts.map(\.id), needingReauth: store.accountsNeedingReauth)
+            .compactMap { store.lastSyncByAccount[$0] }.min()
     }
 
     private var lastSync: Date? {

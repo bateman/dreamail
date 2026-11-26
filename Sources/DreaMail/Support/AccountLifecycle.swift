@@ -311,6 +311,7 @@ enum AccountLifecycle {
                     SyncEngine.attachmentRepairDefaultsKey(accountId: accountId),
                     WindowBackfill.listedKey(accountId: accountId),
                     SyncEngine.firstSyncHistoryKey(accountId: accountId),
+                    SyncEngine.revivedTrashRepairKey(accountId: accountId),
                     "syncWindowDays.\(accountId)"]
         // Which of its labels are open in the sidebar (label ids only).
         keys += SidebarDisclosure.keys(accountId: accountId)
