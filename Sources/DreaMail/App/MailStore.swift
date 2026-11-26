@@ -2462,6 +2462,10 @@ struct ComposeRequest: Identifiable {
     }
 
     private func executeTermination() async {
+        // From here no recount or local action may paint the badge; the
+        // clear at the end is the last word.
+        dockBadge.close()
+
         // Stop the MCP loopback listener before any DB shutdown so in-flight
         // tool handlers cannot race a closed SQLCipher pool.
         stopMCPServer()
@@ -2560,6 +2564,11 @@ struct ComposeRequest: Identifiable {
                 AppDatabase.shared.close()
             }
         )
+
+        // Last step, after everything that could set a badge: the
+        // notification-center count outlives the process, so a stale number
+        // would stay on the Dock icon. The delivered notifications stay.
+        await Notifier.clearBadge()
     }
 
     /// Top matches for an address-field token.
