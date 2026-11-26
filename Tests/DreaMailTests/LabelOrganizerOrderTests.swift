@@ -137,22 +137,4 @@ final class LabelOrganizerOrderTests: XCTestCase {
         let topWrites = LabelOrganizerOrder.sortOrders(before: entries.map(\.row), after: top)
         XCTAssertEqual(Set(topWrites.keys), ["a:a", "a:b", "a:c"])
     }
-
-    /// The rows an older organizer froze in code-point order are found; an
-    /// order arranged by hand is not; a group that is both is judged alone.
-    func testMachineOrderedIds() {
-        func labels(_ pairs: [(String, Int)]) -> [LabelRow] {
-            pairs.map { name, order in
-                LabelRow(id: "a:\(name)", accountId: "a", gmailLabelId: name, name: name, type: "user",
-                         color: nil, sortOrder: order, listVisibility: nil)
-            }
-        }
-        let u = LabelRow.unsorted
-        // Top level frozen in code-point order (Zeta < alpha); p's sublabels arranged by hand (b before a).
-        let rows = labels([("Zeta", 0), ("alpha", 1), ("p", 2), ("p/b", 3), ("p/a", 4), ("p/c", u)])
-        XCTAssertEqual(Set(LabelOrganizerOrder.machineOrderedIds(rows)),
-                       ["a:Zeta", "a:alpha", "a:p"])
-        // Unsorted rows are never touched.
-        XCTAssertTrue(LabelOrganizerOrder.machineOrderedIds(labels([("x", u), ("y", u)])).isEmpty)
-    }
 }

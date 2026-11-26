@@ -403,14 +403,11 @@ final class LabelColorStyleTests: XCTestCase {
     }
 
     /// Every label Gmail gives a color is stored with that background,
-    /// whatever the value: the whole documented palette, and odd formats
-    /// (upper case, spaces, no `#`, `0x`, `rgb()`, with an alpha pair).
+    /// whatever the value: the whole documented palette, and odd case or
+    /// spacing or a missing `#`.
     func testEveryGmailColorIsStoredAndDrawnWithItsBackground() throws {
         let q = try makeDB()
-        let odd: [(String, String)] = [
-            ("#434343FF", "#434343"), (" #16A766 ", "#16a766"), ("594C05", "#594c05"),
-            ("0xCC3A21", "#cc3a21"), ("rgb(65, 105, 125)", "#41697d"), ("#0d3b44cc", "#0d3b44"),
-        ]
+        let odd: [(String, String)] = [(" #16A766 ", "#16a766"), ("594C05", "#594c05")]
         let cases = Self.gmailPalette.map { ($0, $0) } + odd
         try q.write { db in
             let labels = cases.enumerated().map { i, c in
@@ -430,18 +427,16 @@ final class LabelColorStyleTests: XCTestCase {
         }
     }
 
-    /// Gmail's colors are read leniently; local values stay strict.
-    func testGmailHexIsLenientAndLocalParsingIsNot() {
-        for (raw, want) in [("#434343", "#434343"), ("#434343FF", "#434343"), (" 16A766 ", "#16a766"),
-                            ("0xCC3A21", "#cc3a21"), ("rgb(65, 105, 125)", "#41697d"),
-                            ("RGB(0,0,0)", "#000000")] {
-            XCTAssertEqual(LabelRGB.gmailHex(raw), want, raw)
+    /// Only a valid background means "has a color": the sidebar draws any
+    /// other label as an outline alone, so a fill is never "no color".
+    func testOnlyAValidBackgroundIsColored() {
+        XCTAssertFalse(LabelColors.none.isColored)
+        XCTAssertFalse(LabelColors(background: nil, text: "#ffffff").isColored)
+        XCTAssertFalse(LabelColors(background: "", text: nil).isColored)
+        XCTAssertFalse(LabelColors(background: "oops", text: nil).isColored)
+        for hex in Self.gmailPalette {
+            XCTAssertTrue(LabelColors(background: hex, text: nil).isColored, hex)
         }
-        for bad in [nil, "", "#", "#fff", "#fad1655", "red", "rgb(1,2)", "rgb(300,0,0)", "#gggggg"] {
-            XCTAssertNil(LabelRGB.gmailHex(bad), String(describing: bad))
-        }
-        XCTAssertNil(LabelRGB.normalizedHex("rgb(1,2,3)"))
-        XCTAssertNil(LabelRGB.normalizedHex("#434343FF"))
     }
 
     /// The sidebar tag keeps a very dark or very light color and gives it an

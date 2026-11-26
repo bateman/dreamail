@@ -6,8 +6,8 @@ extension LabelRow {
         LabelRow(id: "\(accountId):\(l.id)", accountId: accountId,
                  gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
                  color: nil,
-                 gmailBackgroundColor: LabelRGB.gmailHex(l.color?.backgroundColor),
-                 gmailTextColor: LabelRGB.gmailHex(l.color?.textColor),
+                 gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
+                 gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor),
                  listVisibility: l.labelListVisibility,
                  messageListVisibility: l.messageListVisibility)
     }

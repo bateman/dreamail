@@ -81,7 +81,7 @@ enum SidebarLabelTree {
                 id: row.id, accountId: row.accountId, gmailLabelId: row.gmailLabelId,
                 fullName: row.name, displayName: display, colors: row.displayColors,
                 visibility: .init(raw: row.listVisibility),
-                children: sorted(childrenOf[row.id] ?? []).map(node))
+                children: sorted(childrenOf[row.id] ?? [], under: row.name).map(node))
         }
         return sorted(roots).map(node)
     }
@@ -101,10 +101,16 @@ enum SidebarLabelTree {
     /// Siblings in the organizer's order (`sortOrder`, written only by a drag
     /// in Organize Labels, and only for the siblings of the moved row) when
     /// there is one, else in Gmail's (`compareNames`).
-    static func sorted(_ rows: [LabelRow]) -> [LabelRow] {
-        rows.sorted { a, b in
+    static func sorted(_ rows: [LabelRow], under parent: String? = nil) -> [LabelRow] {
+        // Siblings compare by the name the sidebar shows (`b` for `a/b`), so
+        // top level and sublabels follow one rule.
+        func leaf(_ name: String) -> String {
+            guard let parent, name.hasPrefix(parent + "/"), name.count > parent.count + 1 else { return name }
+            return String(name.dropFirst(parent.count + 1))
+        }
+        return rows.sorted { a, b in
             if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
-            switch compareNames(a.name, b.name) {
+            switch compareNames(leaf(a.name), leaf(b.name)) {
             case .orderedAscending: return true
             case .orderedDescending: return false
             case .orderedSame: return a.id < b.id
@@ -113,59 +119,21 @@ enum SidebarLabelTree {
     }
 
     /// Gmail's order of names: case, diacritics and width ignored, digits
-    /// compared as numbers, then by the first visible character's class:
-    /// punctuation, symbols and emoji, currency (`$`), digits, letters
-    /// (`Gamma` sits between `delta` and `omega`). A fixed locale, so the
-    /// sidebar reads the same on every Mac whatever its language.
-    ///
-    /// Invisible scalars (variation selectors such as the emoji `U+FE0F`,
-    /// zero-width and bidi marks) are left out first: `✉️ mail` and `✉ mail`
-    /// compare as the same name. The class is decided here, not by the
-    /// platform collation, which does not place every symbol the same way
-    /// on every OS version.
+    /// compared as numbers, symbols and emoji first, then digits, then
+    /// letters (`Gamma` sits between `delta` and `omega`). A fixed locale, so
+    /// the sidebar reads the same on every Mac whatever its language.
+    /// Invisible scalars (the emoji variation selector `U+FE0F`, zero-width
+    /// marks) are left out: `✉️ mail` and `✉ mail` are the same name.
     static func compareNames(_ a: String, _ b: String) -> ComparisonResult {
-        let x = comparable(a), y = comparable(b)
-        let rx = leadingClass(x), ry = leadingClass(y)
-        if rx != ry { return rx < ry ? .orderedAscending : .orderedDescending }
-        return x.compare(y, options: [.caseInsensitive, .diacriticInsensitive, .numeric, .widthInsensitive],
-                         range: nil, locale: Locale(identifier: "en"))
+        visible(a).compare(visible(b),
+                           options: [.caseInsensitive, .diacriticInsensitive, .numeric, .widthInsensitive],
+                           range: nil, locale: Locale(identifier: "en"))
     }
 
-    /// The name without its invisible scalars.
-    static func comparable(_ name: String) -> String {
-        String(String.UnicodeScalarView(name.unicodeScalars.filter { !isInvisible($0) }))
-    }
-
-    private static func isInvisible(_ s: Unicode.Scalar) -> Bool {
-        switch s.value {
-        case 0xFE00...0xFE0F, 0xE0100...0xE01EF,          // variation selectors
-             0x200B...0x200F, 0x202A...0x202E, 0x2060...0x2064, 0xFEFF, 0x00AD,
-             0xE0020...0xE007F:                            // zero-width, bidi, tags
-            return true
-        default:
-            return false
-        }
-    }
-
-    /// 0 space and punctuation, 1 symbols and emoji, 2 currency, 3 digits,
-    /// 4 letters and everything else.
-    private static func leadingClass(_ name: String) -> Int {
-        guard let first = name.unicodeScalars.first(where: { $0.properties.generalCategory != .spaceSeparator })
-        else { return 0 }
-        switch first.properties.generalCategory {
-        case .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation,
-             .initialPunctuation, .finalPunctuation, .otherPunctuation, .spaceSeparator,
-             .lineSeparator, .paragraphSeparator, .control, .format:
-            return 0
-        case .mathSymbol, .modifierSymbol, .otherSymbol:
-            return 1
-        case .currencySymbol:
-            return 2
-        case .decimalNumber, .letterNumber, .otherNumber:
-            return 3
-        default:
-            return 4
-        }
+    private static func visible(_ name: String) -> String {
+        String(String.UnicodeScalarView(name.unicodeScalars.filter {
+            !$0.properties.isDefaultIgnorableCodePoint
+        }))
     }
 
     /// Gmail's two lists: labels shown in the list, and those behind the

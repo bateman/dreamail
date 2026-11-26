@@ -127,12 +127,20 @@ enum GmailLabelColorEdit {
         return .banner("Couldn't change the label color on Gmail: \(error.localizedDescription)")
     }
 
+    /// Set once the pending claim is taken, inside the write.
+    private final class ClaimFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isSet: Bool { lock.withLock { value } }
+        func set() { lock.withLock { value = true } }
+    }
+
     typealias Patch = (_ gmailLabelId: String, _ color: GmailLabelColor?) async throws -> GLabel
 
     /// The Gmail colors a label row stores for an API answer.
     static func colors(of label: GLabel) -> LabelColors {
-        LabelColors(background: LabelRGB.gmailHex(label.color?.backgroundColor),
-                    text: LabelRGB.gmailHex(label.color?.textColor))
+        LabelColors(background: LabelRGB.normalizedHex(label.color?.backgroundColor),
+                    text: LabelRGB.normalizedHex(label.color?.textColor))
     }
 
     /// Sets (or, with nil, removes) the label's Gmail color. Throws
@@ -150,14 +158,27 @@ enum GmailLabelColorEdit {
         let wanted = target?.colors ?? .none
         // Read, claim and write in one transaction, so `before` is what the
         // optimistic write replaced and no sync lands in between.
-        let (gmailLabelId, before) = try await db.write { db -> (String, LabelColors) in
-            guard let row = try LabelRow.fetchOne(db, key: id) else { throw Failure.unknownLabel }
-            guard row.type == "user" else { throw Failure.systemLabel }
-            guard pending.begin(id, colors: wanted) else { throw Failure.inFlight }
-            try store(db, wanted, id: id)
-            return (row.gmailLabelId, LabelColors(background: row.gmailBackgroundColor,
-                                                  text: row.gmailTextColor))
+        // `claimed` tells a failure after `begin` (the store throws) from one
+        // before it: only the first must release the claim, or the label
+        // would stay "in flight" and its held colors would override every
+        // sync until the app quits.
+        let claimed = ClaimFlag()
+        let claim: (String, LabelColors)
+        do {
+            claim = try await db.write { db -> (String, LabelColors) in
+                guard let row = try LabelRow.fetchOne(db, key: id) else { throw Failure.unknownLabel }
+                guard row.type == "user" else { throw Failure.systemLabel }
+                guard pending.begin(id, colors: wanted) else { throw Failure.inFlight }
+                claimed.set()
+                try store(db, wanted, id: id)
+                return (row.gmailLabelId, LabelColors(background: row.gmailBackgroundColor,
+                                                      text: row.gmailTextColor))
+            }
+        } catch {
+            if claimed.isSet { pending.cancel(id) }
+            throw error
         }
+        let (gmailLabelId, before) = claim
         await didStore()
         let answer: GLabel
         do {

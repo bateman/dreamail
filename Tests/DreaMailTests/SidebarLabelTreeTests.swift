@@ -101,7 +101,7 @@ final class SidebarLabelTreeTests: XCTestCase {
 
     /// A stored order always wins, even when it happens to equal the names in
     /// code-point order: the user dragged `Zeta` above `alpha`. (An old
-    /// machine-written order is repaired once, by migration v69.)
+    /// machine-written order is reset once, by migration v70.)
     func testExplicitDragWinsEvenWhenItEqualsCodePointOrder() {
         let tree = SidebarLabelTree.build([
             row("L1", "Zeta", order: 0), row("L2", "alpha", order: 1),

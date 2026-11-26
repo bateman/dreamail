@@ -168,20 +168,25 @@ struct SidebarLabelTag: View {
     var body: some View {
         let metrics = MailIconMetrics(rowSize: rowSize)
         let style = LabelPillStyle.resolve(colors, appearance: .init(colorScheme), shape: .dot)
-        Image(systemName: "tag.fill")
-            .font(metrics.font)
-            .imageScale(.medium)
-            .foregroundStyle(Color(style.fill))
-            .overlay {
-                if style.needsBorder {
-                    Image(systemName: "tag")
-                        .font(metrics.font)
-                        .imageScale(.medium)
-                        .foregroundStyle(Color(style.border))
-                }
+        Group {
+            if colors.isColored {
+                Image(systemName: "tag.fill")
+                    .foregroundStyle(Color(style.fill))
+                    .overlay {
+                        if style.needsBorder {
+                            Image(systemName: "tag").foregroundStyle(Color(style.border))
+                        }
+                    }
+            } else {
+                // No color: the outline only, as Gmail draws it, so any
+                // fill means the label has a color (a dark grey included).
+                Image(systemName: "tag").foregroundStyle(Color(style.border))
             }
-            .frame(width: metrics.columnWidth)
-            .accessibilityHidden(true)
+        }
+        .font(metrics.font)
+        .imageScale(.medium)
+        .frame(width: metrics.columnWidth)
+        .accessibilityHidden(true)
     }
 }
 

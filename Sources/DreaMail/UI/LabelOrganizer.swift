@@ -178,7 +178,7 @@ struct LabelColorPalette: View {
             .disabled(saving || label.gmailBackgroundColor == nil)
             if saving {
                 Text("Saving to Gmail…").font(.system(size: 11)).foregroundStyle(.secondary)
-            } else if label.color != nil {
+            } else if LabelRGB.normalizedHex(label.color) != nil {
                 Text("A color only on this Mac is set and is shown instead.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }

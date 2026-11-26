@@ -53,12 +53,18 @@ final class LabelOrganizerOrderUITests: XCTestCase {
         let last = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "labelOrganizer.name.", names[names.count - 1])).firstMatch
         first.press(forDuration: 0.5, thenDragTo: last)
+        var dragged = topLevelNames(app)
+        let moved = Date().addingTimeInterval(3)
+        while dragged == names, Date() < moved {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            dragged = topLevelNames(app)
+        }
+        XCTAssertNotEqual(dragged, names, "the drag moved a label")
         XCTAssertTrue(button.isEnabled, "a stored order enables the button")
-        XCTAssertNotEqual(topLevelNames(app), names.sorted { $0.caseInsensitiveCompare($1) == .orderedAscending },
-                          "the demo order is not Gmail's")
+        let expected = names.sorted { $0.caseInsensitiveCompare($1) == .orderedAscending }
+        XCTAssertNotEqual(dragged, expected, "after the drag the list is not in Gmail's order")
 
         button.click()
-        let expected = names.sorted { $0.caseInsensitiveCompare($1) == .orderedAscending }
         let deadline = Date().addingTimeInterval(5)
         while topLevelNames(app) != expected, Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))

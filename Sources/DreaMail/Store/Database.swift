@@ -2955,17 +2955,11 @@ final class AppDatabase: @unchecked Sendable {
             try db.alter(table: "scheduledSend") { t in t.add(column: "signatureStyle", .text) }
             try db.alter(table: "localDraft") { t in t.add(column: "signatureStyle", .text) }
         }
-        // v69: a label order that only repeats the names in code-point order
-        // was written for every label by an older organizer on any drag, and
-        // hid Gmail's order. Put those back to unsorted, once; from here on
-        // any stored order wins (`LabelOrganizerOrder.machineOrderedIds`).
-        m.registerMigration("v69") { db in
-            let rows = try LabelRow.filter(Column("type") == "user").fetchAll(db)
-            for id in LabelOrganizerOrder.machineOrderedIds(rows) {
-                try db.execute(sql: "UPDATE label SET sortOrder = ? WHERE id = ?",
-                               arguments: [LabelRow.unsorted, id])
-            }
-        }
+        // v69: once reset the orders that only repeated the names in
+        // code-point order. Empty now: v70 resets every user label, which
+        // covers it. The registration stays so the migration history of
+        // existing databases is unchanged.
+        m.registerMigration("v69") { _ in }
         // v70: every user label back to unsorted, once. Until PR #100 any
         // drag stored an order for every label of the account, so no stored
         // order from before can be told from a deliberate one (v69's

@@ -39,34 +39,6 @@ struct LabelRGB: Equatable, Hashable, Sendable {
         return "#" + hex.lowercased()
     }
 
-    /// A color as Gmail's API may send it, read leniently: what
-    /// `normalizedHex` reads, plus `#RRGGBBAA` (alpha dropped), `0x…` and
-    /// `rgb(r, g, b)`, any case, any surrounding space. Only for what comes
-    /// from Gmail; local values stay strict (`normalizedHex`).
-    static func gmailHex(_ string: String?) -> String? {
-        guard let text = string?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-              !text.isEmpty else { return nil }
-        if text.hasPrefix("rgb"), let open = text.firstIndex(of: "("),
-           let close = text.lastIndex(of: ")"), open < close {
-            let parts = text[text.index(after: open)..<close]
-                .split(whereSeparator: { $0 == "," || $0 == " " || $0 == "/" }).map(String.init)
-            guard parts.count >= 3 else { return nil }
-            var out = "#"
-            for part in parts.prefix(3) {
-                guard let v = Int(part), (0...255).contains(v) else { return nil }
-                out += String(format: "%02x", v)
-            }
-            return out
-        }
-        var hex = text
-        if hex.hasPrefix("0x") { hex.removeFirst(2) }
-        if hex.hasPrefix("#") { hex.removeFirst() }
-        guard hex.count == 8, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else {
-            return normalizedHex(hex)
-        }
-        return normalizedHex(String(hex.prefix(6)))
-    }
-
     static let black = LabelRGB(hex: 0x000000)
     static let white = LabelRGB(hex: 0xFFFFFF)
 
@@ -126,6 +98,10 @@ struct LabelColors: Equatable, Hashable, Sendable {
     var text: String?
 
     static let none = LabelColors(background: nil, text: nil)
+
+    /// Whether there is a background color to draw: any valid color means
+    /// the label has one; only its absence means "no color".
+    var isColored: Bool { LabelRGB(hexString: background) != nil }
 }
 
 /// How a label chip (or dot) is drawn: a solid fill, a text color that is
