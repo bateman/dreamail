@@ -140,6 +140,12 @@ minor versions may still change behavior.
   text; "Edit signature as text" in the pen menu turns it into plain text
   you can change (it is then sent as typed).
 
+- **Your own messages show the right account's photo.** With two accounts
+  that share a sending address (one account's address is a "send as"
+  address of the other), a message you sent showed the other account's
+  profile photo. It now shows the photo, or the initial, of the account the
+  message is in.
+
 - **Pasting a signature copied from Gmail.** In Settings → Signatures, ⌘V
   of a signature copied from Gmail's settings page (into an empty box, or
   over the whole text) keeps its look: fonts, colours, links and tables;
