@@ -2053,7 +2053,10 @@ struct Sidebar: View {
             // The selected row's band across the column, behind the list.
             ZStack {
                 Color.mailSidebar
+                // Into the column's safe-area margin like the colour above it
+                // (CI, macOS 26.7.2: the column starts at x 64, the list at 72).
                 SidebarSelectionBand(accent: accent)
+                    .ignoresSafeArea(.container, edges: .horizontal)
             }
         }
         .background(TrailingEdgeReader { store.sidebarTrailingEdge = $0 })
