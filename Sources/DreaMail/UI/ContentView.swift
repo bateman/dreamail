@@ -2184,12 +2184,19 @@ struct SidebarCount: ViewModifier {
 
     @Environment(\.mailRowSizeOverride) private var sizeOverride
 
+    /// The count as `Text` (`badge` takes one); in a Compact sidebar it keeps
+    /// the font of the user's own row size.
+    private var countText: Text {
+        let text = Text("\(count)")
+        guard let size = sizeOverride else { return text }
+        return text.font(.system(size: MailIconMetrics(rowSize: size).pointSize))
+    }
+
     func body(content: Content) -> some View {
         if painted {
-            content.badge(count > 0 ? Text("\(count)").foregroundStyle(SidebarBadgeStyle(selected: selected)).mailRowFont() : nil)
+            content.badge(count > 0 ? countText.foregroundStyle(SidebarBadgeStyle(selected: selected)) : nil)
         } else if sizeOverride != nil {
-            // A Compact sidebar: the count keeps the user's row size too.
-            content.badge(count > 0 ? Text("\(count)").mailRowFont() : nil)
+            content.badge(count > 0 ? countText : nil)
         } else {
             content.badge(count)
         }
