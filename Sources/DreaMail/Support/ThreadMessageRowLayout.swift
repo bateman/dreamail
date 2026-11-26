@@ -122,7 +122,7 @@ enum MessageRowDate {
 /// Which avatar a message row shows. A message counts as the user's own
 /// only when Gmail filed it as SENT *and* its From address belongs to one
 /// of the user's accounts or send-as aliases: a forged From alone must not
-/// borrow the user's photo. Own mail shows the owning account's stored
+/// borrow the user's photo. Own mail shows the message's account's stored
 /// Google photo when there is one, else that account's initial disc.
 /// Everyone else gets an initial disc in a stable colour keyed by their
 /// address. No photo is ever fetched for other senders.
@@ -154,23 +154,23 @@ enum MessageAvatar: Equatable {
     ///   - accountId: the account the message was synced into. A SENT message
     ///     there was sent by that account, even when `owners` maps the address
     ///     to another account (a send-as alias listed by several accounts).
-    ///     `nil` when unknown: the address lookup decides.
     ///   - accountNames: the name each account shows elsewhere (switcher),
     ///     so its initial matches; falls back to `senderName`.
     ///   - accountsWithPhoto: accounts that have a stored photo.
     static func resolve(senderEmail: String, senderName: String,
                         labelIds: String,
                         owners: [String: String],
-                        accountId: String? = nil,
+                        accountId: String,
                         accountNames: [String: String] = [:],
                         accountsWithPhoto: Set<String>) -> MessageAvatar {
         let email = senderEmail.trimmingCharacters(in: .whitespaces).lowercased()
         let name = senderName.trimmingCharacters(in: .whitespaces)
         let shownName = name.isEmpty ? email : name
         let isSent = labelIds.split(separator: " ").contains("SENT")
-        if isSent, !email.isEmpty, let owner = owners[email] {
-            // The From address must still be one of ours (forged From guard).
-            let account = accountId ?? owner
+        if isSent, !email.isEmpty, owners[email] != nil {
+            // The From address must still be one of ours (forged From guard);
+            // which account it is shown for is the message's own.
+            let account = accountId
             if accountsWithPhoto.contains(account) {
                 return .accountPhoto(accountId: account)
             }

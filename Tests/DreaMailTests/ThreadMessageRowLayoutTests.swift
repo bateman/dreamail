@@ -107,9 +107,12 @@ final class ThreadMessageRowLayoutTests: XCTestCase {
     private func avatar(_ email: String, name: String = "Someone",
                         labels: String = "SENT",
                         names: [String: String] = [:],
-                        photos: Set<String> = []) -> MessageAvatar {
-        MessageAvatar.resolve(senderEmail: email, senderName: name,
-                              labelIds: labels, owners: owners,
+                        photos: Set<String> = [],
+                        in account: String? = nil) -> MessageAvatar {
+        // By default the message sits in the mailbox of the address's owner.
+        let mailbox = account ?? owners[email.lowercased()] ?? "alex@example.com"
+        return MessageAvatar.resolve(senderEmail: email, senderName: name,
+                              labelIds: labels, owners: owners, accountId: mailbox,
                               accountNames: names, accountsWithPhoto: photos)
     }
 
@@ -136,7 +139,7 @@ final class ThreadMessageRowLayoutTests: XCTestCase {
     }
 
     func testAliasResolvesToTheAccountThatOwnsIt() {
-        // The alias belongs to the work account, whichever mailbox holds the copy.
+        // The alias is the work account's, and the message sits in its mailbox.
         XCTAssertEqual(avatar("alex@alias.EXAMPLE", photos: ["work@corp.example"]),
                        .accountPhoto(accountId: "work@corp.example"))
     }
@@ -154,7 +157,7 @@ final class ThreadMessageRowLayoutTests: XCTestCase {
 
     // MARK: Avatar: an address shared by two accounts
 
-    private func shared(_ email: String, in account: String?, labels: String = "SENT",
+    private func shared(_ email: String, in account: String, labels: String = "SENT",
                         accounts: [String], aliases: [(email: String, accountId: String)],
                         photos: Set<String> = ["a@example.com", "b@example.com"]) -> MessageAvatar {
         MessageAvatar.resolve(
@@ -170,9 +173,6 @@ final class ThreadMessageRowLayoutTests: XCTestCase {
                        .accountPhoto(accountId: "b@example.com"))
         XCTAssertEqual(shared("b@example.com", in: "a@example.com", accounts: accounts, aliases: aliases),
                        .accountPhoto(accountId: "a@example.com"))
-        // Unknown account: the account whose own address it is wins over the alias.
-        XCTAssertEqual(shared("b@example.com", in: nil, accounts: accounts, aliases: aliases),
-                       .accountPhoto(accountId: "b@example.com"))
         // Received mail from that address stays an initial disc.
         XCTAssertEqual(shared("b@example.com", in: "b@example.com", labels: "INBOX",
                               accounts: accounts, aliases: aliases),
