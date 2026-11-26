@@ -38,11 +38,26 @@ enum AccountRailMetrics {
     /// The top band must reach at least this far from the window's left edge,
     /// so it covers the three window buttons even when the sidebar is hidden.
     static let bandMinimumWidth: CGFloat = windowButtonsExtent + windowButtonsMargin
+    /// Width of the collapsed sidebar (`SidebarIconStrip`), right of the
+    /// rail: the sidebar glyph (`mailIconStyle`: 11, 13 or 15 pt by the
+    /// "Sidebar icon size" setting) in a `stripItemWidth` × `stripItemHeight`
+    /// selection capsule, with `stripItemInset` on each side. Gmail's
+    /// collapsed navigation, icons only.
+    static let stripItemWidth: CGFloat = 32
+    static let stripItemHeight: CGFloat = 28
+    static let stripItemInset: CGFloat = 4
+    static let stripWidth: CGFloat = stripItemWidth + 2 * stripItemInset
+    /// The band over rail and strip: the strip fills exactly the band's step
+    /// past the rail, so their right edges line up. At least
+    /// `bandMinimumWidth`, so it still covers the window buttons.
+    static let stripBandWidth: CGFloat = max(bandMinimumWidth, width + stripWidth)
     /// Band width: from the window's left edge to the sidebar's right edge
-    /// (window coordinates) while the sidebar is on screen; otherwise just
-    /// `bandMinimumWidth`.
-    static func bandWidth(sidebarTrailing: CGFloat, sidebarVisible: Bool) -> CGFloat {
-        guard sidebarVisible else { return bandMinimumWidth }
+    /// (window coordinates) while the sidebar is on screen; to the strip's
+    /// right edge while the collapsed sidebar is; otherwise just
+    /// `bandMinimumWidth` (full-window conversation, split compose).
+    static func bandWidth(sidebarTrailing: CGFloat, sidebarVisible: Bool,
+                          stripVisible: Bool = false) -> CGFloat {
+        guard sidebarVisible else { return stripVisible ? stripBandWidth : bandMinimumWidth }
         return max(bandMinimumWidth, sidebarTrailing)
     }
     /// Settings → Appearance: show the "+" (add account) entry. App-wide.

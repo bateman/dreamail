@@ -133,6 +133,15 @@ minor versions may still change behavior.
   a little more space between them, and the "Defaults" table in Settings →
   Signatures is aligned.
 
+- **A hidden sidebar becomes a strip of icons.** Hiding the sidebar no
+  longer removes it: it shrinks to a narrow strip next to the account rail
+  with the icons of Search and of your mailboxes (in your order) down to
+  "More", as in Gmail's collapsed navigation. Click an icon to open that
+  mailbox; the unread count is in the tooltip; Search reopens the sidebar
+  with the search field active; "More" shows the mailboxes under it. Labels
+  and saved views are in the full sidebar only. Narrow windows and the
+  full-window conversation behave as before.
+
 - **Reorder the sidebar; a closed "More" hides everything under it.** Drag
   the system views (Inbox, Starred, Sent, Promotions, Reminders...) to
   reorder them, also across the "More" row: drop one above "More" to keep

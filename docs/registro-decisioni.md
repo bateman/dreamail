@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.33
+Versione: 0.34
 Ultimo aggiornamento: 26 novembre 2026
 Stato: documento in evoluzione
 
@@ -90,6 +90,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-076 | **Densità: elenco e barra laterale, due scelte separate** | Settings → Appearance: "List density" e "Sidebar density", Comfortable (predefinita, invariata) o Compact, come la densità di Gmail. Compact riduce solo lo spazio verticale: riga dell'elenco con 2 pt invece di 6 sopra e sotto, riga della barra laterale alta almeno 22 pt invece di 30. Caratteri, icone e intestazioni di sezione ("Today", "Yesterday") non cambiano (richiesta del proprietario). La densità della barra laterale è stata chiesta dal proprietario nella sessione di lavoro. |
 | DEC-077 | **Selezione: il colore accent vuol dire "aperto", non "ha il fuoco"** | Come in Gmail, la conversazione aperta e la vista corrente della barra laterale restano nel colore accent (personalizzato, o quello di selezione del sistema) anche quando il fuoco è altrove o la finestra è inattiva; testo e icone con lo stesso inchiostro in ogni stato. Poiché due liste possono mostrare insieme una riga colorata, quella con il fuoco della tastiera ha una barretta di 3 pt sul bordo iniziale. Vale su macOS 26 (stesso meccanismo della selezione dipinta dall'app); su macOS 14–15 resta il grigio di sistema. Assunzione dichiarata e non contestata: vale anche a finestra inattiva. Il "+" e il "⋮" delle etichette sono neutri (mai accent), il "⋮" è verticale come in Gmail. |
 | DEC-078 | **Etichette sotto "More" senza doppioni; snooze: nomi inglesi sempre, titoli in inglese** (affina DEC-063) | Nessuna etichetta è elencata due volte: una sottoetichetta nascosta di un'etichetta visibile compare sotto "More" come riga propria col nome completo ("madre/figlia"), senza ripetere la madre; le etichette nascoste sotto una madre nascosta restano annidate (richiesta del proprietario: la madre ripetuta sembrava un errore). Snooze: l'interfaccia è in inglese, quindi i nomi inglesi di giorni e mesi sono sempre accettati, qualunque sia la lingua del Mac; quelli della lingua del Mac restano accettati (anche senza accenti); i suggerimenti sono sempre intitolati in inglese. Le parole chiave in altre lingue ("domani") restano fuori. Con calendari non gregoriani valgono solo i nomi locali dei mesi. |
+| DEC-079 | **Barra laterale: intera o striscia di icone, mai del tutto nascosta** | Come la navigazione ridotta di Gmail: "nascondere" la barra laterale la riduce a una striscia di sole icone (Search, viste di sistema nell'ordine dell'utente fino a "More"; niente etichette né viste salvate) larga 40 pt, a destra della barra degli account; la fascia in alto diventa 104 pt (64 + 40) così i bordi coincidono (richiesta del proprietario: usare il dislivello che si vedeva a barra nascosta). Due soli stati, stesso comando e stessa chiave di prima. Scelte: nessun numero nella striscia (conteggio nel suggerimento e per VoiceOver); Search riapre la barra intera; "More" segue DEC-075; niente espansione al passaggio del mouse (deviazione voluta da Gmail) e niente riordino nella striscia; la striscia non conta nella soglia dei tre pannelli; finestra stretta, conversazione a tutta finestra e composizione affiancata restano come prima (fascia 90 pt, niente striscia); la densità della barra laterale non si applica alla striscia. Lo stato in memoria di un account rimosso è dimenticato (DEC-019). |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -502,6 +503,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-26 | **0.31** | Aggiunte DEC-075 (ordine della barra laterale; "More" chiuso nasconde tutto) e DEC-076 (densità di elenco e barra laterale). |
 | 2026-11-26 | **0.32** | Aggiunta DEC-077 (la selezione resta nel colore accent senza fuoco). |
 | 2026-11-26 | **0.33** | Aggiunta DEC-078 (etichette sotto "More" senza doppioni; snooze con nomi inglesi). |
+| 2026-11-26 | **0.34** | Aggiunta DEC-079 (barra laterale ridotta a striscia di icone). |
 
 ---
 
