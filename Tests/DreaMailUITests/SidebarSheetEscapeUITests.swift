@@ -72,5 +72,22 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         XCTAssertEqual(rowIds(app), before, "typing in the sheet left the list alone")
         XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch.exists,
                       "Escape closed the sheet only, not the open conversation")
+
+        // Organize Labels has only "Done" as its default action: Escape
+        // closes it too, and the mailbox behind it is left alone.
+        let research = element("sidebar.label.\(account).Label_research", in: app)
+        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        research.rightClick()
+        let organize = app.menuItems.matching(
+            NSPredicate(format: "identifier == %@ OR title == %@", "labelMenu.organize", "Organize Labels…")).firstMatch
+        XCTAssertTrue(organize.waitForExistence(timeout: 5), "the label menu has Organize Labels")
+        organize.click()
+        let title = app.staticTexts["Organize Labels"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Organize Labels is up")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitForAbsence(title), "Escape closes Organize Labels")
+        XCTAssertEqual(rowIds(app), before, "Organize Labels left the list alone")
+        XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch.exists,
+                      "Escape closed the dialog only, not the open conversation")
     }
 }

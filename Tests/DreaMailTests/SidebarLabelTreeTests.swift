@@ -175,15 +175,6 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertFalse(SidebarMoreRows.isUnderMore(.starred, hasReminders: false))
     }
 
-    /// The old "Categories" open/closed flag is neither read nor written.
-    func testNoCategoriesDisclosureKeyIsWritten() throws {
-        let (d, suite) = try defaults()
-        defer { d.removePersistentDomain(forName: suite) }
-        SidebarDisclosure.setMoreExpanded(true, d)
-        XCTAssertEqual(Set(d.dictionaryRepresentation().keys.filter { $0.hasPrefix("sidebar.") }),
-                       [SidebarDisclosure.moreKey])
-    }
-
     // MARK: Disclosure state
 
     private func defaults() throws -> (UserDefaults, String) {

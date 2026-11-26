@@ -17,6 +17,14 @@ final class DemoSeedTests: XCTestCase {
 
     /// The UI tests' short list: the labels the demo threads carry and the
     /// ones the tests name, with the ids, names and order of the full list.
+    func testTinyDemoIsSmallWithoutTravelFamilyAndFriends() {
+        let tiny = DemoSeed.labels(environment: ["DREAMAIL_DEMO_LABELS": "tiny"])
+        XCTAssertEqual(tiny.count, 11)
+        XCTAssertEqual(Set(tiny.map(\.id)),
+                       DemoSeed.smallLabelIds.subtracting(["Label_travel", "Label_family", "Label_friends"]))
+        XCTAssertNotNil(tiny.first { $0.id == "Label_vendors_aws" })
+    }
+
     func testSmallDemoKeepsTheLabelsTheThreadsAndTestsUse() throws {
         let (pool, path) = try makeDatabase()
         defer { try? FileManager.default.removeItem(atPath: path) }

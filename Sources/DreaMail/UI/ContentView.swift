@@ -1110,15 +1110,16 @@ private extension ContentView {
             // Any sheet or alert is up (new label, Organize Labels, filter,
             // signature, default-mail prompt, label menu dialogs, the "l"
             // picker's "Create new"...): its keys, Esc included, belong to
-            // it. The sheet is the key window (`sheetParent`) or the event
-            // still reaches us through its parent (`attachedSheet`); both
-            // are set by AppKit for SwiftUI sheets, alerts and confirmation
-            // dialogs. Without this, "e" or "#" typed in a sheet's text
-            // field would archive or delete the selected conversation.
-            // The shortcuts help is the one sheet that needs `?` and Esc
-            // handled below.
-            if !store.showShortcutsHelp,
-               event.window?.attachedSheet != nil || event.window?.sheetParent != nil {
+            // it. The event's window is the sheet (`sheetParent`), or the
+            // main window holding one (`attachedSheet`), or a popover of a
+            // sheet (the colour palette in Organize Labels: its `parent`
+            // is the sheet). Single letters like "e" and "#" were already
+            // blocked behind a sheet (`MailboxKeyGate`); what this stops is
+            // Escape walking the mailbox ladder (reading pane, checks,
+            // search) and the other shortcuts (⌘1-9, ⌃F, ⌘K) acting behind
+            // a dialog. The shortcuts help is the one sheet that needs `?`
+            // and Esc handled below.
+            if !store.showShortcutsHelp, DialogKeyOwnership.owns(event.window) {
                 return event
             }
             // A label menu dialog is up (Edit, colour, Remove, failure):

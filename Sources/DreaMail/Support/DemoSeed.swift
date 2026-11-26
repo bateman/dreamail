@@ -188,24 +188,33 @@ enum DemoSeed {
     /// their ids, names and order: every accessibility snapshot of a ~70-row
     /// sidebar is slow, and rows below the fold need scrolling. Without it
     /// (`make run`, `make demo`, the label picker's and the sidebar label
-    /// tree's UI tests) the full list.
+    /// tree's UI tests) the full list. `tiny` is `small` without three labels.
     static func labels(environment: [String: String]) -> [DemoLabel] {
-        guard environment["DREAMAIL_DEMO_LABELS"] == "small" else { return userLabels }
-        return userLabels.filter { smallLabelIds.contains($0.id) }
+        switch environment["DREAMAIL_DEMO_LABELS"] {
+        case "small": return userLabels.filter { smallLabelIds.contains($0.id) }
+        case "tiny": return userLabels.filter { tinyLabelIds.contains($0.id) }
+        default: return userLabels
+        }
     }
 
     /// The labels the demo threads carry, plus the nested Clients/… and
     /// Vendors/… trees the sidebar tests open, and Travel, Family and
-    /// Friends: kept as the fixture grew to them. (The click on Vendors'
-    /// triangle that failed without them was the test's: on a short list
-    /// the row sits at the bottom edge of the sidebar and needs a scroll;
-    /// SidebarLabelTreeUITests reveals it.)
+    /// Friends. (Without those three, the `tiny` list, SidebarLabelTreeUITests'
+    /// click on Vendors' triangle failed in CI in November 2026: the test's
+    /// fault, the row sits at the bottom edge of the sidebar and the test
+    /// now scrolls it into view.)
     static let smallLabelIds: Set<String> = [
         "Label_work", "Label_research", "Label_personal", "Label_investment",
         "Label_travel", "Label_family", "Label_friends",
         "Label_clients", "Label_clients_acme", "Label_clients_northwind", "Label_clients_brightloop",
         "Label_vendors", "Label_vendors_aws", "Label_vendors_stripe",
     ]
+
+    /// `DREAMAIL_DEMO_LABELS=tiny` (UI tests only): `small` without Travel,
+    /// Family and Friends, 11 labels, the list of a user with few labels.
+    /// SidebarLabelTreeUITests covers Vendors' disclosure triangle on it.
+    static let tinyLabelIds: Set<String> =
+        smallLabelIds.subtracting(["Label_travel", "Label_family", "Label_friends"])
 
     /// Deliberately long list with near-duplicate clusters so the "l" picker's
     /// type-to-filter (and scroll-past-the-fold) can be exercised in demo mode.

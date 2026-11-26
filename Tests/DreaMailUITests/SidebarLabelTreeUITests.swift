@@ -6,13 +6,13 @@ import XCTest
 final class SidebarLabelTreeUITests: XCTestCase {
     private let account = "you@example.com"
 
-    /// `small`: the short demo label list, as most UI tests (and a real user
-    /// with few labels) have it. Without it the full, long list.
-    private func launch(small: Bool = false) -> XCUIApplication {
+    /// `tiny`: the shortest demo label list, 11 labels, a user with few
+    /// labels. Without it the full, long list.
+    private func launch(tiny: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
-        if small { app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small" }
+        if tiny { app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "tiny" }
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
@@ -43,10 +43,11 @@ final class SidebarLabelTreeUITests: XCTestCase {
         return !element.exists
     }
 
-    /// The parent label on the short list, where the whole tree fits the
-    /// window: one launch, one step (the others run on the full list).
+    /// The parent label on the 11-label list that failed in CI without a
+    /// scroll (runs 45695638539 and 45699532362): one launch, one step (the
+    /// others run on the full list).
     func testParentLabelOnTheShortList() {
-        let app = launch(small: true)
+        let app = launch(tiny: true)
         XCTContext.runActivity(named: "A parent label collapses its sublabels") { _ in
             stepParentLabelCollapsesItsSublabels(app)
         }
