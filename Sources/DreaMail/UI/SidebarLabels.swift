@@ -226,7 +226,7 @@ extension SidebarLabelRow {
 struct SidebarLabelTag: View {
     let colors: LabelColors
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.sidebarRowSize) private var rowSize
+    @Environment(\.mailRowSize) private var rowSize
 
     var body: some View {
         let metrics = MailIconMetrics(rowSize: rowSize)

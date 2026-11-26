@@ -116,7 +116,7 @@ enum SidebarLabelTree {
     /// parent stays under it, so the parent appears in the list as its
     /// container (and not again under "More"). An unlisted label under a
     /// listed parent is a row of its own under "More", named by its path from
-    /// that listed ancestor (`parent/child`); unlisted labels under an
+    /// its full name (`parent/child`); unlisted labels under an
     /// unlisted parent keep their nesting there.
     static func split(_ roots: [SidebarLabelNode],
                       unread: (SidebarLabelNode) -> Int)
@@ -157,8 +157,10 @@ enum SidebarLabelTree {
             if kid.listed {
                 more.append(contentsOf: kid.rows)
             } else {
+                // Named by its full name: two listed parents can each have a
+                // hidden child of the same short name.
                 for var row in kid.rows {
-                    row.displayName = "\(node.displayName)/\(row.displayName)"
+                    row.displayName = row.fullName
                     more.append(row)
                 }
             }

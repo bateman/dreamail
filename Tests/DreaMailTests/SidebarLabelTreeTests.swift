@@ -192,7 +192,22 @@ final class SidebarLabelTreeTests: XCTestCase {
         ])
         let parts = SidebarLabelTree.split(tree) { _ in 0 }
         XCTAssertEqual(shape(parts.listed), ["a [d [e]]"])
-        XCTAssertEqual(shape(parts.more), ["a/b [c]", "d/f"])
+        XCTAssertEqual(shape(parts.more), ["a/b [c]", "a/d/f"])
+        assertDisjoint(parts)
+    }
+
+    /// Two listed parents, each with a hidden `archive`: the rows under
+    /// "More" carry the full names, so they differ.
+    func testLiftedRowsAreNamedByTheirFullName() {
+        let tree = SidebarLabelTree.build([
+            row("L1", "clients"), row("L2", "clients/2024"),
+            row("L3", "clients/2024/archive", visibility: "labelHide"),
+            row("L4", "projects"), row("L5", "projects/2024"),
+            row("L6", "projects/2024/archive", visibility: "labelHide"),
+        ])
+        let parts = SidebarLabelTree.split(tree) { _ in 0 }
+        XCTAssertEqual(shape(parts.more), ["clients/2024/archive", "projects/2024/archive"])
+        XCTAssertEqual(Set(parts.more.map(\.displayName)).count, 2)
         assertDisjoint(parts)
     }
 

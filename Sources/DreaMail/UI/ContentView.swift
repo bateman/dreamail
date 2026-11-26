@@ -1923,7 +1923,6 @@ struct Sidebar: View {
                             // below (same style), in the neutral sidebar ink.
                             Image(systemName: "plus")
                                 .mailIconStyle(selected: false)
-                                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                                 // Layout height of a header line (the glyph
                                 // may overflow it). No hit area outside the
                                 // frame: one padded past it reached the label
@@ -1951,7 +1950,7 @@ struct Sidebar: View {
                         store.editingView = SavedView.empty()
                     } label: {
                         Label {
-                            Text("Add view")
+                            Text("Add view").mailRowFont()
                         } icon: {
                             Image(systemName: "plus")
                                 .mailIconStyle(selected: false)
@@ -2183,9 +2182,14 @@ struct SidebarCount: ViewModifier {
     let selected: Bool
     let painted: Bool
 
+    @Environment(\.mailRowSizeOverride) private var sizeOverride
+
     func body(content: Content) -> some View {
         if painted {
-            content.badge(count > 0 ? Text("\(count)").foregroundStyle(SidebarBadgeStyle(selected: selected)) : nil)
+            content.badge(count > 0 ? Text("\(count)").foregroundStyle(SidebarBadgeStyle(selected: selected)).mailRowFont() : nil)
+        } else if sizeOverride != nil {
+            // A Compact sidebar: the count keeps the user's row size too.
+            content.badge(count > 0 ? Text("\(count)").mailRowFont() : nil)
         } else {
             content.badge(count)
         }

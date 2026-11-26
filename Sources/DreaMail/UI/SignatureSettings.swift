@@ -316,7 +316,7 @@ struct SignatureSettings: View {
 }
 
 /// A pop-up button of a fixed width, titles truncated at the tail.
-private struct SignatureDefaultPopUp: NSViewRepresentable {
+struct SignatureDefaultPopUp: NSViewRepresentable {
     struct Item { let title: String; let value: SignatureDefaultChoice }
     let items: [Item]
     let selection: SignatureDefaultChoice
@@ -324,6 +324,7 @@ private struct SignatureDefaultPopUp: NSViewRepresentable {
     let onSelect: (SignatureDefaultChoice) -> Void
 
     final class Coordinator: NSObject {
+        // Set by `updateNSView`; read by the pick.
         var items: [Item] = []
         var onSelect: (SignatureDefaultChoice) -> Void = { _ in }
         @objc func changed(_ sender: NSPopUpButton) {
@@ -345,10 +346,19 @@ private struct SignatureDefaultPopUp: NSViewRepresentable {
     func updateNSView(_ button: NSPopUpButton, context: Context) {
         context.coordinator.items = items
         context.coordinator.onSelect = onSelect
-        button.removeAllItems()
-        for item in items { button.addItem(withTitle: item.title) }
+        Self.fill(button, with: items)
         if let index = items.firstIndex(where: { $0.value == selection }) {
             button.selectItem(at: index)
+        }
+    }
+
+    /// One menu item per entry, in order, even when titles repeat
+    /// (`addItem(withTitle:)` would drop the earlier item of the same
+    /// title and shift every index after it).
+    static func fill(_ button: NSPopUpButton, with items: [Item]) {
+        button.removeAllItems()
+        for item in items {
+            button.menu?.addItem(NSMenuItem(title: item.title, action: nil, keyEquivalent: ""))
         }
     }
 
