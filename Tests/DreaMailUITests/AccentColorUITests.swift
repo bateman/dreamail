@@ -252,9 +252,9 @@ final class AccentColorUITests: XCTestCase {
 
     // MARK: - Focus bar
 
-    /// Pixels (of a 2x capture) a 3 pt bar on a row 20 pt or more tall
-    /// changes: 3 x 8 pt at the least, far under the real ~200.
-    private static let barPixels = 40
+    /// Pixels the bar changes in a capture: CI measured 93 on the thread
+    /// row and 36 on the sidebar row, and 0 between states without a bar.
+    private static let barPixels = 20
 
     /// The sidebar row's leading edge: the capsule's left side, wide enough
     /// for wherever the capsule starts. The glyph in it is the same in
