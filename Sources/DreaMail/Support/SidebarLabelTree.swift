@@ -128,23 +128,6 @@ enum SidebarLabelTree {
         return (listed, more)
     }
 
-    /// The label with `labelId` behind the labels' "More" row, without its
-    /// sublabels: what the sidebar keeps visible while "More" is closed and
-    /// that label is open. A closed node hides
-    /// its sublabels: with `isOpen` false for it, they are not searched.
-    static func find(_ labelId: String, in nodes: [SidebarLabelNode],
-                     isOpen: (SidebarLabelNode) -> Bool = { _ in true }) -> SidebarLabelNode? {
-        for node in nodes {
-            if node.gmailLabelId == labelId {
-                var leaf = node
-                leaf.children = []
-                return leaf
-            }
-            if isOpen(node), let hit = find(labelId, in: node.children, isOpen: isOpen) { return hit }
-        }
-        return nil
-    }
-
     private static func split(_ node: SidebarLabelNode,
                               unread: (SidebarLabelNode) -> Int)
         -> (listed: SidebarLabelNode?, more: SidebarLabelNode?) {
