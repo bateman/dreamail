@@ -5,7 +5,8 @@ import XCTest
 /// row, then a full-height header. A section break must cost less than one
 /// row, and the header must sit inside the break: never on a row.
 final class ThreadListSectionSpacingUITests: XCTestCase {
-    private func launch(readingPane: Bool, fontScale: Double = 1.0) -> XCUIApplication {
+    private func launch(readingPane: Bool, fontScale: Double = 1.0,
+                        density: String = "comfortable") -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
@@ -18,7 +19,8 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
                                 "-readingPaneHidden", readingPane ? "NO" : "YES",
                                 "-threadOpenStyle", "readingPane",
                                 "-groupBy", "date",
-                                "-fontScale", String(fontScale)]
+                                "-fontScale", String(fontScale),
+                                "-listDensity", density]
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
@@ -157,6 +159,19 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
             XCTAssertGreaterThan(scaled, 1.15 * base,
                                  "font scale 1.6 did not reach the list (rows \(base) → \(scaled) pt)")
             assertCompactSectionBreaks(scaledApp)
+        }
+        XCTContext.runActivity(named: "Compact density: shorter rows, section break still shorter than a row") { _ in
+            let compactApp = launch(readingPane: true, density: "compact")
+            let compact = medianRowHeight(settledLayout(compactApp).rows)
+            // Only the vertical padding changes: 2 x (6 - 2) pt.
+            XCTAssertEqual(base - compact, 8, accuracy: 1.0,
+                           "compact rows \(compact) pt against comfortable \(base) pt")
+            print("ThreadListDensity: comfortable row \(base) pt, compact row \(compact) pt")
+            assertCompactSectionBreaks(compactApp)
+        }
+        XCTContext.runActivity(named: "Back to comfortable restores today's row height") { _ in
+            let again = launch(readingPane: true, density: "comfortable")
+            XCTAssertEqual(medianRowHeight(settledLayout(again).rows), base, accuracy: 0.5)
         }
     }
 
