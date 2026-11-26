@@ -350,6 +350,111 @@ final class ThreadDerivationTests: XCTestCase {
         XCTAssertFalse(t.inInbox)
     }
 
+    // MARK: - Mail arriving in a trashed conversation brings it back
+
+    /// The reported case: a conversation moved to Trash, then a new message
+    /// arrives in it. Gmail shows the conversation in the Inbox again; it
+    /// must not stay hidden in Trash (it was missing from Inbox and All Mail).
+    func testNewMessageInATrashedConversationBringsItBackToInbox() throws {
+        let reply = msg(id: "m3", from: "Ann <ann@example.com>", daysAgo: 0,
+                        labels: "INBOX UNREAD", unread: true)
+        let trashed1 = msg(id: "m2", from: account, daysAgo: 1, labels: "TRASH SENT")
+        let trashed2 = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 2, labels: "TRASH")
+        let t = try XCTUnwrap(derive([reply, trashed1, trashed2]))
+        XCTAssertFalse(t.inTrash, "a message outside the trash keeps the conversation live")
+        XCTAssertTrue(t.inInbox)
+        XCTAssertTrue(t.isUnread)
+        XCTAssertEqual(t.lastDate, reply.date)
+    }
+
+    /// Every message of a conversation trashed: still in Trash.
+    func testFullyTrashedConversationStaysInTrash() throws {
+        let trashed = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 1, labels: "TRASH")
+        XCTAssertTrue(try XCTUnwrap(derive([trashed])).inTrash)
+    }
+
+    /// Only a draft left outside the trash: as in Gmail, the draft stays in
+    /// Drafts (and only the draft is the conversation shown there); the
+    /// trashed mail does not come back to the Inbox.
+    func testDraftLeftOutsideTheTrashStaysInDrafts() throws {
+        let draft = msg(id: "d1", from: account, daysAgo: 0, labels: "DRAFT")
+        let trashed = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 1, labels: "TRASH")
+        let t = try XCTUnwrap(derive([draft, trashed]))
+        XCTAssertFalse(t.inTrash)
+        XCTAssertTrue(t.inDrafts)
+        XCTAssertFalse(t.inInbox)
+        XCTAssertEqual(t.messageCount, 1)
+        XCTAssertEqual(t.snippet, "snippet-d1")
+    }
+
+    /// One message of several deleted (here or on another client): the
+    /// conversation stays live and its row comes from the others.
+    func testOneDeletedMessageLeavesTheConversationLive() throws {
+        let newest = msg(id: "m3", from: "Bob <bob@example.com>", daysAgo: 0,
+                         labels: "TRASH UNREAD STARRED", unread: true, attachment: true)
+        let middle = msg(id: "m2", from: "Ann <ann@example.com>", daysAgo: 1, labels: "INBOX")
+        let oldest = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 2, labels: "INBOX")
+        let t = try XCTUnwrap(derive([newest, middle, oldest]))
+        XCTAssertFalse(t.inTrash)
+        XCTAssertTrue(t.inInbox)
+        XCTAssertEqual(t.messageCount, 2)
+        XCTAssertEqual(t.snippet, "snippet-m2")
+        XCTAssertEqual(t.lastDate, middle.date)
+        XCTAssertFalse(t.isUnread)
+        XCTAssertFalse(t.isStarred)
+        XCTAssertFalse(t.hasAttachment)
+        XCTAssertEqual(t.fromEmail, "ann@example.com")
+    }
+
+    /// Trashed mail beside spam: the conversation is in Spam, not Trash,
+    /// and not in the Inbox; its row comes from the spam message.
+    func testTrashedPlusSpamIsInSpam() throws {
+        let spam = msg(id: "m2", from: "Spam <spam@example.com>", daysAgo: 0, labels: "SPAM")
+        let trashed = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 1, labels: "TRASH")
+        let t = try XCTUnwrap(derive([spam, trashed]))
+        XCTAssertFalse(t.inTrash)
+        XCTAssertTrue(t.inSpam)
+        XCTAssertFalse(t.inInbox)
+        XCTAssertEqual(t.messageCount, 1)
+        XCTAssertEqual(t.fromEmail, "spam@example.com")
+    }
+
+    /// Rows derived by the old rule stay hidden until a message of theirs
+    /// changes; the one-shot repair finds them and re-deriving shows them
+    /// in the Inbox query again.
+    func testStoredTrashedRowWithLiveMailIsFoundAndRepaired() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        let reply = msg(id: "m2", from: "Ann <ann@example.com>", daysAgo: 0,
+                        labels: "INBOX UNREAD", unread: true)
+        let trashed = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 1, labels: "TRASH")
+        try q.write { db in
+            try Account(id: self.account, displayName: "P", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
+            try reply.insert(db)
+            try trashed.insert(db)
+            var stale = try XCTUnwrap(self.derive([reply, trashed]))
+            stale.inTrash = true   // as the old rule stored it
+            try stale.insert(db)
+        }
+        let key = "\(account):t1"
+        func inboxIds() throws -> [String] {
+            try q.read { try ThreadListQuery.inbox().fetchAll($0).map(\.id) }
+        }
+        XCTAssertEqual(try inboxIds(), [])
+        let found = try q.read { db in
+            try SyncEngine.trashedThreadKeysWithLiveMail(db, accountId: self.account)
+        }
+        XCTAssertEqual(found, [key])
+        try q.write { db in
+            try SyncEngine.deriveThreads(db, for: found, accountId: self.account)
+        }
+        XCTAssertEqual(try inboxIds(), [key])
+        XCTAssertEqual(try q.read { db in
+            try SyncEngine.trashedThreadKeysWithLiveMail(db, accountId: self.account)
+        }, [])
+    }
+
     // MARK: - Discarded drafts must not hide live inbox threads
 
     /// Fund Expense / Anna: discarded compose attempts leave DRAFT+TRASH on

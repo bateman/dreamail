@@ -90,6 +90,9 @@ final class MailStore {
     /// fail — republishing the sidebar, account rail, Accounts settings,
     /// and FilterBar on every tick forever.
     private(set) var lastSyncByAccount: [String: Date] = [:]
+    /// Which accounts' latest pass failed (`SyncHealth`); "last synced"
+    /// above only moves on a pass that completed.
+    var syncHealth = SyncHealth()
     /// From identities (primary + Gmail send-as) across all linked accounts.
     /// Used by compose's From picker; never confuse `email` with API mailbox.
     var sendIdentities: [SendIdentity] = [] { didSet { rebuildOwnDisplayNames() } }
@@ -3718,7 +3721,10 @@ struct ComposeRequest: Identifiable {
                 .filter(Column("threadId") == threadId)
                 .order(Column("date"))
                 .fetchAll(db)
-            return try Self.hydrateBodies(headers, db: db)
+            // Deleted messages of a live conversation are not quoted.
+            let inTrash = try MailThread.fetchOne(db, key: threadId)?.inTrash ?? false
+            return try Self.hydrateBodies(
+                TrashedMessages.shown(headers, threadInTrash: inTrash), db: db)
         }) ?? []
         return PendingDraftVisibility.visibleMessages(
             fetched, suppressing: suppressedDraftMessageIds)

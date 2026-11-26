@@ -242,6 +242,7 @@ extension MailStore {
                 if change != .none { anyThreadsChanged = true }
                 // Removed while this pass ran: its outcome is moot.
                 guard isKnownAccount(id) else { continue }
+                noteSyncOutcome(account: id, error: error)
                 if let error {
                     if AccountLifecycle.isReauthRequired(error) {
                         requireReauthorization(for: id, interactive: interactive)
@@ -322,6 +323,7 @@ extension MailStore {
             applyThreadContentChange(change)
             isOffline = false
             accountsNeedingReauth.remove(accountId)
+            noteSyncOutcome(account: accountId, error: nil)
             clearSyncFailureErrorIfNeeded(for: accountId)
             await backfillSenderNameIfNeeded(accountId: accountId)
             refreshAccountPhotoIfDue(accountId: accountId)
@@ -335,6 +337,7 @@ extension MailStore {
             // Removed while this pass ran: ignore its failure (the refresh
             // token is gone and the pass was cancelled on purpose).
             guard isKnownAccount(accountId) else { return }
+            noteSyncOutcome(account: accountId, error: error)
             if case GmailError.partialFetch = error {} else {
                 // The pages stored before the failure, including those the
                 // closed batch sink had not shown yet.
@@ -479,13 +482,17 @@ extension MailStore {
 
     /// A first sync downloads mail that arrived before the account was
     /// added; none of it is new mail (Gmail notifies only for what arrives).
-    /// Mail that arrives during and after the pass still notifies.
+    /// Mail that arrives during and after the pass still notifies. The same
+    /// for the pass that runs the one-time repair of conversations brought
+    /// back from the trash: their mail is old.
     func quietBacklogOfFirstSyncs(_ ids: [String]) {
         for id in ids {
             // An account removed meanwhile is not a first sync: nothing of
             // it may be written back (DEC-019).
-            guard let account = accounts.first(where: { $0.id == id }),
-                  account.historyId == nil else { continue }
+            guard let account = accounts.first(where: { $0.id == id }) else { continue }
+            let repairPending = !UserDefaults.standard.bool(
+                forKey: SyncEngine.revivedTrashRepairKey(accountId: id))
+            guard account.historyId == nil || repairPending else { continue }
             quietNewMailBacklog(accountId: id)
         }
     }
@@ -520,6 +527,21 @@ extension MailStore {
         guard isKnownAccount(accountId) else { return }
         if restart { newMailNotifications.forgetBacklog(accountId: accountId) }
         newMailNotifications.quietBacklog(accountId: accountId, before: Date())
+    }
+
+    /// A pass that did not complete marks its account failed until the next
+    /// one that does; `lastSyncAt` stays at the last completed pass. No
+    /// network is not a failure here: the sync control reads "Offline".
+    func noteSyncOutcome(account id: String, error: Error?) {
+        guard let error else {
+            // Only a change republishes: this runs on every pass.
+            if syncHealth.failedAccounts.contains(id) { syncHealth.recordSuccess(account: id) }
+            return
+        }
+        // Reauth and partial fetches surface too (neither is transient).
+        if OfflinePolicy.surfacesSyncFailure(error), !syncHealth.failedAccounts.contains(id) {
+            syncHealth.recordFailure(account: id)
+        }
     }
 
     func makeSyncStatusSink(_ message: String) -> ThrottledStatusSink {
