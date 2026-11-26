@@ -135,8 +135,17 @@ minor versions may still change behavior.
   stays, marked "No longer on Gmail". The compose window has Gmail's pen menu
   to pick a signature or none. The message is sent with the signature's
   formatting from Gmail (fonts, colours, links, tables; images are dropped)
-  as long as you did not edit the signature; a "Signature as sent" preview
-  in the compose window shows that look, since the editor shows plain text.
+  as long as you did not edit the signature. In the compose window such a
+  signature is shown once, as a read-only block with that look, under the
+  text; "Edit signature as text" in the pen menu turns it into plain text
+  you can change (it is then sent as typed).
+
+- **Pasting a signature copied from Gmail.** In Settings → Signatures, ⌘V
+  of a signature copied from Gmail's settings page (into an empty box, or
+  over the whole text) keeps its look: fonts, colours, links and tables;
+  images are dropped. The sheet shows the look above the text; editing the
+  text, or "Remove formatting", makes it a plain signature. For the Gmail
+  signatures the API does not hand over (it gives one per address).
 
 - **Signatures per account.** DreaMail → Settings (⌘,) → Signatures: several
   signatures per account, a default for new messages and one for replies per
