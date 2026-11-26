@@ -21,45 +21,25 @@ final class TmpVendorsDiagUITests: XCTestCase {
             app.descendants(matching: .any).matching(identifier: id).firstMatch
         }
         var log = ""
-        let vendors = el("sidebar.label.\(account).Label_vendors")
-        let clients = el("sidebar.label.\(account).Label_clients")
-        XCTAssertTrue(vendors.waitForExistence(timeout: 5))
-        log += "vendors.frame=\(vendors.frame) clients.frame=\(clients.frame)\n"
-        log += "outlineRows=\(app.outlineRows.count)\n"
-        for (i, r) in app.outlineRows.allElementsBoundByIndex.enumerated() {
-            log += "row\(i) frame=\(r.frame) triangles=\(r.disclosureTriangles.count) id=\(r.identifier)\n"
+        let add = el("sidebar.labels.add")
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        log += "add type=\(add.elementType.rawValue) frame=\(add.frame) hittable=\(add.isHittable)\n"
+        let named = app.buttons["Create new label"]
+        log += "button by label exists=\(named.exists) frame=\(named.frame)\n"
+        for b in app.buttons.allElementsBoundByIndex.prefix(40) where b.frame.minY > 470 && b.frame.minY < 500 && b.frame.minX < 320 {
+            log += "btn id=\(b.identifier) lbl=\(b.label) f=\(b.frame)\n"
         }
-        for (i, t) in app.disclosureTriangles.allElementsBoundByIndex.enumerated() {
-            log += "tri\(i) frame=\(t.frame)\n"
+        for dx in [0.97, 0.94, 0.90, 0.85] {
+            add.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: 0.5)).click()
+            Thread.sleep(forTimeInterval: 1.5)
+            let up = el("newLabel.name").exists
+            log += "click dx=\(dx): sheet=\(up) sheets=\(app.sheets.count) textFields=\(app.textFields.count)\n"
+            if up { break }
         }
-        let row = app.outlineRows.containing(.any, identifier: vendors.identifier).firstMatch
-        log += "queryRow.frame=\(row.frame) exists=\(row.exists)\n"
-        let tri = row.disclosureTriangles.firstMatch
-        log += "queryTriangle.frame=\(tri.frame) exists=\(tri.exists)\n"
-        func dumpRow(_ r: XCUIElement, _ tag: String) {
-            var d = "\(tag) row=\(r.frame):"
-            for e in r.descendants(matching: .any).allElementsBoundByIndex.prefix(12) {
-                d += " [\(e.elementType.rawValue) id=\(e.identifier) lbl=\(e.label) f=\(e.frame)]"
-            }
-            log += d + "\n"
+        if named.exists {
+            named.click(); Thread.sleep(forTimeInterval: 1.5)
+            log += "named click: sheet=\(el("newLabel.name").exists)\n"
         }
-        for i in 10...18 { dumpRow(app.outlineRows.element(boundBy: i), "r\(i)") }
-        log += "before scroll: vendors.hittable=\(vendors.isHittable) tri.hittable=\(tri.isHittable) "
-            + "clients.hittable=\(clients.isHittable)\n"
-        let sidebar = app.outlines.firstMatch
-        var tries = 0
-        while !(vendors.exists && vendors.isHittable), tries < 15 {
-            sidebar.scroll(byDeltaX: 0, deltaY: -300)
-            tries += 1
-        }
-        log += "after \(tries) scrolls: vendors.frame=\(vendors.frame) hittable=\(vendors.isHittable) "
-            + "tri.frame=\(tri.frame) tri.hittable=\(tri.isHittable)\n"
-        let before = app.outlineRows.count
-        tri.click()
-        Thread.sleep(forTimeInterval: 2)
-        log += "rows before=\(before) after=\(app.outlineRows.count) "
-            + "aws=\(el("sidebar.label.\(account).Label_vendors_aws").exists) "
-            + "acme=\(el("sidebar.label.\(account).Label_clients_acme").exists)\n"
         XCTFail("DIAG\n" + log)
     }
 }
