@@ -8,7 +8,9 @@ final class SidebarLabelTreeUITests: XCTestCase {
 
     /// `tiny`: the shortest demo label list, 11 labels, a user with few
     /// labels. Without it the full, long list.
-    private func launch(tiny: Bool = false) -> XCUIApplication {
+    /// `systemOrder`: a stored order of the system views, as the argument
+    /// value (`(inbox,more,...)`); without it the default order.
+    private func launch(tiny: Bool = false, systemOrder: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
@@ -21,6 +23,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
                                 // every parent label closed.
                                 "-sidebar.more.expanded", "NO",
                                 "-sidebar.labels.expanded.\(account)", "()"]
+        if let systemOrder { app.launchArguments += ["-sidebar.system.order", systemOrder] }
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
@@ -79,7 +82,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
         let steps: [(String, (XCUIApplication) -> Void)] = [
             ("System views and the More row", stepSystemViewsAndMoreRow),
             ("A label row opens its view", stepLabelRowOpensItsView),
-            ("Less keeps only the open category", stepClosedMoreKeepsTheOpenCategory),
+            ("A closed More lists nothing under it", stepClosedMoreHidesEverythingUnderIt),
             ("A parent label collapses its sublabels", stepParentLabelCollapsesItsSublabels),
         ]
         for (name, step) in steps {
@@ -143,9 +146,10 @@ final class SidebarLabelTreeUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(child), "closing it hides AWS again")
     }
 
-    /// Less with a category open keeps only that category listed; `g p`
-    /// opens Promotions with More closed (PR #76's rule: the open view stays).
-    private func stepClosedMoreKeepsTheOpenCategory(_ app: XCUIApplication) {
+    /// A closed More hides everything under it, the open view included: the
+    /// view stays open, the sidebar just has no row for it. `g p` opens
+    /// Promotions with More closed and still lists nothing.
+    private func stepClosedMoreHidesEverythingUnderIt(_ app: XCUIApplication) {
         let more = element("sidebar.more", in: app)
         XCTAssertTrue(more.waitForExistence(timeout: 5))
         more.click()
@@ -156,16 +160,37 @@ final class SidebarLabelTreeUITests: XCTestCase {
         more.click()
         let social = element("sidebar.social", in: app)
         let spam = element("sidebar.spam", in: app)
+        XCTAssertTrue(waitForAbsence(promotions), "Less hides the open category too")
         XCTAssertTrue(waitForAbsence(social), "Less hides the other categories")
         XCTAssertTrue(waitForAbsence(spam), "Less hides Spam")
-        XCTAssertTrue(promotions.exists, "Less keeps the open category listed")
-        // `g i` leaves it, `g p` opens it again with More closed: it is listed.
+        // `g i` leaves it, `g p` opens it again with More closed: still not listed.
         app.typeKey("g", modifierFlags: [])
         app.typeKey("i", modifierFlags: [])
-        XCTAssertTrue(waitForAbsence(promotions), "Promotions is listed only while open")
         app.typeKey("g", modifierFlags: [])
         app.typeKey("p", modifierFlags: [])
-        XCTAssertTrue(promotions.waitForExistence(timeout: 5),
-                      "g p lists Promotions under a closed More")
+        XCTAssertTrue(waitForAbsence(promotions),
+                      "g p lists no Promotions row under a closed More")
+        XCTAssertTrue(more.exists, "the More row stays")
+    }
+
+    /// A stored order puts Promotions above Drafts, out of More; the other
+    /// rows of More stay behind it. (The drag itself is not driven: it is
+    /// flaky in XCUITest; the logic is `SidebarSystemOrderTests`.)
+    func testStoredSystemOrderIsApplied() {
+        let app = launch(systemOrder: "(inbox,starred,snoozed,important,sent,promotions,"
+            + "drafts,allMail,trash,outbox,more,scheduled,reminders,social,spam)")
+        let promotions = element("sidebar.promotions", in: app)
+        let drafts = element("sidebar.drafts", in: app)
+        XCTAssertTrue(promotions.waitForExistence(timeout: 10),
+                      "Promotions is listed with More closed")
+        XCTAssertTrue(drafts.exists)
+        XCTAssertLessThan(promotions.frame.minY, drafts.frame.minY, "Promotions sits above Drafts")
+        XCTAssertFalse(element("sidebar.social", in: app).exists, "Social stays under More")
+        let more = element("sidebar.more", in: app)
+        XCTAssertTrue(more.exists)
+        more.click()
+        XCTAssertTrue(element("sidebar.social", in: app).waitForExistence(timeout: 5))
+        XCTAssertLessThan(drafts.frame.minY, more.frame.minY)
+        XCTAssertLessThan(promotions.frame.minY, more.frame.minY, "Promotions is not under More")
     }
 }

@@ -1883,33 +1883,19 @@ struct Sidebar: View {
                 // result row can land before the panel is torn down.
                 .onChange(of: searchFocused) { store.noteSearchFocused(searchFocused) }
             List(selection: bound.selectedView) {
-                // Gmail's system views, in Gmail's order.
+                // Gmail's system views, in Gmail's order unless dragged.
                 Section {
-                    sidebarItem(.inbox, badge: store.unreadCounts["inbox"])
-                    sidebarItem(.starred, badge: store.unreadCounts["starred"])
-                    sidebarItem(.snoozed, badge: store.unreadCounts["snoozed"])
-                    sidebarItem(.important)
-                    sidebarItem(.sent)
-                    // Count is total drafts (not unread).
-                    sidebarItem(.drafts, badge: store.unreadCounts["drafts"])
-                    sidebarItem(.allMail)
-                    sidebarItem(.trash)
-                    // Mail waiting to go out and reminders never hide
-                    // behind "More" (Gmail lists its Outbox the same way).
-                    if outboxShown {
-                        sidebarItem(.outbox, badge: moreBadge(.outbox))
+                    ForEach(systemRows, id: \.self) { id in
+                        systemRow(id)
+                            .moveDisabled(id == SidebarSystemOrder.moreId)
+                            .contextMenu {
+                                Button("Reset Sidebar Order") { disclosure.systemOrder = nil }
+                                    .disabled(disclosure.systemOrder == nil)
+                            }
                     }
-                    if hasReminders {
-                        sidebarItem(.reminders, badge: moreBadge(.reminders))
-                    }
-                    SidebarMoreToggle(open: disclosure.moreOpen, identifier: "sidebar.more") {
-                        disclosure.moreOpen.toggle()
-                    }
-                    if disclosure.moreOpen {
-                        moreItems
-                    } else if isShownBehindClosedMore(store.selectedView) {
-                        // Closed "More": the open view stays visible.
-                        sidebarItem(store.selectedView, badge: moreBadge(store.selectedView))
+                    .onMove { from, to in
+                        disclosure.systemOrder = SidebarSystemOrder.move(
+                            systemOrder, rows: systemRows, from: from, to: to)
                     }
                 }
                 Section {
@@ -2019,19 +2005,36 @@ struct Sidebar: View {
     }
 
 
-    /// What Gmail keeps behind "More", plus DreaMail's own views.
-    @ViewBuilder private var moreItems: some View {
-        // Only surfaces once something is scheduled (Gmail-style).
-        if !store.scheduledSends.isEmpty || store.selectedView == .scheduled {
-            sidebarItem(.scheduled, badge: moreBadge(.scheduled))
+    /// The full order of the system views, with the "More" row.
+    private var systemOrder: [String] {
+        SidebarSystemOrder.resolve(disclosure.systemOrder, hasReminders: hasReminders)
+    }
+
+    /// The rows listed now: nothing under a closed "More", the open view
+    /// included (the list on the right keeps showing it).
+    private var systemRows: [String] {
+        SidebarSystemOrder.layout(systemOrder, exists: systemRowExists)
+            .rows(moreOpen: disclosure.moreOpen)
+    }
+
+    /// Outbox and Scheduled exist only while they hold something (or are
+    /// open); Reminders is always listed, wherever it sits.
+    private func systemRowExists(_ id: String) -> Bool {
+        switch id {
+        case "outbox": return outboxShown
+        case "scheduled": return !store.scheduledSends.isEmpty || store.selectedView == .scheduled
+        default: return true
         }
-        if !hasReminders {
-            sidebarItem(.reminders, badge: moreBadge(.reminders))
+    }
+
+    @ViewBuilder private func systemRow(_ id: String) -> some View {
+        if id == SidebarSystemOrder.moreId {
+            SidebarMoreToggle(open: disclosure.moreOpen, identifier: "sidebar.more") {
+                disclosure.moreOpen.toggle()
+            }
+        } else if let view = SidebarSystemOrder.view(for: id) {
+            sidebarItem(view, badge: systemBadge(view))
         }
-        // The category views are plain rows, just above Spam.
-        sidebarItem(.promotions, badge: moreBadge(.promotions))
-        sidebarItem(.social, badge: moreBadge(.social))
-        sidebarItem(.spam, badge: moreBadge(.spam))
     }
 
     /// Drafts kept locally while offline; gone once uploaded.
@@ -2044,14 +2047,13 @@ struct Sidebar: View {
         (store.unreadCounts["reminders"] ?? 0) > 0
     }
 
-    /// Whether `view` is listed flat while "More" is closed: it lives under
-    /// "More" (`SidebarMoreRows`).
-    private func isShownBehindClosedMore(_ view: MailboxView) -> Bool {
-        SidebarMoreRows.isUnderMore(view, hasReminders: hasReminders)
-    }
-
-    private func moreBadge(_ view: MailboxView) -> Int? {
+    private func systemBadge(_ view: MailboxView) -> Int? {
         switch view {
+        case .inbox: return store.unreadCounts["inbox"]
+        case .starred: return store.unreadCounts["starred"]
+        case .snoozed: return store.unreadCounts["snoozed"]
+        // Count is total drafts (not unread).
+        case .drafts: return store.unreadCounts["drafts"]
         case .scheduled: return store.scheduledSends.count
         case .outbox: return store.localDrafts.count
         case .reminders: return store.unreadCounts["reminders"]

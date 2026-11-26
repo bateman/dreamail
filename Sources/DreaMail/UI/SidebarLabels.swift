@@ -8,6 +8,11 @@ final class SidebarDisclosureModel {
     var moreOpen = SidebarDisclosure.isMoreExpanded() {
         didSet { SidebarDisclosure.setMoreExpanded(moreOpen) }
     }
+    /// The dragged order of the system views (`SidebarSystemOrder`); nil is
+    /// the default. Every change is stored at once.
+    var systemOrder = SidebarSystemOrder.stored() {
+        didSet { SidebarSystemOrder.store(systemOrder) }
+    }
     /// Loaded per account on first use.
     private var expanded: [String: Set<String>] = [:]
     private var labelsMore: [String: Bool] = [:]

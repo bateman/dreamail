@@ -130,7 +130,7 @@ enum SidebarLabelTree {
 
     /// The label with `labelId` behind the labels' "More" row, without its
     /// sublabels: what the sidebar keeps visible while "More" is closed and
-    /// that label is open (as the system "More" does). A closed node hides
+    /// that label is open. A closed node hides
     /// its sublabels: with `isOpen` false for it, they are not searched.
     static func find(_ labelId: String, in nodes: [SidebarLabelNode],
                      isOpen: (SidebarLabelNode) -> Bool = { _ in true }) -> SidebarLabelNode? {
@@ -169,19 +169,6 @@ enum SidebarLabelTree {
             more = copy
         }
         return (listed, more)
-    }
-}
-
-/// The views the sidebar keeps behind "More". While "More" is closed, the
-/// open one of them stays listed ("Less" keeps the open view visible).
-enum SidebarMoreRows {
-    static func isUnderMore(_ view: MailboxView, hasReminders: Bool) -> Bool {
-        switch view {
-        case .scheduled, .spam, .promotions, .social: return true
-        // Listed above "More" once something has a reminder.
-        case .reminders: return !hasReminders
-        default: return false
-        }
     }
 }
 
