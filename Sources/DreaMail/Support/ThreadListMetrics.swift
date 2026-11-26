@@ -61,6 +61,6 @@ enum SidebarDensity: String, CaseIterable, Identifiable {
 
     static func from(raw: String) -> SidebarDensity { SidebarDensity(rawValue: raw) ?? .comfortable }
 
-    /// Minimum height of a sidebar row, in points.
-    var minRowHeight: Double { self == .compact ? 24 : 30 }
+    /// Minimum height of a sidebar row, in points. Icons and fonts keep their size.
+    var minRowHeight: Double { self == .compact ? 22 : 30 }
 }

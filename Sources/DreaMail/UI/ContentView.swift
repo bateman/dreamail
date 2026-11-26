@@ -1944,7 +1944,6 @@ struct Sidebar: View {
             }
             .listStyle(.sidebar)
             .environment(\.defaultMinListRowHeight, sidebarDensity.minRowHeight)
-            .modifier(SidebarCompactRows(compact: sidebarDensity == .compact))
             .scrollContentBackground(.hidden)
 
             Divider()
@@ -2622,15 +2621,5 @@ struct AccountLabelsEditor: View {
         AccountLabelColor.title(displayName: labels[account.id] ?? account.displayName,
                                 senderName: senderNames[account.id] ?? account.senderName,
                                 accountId: account.id)
-    }
-}
-
-/// Compact sidebar: the small row size (smaller icons and padding). Comfortable
-/// leaves the environment alone, so the sidebar stays as the system draws it.
-private struct SidebarCompactRows: ViewModifier {
-    let compact: Bool
-
-    func body(content: Content) -> some View {
-        if compact { content.environment(\.sidebarRowSize, .small) } else { content }
     }
 }
