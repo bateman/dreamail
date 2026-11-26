@@ -18,25 +18,39 @@ struct LabelRGB: Equatable, Hashable, Sendable {
                   b: Double(hex & 0xFF) / 255)
     }
 
-    /// Parses `#RRGGBB` / `RRGGBB` (any case); nil when missing or malformed.
+    /// Parses any color Gmail may send, leniently: `#RRGGBB` / `RRGGBB` (any
+    /// case), `#RRGGBBAA` (alpha dropped),
+    /// `0x…`, and `rgb(r, g, b)`; surrounding space ignored. nil when
+    /// missing or not a color.
     init?(hexString: String?) {
-        guard var hex = hexString?.trimmingCharacters(in: .whitespaces), !hex.isEmpty else {
-            return nil
-        }
-        if hex.hasPrefix("#") { hex.removeFirst() }
-        guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }),
-              let value = UInt32(hex, radix: 16) else { return nil }
+        guard let hex = Self.normalizedHex(hexString), let value = UInt32(hex.dropFirst(), radix: 16)
+        else { return nil }
         self.init(hex: value)
     }
 
-    /// `#rrggbb` (lowercase) for a valid 6-digit hex color, with or
-    /// without `#` and surrounding spaces; nil for anything else, so no
-    /// arbitrary string from the API is stored.
+    /// `#rrggbb` (lowercase) for any color `init?(hexString:)` reads; nil
+    /// for anything else, so no arbitrary string from the API is stored.
     static func normalizedHex(_ string: String?) -> String? {
-        guard var hex = string?.trimmingCharacters(in: .whitespaces) else { return nil }
-        if hex.hasPrefix("#") { hex.removeFirst() }
-        guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
-        return "#" + hex.lowercased()
+        guard var text = string?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !text.isEmpty else { return nil }
+        if text.hasPrefix("rgb"), let open = text.firstIndex(of: "("), let close = text.lastIndex(of: ")"),
+           open < close {
+            let parts = text[text.index(after: open)..<close]
+                .split(whereSeparator: { $0 == "," || $0 == " " || $0 == "/" }).map(String.init)
+            guard parts.count >= 3 else { return nil }
+            var out = "#"
+            for part in parts.prefix(3) {
+                guard let v = Int(part), (0...255).contains(v) else { return nil }
+                out += String(format: "%02x", v)
+            }
+            return out
+        }
+        if text.hasPrefix("#") { text.removeFirst() } else if text.hasPrefix("0x") { text.removeFirst(2) }
+        guard text.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
+        switch text.count {
+        case 6, 8: return "#" + String(text.prefix(6))
+        default: return nil
+        }
     }
 
     static let black = LabelRGB(hex: 0x000000)
