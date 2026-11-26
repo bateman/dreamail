@@ -65,14 +65,14 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(tree), ["/lead", "a [/b]"])
     }
 
-    /// Gmail's order: case-insensitive, punctuation first (as in the owner's
-    /// list: `$`, apple, …, juve, Notes, prenotazioni).
+    /// Gmail's order: case-insensitive, symbols first (`$`, alpha, beta,
+    /// Gamma, delta, omega).
     func testSiblingsSortAsGmail() {
         let tree = SidebarLabelTree.build([
-            row("L1", "uniba"), row("L2", "Notes"), row("L3", "juve"), row("L4", "$"),
-            row("L5", "apple"), row("L6", "prenotazioni"),
+            row("L1", "omega"), row("L2", "Gamma"), row("L3", "beta"), row("L4", "$"),
+            row("L5", "alpha"), row("L6", "delta"),
         ])
-        XCTAssertEqual(shape(tree), ["$", "apple", "juve", "Notes", "prenotazioni", "uniba"])
+        XCTAssertEqual(shape(tree), ["$", "alpha", "beta", "delta", "Gamma", "omega"])
     }
 
     /// The organizer's order (Mac-only) comes first, then Gmail's.
@@ -81,6 +81,46 @@ final class SidebarLabelTreeTests: XCTestCase {
             row("L1", "b", order: 1), row("L2", "a", order: 2), row("L3", "c"),
         ])
         XCTAssertEqual(shape(tree), ["b", "a", "c"])
+    }
+
+    /// Gmail's order on the character classes of a real sidebar: emoji and
+    /// symbols first, then currency, digits, letters; case, accents ignored;
+    /// a name sorts before the same name plus a space and more. Above and
+    /// below More, whatever the Mac's language (a fixed locale).
+    func testGmailOrderAboveAndBelowMore() {
+        let above = ["✉️ post", "$", "42", "alpha", "beta", "delta", "élan", "Gamma"]
+        let below = ["♫ tunes", "kilo", "kilo base", "LIMA", "mike"]
+        var rows: [LabelRow] = []
+        for (i, n) in (above + below).reversed().enumerated() {
+            rows.append(row("L\(i)", n, visibility: below.contains(n) ? "labelHide" : nil))
+        }
+        let parts = SidebarLabelTree.split(SidebarLabelTree.build(rows)) { _ in 0 }
+        XCTAssertEqual(shape(parts.listed), above)
+        XCTAssertEqual(shape(parts.more), below)
+    }
+
+    /// A stored order always wins, even when it happens to equal the names in
+    /// code-point order: the user dragged `Zeta` above `alpha`. (An old
+    /// machine-written order is repaired once, by migration v69.)
+    func testExplicitDragWinsEvenWhenItEqualsCodePointOrder() {
+        let tree = SidebarLabelTree.build([
+            row("L1", "Zeta", order: 0), row("L2", "alpha", order: 1),
+        ])
+        XCTAssertEqual(shape(tree), ["Zeta", "alpha"])
+    }
+
+    /// A hidden top-level label with three shown sublabels and a hidden one:
+    /// the whole family sits below More, nested, and nothing above it.
+    func testHiddenTopLevelWithMostlyShownSublabelsIsEntirelyBelowMore() {
+        let tree = SidebarLabelTree.build([
+            row("L1", "leisure", visibility: "labelHide"), row("L2", "leisure/cinema"),
+            row("L3", "leisure/books"), row("L4", "leisure/tv", visibility: "labelHide"),
+            row("L5", "leisure/trips"), row("L6", "home"),
+        ])
+        let parts = SidebarLabelTree.split(tree) { _ in 0 }
+        XCTAssertEqual(shape(parts.listed), ["home"])
+        XCTAssertEqual(shape(parts.more), ["leisure [books, cinema, trips, tv]"])
+        assertNothingTwice(parts)
     }
 
     func testColorsAreTheDisplayColors() {
@@ -125,80 +165,126 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(parts.more), ["hidden", "ifUnreadRead"])
     }
 
-    /// Nothing is listed twice: the ids of `listed` and of `more`, children
-    /// included, never meet.
-    private func assertDisjoint(_ parts: (listed: [SidebarLabelNode], more: [SidebarLabelNode]),
-                                file: StaticString = #filePath, line: UInt = #line) {
+    /// Nothing appears twice: the ids of `listed` and of `more`, children
+    /// included, never meet, and no row is named with a path.
+    private func assertNothingTwice(_ parts: (listed: [SidebarLabelNode], more: [SidebarLabelNode]),
+                                    file: StaticString = #filePath, line: UInt = #line) {
         func ids(_ nodes: [SidebarLabelNode]) -> [String] {
             nodes.flatMap { [$0.id] + ids($0.children) }
+        }
+        func names(_ nodes: [SidebarLabelNode]) -> [String] {
+            nodes.flatMap { [$0.displayName] + names($0.children) }
         }
         let l = ids(parts.listed), m = ids(parts.more)
         XCTAssertEqual(Set(l).count, l.count, "listed has a repeat", file: file, line: line)
         XCTAssertEqual(Set(m).count, m.count, "more has a repeat", file: file, line: line)
         XCTAssertTrue(Set(l).isDisjoint(with: m), "a label is in both lists", file: file, line: line)
+        XCTAssertTrue((names(parts.listed) + names(parts.more)).allSatisfy { !$0.contains("/") },
+                      "a row is named with a path", file: file, line: line)
     }
 
-    /// Old: a listed child keeps its hidden parent as its container in the
-    /// list, and the parent is repeated under "More" (["p", ...]); a hidden
-    /// child of a listed parent appears under the parent behind "More"
-    /// (["q [hidden]"]).
-    /// New: the container is not repeated (more has no "p"); the hidden child
-    /// is a row of its own named from its listed parent ("q/hidden").
+    private func allIds(_ nodes: [SidebarLabelNode]) -> [String] {
+        nodes.flatMap { [$0.id] + allIds($0.children) }
+    }
+
+    /// Old (#92): a hidden child of a listed parent was a flat row
+    /// "q/hidden" under More; a listed child of a hidden parent kept the
+    /// parent as container above More.
+    /// New: only the top-level label decides; its subtree follows, nested.
     func testSplitKeepsTheTree() {
         let tree = SidebarLabelTree.build([
             row("L1", "p", visibility: "labelHide"), row("L2", "p/shown"),
             row("L3", "q"), row("L4", "q/hidden", visibility: "labelHide"), row("L5", "q/shown"),
         ])
         let parts = SidebarLabelTree.split(tree) { _ in 0 }
-        XCTAssertEqual(shape(parts.listed), ["p [shown]", "q [shown]"])
-        XCTAssertEqual(shape(parts.more), ["q/hidden"])
-        assertDisjoint(parts)
+        XCTAssertEqual(shape(parts.listed), ["q [hidden, shown]"],
+                       "a hidden sublabel of a listed parent stays nested and listed")
+        XCTAssertEqual(shape(parts.more), ["p [shown]"],
+                       "a hidden top-level family is entirely below More")
+        assertNothingTwice(parts)
     }
 
-    func testHiddenChildOfListedParentIsOneRowNamedFromIt() throws {
+    /// Old: more = ["C/Sub", "Misc"] (a flat row named by its full name).
+    /// New: "Sub" nested under "C" in the list; more = ["Misc"].
+    func testHiddenChildOfListedParentIsNestedUnderIt() throws {
         let tree = SidebarLabelTree.build([
             row("L1", "C"), row("L2", "C/Sub", visibility: "labelHide"),
-            row("L3", "Notes", visibility: "labelHide"),
+            row("L3", "Misc", visibility: "labelHide"),
         ])
         let parts = SidebarLabelTree.split(tree) { _ in 0 }
-        XCTAssertEqual(shape(parts.listed), ["C"])
-        XCTAssertEqual(shape(parts.more), ["C/Sub", "Notes"])
-        let sub = try XCTUnwrap(parts.more.first)
-        XCTAssertEqual(sub.fullName, "C/Sub")
+        XCTAssertEqual(shape(parts.listed), ["C [Sub]"])
+        XCTAssertEqual(shape(parts.more), ["Misc"])
+        let sub = try XCTUnwrap(parts.listed.first?.children.first)
+        XCTAssertEqual(sub.fullName, "C/Sub", "help keeps the full name")
         XCTAssertEqual(sub.gmailLabelId, "L2")
-        assertDisjoint(parts)
+        assertNothingTwice(parts)
     }
 
-    func testListedChildUnderHiddenParentDoesNotRepeatTheParent() {
+    /// Old: a listed child under a hidden parent kept the parent as its
+    /// container in the list. New: the family follows its top-level label,
+    /// so a hidden parent takes its whole subtree below More, nothing above.
+    func testListedChildUnderHiddenParentFollowsTheParent() {
         let tree = SidebarLabelTree.build([
             row("L1", "h", visibility: "labelHide"), row("L2", "h/shown"),
         ])
         let parts = SidebarLabelTree.split(tree) { _ in 0 }
-        XCTAssertEqual(shape(parts.listed), ["h [shown]"])
-        XCTAssertTrue(parts.more.isEmpty)
-        assertDisjoint(parts)
+        XCTAssertTrue(parts.listed.isEmpty)
+        XCTAssertEqual(shape(parts.more), ["h [shown]"])
+        assertNothingTwice(parts)
     }
 
+    /// Old: listed = ["a [d [e]]"], more = ["a/b [c]", "a/d/f"].
+    /// New: a listed top-level label shows its whole subtree, whatever the
+    /// sublabels' own visibility.
     func testThreeLevels() {
-        // a listed; a/b hidden with hidden a/b/c (nesting kept under b);
-        // a/d hidden container of a listed a/d/e and a hidden a/d/f.
         let tree = SidebarLabelTree.build([
             row("L1", "a"),
             row("L2", "a/b", visibility: "labelHide"),
             row("L3", "a/b/c", visibility: "labelHide"),
             row("L4", "a/d", visibility: "labelHide"),
             row("L5", "a/d/e"),
-            row("L6", "a/d/f", visibility: "labelHide"),
+            row("L6", "a/d/f", visibility: "labelShowIfUnread"),
         ])
         let parts = SidebarLabelTree.split(tree) { _ in 0 }
-        XCTAssertEqual(shape(parts.listed), ["a [d [e]]"])
-        XCTAssertEqual(shape(parts.more), ["a/b [c]", "a/d/f"])
-        assertDisjoint(parts)
+        XCTAssertEqual(shape(parts.listed), ["a [b [c], d [e, f]]"])
+        XCTAssertTrue(parts.more.isEmpty)
+        assertNothingTwice(parts)
     }
 
-    /// Two listed parents, each with a hidden `archive`: the rows under
-    /// "More" carry the full names, so they differ.
-    func testLiftedRowsAreNamedByTheirFullName() {
+    /// The reverse of the above: a hidden top-level label takes its subtree
+    /// below More, nested, even a sublabel that is shown.
+    func testHiddenTopLevelFamilyIsEntirelyBelowMore() {
+        let tree = SidebarLabelTree.build([
+            row("L1", "g", visibility: "labelHide"), row("L2", "g/c"),
+            row("L3", "g/c/h", visibility: "labelHide"), row("L4", "z"),
+        ])
+        let parts = SidebarLabelTree.split(tree) { _ in 0 }
+        XCTAssertEqual(shape(parts.listed), ["z"])
+        XCTAssertEqual(shape(parts.more), ["g [c [h]]"])
+        assertNothingTwice(parts)
+    }
+
+    /// "Show if unread" on the top-level label counts the whole family
+    /// (an assumption about Gmail, not verified): new mail only in a sublabel
+    /// still lists the family; no unread anywhere leaves it under More.
+    func testShowIfUnreadCountsTheWholeFamily() {
+        let tree = SidebarLabelTree.build([
+            row("L1", "t", visibility: "labelShowIfUnread"),
+            row("L2", "t/s", visibility: "labelShowIfUnread"),
+        ])
+        XCTAssertEqual(shape(SidebarLabelTree.split(tree) { $0.gmailLabelId == "L1" ? 1 : 0 }.listed),
+                       ["t [s]"])
+        let sublabelUnreadOnly = SidebarLabelTree.split(tree) { $0.gmailLabelId == "L2" ? 5 : 0 }
+        XCTAssertEqual(shape(sublabelUnreadOnly.listed), ["t [s]"])
+        XCTAssertTrue(sublabelUnreadOnly.more.isEmpty)
+        let none = SidebarLabelTree.split(tree) { _ in 0 }
+        XCTAssertTrue(none.listed.isEmpty)
+        XCTAssertEqual(shape(none.more), ["t [s]"])
+    }
+
+    /// Old: rows under More carried full names ("clients/2024/archive").
+    /// New: nested under their listed parents with the same short name.
+    func testSameShortNameUnderTwoParentsStaysNested() {
         let tree = SidebarLabelTree.build([
             row("L1", "clients"), row("L2", "clients/2024"),
             row("L3", "clients/2024/archive", visibility: "labelHide"),
@@ -206,11 +292,14 @@ final class SidebarLabelTreeTests: XCTestCase {
             row("L6", "projects/2024/archive", visibility: "labelHide"),
         ])
         let parts = SidebarLabelTree.split(tree) { _ in 0 }
-        XCTAssertEqual(shape(parts.more), ["clients/2024/archive", "projects/2024/archive"])
-        XCTAssertEqual(Set(parts.more.map(\.displayName)).count, 2)
-        assertDisjoint(parts)
+        XCTAssertEqual(shape(parts.listed), ["clients [2024 [archive]]", "projects [2024 [archive]]"])
+        XCTAssertTrue(parts.more.isEmpty)
+        assertNothingTwice(parts)
     }
 
+    /// Every visibility combination, unread or not: nothing appears twice, no
+    /// path names, and each family is wholly in one list, led by its top-level
+    /// label's own visibility.
     func testNothingIsListedTwiceWhateverTheVisibility() {
         let kinds = ["labelShow", "labelHide", "labelShowIfUnread"]
         for pv in kinds { for cv in kinds { for gv in kinds {
@@ -219,13 +308,24 @@ final class SidebarLabelTreeTests: XCTestCase {
                 row("L3", "p/c/g", visibility: gv), row("L4", "p/x", visibility: cv),
             ])
             for unread in [0, 3] {
-                assertDisjoint(SidebarLabelTree.split(tree) { _ in unread })
+                let parts = SidebarLabelTree.split(tree) { _ in unread }
+                assertNothingTwice(parts)
+                XCTAssertEqual(parts.listed.count + parts.more.count, 1, "one family, one place")
+                let listed = SidebarLabelNode.Visibility(raw: pv).isListed(unread: unread)
+                XCTAssertEqual(parts.listed.count, listed ? 1 : 0, "\(pv) \(cv) \(gv) unread \(unread)")
+                XCTAssertEqual(Set(allIds(parts.listed + parts.more)).count, 4, "the whole family, once")
             }
         } } }
     }
 
     func testEverythingShownLeavesMoreEmpty() {
         let tree = SidebarLabelTree.build([row("L1", "a"), row("L2", "a/b")])
+        XCTAssertTrue(SidebarLabelTree.split(tree) { _ in 0 }.more.isEmpty)
+    }
+
+    /// A hidden sublabel under a listed parent needs no More row.
+    func testOnlyAHiddenSublabelNeedsNoMoreRow() {
+        let tree = SidebarLabelTree.build([row("L1", "a"), row("L2", "a/b", visibility: "labelHide")])
         XCTAssertTrue(SidebarLabelTree.split(tree) { _ in 0 }.more.isEmpty)
     }
 

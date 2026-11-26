@@ -2738,7 +2738,8 @@ struct ComposeRequest: Identifiable {
     ) throws -> AccountsSnapshot {
         AccountsSnapshot(
             accounts: try Account.order(Column("id")).fetchAll(db),
-            // User order first (organizer drag), alphabetical among the unordered.
+            // Read order only: `SidebarLabelTree` sorts siblings (organizer
+            // drag first, then Gmail's order).
             labels: try LabelRow.filter(Column("type") == "user")
                 .order(Column("sortOrder"), Column("name")).fetchAll(db))
     }
@@ -4321,14 +4322,21 @@ struct ComposeRequest: Identifiable {
     }
 
     /// Persists a drag-reorder of one account's labels from the organizer:
-    /// `order` is the whole new list (`LabelOrganizerOrder.moved`).
+    /// `order` is the whole new list (`LabelOrganizerOrder.moved`). Only the
+    /// siblings of the moved row get a stored order; every other group keeps
+    /// following Gmail's order, so a label created later lands where Gmail
+    /// puts it.
     func reorderLabels(account accountId: String, to order: [LabelRow]) {
+        let before = LabelOrganizerOrder.entries(
+            tree: labelTrees[accountId] ?? [], rows: userLabels(forAccount: accountId)).map(\.row)
+        let writes = LabelOrganizerOrder.sortOrders(
+            before: before, after: order.filter { $0.accountId == accountId })
         try? db.write { db in
             // Only the order column, and only rows still there: a stale copy
             // must not write an old name back or re-create a deleted label.
-            for (idx, row) in order.enumerated() where row.accountId == accountId {
-                try LabelRow.filter(Column("id") == row.id)
-                    .updateAll(db, Column("sortOrder").set(to: idx))
+            for (id, position) in writes {
+                try LabelRow.filter(Column("id") == id)
+                    .updateAll(db, Column("sortOrder").set(to: position))
             }
         }
         reloadAccounts()

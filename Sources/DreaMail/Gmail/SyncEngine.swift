@@ -334,6 +334,7 @@ actor SyncEngine {
     /// is kept over an older answer, so it does not bounce back.
     static func applyLabels(_ db: Database, accountId: String, labels: [GLabel],
                             pendingColors: PendingLabelColorEdits = .shared,
+                            defaults: UserDefaults = .standard,
                             now: Date = Date()) throws {
         for l in labels {
             let id = "\(accountId):\(l.id)"
@@ -359,15 +360,15 @@ actor SyncEngine {
         // Compared in memory, not with `NOT IN (…)`: the fetched list can
         // exceed what one statement binds.
         let fetched = Set(labels.map(\.id))
-        let stored = try String.fetchAll(
-            db, sql: "SELECT gmailLabelId FROM label WHERE accountId = ?",
-            arguments: [accountId])
-        let gone = stored.filter { !fetched.contains($0) }.map { "\(accountId):\($0)" }
-        for chunk in sqlChunks(gone) {
+        let stored = try LabelRow.filter(Column("accountId") == accountId).fetchAll(db)
+        let goneRows = stored.filter { !fetched.contains($0.gmailLabelId) }
+        for chunk in sqlChunks(goneRows.map(\.id)) {
             try db.execute(
                 sql: "DELETE FROM label WHERE accountId = ? AND id IN (\(placeholders(chunk.count)))",
                 arguments: StatementArguments([accountId] + Array(chunk)))
         }
+        // "Deleted means gone": what this Mac keeps per label goes with it.
+        LabelRemoval.forgetDefaults(goneRows, defaults)
     }
 
     // MARK: - Backfill

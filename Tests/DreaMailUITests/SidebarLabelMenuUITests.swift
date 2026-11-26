@@ -231,4 +231,43 @@ final class SidebarLabelMenuUITests: XCTestCase {
         more.click()
         XCTAssertTrue(waitForAbsence(research), "a closed More hides the open label as well")
     }
+
+    /// A sublabel of a listed parent is always shown nested under it, in
+    /// place, whatever its own list visibility (Gmail's sidebar): hiding
+    /// Vendors/Stripe through its menu sets Gmail's value but changes nothing
+    /// here: no More row, no path name, the parent's name once.
+    func testHiddenSublabelStaysNestedUnderItsListedParent() {
+        let app = launch()
+        let vendors = label("Label_vendors", in: app)
+        let aws = label("Label_vendors_aws", in: app)
+        let stripe = label("Label_vendors_stripe", in: app)
+        let more = element("sidebar.labels.more.\(account)", in: app)
+        XCTAssertTrue(reveal(vendors, in: app))
+        XCTAssertTrue(aws.waitForExistence(timeout: 5))
+        XCTAssertTrue(stripe.exists)
+        XCTAssertFalse(more.exists, "every demo label is shown: no labels' More row")
+
+        stripe.rightClick()
+        let hide = menuItem("labelMenu.labelList.hide", "Hide", in: app)
+        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        hide.click()
+        // Give a wrong removal time to show before asserting the row stays.
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        XCTAssertTrue(stripe.exists, "a hidden sublabel of a listed parent stays listed")
+        XCTAssertFalse(more.exists, "and needs no More row")
+        // Inside Vendors' subtree: after its sibling, indented like it.
+        XCTAssertLessThan(vendors.frame.minY, aws.frame.minY)
+        XCTAssertLessThan(aws.frame.minY, stripe.frame.minY, "in sibling order, under AWS")
+        XCTAssertEqual(stripe.frame.minX, aws.frame.minX, accuracy: 1, "indented like its siblings")
+        // Short names, no path: the demo has labels named "Starred / keep",
+        // so look at the sublabels' own rows, not at every text.
+        let sidebar = app.outlines.firstMatch
+        XCTAssertTrue(stripe.staticTexts["Stripe"].exists, "the sublabel shows its short name")
+        XCTAssertTrue(aws.staticTexts["AWS"].exists)
+        XCTAssertFalse(sidebar.staticTexts["Vendors/Stripe"].exists, "no row is named with a path")
+        XCTAssertFalse(sidebar.staticTexts["Vendors/AWS"].exists)
+        XCTAssertEqual(sidebar.staticTexts.matching(NSPredicate(
+            format: "label == 'Vendors' OR identifier == 'Vendors'")).count, 1,
+                       "the parent's name appears once")
+    }
 }

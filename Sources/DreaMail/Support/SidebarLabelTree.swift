@@ -51,9 +51,8 @@ enum SidebarLabelTree {
     ///
     /// A label nests under the longest existing label whose name is a
     /// `/`-prefix of its own. Siblings keep the organizer's order
-    /// (`sortOrder`, a Mac-only customization), then Gmail's: names
-    /// compared case-insensitively, so `Notes` sits between `juve` and
-    /// `prenotazioni`.
+    /// (`sortOrder`, written only by a drag in Organize Labels), then Gmail's
+    /// (`compareNames`).
     static func build(_ rows: [LabelRow]) -> [SidebarLabelNode] {
         // Exact names; on a duplicate name the first row is the parent.
         var byName: [String: LabelRow] = [:]
@@ -99,10 +98,13 @@ enum SidebarLabelTree {
         return nil
     }
 
+    /// Siblings in the organizer's order (`sortOrder`, written only by a drag
+    /// in Organize Labels, and only for the siblings of the moved row) when
+    /// there is one, else in Gmail's (`compareNames`).
     static func sorted(_ rows: [LabelRow]) -> [LabelRow] {
         rows.sorted { a, b in
             if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
-            switch a.name.compare(b.name, options: [.caseInsensitive]) {
+            switch compareNames(a.name, b.name) {
             case .orderedAscending: return true
             case .orderedDescending: return false
             case .orderedSame: return a.id < b.id
@@ -110,62 +112,42 @@ enum SidebarLabelTree {
         }
     }
 
+    /// Gmail's order of names: case, diacritics and width ignored, digits
+    /// compared as numbers, symbols and emoji first, then digits, then
+    /// letters (`Gamma` sits between `delta` and `omega`). A fixed locale, so
+    /// the sidebar reads the same on every Mac whatever its language.
+    static func compareNames(_ a: String, _ b: String) -> ComparisonResult {
+        a.compare(b, options: [.caseInsensitive, .diacriticInsensitive, .numeric, .widthInsensitive],
+                  range: nil, locale: Locale(identifier: "en"))
+    }
+
     /// Gmail's two lists: labels shown in the list, and those behind the
-    /// labels' trailing "More" row (hidden, or shown only when unread and
-    /// read now). A label is never in both. A listed label under an unlisted
-    /// parent stays under it, so the parent appears in the list as its
-    /// container (and not again under "More"). An unlisted label under a
-    /// listed parent is a row of its own under "More", named by its path from
-    /// its full name (`parent/child`); unlisted labels under an
-    /// unlisted parent keep their nesting there.
+    /// labels' trailing "More" row. Only a top-level label's own visibility
+    /// decides (hidden, or shown only when unread and read now): its whole
+    /// subtree follows it, nested, whatever the sublabels' own setting, as in
+    /// Gmail's sidebar. A label is never in both lists, no row carries a path
+    /// name, and "More" exists only when a top-level family is hidden.
     static func split(_ roots: [SidebarLabelNode],
                       unread: (SidebarLabelNode) -> Int)
         -> (listed: [SidebarLabelNode], more: [SidebarLabelNode]) {
         var listed: [SidebarLabelNode] = []
         var more: [SidebarLabelNode] = []
         for root in roots {
-            let parts = split(root, unread: unread)
-            if let l = parts.listed { listed.append(l) }
-            more.append(contentsOf: parts.more)
+            if root.visibility.isListed(unread: subtreeUnread(root, unread)) {
+                listed.append(root)
+            } else {
+                more.append(root)
+            }
         }
         return (listed, more)
     }
 
-    /// `more`: for a listed node, its unlisted descendants as rows of their
-    /// own (already named from it); for an unlisted node, itself with its
-    /// unlisted children nested (empty when it is listed as a container).
-    private static func split(_ node: SidebarLabelNode,
-                              unread: (SidebarLabelNode) -> Int)
-        -> (listed: SidebarLabelNode?, more: [SidebarLabelNode]) {
-        var listedKids: [SidebarLabelNode] = []
-        var kidRows: [(listed: Bool, rows: [SidebarLabelNode])] = []
-        for child in node.children {
-            let parts = split(child, unread: unread)
-            if let l = parts.listed { listedKids.append(l) }
-            kidRows.append((parts.listed != nil, parts.more))
-        }
-        let own = node.visibility.isListed(unread: unread(node))
-        guard own || !listedKids.isEmpty else {
-            var copy = node
-            copy.children = kidRows.flatMap(\.rows)
-            return (nil, [copy])
-        }
-        var listed = node
-        listed.children = listedKids
-        var more: [SidebarLabelNode] = []
-        for kid in kidRows {
-            if kid.listed {
-                more.append(contentsOf: kid.rows)
-            } else {
-                // Named by its full name: two listed parents can each have a
-                // hidden child of the same short name.
-                for var row in kid.rows {
-                    row.displayName = row.fullName
-                    more.append(row)
-                }
-            }
-        }
-        return (listed, more)
+    /// Unread mail in the label and its sublabels: "show if unread" on a
+    /// top-level label counts the whole family (assumed to be Gmail's
+    /// behaviour, not verified).
+    private static func subtreeUnread(_ node: SidebarLabelNode,
+                                      _ unread: (SidebarLabelNode) -> Int) -> Int {
+        node.children.reduce(unread(node)) { $0 + subtreeUnread($1, unread) }
     }
 }
 

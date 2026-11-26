@@ -17,8 +17,9 @@ struct LabelOrganizerEntry: Identifiable, Hashable, Sendable {
 /// Families are the sidebar's (`SidebarLabelTree`: a label nests under the
 /// longest existing label whose name is a `/`-prefix of its own, which makes
 /// its descendants exactly `LabelFamily.descendants`). The stored order is
-/// `sortOrder`; siblings are read in that order, so the sidebar and the sheet
-/// show the same thing.
+/// `sortOrder`, written by a drag for the siblings of the moved row only;
+/// siblings are read in that order, else in Gmail's, so the sidebar and the
+/// sheet show the same thing.
 enum LabelOrganizerOrder {
     /// One account's labels as the sheet shows them: every family contiguous
     /// at its parent's position, children in their stored relative order.
@@ -82,5 +83,56 @@ enum LabelOrganizerOrder {
         rest.removeSubrange(index..<end)
         rest.insert(contentsOf: block, at: destination > index ? destination - block.count : destination)
         return rest.map(\.row)
+    }
+
+    /// The sibling group of a row: the id of its parent label, "" at the top.
+    private static func groups(_ rows: [LabelRow]) -> [String: [String]] {
+        var byName: [String: LabelRow] = [:]
+        for row in rows where byName[row.name] == nil { byName[row.name] = row }
+        var out: [String: [String]] = [:]
+        for row in rows {
+            let parent = SidebarLabelTree.parent(of: row.name, among: byName)
+            out[parent.flatMap { $0.id == row.id ? nil : $0.id } ?? "", default: []].append(row.id)
+        }
+        return out
+    }
+
+    /// The `sortOrder` a drag writes: for each sibling group whose order
+    /// changed, the position of each of its rows; nothing for the other
+    /// groups, which keep following Gmail's order. `before` and `after` are
+    /// the whole list of one account, as shown and as dropped.
+    static func sortOrders(before: [LabelRow], after: [LabelRow]) -> [String: Int] {
+        let old = groups(before)
+        var writes: [String: Int] = [:]
+        for (key, ids) in groups(after) where old[key] != ids {
+            for (position, id) in ids.enumerated() { writes[id] = position }
+        }
+        return writes
+    }
+
+    /// Rows whose stored `sortOrder` only repeats the names in code-point
+    /// order, within their sibling group. A version that listed labels in the
+    /// database's binary order wrote that for every label on any drag, and it
+    /// hid Gmail's order for good. Used once, by migration v69, to put them
+    /// back to unsorted; afterwards any stored order wins.
+    static func machineOrderedIds(_ rows: [LabelRow]) -> [String] {
+        var ids: [String] = []
+        let byAccount = Dictionary(grouping: rows, by: \.accountId)
+        for (_, accountRows) in byAccount {
+            var byName: [String: LabelRow] = [:]
+            for row in accountRows where byName[row.name] == nil { byName[row.name] = row }
+            var siblings: [String: [LabelRow]] = [:]
+            for row in accountRows {
+                let parent = SidebarLabelTree.parent(of: row.name, among: byName)
+                siblings[parent.flatMap { $0.id == row.id ? nil : $0.id } ?? "", default: []].append(row)
+            }
+            for (_, group) in siblings {
+                let stored = group.filter { $0.sortOrder != LabelRow.unsorted }
+                let byStored = stored.sorted { ($0.sortOrder, $0.id) < ($1.sortOrder, $1.id) }
+                let byName = stored.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
+                if byStored.map(\.id) == byName.map(\.id) { ids += stored.map(\.id) }
+            }
+        }
+        return ids
     }
 }

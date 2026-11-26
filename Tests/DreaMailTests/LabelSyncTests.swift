@@ -52,6 +52,87 @@ final class LabelSyncTests: XCTestCase {
         XCTAssertEqual(try names(q, account: account), ["INBOX", "Receipts"])
     }
 
+    /// A label deleted on Gmail leaves nothing behind on this Mac either
+    /// ("deleted means gone"): its disclosure state goes with the row.
+    func testLabelDeletedInGmailForgetsItsDefaults() throws {
+        let suite = "LabelSyncTests.\(UUID().uuidString)"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let q = try makeDB()
+        try q.write { db in
+            try SyncEngine.applyLabels(db, accountId: account, labels: [
+                label("Label_1", "Old project"), label("Label_2", "Receipts"),
+            ], defaults: d)
+        }
+        SidebarDisclosure.setLabel("Label_1", accountId: account, expanded: true, d)
+        SidebarDisclosure.setLabel("Label_2", accountId: account, expanded: true, d)
+        try q.write { db in
+            try SyncEngine.applyLabels(db, accountId: account, labels: [
+                label("Label_2", "Receipts"),
+            ], defaults: d)
+        }
+        XCTAssertEqual(SidebarDisclosure.expandedLabels(accountId: account, d), ["Label_2"])
+    }
+
+    /// v69: a stored order that only repeats the names in code-point order is
+    /// put back to unsorted, per sibling group; a hand-made order stays;
+    /// running it again changes nothing.
+    func testMigrationV69ResetsMachineOrderOnly() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q, upTo: "v68")
+        try q.write { db in
+            try Account(id: account, displayName: "P", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
+            func put(_ name: String, _ order: Int) throws {
+                try LabelRow(id: "\(account):\(name)", accountId: account, gmailLabelId: name,
+                             name: name, type: "user", color: nil, sortOrder: order,
+                             listVisibility: nil).save(db)
+            }
+            // Top level: code-point order (Zeta, alpha) as an old drag froze it.
+            try put("Zeta", 0); try put("alpha", 1); try put("p", 2)
+            // p's sublabels: arranged by hand (b before a: not code-point order).
+            try put("p/b", 3); try put("p/a", 4)
+        }
+        func orders() throws -> [String: Int] {
+            try q.read { db in
+                Dictionary(uniqueKeysWithValues: try LabelRow.fetchAll(db).map { ($0.name, $0.sortOrder) })
+            }
+        }
+        try AppDatabase.migrator.migrate(q)
+        let u = LabelRow.unsorted
+        XCTAssertEqual(try orders(), ["Zeta": u, "alpha": u, "p": u, "p/b": 3, "p/a": 4])
+        // Idempotent: migrating again (nothing left to apply) changes nothing.
+        try AppDatabase.migrator.migrate(q)
+        XCTAssertEqual(try orders(), ["Zeta": u, "alpha": u, "p": u, "p/b": 3, "p/a": 4])
+    }
+
+    /// Both visibility fields follow Gmail on every sync: a change made in
+    /// Gmail overwrites the stored value, and an answer without the field
+    /// (Gmail's default) does not keep an older one.
+    func testListAndMessageVisibilityFollowGmailOnEverySync() throws {
+        let q = try makeDB()
+        func sync(_ list: String?, _ message: String?) throws {
+            try q.write { db in
+                try SyncEngine.applyLabels(db, accountId: account, labels: [
+                    GLabel(id: "Label_1", name: "Receipts", type: "user", color: nil,
+                           labelListVisibility: list, messageListVisibility: message),
+                ])
+            }
+        }
+        func stored() throws -> (String?, String?) {
+            let row = try q.read { db in try LabelRow.fetchOne(db, key: "\(account):Label_1") }
+            return (row?.listVisibility, row?.messageListVisibility)
+        }
+        try sync("labelShowIfUnread", "hide")
+        XCTAssertTrue(try stored() == ("labelShowIfUnread", "hide"))
+        try sync("labelShow", "show")
+        XCTAssertTrue(try stored() == ("labelShow", "show"), "a change made in Gmail is stored")
+        try sync("labelHide", "hide")
+        try sync(nil, nil)
+        XCTAssertTrue(try stored() == (nil, nil), "an omitted field does not keep an older value")
+        XCTAssertEqual(SidebarLabelNode.Visibility(raw: nil), .show, "and reads as Gmail's default")
+    }
+
     func testSurvivingLabelsKeepLocalColorAndOrder() throws {
         let q = try makeDB()
         try q.write { db in
