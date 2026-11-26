@@ -489,10 +489,16 @@ enum SelectionInk {
 struct SidebarBadgeStyle: ShapeStyle {
     let selected: Bool
 
+    /// The selection ink for a selected row (white on the system's
+    /// emphasized highlight too); nil on any other row.
+    static func ink(selected: Bool, prominence: BackgroundProminence, accent: MailAccent) -> Color? {
+        SelectionInk.color(selected: selected, prominence: prominence, accent: accent)
+            ?? (selected && prominence == .increased ? Color.mailOnEmphasizedSelection : nil)
+    }
+
     func resolve(in environment: EnvironmentValues) -> Color {
-        SelectionInk.color(selected: selected, prominence: environment.backgroundProminence,
-                           accent: environment.mailAccent)
-            ?? (selected && environment.backgroundProminence == .increased
-                ? Color.mailOnEmphasizedSelection : Color(nsColor: .secondaryLabelColor))
+        Self.ink(selected: selected, prominence: environment.backgroundProminence,
+                 accent: environment.mailAccent)
+            ?? Color(nsColor: .secondaryLabelColor)
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Gmail's label menu (the "⋮" on a label row, and its context menu), in
@@ -76,34 +77,48 @@ struct LabelMenuItems: View {
 }
 
 /// The "⋮" at the right of a label row: the same menu as a right-click.
+///
+/// A borderless menu is drawn by AppKit, which ignores a label's rotation
+/// and tint (the dots came out horizontal and in the accent), so the label
+/// is a ready-made image: three stacked dots, in the secondary label colour
+/// (never the accent), or in the selection ink on the open label. It is
+/// not a template image, so AppKit draws it as it is.
 struct LabelMenuButton: View {
     let node: SidebarLabelNode
     /// Whether the row is the open label (its ink follows the selection).
     let selected: Bool
     let onNewLabel: (NewLabelRequest) -> Void
     let onPickColor: () -> Void
+    @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.mailAccent) private var accent
+
+    /// 12 x 16 pt: Gmail's "more_vert" at the sidebar's glyph size.
+    static let size = NSSize(width: 12, height: 16)
+
+    static func dots(ink: NSColor) -> NSImage {
+        let image = NSImage(size: size, flipped: false) { rect in
+            ink.setFill()
+            let diameter: CGFloat = 3
+            for index in 0..<3 {
+                let y = 1.5 + CGFloat(index) * 5
+                NSBezierPath(ovalIn: NSRect(x: (rect.width - diameter) / 2, y: y,
+                                            width: diameter, height: diameter)).fill()
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
 
     var body: some View {
+        let ink = SidebarBadgeStyle.ink(selected: selected, prominence: prominence, accent: accent)
         Menu {
             LabelMenuItems(node: node, onNewLabel: onNewLabel, onPickColor: onPickColor)
         } label: {
-            // Gmail's vertical "⋮", neutral (never the accent: a
-            // hierarchical style inside a selected sidebar row resolves to
-            // it): the secondary label colour, the selection ink on the
-            // painted selection (`SidebarBadgeStyle`). The frame is the
-            // rotated glyph's, so the hit area is as tall as the dots.
-            // `.menuStyle(.button)` + `.buttonStyle(.plain)`: SwiftUI draws
-            // this label itself (a borderless menu is drawn by AppKit,
-            // which ignored the rotation and the colour).
-            Image(systemName: "ellipsis")
-                .font(.system(size: 13, weight: .regular))
-                .rotationEffect(.degrees(90))
-                .foregroundStyle(SidebarBadgeStyle(selected: selected))
-                .frame(width: 16, height: 18)
-                .contentShape(Rectangle())
+            Image(nsImage: Self.dots(ink: ink.map { NSColor($0) } ?? .secondaryLabelColor))
+                .renderingMode(.original)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Options")
