@@ -321,11 +321,13 @@ struct SignatureSettings: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
+            // A fixed label width: the button hugs its label, so the width
+            // does not depend on the selected title.
             Text(title).lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: Self.pickerColumnWidth - 30, alignment: .leading)
         }
         .menuStyle(.borderedButton)
-        .frame(width: Self.pickerColumnWidth, alignment: .leading)
+        .fixedSize()
         .accessibilityLabel(use == .newMessage ? "Default for new messages from \(email)"
                                                : "Default for replies and forwards from \(email)")
         .accessibilityIdentifier("settings.signatures.default.\(use == .newMessage ? "new" : "reply").\(email)")

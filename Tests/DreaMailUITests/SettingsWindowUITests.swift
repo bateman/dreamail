@@ -5,7 +5,7 @@ import XCTest
 final class SettingsWindowUITests: XCTestCase {
     private let account = "you@example.com"
 
-    private func launch(alias: Bool = false, extra: [String] = []) -> XCUIApplication {
+    private func launch(alias: Bool = false, sidebar: Bool = false, extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
@@ -20,6 +20,8 @@ final class SettingsWindowUITests: XCTestCase {
         addTeardownBlock { app.terminate() }
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
         app.activate()
+        // The sidebar starts collapsed; → reveals it (see SidebarNavUITests).
+        if sidebar { app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: []) }
         return app
     }
 
@@ -73,7 +75,7 @@ final class SettingsWindowUITests: XCTestCase {
     }
 
     func testSidebarDensityShortensEverySidebarRowAndComfortableRestoresThem() {
-        let app = launch()
+        let app = launch(sidebar: true)
         let systemUpper = "sidebar.inbox", systemLower = "sidebar.starred"
         let labelUpper = "sidebar.label.\(account).Label_work"
         let labelLower = "sidebar.label.\(account).Label_research"

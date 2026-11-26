@@ -149,19 +149,24 @@ final class SidebarLabelMenuUITests: XCTestCase {
     }
 
     /// The "+" next to Labels is the glyph of the "Add view" row: not larger.
+    /// The Labels header carries the identifier on its whole row, so the glyph
+    /// is read as the image inside each row.
     func testLabelsPlusIsNotLargerThanAddViewPlus() {
         let app = launch()
-        let plus = app.buttons["Create new label"]
-        XCTAssertTrue(plus.waitForExistence(timeout: 10))
+        let header = element("sidebar.labels.add", in: app)
+        XCTAssertTrue(header.waitForExistence(timeout: 10))
         let addView = app.buttons["Add view"]
         XCTAssertTrue(addView.waitForExistence(timeout: 10))
         XCTAssertTrue(reveal(addView, in: app), "Add view can be scrolled to")
-        let glyph = addView.images.firstMatch
-        XCTAssertTrue(glyph.exists, "the Add view row has its + glyph")
+        let plus = header.descendants(matching: .image).firstMatch
+        let glyph = addView.descendants(matching: .image).firstMatch
+        print("SidebarLabelMenu: header \(header.debugDescription)\nAdd view \(addView.debugDescription)")
+        XCTAssertTrue(plus.exists, "the Labels + is an image: \(header.debugDescription)")
+        XCTAssertTrue(glyph.exists, "the Add view + is an image: \(addView.debugDescription)")
         print("SidebarLabelMenu: Labels + \(plus.frame), Add view + \(glyph.frame)")
         XCTAssertLessThanOrEqual(plus.frame.width, glyph.frame.width + 2,
                                  "Labels + \(plus.frame) is wider than the Add view + \(glyph.frame)")
-        XCTAssertLessThanOrEqual(plus.frame.height, glyph.frame.height + 4,
+        XCTAssertLessThanOrEqual(plus.frame.height, glyph.frame.height + 2,
                                  "Labels + \(plus.frame) is taller than the Add view + \(glyph.frame)")
     }
 
