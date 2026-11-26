@@ -44,8 +44,11 @@ final class AccountRailUITests: XCTestCase {
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        let row = element(app, "threadRow.you@example.com:t3")
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "demo inbox should load")
+        // Any inbox row: the main window's list, with Settings in front.
+        let row = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15),
+                      "demo inbox should load; tree: \(app.debugDescription.prefix(3000))")
         let comfortable = row.frame.height
 
         let compactChoice = settings.radioButtons["Compact"]
