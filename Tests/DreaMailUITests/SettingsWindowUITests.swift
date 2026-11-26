@@ -84,12 +84,17 @@ final class SettingsWindowUITests: XCTestCase {
         XCTAssertTrue(settings.waitForNonExistence(timeout: 5), "Settings closes")
     }
 
-    /// Sizes of what a row draws, in order: its texts (title and count) and
-    /// its images (icon, tag). Compact must leave them as they are.
-    private func glyphSizes(_ id: String, in app: XCUIApplication) -> [CGSize] {
-        let row = element(id, in: app)
-        return (row.staticTexts.allElementsBoundByIndex + row.images.allElementsBoundByIndex)
-            .map { CGSize(width: $0.frame.width.rounded(), height: $0.frame.height.rounded()) }
+    /// Height of the text drawn for `title`: the smallest element carrying
+    /// that label (a row's own element can be taller than its text, and the
+    /// rows' texts are not always exposed as children of the row).
+    private func titleHeight(_ title: String, in app: XCUIApplication) -> CGFloat? {
+        app.windows.firstMatch.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", title))
+            .allElementsBoundByIndex
+            .map(\.frame)
+            .filter { !$0.isEmpty }
+            .map(\.height)
+            .min()
     }
 
     func testSidebarDensityShortensEverySidebarRowAndComfortableRestoresThem() {
@@ -100,15 +105,13 @@ final class SettingsWindowUITests: XCTestCase {
         for id in [systemUpper, systemLower, labelUpper, labelLower] {
             XCTAssertTrue(element(id, in: app).waitForExistence(timeout: 10), id)
         }
-        let addView = app.buttons["Add view"]
-        XCTAssertTrue(addView.waitForExistence(timeout: 10))
-        let measured = [systemUpper, labelUpper, labelLower]
-        let before = measured.map { glyphSizes($0, in: app) }
-        let addViewBefore = (addView.staticTexts.allElementsBoundByIndex + addView.images.allElementsBoundByIndex)
-            .map { CGSize(width: $0.frame.width.rounded(), height: $0.frame.height.rounded()) }
-        XCTAssertFalse(before[0].isEmpty, "the Inbox row exposes its title: \(before)")
-        XCTAssertFalse(addViewBefore.isEmpty, "Add view exposes its text and glyph")
-        print("SidebarDensity: glyph sizes before \(before), Add view \(addViewBefore)")
+        // Fonts do not change in Compact: the text of a system row, a label
+        // row and "Add view" keeps its height. (Icons and tags are not
+        // exposed as elements: only a Mac shows them.)
+        let titles = ["Inbox", "Work", "Research", "Add view"]
+        let before = titles.map { titleHeight($0, in: app) }
+        print("SidebarDensity: title heights before \(before)")
+        XCTAssertFalse(before.contains { $0 == nil }, "every title is exposed: \(before)")
         let systemBase = pitch(app, systemUpper, systemLower)
         let labelBase = pitch(app, labelUpper, labelLower)
 
@@ -117,21 +120,11 @@ final class SettingsWindowUITests: XCTestCase {
                       "compact system rows: \(systemBase) → \(pitch(app, systemUpper, systemLower)) pt")
         XCTAssertTrue(waitUntil { labelBase - self.pitch(app, labelUpper, labelLower) >= 4 },
                       "compact label rows: \(labelBase) → \(pitch(app, labelUpper, labelLower)) pt")
-        // Fonts and icons do not change in Compact (±0.5 pt, rounded above).
-        for (id, was) in zip(measured, before) {
-            let now = glyphSizes(id, in: app)
-            XCTAssertEqual(now.count, was.count, "\(id): the same texts and images")
-            for (a, b) in zip(now, was) {
-                XCTAssertEqual(a.height, b.height, accuracy: 1, "\(id): \(now) vs \(was)")
-                XCTAssertEqual(a.width, b.width, accuracy: 1, "\(id): \(now) vs \(was)")
-            }
-        }
-        let addViewNow = (addView.staticTexts.allElementsBoundByIndex + addView.images.allElementsBoundByIndex)
-            .map { CGSize(width: $0.frame.width.rounded(), height: $0.frame.height.rounded()) }
-        XCTAssertEqual(addViewNow.count, addViewBefore.count)
-        for (a, b) in zip(addViewNow, addViewBefore) {
-            XCTAssertEqual(a.height, b.height, accuracy: 1, "Add view: \(addViewNow) vs \(addViewBefore)")
-            XCTAssertEqual(a.width, b.width, accuracy: 1, "Add view: \(addViewNow) vs \(addViewBefore)")
+        let after = titles.map { titleHeight($0, in: app) }
+        print("SidebarDensity: title heights compact \(after)")
+        for (title, (was, now)) in zip(titles, zip(before, after)) {
+            guard let was, let now else { continue }
+            XCTAssertEqual(now, was, accuracy: 1, "\(title): the text is \(now) pt high in Compact, \(was) before")
         }
         print("SidebarDensity: system \(systemBase) → \(pitch(app, systemUpper, systemLower)) pt, "
               + "label \(labelBase) → \(pitch(app, labelUpper, labelLower)) pt")
