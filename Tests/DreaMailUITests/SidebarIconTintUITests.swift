@@ -4,9 +4,9 @@ import XCTest
 /// The selected sidebar row draws its glyph and title in neutral colours,
 /// never the accent, in the main sidebar and the Settings sidebar, with the
 /// default and a red accent, in each selection state:
-/// - focused list: a solid accent capsule, with white glyph and title;
+/// - focused list: a solid accent band, with white glyph and title;
 /// - focus elsewhere in an active window (the state the owner reported) and
-///   inactive window: the same capsule and ink, as Gmail's current mailbox
+///   inactive window: the same band and ink, as Gmail's current mailbox
 ///   keeps its pill whatever has the focus (it was grey before).
 ///
 /// Reads the rendered pixels of the selected row: a capture of the app

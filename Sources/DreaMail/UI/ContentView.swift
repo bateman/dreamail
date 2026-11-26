@@ -2140,7 +2140,7 @@ struct Sidebar: View {
                                painted: accent.paintsSelection || (selected && accent.keepsSelectionColor)))
         .environment(\.sidebarRowSelected, selected)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
-        // The selection capsule in the custom accent (`AccentSelectionBackground`).
+        // The selection band in the custom accent (`AccentSelectionBackground`).
         .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
         .simultaneousGesture(
             TapGesture().onEnded { store.goTo(view) },

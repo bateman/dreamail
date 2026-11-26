@@ -2181,6 +2181,6 @@ private struct ThreadRowBackground: View {
             ? accent.fill.opacity(0.10)
             : (unread ? Color.clear : Color.primary.opacity(0.05))
         AccentSelectionBackground(selected: focus.id == threadId, accent: accent,
-                                  cornerRadius: 0, unselected: base)
+                                  unselected: base)
     }
 }

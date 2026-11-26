@@ -391,96 +391,47 @@ extension View {
 
 // MARK: - Selection highlight
 
-/// A selectable row's `listRowBackground`, painting the selection.
+/// A selectable row's `listRowBackground`, painting the selection as a
+/// square band over the row's full width.
 ///
-/// AppKit draws a `List`'s selection (the sidebar capsule, the thread
+/// AppKit draws a `List`'s selection (the sidebar row, the thread
 /// row) in the system accent while the list is focused in the key window,
 /// in grey otherwise, and ignores `.tint`. A row's `listRowBackground` is
 /// drawn over that highlight, and it still sees the list's own selection
-/// state through `backgroundProminence` (`.increased` while the selection
-/// is emphasized). The selected row is painted whatever the focus, like
-/// Gmail's open conversation and current mailbox: the colour says "this is
-/// open". With a custom accent (`MailAccent.paintsSelection`) the fill is
-/// the accent in every state; with the default, the system's emphasized
-/// selection colour where AppKit would draw grey (unfocused list, inactive
-/// window), and AppKit's own highlight when emphasized.
-///
-/// Two lists can then show an accent row at once, so the focused one (the
-/// emphasized selection) also gets a thin bar in the selection ink at its
-/// leading edge, as Gmail marks the focused row.
-/// `List(selection:)`, keyboard navigation, VoiceOver and drag and drop
-/// are untouched: only the paint changes. A fill that would vanish into
+/// state through `backgroundProminence`. The selected row is painted whatever
+/// the focus, like Gmail's open conversation and current mailbox: the colour
+/// says "this is open". The band is a plain rectangle, as wide as the row
+/// background (the sidebar column, edge to edge) and as tall as the row, so
+/// it also covers AppKit's own rounded capsule, and nothing moves when the
+/// focus changes. The fill is the accent with a custom one
+/// (`MailAccent.paintsSelection`), else the system's emphasized selection
+/// colour. `List(selection:)`, keyboard navigation, VoiceOver and drag and
+/// drop are untouched: only the paint changes. A fill that would vanish into
 /// the surface (`AccentPalette.selectionBorder`) gets an outline.
 struct AccentSelectionBackground: View {
     let selected: Bool
     let accent: MailAccent
-    /// 0 for the thread list's full-width row; the sidebar's capsule is
-    /// rounded.
-    let cornerRadius: CGFloat
     var unselected: Color = .clear
-    /// Gap to the row's left and right edges. Only the full sidebar rows
-    /// (`sidebar(selected:accent:)`) set it; the thread list's band and the
-    /// icon strip's own 32 pt capsule keep their geometry (0).
-    var horizontalInset: CGFloat = 0
-    @Environment(\.backgroundProminence) private var prominence
     @Environment(\.colorScheme) private var colorScheme
-
-    /// Corner radius of the icon strip's capsule (its own geometry).
-    static let sidebarCornerRadius: CGFloat = 6
-    /// Corner radius of the full sidebar rows' capsule: AppKit's own, from
-    /// the same measurement (its corner, 2 pt below the top edge, starts
-    /// 2 pt in: a radius of 8 where 6 starts 1 pt in).
-    static let sidebarRowCornerRadius: CGFloat = 8
-    /// Width of the focus bar at the selected row's leading edge.
-    static let focusBarWidth: CGFloat = 3
-    /// Gap between the row background's edges and the painted capsule on
-    /// each side. A row background spans the whole row, wider than AppKit's
-    /// own capsule, and SwiftUI does not expose the system's inset. Measured
-    /// by `SidebarSelectionGeometryUITests` on macOS 26.7.2 (CI run
-    /// 45892085129): with 10 pt the painted capsule and AppKit's own
-    /// (default accent, focused list) both span x 82-285 in the window, at
-    /// the same height. The one place to change it.
-    static let sidebarHorizontalInset: CGFloat = 10
 
     /// Sidebar rows (main window and Settings): nil unless the app paints
     /// this row, so the system draws everything else exactly as before.
     static func sidebar(selected: Bool, accent: MailAccent) -> AccentSelectionBackground? {
         accent.paintsSelection || (selected && accent.keepsSelectionColor)
-            ? AccentSelectionBackground(selected: selected, accent: accent,
-                                        cornerRadius: sidebarRowCornerRadius,
-                                        horizontalInset: sidebarHorizontalInset)
+            ? AccentSelectionBackground(selected: selected, accent: accent)
             : nil
     }
 
     var body: some View {
         if selected, accent.keepsSelectionColor {
-            let emphasized = prominence == .increased
-            let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            Group {
-                if accent.isCustom || !emphasized {
-                    shape
-                        .fill(accent.isCustom ? accent.fill : Color(nsColor: .selectedContentBackgroundColor))
-                        .overlay {
-                            if accent.isCustom, accent.palette(scheme: colorScheme).selectionBorder {
-                                shape.strokeBorder(accent.foreground, lineWidth: 1)
-                            }
-                        }
-                } else {
-                    // Default accent, emphasized: AppKit's own highlight.
-                    unselected
+            Rectangle()
+                .fill(accent.isCustom ? accent.fill : Color(nsColor: .selectedContentBackgroundColor))
+                .overlay {
+                    if accent.isCustom, accent.palette(scheme: colorScheme).selectionBorder {
+                        Rectangle().strokeBorder(accent.foreground, lineWidth: 1)
+                    }
                 }
-            }
-            .overlay(alignment: .leading) {
-                if emphasized {
-                    Rectangle()
-                        .fill(accent.isCustom ? accent.onFill : Color.mailOnEmphasizedSelection)
-                        .frame(width: Self.focusBarWidth)
-                        .padding(.vertical, cornerRadius)
-                        .padding(.leading, cornerRadius > 0 ? Self.focusBarWidth : 0)
-                }
-            }
-            .padding(.horizontal, horizontalInset)
-            .accessibilityHidden(true)
+                .accessibilityHidden(true)
         } else {
             unselected
         }
@@ -502,7 +453,7 @@ enum SelectionInk {
     }
 }
 
-/// A sidebar count on a selected row: the selection ink on the capsule (white
+/// A sidebar count on a selected row: the selection ink on the band (white
 /// on the system's emphasized highlight), the secondary label colour elsewhere.
 struct SidebarBadgeStyle: ShapeStyle {
     let selected: Bool

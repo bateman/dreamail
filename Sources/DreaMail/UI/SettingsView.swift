@@ -111,7 +111,7 @@ struct SettingsView: View {
             }
         }
         .accessibilityIdentifier("settings.pane.\(p.rawValue)")
-        // The selection capsule in the custom accent (`AccentSelectionBackground`).
+        // The selection band in the custom accent (`AccentSelectionBackground`).
         .listRowBackground(AccentSelectionBackground.sidebar(selected: pane == p, accent: accent))
         .tag(p)
     }
