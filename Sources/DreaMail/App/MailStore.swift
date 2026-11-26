@@ -4294,12 +4294,11 @@ struct ComposeRequest: Identifiable {
         accounts = ids.compactMap { byId[$0] }
     }
 
-    /// Persists a drag-reorder of one account's labels from the organizer.
-    func reorderLabels(account accountId: String, from source: IndexSet, to destination: Int) {
-        var labels = labelsByAccount[accountId] ?? []
-        labels.move(fromOffsets: source, toOffset: destination)
+    /// Persists a drag-reorder of one account's labels from the organizer:
+    /// `order` is the whole new list (`LabelOrganizerOrder.moved`).
+    func reorderLabels(account accountId: String, to order: [LabelRow]) {
         try? db.write { db in
-            for (idx, var row) in labels.enumerated() {
+            for (idx, var row) in order.enumerated() where row.sortOrder != idx {
                 row.sortOrder = idx
                 try row.save(db)
             }
