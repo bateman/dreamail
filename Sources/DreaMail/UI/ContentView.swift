@@ -1913,11 +1913,11 @@ struct Sidebar: View {
                                 .font(.system(size: 16, weight: .regular))
                                 .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                                 // Layout height of a header line (the glyph
-                                // overflows it), hit area padded outside it.
-                                .frame(width: 22, height: 14)
-                                .padding(4)
+                                // overflows it). No hit area outside the
+                                // frame: one padded past it reached the label
+                                // row below and covered its "⋮" in the UI test.
+                                .frame(width: 22, height: 16)
                                 .contentShape(Rectangle())
-                                .padding(-4)
                         }
                         .buttonStyle(.plain)
                         .help("Create new label")
