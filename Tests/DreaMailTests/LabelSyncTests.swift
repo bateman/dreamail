@@ -52,6 +52,33 @@ final class LabelSyncTests: XCTestCase {
         XCTAssertEqual(try names(q, account: account), ["INBOX", "Receipts"])
     }
 
+    /// Both visibility fields follow Gmail on every sync: a change made in
+    /// Gmail overwrites the stored value, and an answer without the field
+    /// (Gmail's default) does not keep an older one.
+    func testListAndMessageVisibilityFollowGmailOnEverySync() throws {
+        let q = try makeDB()
+        func sync(_ list: String?, _ message: String?) throws {
+            try q.write { db in
+                try SyncEngine.applyLabels(db, accountId: account, labels: [
+                    GLabel(id: "Label_1", name: "Receipts", type: "user", color: nil,
+                           labelListVisibility: list, messageListVisibility: message),
+                ])
+            }
+        }
+        func stored() throws -> (String?, String?) {
+            let row = try q.read { db in try LabelRow.fetchOne(db, key: "\(account):Label_1") }
+            return (row?.listVisibility, row?.messageListVisibility)
+        }
+        try sync("labelShowIfUnread", "hide")
+        XCTAssertTrue(try stored() == ("labelShowIfUnread", "hide"))
+        try sync("labelShow", "show")
+        XCTAssertTrue(try stored() == ("labelShow", "show"), "a change made in Gmail is stored")
+        try sync("labelHide", "hide")
+        try sync(nil, nil)
+        XCTAssertTrue(try stored() == (nil, nil), "an omitted field does not keep an older value")
+        XCTAssertEqual(SidebarLabelNode.Visibility(raw: nil), .show, "and reads as Gmail's default")
+    }
+
     func testSurvivingLabelsKeepLocalColorAndOrder() throws {
         let q = try makeDB()
         try q.write { db in
