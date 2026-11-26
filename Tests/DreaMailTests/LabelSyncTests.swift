@@ -100,10 +100,12 @@ final class LabelSyncTests: XCTestCase {
         XCTAssertEqual(out.checked, ["L1", "L2"], "the failed read is tried again next pass")
         XCTAssertEqual(out.labels.map { $0.color?.backgroundColor }, ["#434343", nil, "#fad165", nil])
         let q = try makeDB()
-        try q.write { db in
-            try SyncEngine.applyLabels(db, accountId: account, labels: out.labels)
+        let account = self.account
+        let completed = out.labels
+        try await q.write { db in
+            try SyncEngine.applyLabels(db, accountId: account, labels: completed)
         }
-        let stored = try q.read { db in try LabelRow.fetchOne(db, key: "\(account):L1") }
+        let stored = try await q.read { db in try LabelRow.fetchOne(db, key: "\(account):L1") }
         XCTAssertEqual(stored?.gmailBackgroundColor, "#434343")
         XCTAssertTrue(stored?.displayColors.isColored == true)
     }
