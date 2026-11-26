@@ -165,6 +165,21 @@ minor versions may still change behavior.
   ("ven", "set 12", also without accents: "venerdi"); suggestions are
   titled in English. "mar 5" on an Italian Mac offers March 5 first.
 
+- **New mail in a conversation you had deleted shows up again.** A
+  conversation counted as deleted as soon as one of its messages was in the
+  Trash, so a reply arriving later stayed hidden there, missing from Inbox
+  and All Mail. As in Gmail, a conversation is in the Trash only when all
+  its messages are; new mail brings it back with the new message only: the
+  messages you deleted stay out of the conversation, of search and of the
+  counts. Conversations hidden this way come back at the first sync after
+  updating. Known limit: the deleted messages of such a conversation cannot
+  yet be seen or restored from DreaMail (they can in Gmail's Trash).
+
+- **The sync indicator tells the truth.** The "last synced" time in the
+  toolbar and in Settings → Accounts is refreshed as time passes (it could
+  read "now" for hours) and says "Sync failed · last synced …" when the
+  last pass of an account failed.
+
 - **Labels in the sidebar as in Gmail: whole families, Gmail's order.** A
   label and its sublabels always stay together, nested: the whole family is
   listed above the labels' "More" or below it, following the top-level
