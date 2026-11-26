@@ -1832,6 +1832,9 @@ struct Sidebar: View {
     @State private var viewToDelete: SavedView?
     @State private var disclosure = SidebarDisclosureModel()
     @State private var newLabel: NewLabelRequest?
+    @AppStorage(SidebarDensity.storageKey) private var sidebarDensityRaw =
+        SidebarDensity.comfortable.rawValue
+    private var sidebarDensity: SidebarDensity { .from(raw: sidebarDensityRaw) }
 
     private var confirmingViewDeleteShown: Binding<Bool> {
         Binding(
@@ -1949,7 +1952,7 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, 30)
+            .environment(\.defaultMinListRowHeight, sidebarDensity.minRowHeight)
             .scrollContentBackground(.hidden)
 
             Divider()
