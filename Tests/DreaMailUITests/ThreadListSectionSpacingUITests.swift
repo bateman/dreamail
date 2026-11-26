@@ -73,6 +73,19 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         return last
     }
 
+    /// Height of the first section break's band: the gap between the two
+    /// rows around a header, minus the plain gap between two rows.
+    private func headerBand(_ rows: [CGRect], _ headers: [CGRect]) -> CGFloat {
+        var plain: [CGFloat] = []
+        var band: CGFloat?
+        for (a, b) in zip(rows, rows.dropFirst()) {
+            if headers.contains(where: { $0.midY > a.midY && $0.midY < b.midY }) {
+                band = band ?? (b.minY - a.maxY)
+            } else { plain.append(b.minY - a.maxY) }
+        }
+        return (band ?? 0) - (plain.min() ?? 0)
+    }
+
     private func medianRowHeight(_ rows: [CGRect]) -> CGFloat {
         rows.isEmpty ? 0 : rows.map(\.height).sorted()[rows.count / 2]
     }
@@ -160,14 +173,19 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
                                  "font scale 1.6 did not reach the list (rows \(base) → \(scaled) pt)")
             assertCompactSectionBreaks(scaledApp)
         }
-        XCTContext.runActivity(named: "Compact density: shorter rows, section break still shorter than a row") { _ in
+        XCTContext.runActivity(named: "Compact density: shorter rows, same section header band") { _ in
             let compactApp = launch(readingPane: true, density: "compact")
             let compact = medianRowHeight(settledLayout(compactApp).rows)
             // Only the vertical padding changes: 2 x (6 - 2) pt.
             XCTAssertEqual(base - compact, 8, accuracy: 1.0,
                            "compact rows \(compact) pt against comfortable \(base) pt")
             print("ThreadListDensity: comfortable row \(base) pt, compact row \(compact) pt")
-            assertCompactSectionBreaks(compactApp)
+            // Headers are not shrunk: the header band (break minus row gap)
+            // is the same as in comfortable. A compact row may be shorter
+            // than the header; that is accepted.
+            let (rows, headers) = settledLayout(compactApp)
+            let (baseRows, baseHeaders) = settledLayout(app)
+            XCTAssertEqual(headerBand(rows, headers), headerBand(baseRows, baseHeaders), accuracy: 1.0)
         }
         XCTContext.runActivity(named: "Back to comfortable restores today's row height") { _ in
             let again = launch(readingPane: true, density: "comfortable")

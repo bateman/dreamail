@@ -20,7 +20,7 @@ enum ListDensity: String, CaseIterable, Identifiable {
 }
 
 /// The one source of every vertical measure that depends on the density:
-/// the thread row, the section header gap. Comfortable is today's layout.
+/// the thread row's padding and the section header gap (which does not change). Comfortable is today's layout.
 struct ThreadListMetrics: Equatable {
     let density: ListDensity
     let fontScale: Double
@@ -38,10 +38,9 @@ struct ThreadListMetrics: Equatable {
     var rowContentHeight: Double { ThreadRowChipLayout.trailingStripHeight * fontScale }
     var rowHeight: Double { rowContentHeight + 2 * rowVerticalPadding }
 
-    /// Air between a section's last row and the next header's title,
-    /// at font scale 1 (comfortable 6 pt, compact 4 pt: the ratio of the rows).
-    var sectionGapBase: Double { density == .compact ? 4 : 6 }
-    var sectionGap: Double { sectionGapBase * fontScale }
+    /// Air between a section's last row and the next header's title.
+    /// The same in both densities: only the rows get denser.
+    var sectionGap: Double { 6 * fontScale }
 
     /// What the plain List adds above a header's content (macOS 26).
     static let systemHeaderTopInset = 4.0

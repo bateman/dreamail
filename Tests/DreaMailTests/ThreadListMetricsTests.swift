@@ -24,13 +24,14 @@ final class ThreadListMetricsTests: XCTestCase {
                                  c.rowContentHeight)
     }
 
-    func testSectionBreakIsShorterThanARowInBothDensities() {
-        for density in ListDensity.allCases {
-            for scale in [0.8, 1.0, 1.3] {
-                let m = ThreadListMetrics(density: density, fontScale: scale)
-                XCTAssertLessThan(m.sectionGap, m.rowHeight, "\(density) at \(scale)")
-                XCTAssertGreaterThanOrEqual(m.sectionHeaderTopPadding, 0)
-            }
+    func testSectionHeaderIsTheSameInBothDensities() {
+        for scale in [0.8, 1.0, 1.3] {
+            let k = ThreadListMetrics(density: .comfortable, fontScale: scale)
+            let c = ThreadListMetrics(density: .compact, fontScale: scale)
+            XCTAssertEqual(k.sectionGap, c.sectionGap)
+            XCTAssertEqual(k.sectionHeaderTopPadding, c.sectionHeaderTopPadding)
+            // Comfortable keeps the break shorter than a row.
+            XCTAssertLessThan(k.sectionGap, k.rowHeight)
         }
     }
 
