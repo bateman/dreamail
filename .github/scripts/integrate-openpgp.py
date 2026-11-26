@@ -8,8 +8,8 @@ release (docs/DEPENDENCIES.md, "OpenPGP library").
   2. Finds the commit on its main whose Package.swift points at that
      release (the commit DreaMail pins), and reads from it the checksum, the
      rPGP version and licence, the crate count and the accepted advisories.
-  3. Checks that the release's tag commit is in the history of that commit,
-     and that the checksum in Package.swift, the release's .sha256 asset and
+  3. Checks that the release's tag commit lies between the current pin and
+     that commit on main's history, and that the checksum in Package.swift, the release's .sha256 asset and
      the SHA-256 of the downloaded zip agree.
   4. Edits project.yml (revision and its version comment),
      docs/DEPENDENCIES.md (table and a "Recorded for" note) and CHANGELOG.md.
@@ -19,8 +19,9 @@ release (docs/DEPENDENCIES.md, "OpenPGP library").
      GitHub Actions, the outputs (changed, version, commit, review).
 
 `review=true` means a change needs a person, and the workflow does not
-merge: Package.swift changed beyond its version and checksum, rust/deny.toml
-changed, or the accepted advisories (DEC-051) differ from the table's.
+merge: Package.swift changed beyond its version and checksum, the library's
+build, check or release pipeline changed (PIPELINE), or the accepted
+advisories (DEC-051) differ from the table's.
 
 Usage: .github/scripts/integrate-openpgp.py [VERSION]
 Exit status: 0 done or already integrated, 1 a check failed, 2 bad input.
@@ -129,7 +130,34 @@ def deny_advisories(text: str) -> list[str]:
         ignore = tomllib.loads(text).get("advisories", {}).get("ignore", [])
     except tomllib.TOMLDecodeError as error:
         raise Failure(f"rust/deny.toml does not parse: {error}") from error
-    return sorted({entry if isinstance(entry, str) else entry.get("id", "?") for entry in ignore})
+    ids = sorted({entry if isinstance(entry, str) else entry.get("id", "?") for entry in ignore})
+    for advisory in ids:
+        # Only plain ids reach the pull request body: no text a reviewer reads.
+        if not re.fullmatch(r"RUSTSEC-[0-9]{4}-[0-9]{4}", str(advisory)):
+            raise Failure(f"rust/deny.toml ignores something that is not a RUSTSEC id: {advisory!r}")
+    return ids
+
+
+# Upstream paths whose change waits for a person: what builds, checks and
+# signs the binary. The automated rPGP upgrades touch none of them.
+PIPELINE = [".github", "scripts", "rust/deny.toml", "rust/rust-toolchain.toml", "rust/.cargo"]
+
+
+def review_reasons(manifest: str, old_manifest: str, pipeline: list[str],
+                   was: list[str], now: list[str]) -> list[str]:
+    """Why the pull request must wait for a person instead of merging."""
+    reasons = []
+    if manifest_shape(manifest) != manifest_shape(old_manifest):
+        reasons.append("Package.swift changed beyond `version` and `checksum` (products, targets or "
+                       "dependencies may differ; `check-package-pins.py` does not see inside it)")
+    if pipeline:
+        reasons.append("the library's build, check or release pipeline changed: "
+                       + ", ".join(f"`{path}`" for path in pipeline))
+    if was != now:
+        reasons.append(f"the accepted advisories changed (table: {', '.join(was) or 'none'}; "
+                       f"library: {', '.join(now) or 'none'}): update the row and DEC-051 in "
+                       "docs/registro-decisioni.md")
+    return reasons
 
 
 def library_facts(clone: Path, commit: str) -> dict:
@@ -270,8 +298,9 @@ def main(argv: list[str]) -> int:
         clone = Path(tmp) / "openpgp"
         git("clone", "--quiet", "--filter=blob:none", "--no-checkout", UPSTREAM, str(clone))
         commit = pinning_commit(clone, version)
-        # The release was built from main's history: its tag's commit is an
-        # ancestor of the commit pinned (the Release workflow refuses others).
+        # The tag's commit, which the workflow then requires to be the source
+        # commit of the zip's attestation: it lies between the old pin and
+        # the new one on main's history.
         built = git("rev-parse", f"v{version}^{{commit}}", cwd=clone).strip()
         if subprocess.run(["git", "merge-base", "--is-ancestor", built, commit], cwd=clone).returncode:
             raise Failure(f"release v{version} was built from {built}, which is not in the history "
@@ -280,12 +309,18 @@ def main(argv: list[str]) -> int:
             print(f"v{version} (commit {commit}) is already pinned: nothing to do.")
             outputs(changed="false")
             return 0
+        if version == old_version:
+            raise Failure(f"v{version} is pinned, but at {pinned}, and a later upstream commit {commit} "
+                          "declares the same version: a person must look")
+        if subprocess.run(["git", "merge-base", "--is-ancestor", pinned, built], cwd=clone).returncode:
+            raise Failure(f"release v{version} was built from {built}, which is not after the "
+                          f"current pin {pinned}")
         manifest = git("show", f"{commit}:Package.swift", cwd=clone)
         old_manifest = git("show", f"{pinned}:Package.swift", cwd=clone)
         _, checksum = package_fields(manifest)
         old_checksum = package_fields(old_manifest)[1]
         facts = library_facts(clone, commit)
-        deny_changed = bool(git("diff", "--name-only", pinned, commit, "--", "rust/deny.toml", cwd=clone).strip())
+        pipeline = git("diff", "--name-only", pinned, commit, "--", *PIPELINE, cwd=clone).split()
 
     base = f"{UPSTREAM}/releases/download/v{version}/{ASSET}"
     asset_sum = download(base + ".sha256").decode().split()[0]
@@ -313,36 +348,24 @@ def main(argv: list[str]) -> int:
     for path, text in edited.items():
         path.write_text(text, encoding="utf-8")
 
-    # What makes the pull request wait for a person instead of merging.
-    reasons = []
-    if manifest_shape(manifest) != manifest_shape(old_manifest):
-        reasons.append("Package.swift changed beyond `version` and `checksum` (products, targets or "
-                       "dependencies may differ; `check-package-pins.py` does not see inside it)")
-    if deny_changed:
-        reasons.append("rust/deny.toml changed (advisory, licence, ban or source policy)")
-    if was != now:
-        reasons.append(f"the accepted advisories changed (table: {', '.join(was) or 'none'}; "
-                       f"library: {', '.join(now) or 'none'}): update the row and DEC-051 in "
-                       "docs/registro-decisioni.md")
+    reasons = review_reasons(manifest, old_manifest, pipeline, was, now)
     body = [
         f"Integrates dreamail-openpgp [v{version}]({UPSTREAM}/releases/tag/v{version}) "
         f"(rPGP `pgp` {facts['pgp']}, {facts['crates']} crates), replacing v{old_version}.",
         "",
         f"- Commit pinned: `{commit}` ({UPSTREAM}/commit/{commit})",
         f"- SHA-256 `{checksum}`: the same in Package.swift, the release's `.sha256` asset and the downloaded zip.",
-        "- Build provenance: the zip's attestation verified against dreamail-openpgp's Release workflow "
-        "(`gh attestation verify`).",
+        "- Build provenance: the zip's attestation verified (`gh attestation verify`): signed by "
+        "dreamail-openpgp's `release.yml` running on `refs/heads/main`, from the tag's commit "
+        f"`{built}`, on a GitHub-hosted runner.",
         f"- Changes since v{old_version}: {UPSTREAM}/compare/{pinned}...{commit}",
-        "",
-        "Regression check: the full CI workflow (workflow hardening, package pins, build with warnings "
-        "as errors, unit tests including the linked-library tests, test-skip check, both UI shards) "
-        "ran on this branch with only this pin changed, after CI was green on main.",
     ]
     if reasons:
         body += ["", "**Needs a person, not merged by the workflow:**", *[f"- {r}" for r in reasons]]
     BODY.parent.mkdir(exist_ok=True)
     BODY.write_text("\n".join(body) + "\n", encoding="utf-8")
-    outputs(changed="true", version=version, commit=commit, review=str(bool(reasons)).lower())
+    outputs(changed="true", version=version, commit=commit, built=built,
+            review=str(bool(reasons)).lower())
     return 0
 
 

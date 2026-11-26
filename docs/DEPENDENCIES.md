@@ -55,17 +55,20 @@ To move to a new release, run the **Integrate dreamail-openpgp** workflow
 (Actions, manual only; empty version: the newest release). It first needs
 the whole CI, UI shards included, green on `main` (a manual run there,
 reused if one already passed). `.github/scripts/integrate-openpgp.py` then
-checks that the release was built from the pinned commit's history and that
-`Package.swift` at that commit, the release's `.sha256` asset and the
-downloaded zip agree; the workflow verifies the zip's build provenance
-attestation (`gh attestation verify`, against the library's Release
-workflow; releases up to `v0.2.0` have none). It updates `project.yml`,
+checks that the release's tag commit lies between the current pin and the
+new one on the library's `main`, and that `Package.swift` at the new commit,
+the release's `.sha256` asset and the downloaded zip agree. The workflow
+then verifies the zip's build provenance attestation (`gh attestation
+verify`): signed by the library's `release.yml` running on `refs/heads/main`,
+from that tag commit, on a GitHub-hosted runner (releases up to `v0.2.0`
+have none). It updates `project.yml`,
 this table and `CHANGELOG.md`, and runs the whole CI again on branch
 `deps/dreamail-openpgp-v<version>`, where only the pin changed. Green: the
 pull request is merged, unless the run's `merge` input is off. Red: it stays
 a draft with the failed run. It always waits for a person when
 `Package.swift` changed beyond its version and checksum, when the library's
-`rust/deny.toml` changed, or when the accepted advisories differ from this
+build, check or release pipeline changed (`.github`, `scripts`,
+`rust/deny.toml`, the toolchain, `rust/.cargo`), or when the accepted advisories differ from this
 table (DEC-051 must be updated with them).
 
 ## What enforces what

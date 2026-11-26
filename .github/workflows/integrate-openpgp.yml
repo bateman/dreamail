@@ -25,7 +25,9 @@ name: Integrate dreamail-openpgp
 #      with the failed run, and this job fails.
 #
 # Trust: the checksums prove the files agree; the attestation proves the
-# zip was built by dreamail-openpgp's Release workflow from its main. Running
+# zip was built by dreamail-openpgp's release.yml running on its main, from
+# the tag's commit; changes to its build, check or release pipeline wait for
+# a person. Running
 # this workflow with `merge` on accepts that release without reading its
 # diff (the pull request links it).
 #
@@ -62,6 +64,7 @@ jobs:
       contents: write       # push the branch, merge
       pull-requests: write  # open and merge the pull request
       actions: write        # start CI on the branch and on main
+      attestations: read    # verify the release's provenance
     # GH_TOKEN is given only to the steps that call GitHub, never to the
     # one that reads the upstream repository's files.
     env:
@@ -97,17 +100,23 @@ jobs:
             python3 .github/scripts/integrate-openpgp.py
           fi
 
-      # The zip was made by dreamail-openpgp's Release workflow, not just
-      # uploaded by someone who can write to its releases. Releases up to
-      # v0.2.0 have no attestation and cannot be integrated this way.
+      # The zip was made by dreamail-openpgp's release.yml running on its
+      # main (not on another branch, a pull request or a self-hosted
+      # runner), from the release tag's commit, which the script checked
+      # lies between the old and the new pin. Releases up to v0.2.0 have no
+      # attestation and cannot be integrated this way.
       - name: Verify the release's build provenance
         if: steps.integrate.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          BUILT: ${{ steps.integrate.outputs.built }}
         run: |
           gh attestation verify build/openpgp/DreaMailRPGP.xcframework.zip \
             --repo bateman/dreamail-openpgp \
-            --signer-workflow bateman/dreamail-openpgp/.github/workflows/release.yml
+            --cert-identity https://github.com/bateman/dreamail-openpgp/.github/workflows/release.yml@refs/heads/main \
+            --source-ref refs/heads/main \
+            --source-digest "$BUILT" \
+            --deny-self-hosted-runners
 
       - name: Push the branch and run CI on it
         id: ci
@@ -134,8 +143,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           status=0
           run=$(.github/scripts/run-ci.sh "$branch" "$sha") || status=$?
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "passed=$([ "$status" -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          {
+            echo "run=$run"
+            echo "status=$status"
+            echo "passed=$([ "$status" -eq 0 ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
 
       # Also after a failed or timed-out step above, once the branch exists:
       # never a pushed branch without a pull request.
@@ -148,15 +160,16 @@ jobs:
           SHA: ${{ steps.ci.outputs.sha }}
           RUN: ${{ steps.ci.outputs.run }}
           PASSED: ${{ steps.ci.outputs.passed }}
+          STATUS: ${{ steps.ci.outputs.status }}
           REVIEW: ${{ steps.integrate.outputs.review }}
           MERGE: ${{ inputs.merge }}
         run: |
           body=build/openpgp-integration.md
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN"
           title="Integrate dreamail-openpgp v$VERSION"
-          if [ -z "$RUN" ]; then
-            printf '\n**CI could not be started or found on this branch** (%s/%s/actions/runs/%s). Not merged.\n' \
-              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$body"
+          if [ -z "$RUN" ] || { [ "$STATUS" != "0" ] && [ "$STATUS" != "1" ]; }; then
+            printf '\n**CI could not be started, found or followed to its end on this branch** (%s; this workflow: %s/%s/actions/runs/%s). Not merged.\n' \
+              "${RUN:+$run_url}" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$body"
             gh pr create --base "$BASE" --head "$BRANCH" --draft --title "$title" --body-file "$body"
             echo "CI did not run on $BRANCH: draft pull request opened, nothing merged." | tee -a "$GITHUB_STEP_SUMMARY" >&2
             exit 1
@@ -167,7 +180,7 @@ jobs:
             echo "CI failed on $BRANCH: draft pull request opened, nothing merged." | tee -a "$GITHUB_STEP_SUMMARY" >&2
             exit 1
           fi
-          printf '\nCI passed on this branch: %s\n\nOpened by the Integrate dreamail-openpgp workflow (%s/%s/actions/runs/%s).\n' \
+          printf '\nRegression check: the whole CI (workflow hardening, package pins, build with warnings as errors, unit tests including the linked-library tests, test-skip check, both UI shards) passed on this branch, where only the pin changed, after it passed on main: %s\n\nOpened by the Integrate dreamail-openpgp workflow (%s/%s/actions/runs/%s).\n' \
             "$run_url" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$body"
           gh pr create --base "$BASE" --head "$BRANCH" --title "$title" --body-file "$body"
           if [ "$REVIEW" = "true" ] || [ "$MERGE" != "true" ]; then
@@ -182,12 +195,15 @@ jobs:
       # If even the pull request could not be opened, remove the branch, so
       # the next run is not refused because it exists.
       - name: Remove a branch left without a pull request
-        if: failure() && steps.ci.outputs.branch != ''
+        if: always() && steps.ci.outputs.branch != ''
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.ci.outputs.branch }}
         run: |
-          if [ "$(gh pr list --head "$BRANCH" --state all --json number --jq length)" = "0" ]; then
+          # This repository's own pull requests only: a fork's with the same
+          # branch name does not count.
+          if [ "$(gh pr list --head "$BRANCH" --state all --json isCrossRepository \
+              --jq '[.[] | select(.isCrossRepository | not)] | length')" = "0" ]; then
             git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" --delete "$BRANCH"
             echo "Removed $BRANCH, which had no pull request." | tee -a "$GITHUB_STEP_SUMMARY"
           fi

@@ -518,5 +518,21 @@ class IntegrateOpenPGPTests(unittest.TestCase):
         self.assertFalse(integrate_openpgp.LICENCE.match("MIT [x](https://e.invalid) @someone"))
         self.assertFalse(integrate_openpgp.SEMVER.match("\u0663.0.0"))
 
+    def test_review_reasons(self):
+        m = 'let version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\nproducts\n'
+        m2 = m.replace("1.0.0", "1.0.1")
+        adv = ["RUSTSEC-2023-0071"]
+        reasons = integrate_openpgp.review_reasons
+        self.assertEqual(reasons(m2, m, [], adv, adv), [])
+        self.assertEqual(len(reasons(m2 + "targets\n", m, [], adv, adv)), 1)
+        self.assertIn("`.github/workflows/release.yml`",
+                      reasons(m2, m, [".github/workflows/release.yml"], adv, adv)[0])
+        self.assertIn("advisories", reasons(m2, m, [], adv, adv + ["RUSTSEC-2026-0001"])[0])
+        self.assertEqual(len(reasons(m2 + "x\n", m, ["scripts/a.sh"], adv, [])), 3)
+
+    def test_deny_advisories_rejects_free_text(self):
+        with self.assertRaises(integrate_openpgp.Failure):
+            integrate_openpgp.deny_advisories('[advisories]\nignore = ["approved in DEC-051 @someone"]\n')
+
 if __name__ == "__main__":
     unittest.main()

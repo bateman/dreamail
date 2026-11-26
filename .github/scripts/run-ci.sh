@@ -6,7 +6,8 @@
 # main (the baseline) and for its branch. Needs gh with GH_TOKEN and GH_REPO.
 #
 # Usage: .github/scripts/run-ci.sh [--reuse] REF SHA
-# Exit status: 0 CI passed, 1 CI failed, 2 the run could not be started or found.
+# Exit status: 0 CI passed, 1 CI failed, 2 the run could not be started,
+# found or followed to its end.
 set -euo pipefail
 
 reuse=false
@@ -53,4 +54,10 @@ echo "$run"
 if gh run watch "$run" --exit-status --interval 30 > /dev/null; then
   exit 0
 fi
-exit 1
+# A failed watch is a red run only if the run itself says so; an API error
+# or a run still going is "could not follow it".
+conclusion=$(gh run view "$run" --json conclusion --jq .conclusion || true)
+case "$conclusion" in
+  failure|timed_out|cancelled|action_required|startup_failure) exit 1 ;;
+  *) echo "CI run $run: could not follow it to its end (conclusion '$conclusion')." >&2; exit 2 ;;
+esac
