@@ -1107,8 +1107,23 @@ private extension ContentView {
             guard let store else { return event }
             // Settings is capturing a key for rebinding — don't run shortcuts.
             if store.keyBindings.capturing { return event }
+            // Any sheet or alert is up (new label, Organize Labels, filter,
+            // signature, default-mail prompt, label menu dialogs, the "l"
+            // picker's "Create new"...): its keys, Esc included, belong to
+            // it. The sheet is the key window (`sheetParent`) or the event
+            // still reaches us through its parent (`attachedSheet`); both
+            // are set by AppKit for SwiftUI sheets, alerts and confirmation
+            // dialogs. Without this, "e" or "#" typed in a sheet's text
+            // field would archive or delete the selected conversation.
+            // The shortcuts help is the one sheet that needs `?` and Esc
+            // handled below.
+            if !store.showShortcutsHelp,
+               event.window?.attachedSheet != nil || event.window?.sheetParent != nil {
+                return event
+            }
             // A label menu dialog is up (Edit, colour, Remove, failure):
-            // its keys, Esc included, belong to it.
+            // its keys, Esc included, belong to it. Kept: it is set before
+            // the sheet window attaches.
             if store.labelMenu.presentsDialog { return event }
             // Quick Look panel is up: every key (Esc, space, arrows) belongs
             // to the panel — the Esc ladder below must not close the reading
@@ -1349,8 +1364,8 @@ private extension ContentView {
             }
             if store.showLabelPicker {
                 let picker = store.labelPicker
-                // "Create new" sheet on top: its text field gets every key.
-                if picker.sheetOpen { return event }
+                // The "Create new" sheet on top is covered by the sheet
+                // rule at the top of the monitor.
                 switch event.keyCode {
                 case 53:  // esc
                     store.mailboxOverlay = nil

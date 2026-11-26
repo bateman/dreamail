@@ -200,7 +200,7 @@ enum DemoSeed {
     /// disclosure triangle did not open it (CI, November 2026).
     static let smallLabelIds: Set<String> = [
         "Label_work", "Label_research", "Label_personal", "Label_investment",
-        "Label_travel", "Label_family", "Label_friends",
+        // TEMP-DIAG: Travel/Family/Friends removed to reproduce the 11-label list.
         "Label_clients", "Label_clients_acme", "Label_clients_northwind", "Label_clients_brightloop",
         "Label_vendors", "Label_vendors_aws", "Label_vendors_stripe",
     ]

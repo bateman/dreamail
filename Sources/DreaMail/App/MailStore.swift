@@ -26,8 +26,6 @@ final class LabelPickerState: ObservableObject {
     /// mode): Return then only closes, as in Gmail, instead of undoing the
     /// pick. Reset when the picker opens.
     var changed = false
-    /// The "Create new" sheet is up: the window key monitor leaves keys alone.
-    var sheetOpen = false
     /// `l` toggles labels; `v` (Gmail's Move to) adds one and leaves the inbox.
     enum Mode { case label, move }
     @Published var mode = Mode.label
@@ -455,7 +453,6 @@ final class MailStore {
         labelPicker.highlight = 0
         labelPicker.navigated = false
         labelPicker.changed = false
-        labelPicker.sheetOpen = false
         labelPicker.mode = mode
         labelPicker.moveTargetIds = mode == .move ? moveTargetIds : []
         labelPicker.session = UUID()
