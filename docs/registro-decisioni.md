@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.31
+Versione: 0.32
 Ultimo aggiornamento: 26 novembre 2026
 Stato: documento in evoluzione
 
@@ -88,6 +88,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-074 | **Firma ricca: mostrata una volta sola; incollabile da Gmail** (affina DEC-070) | In composizione una firma con l'aspetto di Gmail è mostrata **una sola volta**, come riquadro in sola lettura sotto il testo (niente copia in testo, niente anteprima "Signature as sent"); "Edit signature as text" la trasforma in testo, che parte com'è scritto. Lo stato è esplicito (`ComposeSignatureStyle`: legacy, plain, rich) e viaggia col messaggio: annulla invio, coda offline, invio programmato e Outbox (migrazione v68), bozze di Gmail (attributo `data-dreamail-signature` sul blocco della firma, letto e tolto solo nei tag della parte scritta dall'utente; ogni messaggio inviato da DreaMail ne è privo). In Settings una firma copiata da Gmail si incolla col suo aspetto (solo se sostituisce tutto il testo; fino a 300 KB, ridotta e poi filtrata con le stesse regole di DEC-070; immagini tolte) e resta una firma locale. "Keep a copy" scartato dal proprietario. Residui accettati: una bozza inviata direttamente da Gmail web o dal telefono può portare l'attributo (innocuo); con il testo citato espanso il riquadro sta sotto la citazione; l'RTF arriva quasi senza aspetto. Non verificato senza un Mac: se Gmail toglie lo spazio di "-- " (il confronto lo ignora). |
 | DEC-075 | **Barra laterale: ordine scelto dall'utente; "More" chiuso nasconde tutto** (affina DEC-063, corregge DEC-073) | Le viste di sistema si riordinano col trascinamento, anche attraverso la riga "More" (sopra: sempre visibile; sotto: nascosta con "More" chiuso). L'ordine è **per account** (chiave `sidebar.system.order.<account>`, tolta con l'account, DEC-019); la vista "tutti gli account" ha il proprio. "Reset Sidebar Order" (menu View e clic destro) torna all'ordine di Gmail. Con "More" chiuso non è elencato nulla di ciò che sta sotto, **compresa la vista aperta** (richiesta del proprietario: annulla la regola di #76 mantenuta in DEC-073); lo stesso per il "More" delle etichette. Resta DEC-063: Reminders compare sopra "More" finché c'è un promemoria, anche se l'ordine salvato la tiene sotto. "More" è sempre elencata, anche vuota. Deviazione voluta da Gmail, che non permette di riordinare le viste di sistema. Non verificato senza un Mac: trascinamento reale e VoiceOver. |
 | DEC-076 | **Densità: elenco e barra laterale, due scelte separate** | Settings → Appearance: "List density" e "Sidebar density", Comfortable (predefinita, invariata) o Compact, come la densità di Gmail. Compact riduce solo lo spazio verticale: riga dell'elenco con 2 pt invece di 6 sopra e sotto, riga della barra laterale alta almeno 22 pt invece di 30. Caratteri, icone e intestazioni di sezione ("Today", "Yesterday") non cambiano (richiesta del proprietario). La densità della barra laterale è stata chiesta dal proprietario nella sessione di lavoro. |
+| DEC-077 | **Selezione: il colore accent vuol dire "aperto", non "ha il fuoco"** | Come in Gmail, la conversazione aperta e la vista corrente della barra laterale restano nel colore accent (personalizzato, o quello di selezione del sistema) anche quando il fuoco è altrove o la finestra è inattiva; testo e icone con lo stesso inchiostro in ogni stato. Poiché due liste possono mostrare insieme una riga colorata, quella con il fuoco della tastiera ha una barretta di 3 pt sul bordo iniziale. Vale su macOS 26 (stesso meccanismo della selezione dipinta dall'app); su macOS 14–15 resta il grigio di sistema. Assunzione dichiarata e non contestata: vale anche a finestra inattiva. Il "+" e il "⋮" delle etichette sono neutri (mai accent), il "⋮" è verticale come in Gmail. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -498,6 +499,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-26 | **0.29** | Aggiunta DEC-073 (categorie senza sotto-menu; tasti alla finestra aperta). |
 | 2026-11-26 | **0.30** | Aggiunta DEC-074 (firma ricca mostrata una volta sola; firma di Gmail incollabile). |
 | 2026-11-26 | **0.31** | Aggiunte DEC-075 (ordine della barra laterale; "More" chiuso nasconde tutto) e DEC-076 (densità di elenco e barra laterale). |
+| 2026-11-26 | **0.32** | Aggiunta DEC-077 (la selezione resta nel colore accent senza fuoco). |
 
 ---
 

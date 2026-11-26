@@ -105,6 +105,17 @@ minor versions may still change behavior.
 - **Categories without a sub-menu.** Under "More", Promotions and Social are
   plain rows just above Spam; the "Categories" group is gone.
 
+- **The open conversation and mailbox keep their colour.** On macOS 26 the
+  selected row in the list and in the sidebar stays in the accent colour
+  when you click elsewhere or the window is inactive, as in Gmail: the
+  colour means "this is open", not "this list has focus" (it used to turn
+  a heavy grey). The list that has the keyboard focus shows a thin bar at
+  the row's leading edge. On macOS 14 and 15 nothing changes. Also: the
+  "+" next to Labels is larger and neutral, the label "⋮" is vertical and
+  neutral (not accent blue), the hover actions on a conversation row have
+  a little more space between them, and the "Defaults" table in Settings →
+  Signatures is aligned.
+
 - **Reorder the sidebar; a closed "More" hides everything under it.** Drag
   the system views (Inbox, Starred, Sent, Promotions, Reminders...) to
   reorder them, also across the "More" row: drop one above "More" to keep
