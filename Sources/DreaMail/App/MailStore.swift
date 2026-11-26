@@ -212,6 +212,8 @@ final class MailStore {
     /// Bumped by `/` (Gmail-style) to move keyboard focus into the sidebar
     /// search field. The sidebar watches this and drives its `@FocusState`.
     var searchFocusToken = 0
+    /// Bumped by View ▸ Reset Sidebar Order; the sidebar resets its order.
+    var sidebarOrderResetToken = 0
     /// True while the search field is focused, so ContentView can float the
     /// wide command-K-style results panel over the message list.
     var searchActive = false

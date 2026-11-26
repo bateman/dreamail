@@ -263,6 +263,8 @@ struct DreaMailApp: App {
                 Button("Reset Text Size") { fontScale = 1.0 }
                     .keyboardShortcut("0", modifiers: .command)
                 Divider()
+                Button("Reset Sidebar Order") { store.sidebarOrderResetToken &+= 1 }
+                Divider()
             }
             CommandGroup(after: .help) {
                 Button("Keyboard Shortcuts") { store.showShortcutsHelp = true }

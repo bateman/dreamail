@@ -164,10 +164,14 @@ final class SidebarLabelTreeUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(social), "Less hides the other categories")
         XCTAssertTrue(waitForAbsence(spam), "Less hides Spam")
         // `g i` leaves it, `g p` opens it again with More closed: still not listed.
+        // An inbox thread: listed in the inbox, not in Promotions.
+        let inboxThread = element("threadRow.\(account):t3", in: app)
         app.typeKey("g", modifierFlags: [])
         app.typeKey("i", modifierFlags: [])
+        XCTAssertTrue(inboxThread.waitForExistence(timeout: 5), "g i lists the inbox")
         app.typeKey("g", modifierFlags: [])
         app.typeKey("p", modifierFlags: [])
+        XCTAssertTrue(waitForAbsence(inboxThread), "g p opens Promotions: the list changed")
         XCTAssertTrue(waitForAbsence(promotions),
                       "g p lists no Promotions row under a closed More")
         XCTAssertTrue(more.exists, "the More row stays")

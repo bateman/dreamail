@@ -34,10 +34,6 @@ enum SidebarSystemOrder {
         ("promotions", .promotions), ("social", .social), ("spam", .spam),
     ]
 
-    static func id(for view: MailboxView) -> String? {
-        views.first { $0.view == view }?.id
-    }
-
     static func view(for id: String) -> MailboxView? {
         views.first { $0.id == id }?.view
     }
@@ -76,24 +72,32 @@ enum SidebarSystemOrder {
     }
 
     /// What the sidebar lists. `above` and `under` hold the ids of the rows
-    /// that exist now; "More" is listed only while something is under it.
+    /// that exist now. "More" is always listed, even with nothing under it,
+    /// so a row can be dropped back below it.
     struct Layout: Equatable {
         var above: [String]
         var under: [String]
-        var showsMore: Bool { !under.isEmpty }
 
         /// The ids in sidebar order: what is under "More" only when open.
         func rows(moreOpen: Bool) -> [String] {
-            above + (showsMore ? [SidebarSystemOrder.moreId] : []) + (moreOpen ? under : [])
+            above + [SidebarSystemOrder.moreId] + (moreOpen ? under : [])
         }
     }
 
     /// `exists` tells whether a row exists now (Outbox and Scheduled only
     /// when they hold something); a row that does not keeps its slot.
-    static func layout(_ order: [String], exists: (String) -> Bool) -> Layout {
+    /// `aboveMore`: rows that are listed above "More" whatever their slot
+    /// (Reminders once something has a reminder, DEC-063), at the end of
+    /// what is above it.
+    static func layout(_ order: [String], exists: (String) -> Bool,
+                       aboveMore: Set<String> = []) -> Layout {
         let split = order.firstIndex(of: moreId) ?? order.endIndex
-        return Layout(above: order[..<split].filter(exists),
-                      under: order[split...].filter { $0 != moreId && exists($0) })
+        var above = order[..<split].filter(exists)
+        var under = order[split...].filter { $0 != moreId && exists($0) }
+        let lifted = under.filter(aboveMore.contains)
+        under.removeAll(where: aboveMore.contains)
+        above += lifted
+        return Layout(above: above, under: under)
     }
 
     /// The order after the listed rows `rows` (as `List.onMove` reports:
@@ -104,11 +108,10 @@ enum SidebarSystemOrder {
                      from: IndexSet, to: Int) -> [String] {
         let moving = from.filter { rows.indices.contains($0) }
         guard !moving.isEmpty else { return order }
-        var moved = rows
-        let items = moving.sorted().map { rows[$0] }
-        for index in moving.sorted(by: >) { moved.remove(at: index) }
-        let insertAt = to - moving.filter { $0 < to }.count
-        moved.insert(contentsOf: items, at: max(0, min(insertAt, moved.count)))
+        let moved = AccountOrder.moved(rows, from: IndexSet(moving),
+                                       to: max(0, min(to, rows.count)))
+        // A drop on the same place changes nothing.
+        guard moved != rows else { return order }
 
         let listed = Set(rows)
         var result = order

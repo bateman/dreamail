@@ -19,19 +19,20 @@ final class SidebarSystemOrderTests: XCTestCase {
                        ["inbox", "starred", "snoozed", "important", "sent", "drafts",
                         "allMail", "trash", "outbox", "more", "scheduled", "reminders",
                         "promotions", "social", "spam"])
-        let with = Order.defaultOrder(hasReminders: true)
-        XCTAssertLessThan(with.firstIndex(of: "reminders")!, with.firstIndex(of: "more")!,
-                          "Reminders sits above More once there is one")
+        XCTAssertEqual(Order.defaultOrder(hasReminders: true),
+                       ["inbox", "starred", "snoozed", "important", "sent", "drafts",
+                        "allMail", "trash", "outbox", "reminders", "more", "scheduled",
+                        "promotions", "social", "spam"],
+                       "Reminders sits above More once there is one")
         XCTAssertEqual(Order.resolve(nil, hasReminders: false),
                        Order.defaultOrder(hasReminders: false))
     }
 
-    func testEveryViewHasAnIdAndBack() {
+    func testEveryRowHasAView() {
         for id in Order.defaultOrder(hasReminders: false) where id != Order.moreId {
-            let view = try? XCTUnwrap(Order.view(for: id), id)
-            XCTAssertEqual(view.flatMap(Order.id(for:)), id)
+            XCTAssertNotNil(Order.view(for: id), id)
         }
-        XCTAssertNil(Order.id(for: .labels))
+        XCTAssertNil(Order.view(for: Order.moreId))
     }
 
     // MARK: Closed More lists nothing under it
@@ -45,16 +46,50 @@ final class SidebarSystemOrderTests: XCTestCase {
         XCTAssertEqual(listed(order).suffix(5), ["scheduled", "reminders", "promotions", "social", "spam"])
     }
 
-    func testMoreIsHiddenWhenNothingIsUnderIt() {
+    func testMoreIsListedEvenWithNothingUnderIt() {
         let order = ["inbox", "starred", "snoozed", "important", "sent", "drafts", "allMail",
                      "trash", "outbox", "scheduled", "reminders", "promotions", "social",
                      "spam", "more"]
         let layout = Order.layout(order, exists: always)
-        XCTAssertFalse(layout.showsMore)
-        XCTAssertFalse(layout.rows(moreOpen: true).contains("more"))
-        // Only rows that do not exist now are under it: hidden as well.
+        XCTAssertTrue(layout.under.isEmpty)
+        XCTAssertEqual(layout.rows(moreOpen: false).last, "more")
+        // Only rows that do not exist now are under it: still listed.
         let onlyConditional = Order.layout(["inbox", "more", "scheduled"]) { $0 != "scheduled" }
-        XCTAssertFalse(onlyConditional.showsMore)
+        XCTAssertEqual(onlyConditional.rows(moreOpen: true), ["inbox", "more"])
+        // A row dropped after the empty More goes under it again.
+        let rows = layout.rows(moreOpen: true)
+        let back = Order.move(order, rows: rows, from: [rows.firstIndex(of: "sent")!], to: rows.count)
+        XCTAssertEqual(Order.layout(back, exists: always).under, ["sent"])
+    }
+
+    /// DEC-063: Reminders is listed above More once something has a
+    /// reminder, wherever an earlier drag left its slot.
+    func testRemindersStayAboveMoreOnceThereIsOne() {
+        let order = Order.defaultOrder(hasReminders: false)
+        var rows = listed(order)
+        // No reminders yet: the user drags Sent to the top; every id is stored.
+        let stored = Order.move(order, rows: rows, from: [rows.firstIndex(of: "sent")!], to: 0)
+        XCTAssertTrue(Order.layout(stored, exists: always).under.contains("reminders"))
+        // A reminder comes due: the stored order has Reminders under More...
+        let resolved = Order.resolve(stored, hasReminders: true)
+        let layout = Order.layout(resolved, exists: always, aboveMore: ["reminders"])
+        XCTAssertEqual(layout.above.last, "reminders", "...but it is listed above it")
+        XCTAssertFalse(layout.under.contains("reminders"))
+        XCTAssertTrue(layout.rows(moreOpen: false).contains("reminders"),
+                      "visible with More closed")
+        // Without reminders the stored slot stands.
+        XCTAssertTrue(Order.layout(resolved, exists: always).under.contains("reminders"))
+        // A drag with Reminders lifted stays consistent.
+        rows = layout.rows(moreOpen: true)
+        let again = Order.move(resolved, rows: rows, from: [0], to: rows.count)
+        XCTAssertEqual(Set(again), Set(resolved))
+    }
+
+    func testDropOnTheSamePlaceChangesNothing() {
+        let order = Order.defaultOrder(hasReminders: false)
+        let rows = listed(order)
+        XCTAssertEqual(Order.move(order, rows: rows, from: [3], to: 3), order)
+        XCTAssertEqual(Order.move(order, rows: rows, from: [3], to: 4), order)
     }
 
     // MARK: Moves
@@ -84,7 +119,7 @@ final class SidebarSystemOrderTests: XCTestCase {
         XCTAssertEqual(layout.rows(moreOpen: true).filter { $0 == "more" }.count, 1)
     }
 
-    func testMoveIntoMoreAndEmptyingItHidesMore() {
+    func testMoveIntoMoreAndEmptyingIt() {
         let order = Order.defaultOrder(hasReminders: false)
         var rows = listed(order)
         // Trash to the very end: under More.
@@ -97,8 +132,9 @@ final class SidebarSystemOrderTests: XCTestCase {
                                to: rows.firstIndex(of: "more")!)
         }
         let layout = Order.layout(moved, exists: always)
-        XCTAssertFalse(layout.showsMore)
+        XCTAssertTrue(layout.under.isEmpty)
         XCTAssertEqual(layout.above.count, 14)
+        XCTAssertTrue(layout.rows(moreOpen: false).contains("more"), "More stays listed")
     }
 
     func testMoveWhileMoreIsClosedPutsTheRowUnderIt() {

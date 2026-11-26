@@ -1878,6 +1878,10 @@ struct Sidebar: View {
                 .padding(.horizontal, 10).padding(.bottom, 8)
                 // Gmail's `/`: focus search.
                 .onChange(of: store.searchFocusToken) { searchFocused = true }
+                // View ▸ Reset Sidebar Order: the sidebar being shown.
+                .onChange(of: store.sidebarOrderResetToken) {
+                    disclosure.setSystemOrder(nil, orderScope)
+                }
                 // Drive the window-level results panel from the field's focus.
                 // Blur is deferred (see noteSearchFocused) so a click on a
                 // result row can land before the panel is torn down.
@@ -1896,8 +1900,9 @@ struct Sidebar: View {
                             }
                     }
                     .onMove { from, to in
-                        disclosure.setSystemOrder(SidebarSystemOrder.move(
-                            systemOrder, rows: systemRows, from: from, to: to), orderScope)
+                        let moved = SidebarSystemOrder.move(
+                            systemOrder, rows: systemRows, from: from, to: to)
+                        if moved != systemOrder { disclosure.setSystemOrder(moved, orderScope) }
                     }
                 }
                 Section {
@@ -2023,7 +2028,8 @@ struct Sidebar: View {
     /// The rows listed now: nothing under a closed "More", the open view
     /// included (the list on the right keeps showing it).
     private var systemRows: [String] {
-        SidebarSystemOrder.layout(systemOrder, exists: systemRowExists)
+        SidebarSystemOrder.layout(systemOrder, exists: systemRowExists,
+                                  aboveMore: hasReminders ? ["reminders"] : [])
             .rows(moreOpen: disclosure.moreOpen)
     }
 
