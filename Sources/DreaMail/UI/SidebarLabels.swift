@@ -159,6 +159,10 @@ struct SidebarLabelRow: View {
                 if showsMenuButton(selected) {
                     Spacer(minLength: 4)
                     LabelMenuButton(node: node, selected: selected, onNewLabel: onNewLabel, onPickColor: pickColor)
+                        // Clear of the list's right edge: flush against it the
+                        // ⋮ was half out of the visible area and the UI test
+                        // found it "not hittable" (a 16 pt box at x 264-280).
+                        .padding(.trailing, 8)
                 }
             }
         } icon: {
