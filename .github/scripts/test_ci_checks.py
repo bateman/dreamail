@@ -30,6 +30,7 @@ check_workflows = load("check-workflows")
 check_test_skips = load("check-test-skips")
 check_package_pins = load("check-package-pins")
 needs_build = load("needs-build")
+integrate_openpgp = load("integrate-openpgp")
 
 
 class TempFiles(unittest.TestCase):
@@ -408,6 +409,135 @@ class NeedsBuildTests(TempFiles):
         self.assertGreater(scanned, 0)
         self.assertEqual(offenders, [], "a test reads a path that needs-build.py skips")
 
+
+class IntegrateOpenPGPTests(unittest.TestCase):
+    """The edits of integrate-openpgp.py, on the repository's own files."""
+
+    COMMIT = "a" * 40
+    CHECKSUM = "b" * 64
+
+    def setUp(self):
+        self.project = (REPO / "project.yml").read_text()
+        self.dependencies = (REPO / "docs" / "DEPENDENCIES.md").read_text()
+        self.changelog = (REPO / "CHANGELOG.md").read_text()
+
+    def new(self, **overrides):
+        values = {"version": "9.8.7", "commit": self.COMMIT, "checksum": self.CHECKSUM,
+                  "date": "1 January 2030", "pgp": "1.2.3", "licence": "MIT OR Apache-2.0",
+                  "crates": 150, "advisories": []}
+        return {**values, **overrides}
+
+    def old(self):
+        return {"version": integrate_openpgp.current_release(self.dependencies),
+                "commit": integrate_openpgp.current_pin(self.project), "checksum": "c" * 64}
+
+    def test_project_pin_and_comment(self):
+        edited = integrate_openpgp.edit_project(self.project, "9.8.7", self.COMMIT)
+        self.assertEqual(integrate_openpgp.current_pin(edited), self.COMMIT)
+        self.assertIn("Release v9.8.7, pinned", edited)
+        # GRDB's pin is untouched.
+        grdb = re.search(r"^  GRDB:\n    url: \S+\n    revision: (\S+)$", self.project, re.M).group(0)
+        self.assertIn(grdb, edited)
+
+    def test_dependencies_only_the_openpgp_section(self):
+        edited = integrate_openpgp.edit_dependencies(self.dependencies, self.old(), self.new())
+        start, end = integrate_openpgp.openpgp_section(self.dependencies)
+        self.assertEqual(edited[:start], self.dependencies[:start])
+        self.assertTrue(edited.endswith(self.dependencies[end:]))
+        section = integrate_openpgp.section(edited)
+        for text in ("| Release | `v9.8.7` |", f"`{self.COMMIT}`", f"`{self.CHECKSUM}`",
+                     "| Recorded | 1 January 2030 |", "(`pgp` =1.2.3, MIT OR Apache-2.0) and 150 crates",
+                     "from the `v9.8.7` GitHub release", "Recorded for `v9.8.7`"):
+            self.assertIn(text, section)
+        self.assertEqual(integrate_openpgp.current_release(edited), "9.8.7")
+        self.assertTrue(all(len(line) <= 76 for line in section.split("Recorded for `v9.8.7`")[1]
+                            .split("\n\n")[0].splitlines()))
+
+    def test_advisories_read_from_the_table(self):
+        self.assertEqual(integrate_openpgp.table_advisories(self.dependencies),
+                         ["RUSTSEC-2023-0071", "RUSTSEC-2026-0387"])
+
+    def test_changelog_entry_first_under_unreleased(self):
+        edited = integrate_openpgp.edit_changelog(self.changelog, "9.8.7", "1.2.3")
+        after = edited.split("## [Unreleased]\n\n", 1)[1]
+        self.assertTrue(after.startswith("- The OpenPGP library moves to v9.8.7"))
+
+    def test_missing_row_fails(self):
+        with self.assertRaises(integrate_openpgp.Failure):
+            integrate_openpgp.edit_dependencies(
+                self.dependencies.replace("| Recorded |", "| Noted |"), self.old(), self.new())
+
+    def test_package_fields(self):
+        manifest = 'let version = "1.2.3"\nlet checksum = "' + self.CHECKSUM + '"\n'
+        self.assertEqual(integrate_openpgp.package_fields(manifest), ("1.2.3", self.CHECKSUM))
+        with self.assertRaises(integrate_openpgp.Failure):
+            integrate_openpgp.package_fields("let version = v\n")
+
+
+    def test_pinning_commit_is_the_one_that_set_the_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+
+            def commit(manifest):
+                (repo / "Package.swift").write_text(manifest)
+                subprocess.run(["git", "add", "Package.swift"], cwd=repo, check=True)
+                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                "commit", "-qm", "c"], cwd=repo, check=True)
+                return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            commit('let version = "0.0.0"  // no release yet\n')
+            setter = commit('let version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\n')
+            commit('// renamed\nlet version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\n')
+            self.assertEqual(integrate_openpgp.pinning_commit(repo, "1.0.0", "HEAD"), setter)
+            with self.assertRaisesRegex(integrate_openpgp.Failure, "pull request merged"):
+                integrate_openpgp.pinning_commit(repo, "2.0.0", "HEAD")
+
+    def test_pipeline_paths(self):
+        for path in (".github", "scripts", ".cargo", "rust/.cargo", "rust/deny.toml",
+                     "rust/rust-toolchain.toml", "rust/rust-toolchain"):
+            self.assertIn(path, integrate_openpgp.PIPELINE)
+
+    def test_manifest_shape_ignores_only_version_and_checksum(self):
+        a = 'let version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\nproducts\n'
+        b = 'let version = "1.0.1"\nlet checksum = "' + "d" * 64 + '"\nproducts\n'
+        self.assertEqual(integrate_openpgp.manifest_shape(a), integrate_openpgp.manifest_shape(b))
+        self.assertNotEqual(integrate_openpgp.manifest_shape(a),
+                            integrate_openpgp.manifest_shape(b + '.package(url: "x", branch: "main")\n'))
+
+    def test_deny_advisories_both_forms(self):
+        text = ('[advisories]\nignore = [\n  { id = "RUSTSEC-2023-0071", reason = "r" },\n'
+                '  "RUSTSEC-2026-0001",\n  # { id = "RUSTSEC-1999-0001" },\n]\n')
+        self.assertEqual(integrate_openpgp.deny_advisories(text),
+                         ["RUSTSEC-2023-0071", "RUSTSEC-2026-0001"])
+
+    def test_values_are_inserted_literally(self):
+        edited = integrate_openpgp.edit_dependencies(
+            self.dependencies, self.old(), self.new(licence="MIT \\g<0> \\n"))
+        self.assertIn("(`pgp` =1.2.3, MIT \\g<0> \\n) and 150 crates", edited)
+
+    def test_licence_and_version_patterns(self):
+        self.assertTrue(integrate_openpgp.LICENCE.match("MIT OR Apache-2.0"))
+        self.assertFalse(integrate_openpgp.LICENCE.match("MIT\n## Injected"))
+        self.assertFalse(integrate_openpgp.LICENCE.match("MIT [x](https://e.invalid) @someone"))
+        self.assertFalse(integrate_openpgp.SEMVER.match("\u0663.0.0"))
+
+    def test_review_reasons(self):
+        m = 'let version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\nproducts\n'
+        m2 = m.replace("1.0.0", "1.0.1")
+        adv = ["RUSTSEC-2023-0071"]
+        reasons = integrate_openpgp.review_reasons
+        self.assertEqual(reasons(m2, m, [], adv, adv), [])
+        self.assertEqual(len(reasons(m2 + "targets\n", m, [], adv, adv)), 1)
+        self.assertIn("`.github/workflows/release.yml`",
+                      reasons(m2, m, [".github/workflows/release.yml"], adv, adv)[0])
+        self.assertIn("advisories", reasons(m2, m, [], adv, adv + ["RUSTSEC-2026-0001"])[0])
+        self.assertEqual(len(reasons(m2 + "x\n", m, ["scripts/a.sh"], adv, [])), 3)
+
+    def test_deny_advisories_rejects_free_text(self):
+        with self.assertRaises(integrate_openpgp.Failure):
+            integrate_openpgp.deny_advisories('[advisories]\nignore = ["approved in DEC-051 @someone"]\n')
 
 if __name__ == "__main__":
     unittest.main()
