@@ -269,6 +269,7 @@ struct SignatureSettings: View {
                     GridRow {
                         Text(email).lineLimit(1).truncationMode(.middle)
                             .frame(width: Self.addressColumnWidth, alignment: .leading)
+                            .help(email)
                         defaultPicker(email: email, use: .newMessage)
                         defaultPicker(email: email, use: .reply)
                     }
@@ -277,8 +278,10 @@ struct SignatureSettings: View {
         }
     }
 
-    private static let pickerColumnWidth: CGFloat = 190
-    private static let addressColumnWidth: CGFloat = 220
+    // The Settings window is 800 wide: 800 - 190 sidebar - 1 divider - 40 padding
+    // leaves 569 for the pane. 170 + 2 * 160 + 2 * 14 = 518 keeps a margin.
+    private static let pickerColumnWidth: CGFloat = 160
+    private static let addressColumnWidth: CGFloat = 170
 
     private func defaultPicker(email: String, use: SignatureUse) -> some View {
         let isPrimary = email.caseInsensitiveCompare(accountId) == .orderedSame
