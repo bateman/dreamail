@@ -155,7 +155,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(plus.waitForExistence(timeout: 10))
         let addView = app.buttons["Add view"]
         XCTAssertTrue(addView.waitForExistence(timeout: 10))
-        if !addView.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -400) }
+        XCTAssertTrue(reveal(addView, in: app), "Add view can be scrolled to")
         let glyph = addView.images.firstMatch
         XCTAssertTrue(glyph.exists, "the Add view row has its + glyph")
         print("SidebarLabelMenu: Labels + \(plus.frame), Add view + \(glyph.frame)")
