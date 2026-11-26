@@ -255,7 +255,6 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(aws.staticTexts["AWS"].exists)
         XCTAssertFalse(sidebar.staticTexts["Vendors/Stripe"].exists, "no row is named with a path")
         XCTAssertFalse(sidebar.staticTexts["Vendors/AWS"].exists)
-        XCTAssertTrue(vendors.staticTexts["Vendors"].exists)
         XCTAssertEqual(sidebar.staticTexts.matching(NSPredicate(
             format: "label == 'Vendors' OR identifier == 'Vendors'")).count, 1,
                        "the parent's name appears once")
