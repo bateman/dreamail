@@ -429,7 +429,7 @@ struct AccentSelectionBackground: View {
     /// Sidebar rows (main window and Settings): nil unless the app paints
     /// this row, so the system draws everything else exactly as before.
     static func sidebar(selected: Bool, accent: MailAccent) -> AccentSelectionBackground? {
-        accent.paintsSelection || (selected && accent.keepsSelectionColor)
+        accent.keepsSelectionColor
             ? AccentSelectionBackground(selected: selected, accent: accent,
                                         cornerRadius: sidebarCornerRadius)
             : nil
@@ -469,19 +469,18 @@ struct AccentSelectionBackground: View {
     }
 }
 
-/// Ink for a selected row's text and glyphs where the app paints the
-/// selection (`AccentSelectionBackground`): the rule's `onFill` (white or
-/// black) on a custom accent, in every state; on the default accent white
-/// where AppKit would not (unfocused list, inactive window: its ink is
-/// dark on grey). Nil elsewhere, and the row draws its usual colours
-/// (AppKit turns them white on its own emphasized highlight). Callers pass
-/// whether the row is the selected one.
+/// Ink for a selected row's text and glyphs where the app keeps the
+/// selection colour (`AccentSelectionBackground`), in every state, focused
+/// or not, so the row looks the same whatever has the focus: the rule's
+/// `onFill` (white or black) on a custom accent, the emphasized selection
+/// ink (white) on the default one. Nil elsewhere, and the row draws its
+/// usual colours. Callers pass whether the row is the selected one; the
+/// prominence is not needed any more.
 enum SelectionInk {
     static func color(selected: Bool, prominence: BackgroundProminence,
                       accent: MailAccent) -> Color? {
         guard selected, accent.keepsSelectionColor else { return nil }
-        if accent.isCustom { return accent.onFill }
-        return prominence == .increased ? nil : Color.mailOnEmphasizedSelection
+        return accent.isCustom ? accent.onFill : Color.mailOnEmphasizedSelection
     }
 }
 

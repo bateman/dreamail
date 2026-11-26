@@ -379,11 +379,13 @@ final class AccentColorTests: XCTestCase {
                 XCTAssertEqual(SelectionInk.color(selected: true, prominence: prominence, accent: red),
                                red.onFill)
             }
-            // Default: AppKit's own ink when emphasized; the emphasized
-            // selection ink where AppKit would draw grey.
-            XCTAssertNil(SelectionInk.color(selected: true, prominence: .increased, accent: .default))
-            XCTAssertEqual(SelectionInk.color(selected: true, prominence: .standard, accent: .default),
-                           Color.mailOnEmphasizedSelection)
+            // Default: the emphasized selection ink in both states, so the
+            // row (star, draft tag, category pill) does not change look
+            // when the focus leaves.
+            for prominence in [BackgroundProminence.increased, .standard] {
+                XCTAssertEqual(SelectionInk.color(selected: true, prominence: prominence, accent: .default),
+                               Color.mailOnEmphasizedSelection)
+            }
         } else {
             XCTAssertFalse(red.paintsSelection)
             XCTAssertFalse(red.keepsSelectionColor)

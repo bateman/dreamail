@@ -1912,10 +1912,14 @@ struct Sidebar: View {
                             Image(systemName: "plus")
                                 .font(.system(size: 16, weight: .regular))
                                 .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-                                .frame(width: 24, height: 24)
+                                // Layout height of a header line (the glyph
+                                // overflows it), hit area padded outside it.
+                                .frame(width: 22, height: 14)
+                                .padding(4)
                                 .contentShape(Rectangle())
+                                .padding(-4)
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.plain)
                         .help("Create new label")
                         .accessibilityLabel("Create new label")
                         .accessibilityIdentifier("sidebar.labels.add")
@@ -2124,7 +2128,7 @@ struct Sidebar: View {
         }
         .listItemTint(.monochrome)
         .modifier(SidebarCount(count: badge ?? 0, selected: selected,
-                               painted: accent.paintsSelection || (selected && accent.keepsSelectionColor)))
+                               painted: accent.keepsSelectionColor))
         .environment(\.sidebarRowSelected, selected)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
         // The selection capsule in the custom accent (`AccentSelectionBackground`).

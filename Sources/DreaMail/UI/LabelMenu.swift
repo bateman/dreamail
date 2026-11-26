@@ -92,6 +92,9 @@ struct LabelMenuButton: View {
             // it): the secondary label colour, the selection ink on the
             // painted selection (`SidebarBadgeStyle`). The frame is the
             // rotated glyph's, so the hit area is as tall as the dots.
+            // `.menuStyle(.button)` + `.buttonStyle(.plain)`: SwiftUI draws
+            // this label itself (a borderless menu is drawn by AppKit,
+            // which ignored the rotation and the colour).
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .regular))
                 .rotationEffect(.degrees(90))
@@ -99,7 +102,8 @@ struct LabelMenuButton: View {
                 .frame(width: 16, height: 18)
                 .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Options")

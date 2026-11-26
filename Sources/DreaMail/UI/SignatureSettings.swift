@@ -261,9 +261,7 @@ struct SignatureSettings: View {
                 GridRow {
                     Text("Address").font(.system(size: 11, weight: .medium))
                     Text("New messages").font(.system(size: 11, weight: .medium))
-                        .gridColumnAlignment(.leading)
                     Text("Replies and forwards").font(.system(size: 11, weight: .medium))
-                        .gridColumnAlignment(.leading)
                 }
                 .foregroundStyle(.secondary)
                 ForEach(addresses, id: \.self) { email in
@@ -309,8 +307,8 @@ struct SignatureSettings: View {
         .labelsHidden()
         // Every picker fills the same fixed column and starts at its
         // header's leading edge, whatever its title (long names truncate).
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(width: Self.pickerColumnWidth, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .frame(width: Self.pickerColumnWidth)
         .accessibilityLabel(use == .newMessage ? "Default for new messages from \(email)"
                                                : "Default for replies and forwards from \(email)")
     }

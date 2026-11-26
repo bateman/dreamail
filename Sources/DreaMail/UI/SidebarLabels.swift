@@ -171,7 +171,7 @@ struct SidebarLabelRow: View {
         // Gmail's "⋮" takes the count's place on hover; on the open label it
         // is drawn beside the count, which stays.
         .modifier(SidebarCount(count: hidesCount ? 0 : unread, selected: selected,
-                               painted: accent.paintsSelection || (selected && accent.keepsSelectionColor)))
+                               painted: accent.keepsSelectionColor))
         .environment(\.sidebarRowSelected, selected)
         .help(node.fullName)
         // A container, so the "⋮" in the title stays its own element (for

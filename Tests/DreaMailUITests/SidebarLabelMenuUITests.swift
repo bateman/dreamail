@@ -74,6 +74,9 @@ final class SidebarLabelMenuUITests: XCTestCase {
         research.hover()
         let dots = element("sidebar.label.menu.\(account).Label_research", in: app)
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "hovering a label shows its ⋮")
+        // Gmail's "⋮" is vertical: its box is taller than wide (the old
+        // horizontal ellipsis, drawn by AppKit, was wider than tall).
+        XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
         dots.click()
         let items: [(String, String)] = [
             ("labelMenu.color", "Label color"),
