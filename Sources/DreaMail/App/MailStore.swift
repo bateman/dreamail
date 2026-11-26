@@ -4345,7 +4345,7 @@ struct ComposeRequest: Identifiable {
     /// "Use Gmail's Order": forgets the order dragged in Organize Labels for
     /// this account; the sidebar and the sheet follow Gmail's order again.
     func resetLabelOrder(account accountId: String) {
-        try? db.write { db in try LabelRow.clearStoredOrder(db, accountId: accountId) }
+        _ = try? db.write { db in try LabelRow.clearStoredOrder(db, accountId: accountId) }
         reloadAccounts()
     }
 
