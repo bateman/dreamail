@@ -1865,6 +1865,11 @@ struct ComposeRequest: Identifiable {
         // the launch path so a future "defer more" pass does not re-open the
         // window that put it in runDeferredStartupWork.
         loadBlocked()
+        // A crash or force quit leaves the last number on the Dock icon (the
+        // system keeps it). Clear it before the first recount can paint:
+        // `reloadThreads` hops to the main actor later, and its `setBadge`
+        // goes after this one.
+        Notifier.setBadge(0)
         reloadThreads()
         startupTask = Task { await self.runDeferredStartupWork() }
         // The opt-in MCP server starts in runDeferredStartupWork, not here:

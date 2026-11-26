@@ -91,13 +91,8 @@ enum Notifier {
     static func clearBadge(timeout: Duration = .seconds(1)) async {
         badgeRequest += 1 // a late `setBadge` callback must not repaint
         NSApplication.shared.dockTile.badgeLabel = ""
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                try? await UNUserNotificationCenter.current().setBadgeCount(0)
-            }
-            group.addTask { try? await Task.sleep(for: timeout) }
-            await group.next()
-            group.cancelAll()
+        await BoundedWait.run(timeout: timeout) { done in
+            UNUserNotificationCenter.current().setBadgeCount(0) { _ in done() }
         }
     }
 

@@ -13,10 +13,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Apply a forced Light/Dark theme before the first window draws so a
         // non-system choice doesn't flash the system appearance at launch.
         AppTheme.apply(.current)
-        // A crash or force quit leaves the last number on the Dock icon
-        // (the system keeps it). Clear it now; the first recount paints
-        // the real count after it, since system calls run in order.
-        Notifier.setBadge(0)
         // Compile the remote-image content rule once so the first message open
         // never pays the WKContentRuleList async hop.
         HTMLRemoteImageBlocker.prepareAtLaunch()
