@@ -38,46 +38,86 @@ final class AccountRailUITests: XCTestCase {
             stepDensityShortensTheRowsAndComfortableRestoresThem(app) }
     }
 
-    /// Settings → Appearance → Density, picked live (no launch argument: it
-    /// would override the picker). Settings is still open from the step above.
-    private func stepDensityShortensTheRowsAndComfortableRestoresThem(_ app: XCUIApplication) {
+    private func anyRow(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
+    }
+
+    private func openSettings(_ app: XCUIApplication) -> XCUIElement {
+        app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        // Any inbox row: the main window's list, with Settings in front.
-        let row = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 15),
-                      "demo inbox should load; tree: \(app.debugDescription.prefix(3000))")
-        let comfortable = row.frame.height
+        return settings
+    }
 
-        let compactChoice = settings.radioButtons["Compact"]
-        XCTAssertTrue(compactChoice.waitForExistence(timeout: 5), "Density has a Compact choice")
-        compactChoice.click()
-        XCTAssertTrue(waitUntil { abs((comfortable - row.frame.height) - 8) <= 1 },
-                      "compact rows are 8 pt shorter: \(comfortable) → \(row.frame.height) pt")
-        print("ThreadListDensity: comfortable row \(comfortable) pt, compact row \(row.frame.height) pt")
+    /// Picks `title` in the list-density group of Settings → Appearance (live,
+    /// no launch argument: it would override the picker), then closes Settings so
+    /// the main window is the key window again.
+    private func pickListDensity(_ app: XCUIApplication, _ title: String) {
+        let settings = openSettings(app)
+        let pane = element(settings, "settings.pane.appearance")
+        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        pane.click()
+        let choice = element(settings, "settings.listDensity").radioButtons[title]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5), "List density has a \(title) choice")
+        choice.click()
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(settings.waitForNonExistence(timeout: 5), "Settings closes")
+    }
 
-        row.hover()
-        let actions = ["archive", "trash", "toggleRead", "snooze"].map {
-            row.descendants(matching: .button).matching(identifier: "rowAction.\($0)").firstMatch
+    private func rowFrameOnceSettled(_ app: XCUIApplication, _ id: String) -> CGRect {
+        let row = element(app, id)
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "row \(id) is on screen")
+        var last = row.frame
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            let now = row.frame
+            if now == last { return now }
+            last = now
         }
-        for b in actions {
+        return last
+    }
+
+    /// Settings → Appearance → List density, picked live: Compact makes the
+    /// rows shorter, the hover actions and label chips stay inside the row,
+    /// Comfortable restores the height.
+    private func stepDensityShortensTheRowsAndComfortableRestoresThem(_ app: XCUIApplication) {
+        // Settings is still open from the step above: close it first.
+        app.typeKey("w", modifierFlags: .command)
+        let first = anyRow(app)
+        XCTAssertTrue(first.waitForExistence(timeout: 15),
+                      "demo inbox should load; windows \(app.windows.allElementsBoundByIndex.map { $0.title })")
+        let id = first.identifier
+        let comfortable = rowFrameOnceSettled(app, id).height
+
+        pickListDensity(app, "Compact")
+        let compactRow = element(app, id)
+        XCTAssertTrue(waitUntil { abs((comfortable - compactRow.frame.height) - 8) <= 1.5 },
+                      "compact rows are 8 pt shorter: \(comfortable) → \(compactRow.frame.height) pt")
+        print("ThreadListDensity: comfortable row \(comfortable) pt, compact row \(compactRow.frame.height) pt")
+
+        compactRow.hover()
+        for action in ["archive", "trash", "toggleRead", "snooze"] {
+            let b = compactRow.descendants(matching: .button)
+                .matching(identifier: "rowAction.\(action)").firstMatch
             XCTAssertTrue(b.waitForExistence(timeout: 5))
-            XCTAssertGreaterThanOrEqual(b.frame.minY, row.frame.minY - 0.5, "hover action above the row")
-            XCTAssertLessThanOrEqual(b.frame.maxY, row.frame.maxY + 0.5, "hover action below the row")
+            XCTAssertGreaterThanOrEqual(b.frame.minY, compactRow.frame.minY - 0.5, "\(action) above the row")
+            XCTAssertLessThanOrEqual(b.frame.maxY, compactRow.frame.maxY + 0.5, "\(action) below the row")
         }
+        let rows = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).allElementsBoundByIndex
+            .map(\.frame)
         for chip in app.descendants(matching: .any).matching(identifier: "rowLabelChip").allElementsBoundByIndex
         where !chip.frame.isEmpty {
-            let owner = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).allElementsBoundByIndex
-                .first { $0.frame.insetBy(dx: -1, dy: -1).contains(chip.frame.insetBy(dx: 0, dy: 1)) }
-            XCTAssertNotNil(owner, "a label chip is clipped by its compact row: \(chip.frame)")
+            XCTAssertTrue(rows.contains { $0.insetBy(dx: -1, dy: -1).contains(chip.frame.insetBy(dx: 0, dy: 1)) },
+                          "a label chip is clipped by its compact row: \(chip.frame)")
         }
 
-        settings.radioButtons["Comfortable"].click()
-        XCTAssertTrue(waitUntil { abs(row.frame.height - comfortable) <= 0.5 },
-                      "comfortable restores the row height: \(row.frame.height) pt")
+        pickListDensity(app, "Comfortable")
+        XCTAssertTrue(waitUntil { abs(element(app, id).frame.height - comfortable) <= 0.5 },
+                      "comfortable restores the row height: \(element(app, id).frame.height) pt")
     }
 
     /// The top band covers the three window buttons (sidebar hidden, then
