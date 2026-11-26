@@ -16,7 +16,7 @@ struct SidebarLabelNode: Identifiable, Hashable, Sendable {
     /// What the row shows: the name after the parent's, e.g. `hotmail`. A
     /// label whose parent does not exist keeps the rest of its path (`b/c`
     /// under `a` when `a/b` is missing; `x/y` at the top when `x` is).
-    let displayName: String
+    var displayName: String
     let colors: LabelColors
     let visibility: Visibility
     var children: [SidebarLabelNode]
@@ -112,9 +112,12 @@ enum SidebarLabelTree {
 
     /// Gmail's two lists: labels shown in the list, and those behind the
     /// labels' trailing "More" row (hidden, or shown only when unread and
-    /// read now). A listed label under an unlisted parent stays under it, so
-    /// the parent appears in the list as its container; an unlisted label
-    /// under a listed parent appears in "More" under its parent likewise.
+    /// read now). A label is never in both. A listed label under an unlisted
+    /// parent stays under it, so the parent appears in the list as its
+    /// container (and not again under "More"). An unlisted label under a
+    /// listed parent is a row of its own under "More", named by its path from
+    /// that listed ancestor (`parent/child`); unlisted labels under an
+    /// unlisted parent keep their nesting there.
     static func split(_ roots: [SidebarLabelNode],
                       unread: (SidebarLabelNode) -> Int)
         -> (listed: [SidebarLabelNode], more: [SidebarLabelNode]) {
@@ -123,33 +126,42 @@ enum SidebarLabelTree {
         for root in roots {
             let parts = split(root, unread: unread)
             if let l = parts.listed { listed.append(l) }
-            if let m = parts.more { more.append(m) }
+            more.append(contentsOf: parts.more)
         }
         return (listed, more)
     }
 
+    /// `more`: for a listed node, its unlisted descendants as rows of their
+    /// own (already named from it); for an unlisted node, itself with its
+    /// unlisted children nested (empty when it is listed as a container).
     private static func split(_ node: SidebarLabelNode,
                               unread: (SidebarLabelNode) -> Int)
-        -> (listed: SidebarLabelNode?, more: SidebarLabelNode?) {
+        -> (listed: SidebarLabelNode?, more: [SidebarLabelNode]) {
         var listedKids: [SidebarLabelNode] = []
-        var moreKids: [SidebarLabelNode] = []
+        var kidRows: [(listed: Bool, rows: [SidebarLabelNode])] = []
         for child in node.children {
             let parts = split(child, unread: unread)
             if let l = parts.listed { listedKids.append(l) }
-            if let m = parts.more { moreKids.append(m) }
+            kidRows.append((parts.listed != nil, parts.more))
         }
         let own = node.visibility.isListed(unread: unread(node))
-        var listed: SidebarLabelNode?
-        if own || !listedKids.isEmpty {
+        guard own || !listedKids.isEmpty else {
             var copy = node
-            copy.children = listedKids
-            listed = copy
+            copy.children = kidRows.flatMap(\.rows)
+            return (nil, [copy])
         }
-        var more: SidebarLabelNode?
-        if !own || !moreKids.isEmpty {
-            var copy = node
-            copy.children = moreKids
-            more = copy
+        var listed = node
+        listed.children = listedKids
+        var more: [SidebarLabelNode] = []
+        for kid in kidRows {
+            if kid.listed {
+                more.append(contentsOf: kid.rows)
+            } else {
+                for var row in kid.rows {
+                    row.displayName = "\(node.displayName)/\(row.displayName)"
+                    more.append(row)
+                }
+            }
         }
         return (listed, more)
     }

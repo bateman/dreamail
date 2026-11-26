@@ -268,6 +268,7 @@ struct SignatureSettings: View {
                 ForEach(addresses, id: \.self) { email in
                     GridRow {
                         Text(email).lineLimit(1).truncationMode(.middle)
+                            .frame(width: Self.addressColumnWidth, alignment: .leading)
                         defaultPicker(email: email, use: .newMessage)
                         defaultPicker(email: email, use: .reply)
                     }
@@ -277,6 +278,7 @@ struct SignatureSettings: View {
     }
 
     private static let pickerColumnWidth: CGFloat = 190
+    private static let addressColumnWidth: CGFloat = 220
 
     private func defaultPicker(email: String, use: SignatureUse) -> some View {
         let isPrimary = email.caseInsensitiveCompare(accountId) == .orderedSame
@@ -294,24 +296,39 @@ struct SignatureSettings: View {
                         choice: isPrimary && choice == .none ? .followPrimary : choice)
                 }
             })
-        return Picker("", selection: binding) {
-            if !isPrimary {
-                Text("Same as \(accountId)").tag(SignatureDefaultChoice.followPrimary)
+        let title: String = {
+            switch binding.wrappedValue {
+            case .followPrimary: return "Same as \(accountId)"
+            case .none: return "No signature"
+            case .signature(let id): return signatures.first { $0.id == id }?.name ?? "No signature"
             }
-            Text("No signature").tag(SignatureDefaultChoice.none)
-            ForEach(signatures) { signature in
-                if let id = signature.id {
-                    Text(signature.name).tag(SignatureDefaultChoice.signature(id))
+        }()
+        // A `Menu` whose label fills the column: a menu-style `Picker` keeps
+        // its own width and centres in the frame, so the left edges and the
+        // widths differed from row to row.
+        return Menu {
+            Picker("", selection: binding) {
+                if !isPrimary {
+                    Text("Same as \(accountId)").tag(SignatureDefaultChoice.followPrimary)
+                }
+                Text("No signature").tag(SignatureDefaultChoice.none)
+                ForEach(signatures) { signature in
+                    if let id = signature.id {
+                        Text(signature.name).tag(SignatureDefaultChoice.signature(id))
+                    }
                 }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(title).lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .labelsHidden()
-        // Every picker fills the same fixed column and starts at its
-        // header's leading edge, whatever its title (long names truncate).
-        .frame(maxWidth: .infinity)
-        .frame(width: Self.pickerColumnWidth)
+        .menuStyle(.borderedButton)
+        .frame(width: Self.pickerColumnWidth, alignment: .leading)
         .accessibilityLabel(use == .newMessage ? "Default for new messages from \(email)"
                                                : "Default for replies and forwards from \(email)")
+        .accessibilityIdentifier("settings.signatures.default.\(use == .newMessage ? "new" : "reply").\(email)")
     }
 }
 

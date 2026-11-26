@@ -63,6 +63,20 @@ final class SidebarDisclosureModel {
     }
 }
 
+/// Compact sidebar density: trims the row's vertical space (`SidebarDensity
+/// .rowVerticalTrim`); Comfortable adds nothing. Not on section headers.
+struct SidebarRowDensity: ViewModifier {
+    @AppStorage(SidebarDensity.storageKey) private var raw = SidebarDensity.comfortable.rawValue
+
+    func body(content: Content) -> some View {
+        content.padding(.vertical, -SidebarDensity.from(raw: raw).rowVerticalTrim)
+    }
+}
+
+extension View {
+    func sidebarRowDensity() -> some View { modifier(SidebarRowDensity()) }
+}
+
 /// What the "+" next to Labels, or a label's "Add sublabel…", opens.
 struct NewLabelRequest: Identifiable {
     let id = UUID()
@@ -168,6 +182,7 @@ struct SidebarLabelRow: View {
             SidebarLabelTag(colors: node.colors)
         }
         .listItemTint(.monochrome)
+        .sidebarRowDensity()
         // Gmail's "⋮" takes the count's place on hover; on the open label it
         // is drawn beside the count, which stays.
         .modifier(SidebarCount(count: hidesCount ? 0 : unread, selected: selected,
@@ -251,6 +266,7 @@ struct SidebarMoreToggle: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .sidebarRowDensity()
         .accessibilityIdentifier(identifier)
     }
 }
