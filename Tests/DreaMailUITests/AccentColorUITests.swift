@@ -270,7 +270,7 @@ final class AccentColorUITests: XCTestCase {
     /// The selected thread row's leading edge, left of its content (inside
     /// the list's own padding, which the row's band covers).
     private static func threadEdge(strip: CGRect) -> CGRect {
-        CGRect(x: strip.minX - 40, y: strip.minY, width: 32, height: strip.height)
+        CGRect(x: strip.minX - 40, y: strip.minY, width: 50, height: strip.height)
     }
 
     /// Pixels that differ clearly between two captures of the same rect.
