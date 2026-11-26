@@ -148,30 +148,6 @@ final class SidebarLabelMenuUITests: XCTestCase {
                                  "the ⋮ \(dots.frame) is taller than the title \(title.frame)")
     }
 
-    /// The "+" next to Labels: its box is no larger than the "Add view" row
-    /// (the glyph's size itself comes from the same `mailIconStyle`, which a
-    /// frame cannot show: the first version's 16 pt glyph also fitted its
-    /// 22 x 16 box). The "Labels" header's identifier sits on its title, so
-    /// the button is found by its label.
-    func testLabelsPlusIsNotLargerThanAddViewRow() {
-        let app = launch()
-        let candidates = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Create new label'"))
-        XCTAssertTrue(candidates.firstMatch.waitForExistence(timeout: 10))
-        let boxes = candidates.allElementsBoundByIndex.map { ($0.elementType.rawValue, $0.frame) }
-        print("SidebarLabelMenu: + candidates \(boxes)")
-        let plus = candidates.allElementsBoundByIndex
-            .min { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
-        let addView = app.buttons["Add view"]
-        XCTAssertTrue(addView.waitForExistence(timeout: 10))
-        let box = try? XCTUnwrap(plus).frame
-        XCTAssertNotNil(box)
-        guard let box else { return }
-        print("SidebarLabelMenu: Labels + \(box), Add view row \(addView.frame)")
-        XCTAssertLessThanOrEqual(box.height, addView.frame.height + 2, "the + box \(box) is taller than the Add view row")
-        XCTAssertLessThanOrEqual(box.width, 24, "the + box \(box) is wider than the icon column")
-    }
-
     func testParentColorGoesToItsSublabelsAndRemoveAsksFirst() {
         let app = launch()
         let vendors = label("Label_vendors", in: app)

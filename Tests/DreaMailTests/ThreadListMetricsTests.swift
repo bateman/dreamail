@@ -28,8 +28,8 @@ final class ThreadListMetricsTests: XCTestCase {
     func testSidebarDensity() {
         XCTAssertEqual(SidebarDensity.comfortable.minRowHeight, 30)
         XCTAssertLessThan(SidebarDensity.compact.minRowHeight, 30)
-        XCTAssertNil(SidebarDensity.comfortable.rowVerticalInset)
-        XCTAssertEqual(SidebarDensity.compact.rowVerticalInset, 3)
+        XCTAssertNil(SidebarDensity.comfortable.listRowSize)
+        XCTAssertEqual(SidebarDensity.compact.listRowSize, .small)
         XCTAssertEqual(SidebarDensity.from(raw: "nope"), .comfortable)
         XCTAssertEqual(SidebarDensity.from(raw: ""), .comfortable)
         XCTAssertEqual(SidebarDensity.from(raw: "compact"), .compact)

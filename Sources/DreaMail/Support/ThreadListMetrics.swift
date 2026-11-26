@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Gmail's "Density" setting for the thread list: Comfortable (the default)
 /// or Compact. App-wide, stored in UserDefaults.
@@ -64,9 +65,11 @@ enum SidebarDensity: String, CaseIterable, Identifiable {
     /// Minimum height of a sidebar row, in points. Icons and fonts keep their size.
     var minRowHeight: Double { self == .compact ? 22 : 30 }
 
-    /// Vertical row inset, above and below a sidebar row's content, in
-    /// points. The system's own insets set the row's height (the minimum
-    /// above never reached it, and a negative padding inside the row did not
-    /// either). Comfortable has none: the system's default stays.
-    var rowVerticalInset: Double? { self == .compact ? 3 : nil }
+    /// The system row size the sidebar list is drawn with: Compact asks for
+    /// the small one (the system sets the row's height from it; a minimum
+    /// row height, a row inset and a negative padding did not move it).
+    /// Comfortable keeps the user's own "Sidebar icon size" setting (`nil`).
+    /// Glyph and title sizes stay those of the user's setting
+    /// (`mailRowSizeOverride`).
+    var listRowSize: SidebarRowSize? { self == .compact ? .small : nil }
 }

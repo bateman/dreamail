@@ -36,7 +36,7 @@ struct MailIconMetrics: Equatable {
 private struct MailIconModifier: ViewModifier {
     let selected: Bool
     /// The "Sidebar icon size" setting (macOS 14+, this app's minimum).
-    @Environment(\.sidebarRowSize) private var rowSize
+    @Environment(\.mailRowSize) private var rowSize
     /// `.increased` inside a row drawn over the emphasized (accent) selection.
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
@@ -50,6 +50,22 @@ private struct MailIconModifier: ViewModifier {
             .foregroundStyle(.mailIcon(selected: selected, prominence: prominence, accent: accent))
             .frame(width: metrics.columnWidth)
     }
+}
+
+private struct MailRowSizeOverrideKey: EnvironmentKey {
+    static let defaultValue: SidebarRowSize? = nil
+}
+
+extension EnvironmentValues {
+    /// Set by a Compact sidebar: the row size the user chose, while the list
+    /// itself is drawn with the small one. Glyphs and titles keep that size.
+    var mailRowSizeOverride: SidebarRowSize? {
+        get { self[MailRowSizeOverrideKey.self] }
+        set { self[MailRowSizeOverrideKey.self] = newValue }
+    }
+
+    /// The row size glyph and title metrics follow.
+    var mailRowSize: SidebarRowSize { mailRowSizeOverride ?? sidebarRowSize }
 }
 
 private struct SidebarRowSelectedKey: EnvironmentKey {
@@ -69,9 +85,14 @@ private struct MailRowTitleModifier: ViewModifier {
     @Environment(\.sidebarRowSelected) private var selected
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
+    @Environment(\.mailRowSizeOverride) private var sizeOverride
 
     func body(content: Content) -> some View {
-        content.foregroundStyle(.mailRowTitle(selected: selected, prominence: prominence, accent: accent))
+        // Only in a Compact sidebar: the title keeps the size of the user's
+        // row size, whatever the list draws.
+        content
+            .font(sizeOverride.map { .system(size: MailIconMetrics(rowSize: $0).pointSize) })
+            .foregroundStyle(.mailRowTitle(selected: selected, prominence: prominence, accent: accent))
     }
 }
 

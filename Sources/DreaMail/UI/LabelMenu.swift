@@ -91,7 +91,7 @@ struct LabelMenuButton: View {
     let onPickColor: () -> Void
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
-    @Environment(\.sidebarRowSize) private var rowSize
+    @Environment(\.mailRowSize) private var rowSize
 
     /// The three dots together stay within the title's cap height: about
     /// 0.85 of the sidebar icon's point size (11 pt at the medium row size),

@@ -63,26 +63,19 @@ final class SidebarDisclosureModel {
     }
 }
 
-/// Compact sidebar density: the row's vertical insets (`SidebarDensity
-/// .rowVerticalInset`); Comfortable keeps the system's insets (`nil`). Not
-/// on section headers.
-struct SidebarRowDensity: ViewModifier {
-    @AppStorage(SidebarDensity.storageKey) private var raw = SidebarDensity.comfortable.rawValue
-    // Horizontal insets of a sidebar row, kept as the system draws them.
-    private static let horizontal: CGFloat = 10
+/// The sidebar list's density: Compact draws the list with the small system
+/// row size, which sets the rows' height; glyphs and titles keep the size of
+/// the user's own setting. Comfortable changes nothing.
+struct SidebarListDensity: ViewModifier {
+    let density: SidebarDensity
+    @Environment(\.sidebarRowSize) private var system
 
     func body(content: Content) -> some View {
-        if let v = SidebarDensity.from(raw: raw).rowVerticalInset {
-            content.listRowInsets(EdgeInsets(top: v, leading: Self.horizontal,
-                                             bottom: v, trailing: Self.horizontal))
-        } else {
-            content.listRowInsets(nil)
-        }
+        let size = density.listRowSize
+        content
+            .environment(\.mailRowSizeOverride, size == nil ? nil : system)
+            .environment(\.sidebarRowSize, size ?? system)
     }
-}
-
-extension View {
-    func sidebarRowDensity() -> some View { modifier(SidebarRowDensity()) }
 }
 
 /// What the "+" next to Labels, or a label's "Add sublabel…", opens.
@@ -134,10 +127,6 @@ struct SidebarLabelNodeView: View {
     let onNewLabel: (NewLabelRequest) -> Void
 
     var body: some View {
-        rows.sidebarRowDensity()
-    }
-
-    @ViewBuilder private var rows: some View {
         if node.children.isEmpty {
             SidebarLabelRow(node: node, onNewLabel: onNewLabel)
         } else {
@@ -194,7 +183,6 @@ struct SidebarLabelRow: View {
             SidebarLabelTag(colors: node.colors)
         }
         .listItemTint(.monochrome)
-        .sidebarRowDensity()
         // Gmail's "⋮" takes the count's place on hover; on the open label it
         // is drawn beside the count, which stays.
         .modifier(SidebarCount(count: hidesCount ? 0 : unread, selected: selected,
@@ -278,7 +266,6 @@ struct SidebarMoreToggle: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .sidebarRowDensity()
         .accessibilityIdentifier(identifier)
     }
 }

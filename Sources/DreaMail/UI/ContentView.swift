@@ -1959,11 +1959,11 @@ struct Sidebar: View {
                         .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .sidebarRowDensity()
                 }
             }
             .listStyle(.sidebar)
             .environment(\.defaultMinListRowHeight, sidebarDensity.minRowHeight)
+            .modifier(SidebarListDensity(density: sidebarDensity))
             .scrollContentBackground(.hidden)
 
             Divider()
@@ -2146,7 +2146,6 @@ struct Sidebar: View {
                 .mailIconStyle(selected: selected)
         }
         .listItemTint(.monochrome)
-        .sidebarRowDensity()
         .modifier(SidebarCount(count: badge ?? 0, selected: selected,
                                painted: accent.paintsSelection || (selected && accent.keepsSelectionColor)))
         .environment(\.sidebarRowSelected, selected)
