@@ -96,6 +96,13 @@ minor versions may still change behavior.
   notifications. "Connecting…" now ends as soon as the account is saved, and
   while DreaMail waits for the browser there is a Cancel.
 
+- **Organize Labels keeps families together.** In Organize Labels the
+  sublabels are listed under their label, indented. Dragging a label moves
+  it with all its sublabels; a sublabel can be reordered among its siblings
+  but cannot be dragged away from its label, and a label cannot be dropped
+  inside another family. The label picker and the Labels view list labels
+  in the same order.
+
 - **Labels like Gmail: the label menu.** Each label in the sidebar has
   Gmail's menu, on "⋮" (shown on hover and on the open label) and on
   right-click: label colour, show in label list (show, show if unread, hide),

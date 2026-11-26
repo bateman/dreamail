@@ -8,9 +8,6 @@ final class SidebarDisclosureModel {
     var moreOpen = SidebarDisclosure.isMoreExpanded() {
         didSet { SidebarDisclosure.setMoreExpanded(moreOpen) }
     }
-    var categoriesOpen = SidebarDisclosure.flag(SidebarDisclosure.categoriesKey) {
-        didSet { SidebarDisclosure.setFlag(SidebarDisclosure.categoriesKey, categoriesOpen) }
-    }
     /// Loaded per account on first use.
     private var expanded: [String: Set<String>] = [:]
     private var labelsMore: [String: Bool] = [:]
