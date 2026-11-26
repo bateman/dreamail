@@ -18,12 +18,13 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         return !element.exists
     }
 
-    /// The demo threads t1…t9 that are listed (a predicate over every
-    /// identifier found none on CI, one query per id does).
-    private func rowIds(_ app: XCUIApplication) -> [String] {
-        (1...9).map { "t\($0)" }.filter {
-            element("threadRow.\(account):\($0)", in: app).exists
-        }
+    /// The subject of the open conversation. "e" (archive), "#" (delete)
+    /// and "j" (next) would close or change it. (Listing the thread rows
+    /// found none on CI once a conversation was open.)
+    private func openSubject(_ app: XCUIApplication) -> String {
+        let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
+        guard subject.exists else { return "" }
+        return subject.label.isEmpty ? (subject.value as? String ?? "") : subject.label
     }
 
     func testNewLabelSheetKeepsShortcutsAndEscapeCloses() {
@@ -52,7 +53,7 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch
             .waitForExistence(timeout: 5), "the conversation is open")
 
-        let before = rowIds(app)
+        let before = openSubject(app)
         XCTAssertFalse(before.isEmpty)
         let add = element("sidebar.labels.add", in: app)
         XCTAssertTrue(add.waitForExistence(timeout: 5))
@@ -71,7 +72,7 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(field), "Escape closes the new label sheet")
         // Nothing the keys stand for ("e" archive, "#" delete, "j" next)
         // happened to the list.
-        XCTAssertEqual(rowIds(app), before, "typing in the sheet left the list alone")
+        XCTAssertEqual(openSubject(app), before, "typing in the sheet left the conversation alone")
         XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch.exists,
                       "Escape closed the sheet only, not the open conversation")
 
@@ -88,7 +89,7 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 5), "Organize Labels is up")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         XCTAssertTrue(waitForAbsence(title), "Escape closes Organize Labels")
-        XCTAssertEqual(rowIds(app), before, "Organize Labels left the list alone")
+        XCTAssertEqual(openSubject(app), before, "Organize Labels left the conversation alone")
         XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch.exists,
                       "Escape closed the dialog only, not the open conversation")
     }
