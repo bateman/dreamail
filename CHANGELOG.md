@@ -39,9 +39,9 @@ minor versions may still change behavior.
   Gmail does. An image that still fails shows its alternative text in small
   type, when it has one, instead of leaving an empty space.
 
-- **Fixed: a closed "Categories" kept showing the open category.** Closing
-  "Categories" (or a parent label) now hides everything under it, as in
-  Gmail; "Less" still keeps the open view visible.
+- **Fixed: a closed parent label kept showing the open sublabel.** Closing
+  a parent label now hides everything under it, as in Gmail; "Less" still
+  keeps the open view visible.
 
 - **OpenPGP (off by default).** Signature check and decryption of PGP/MIME
   and cleartext-signed mail, with an indicator in the message header, and
@@ -54,7 +54,7 @@ minor versions may still change behavior.
   GnuPG 2.4 with its default settings is decrypted too (library v0.1.1).
 
 - **Sidebar like Gmail.** System views in Gmail's order with Important, a
-  "More" row (Scheduled, Reminders, Spam, Categories), and your labels as a
+  "More" row (Scheduled, Reminders, Promotions, Social, Spam), and your labels as a
   tree with colours, unread counts and Gmail's show/hide setting. "+" next to
   Labels creates a label, also nested. Outbox and Reminders stay visible when
   they hold something. Spam shows what this Mac has: spam received since the
@@ -95,6 +95,15 @@ minor versions may still change behavior.
   keeps what you did meanwhile. Old mail downloaded this way does not post
   notifications. "Connecting…" now ends as soon as the account is saved, and
   while DreaMail waits for the browser there is a Cancel.
+
+- **Escape closes every dialog, and shortcuts stay out of the way.** While a
+  sheet or an alert is open (new label, Organize Labels, filters,
+  signatures, the label menu's dialogs) the keys go to it: Escape closes it,
+  and the mail shortcuts no longer act on the window behind. With compose's
+  "Discard" confirmation open, Escape now cancels the confirmation.
+
+- **Categories without a sub-menu.** Under "More", Promotions and Social are
+  plain rows just above Spam; the "Categories" group is gone.
 
 - **Organize Labels keeps families together.** In Organize Labels the
   sublabels are listed under their label, indented. Dragging a label moves
