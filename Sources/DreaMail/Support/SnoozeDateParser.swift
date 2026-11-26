@@ -10,8 +10,35 @@ enum SnoozeDateParser {
         var id: String { label }
     }
 
-    static func suggestions(for query: String, now: Date = Date()) -> [Suggestion] {
-        let cal = Calendar.current
+    /// English names (fixed `en_US_POSIX`), so typing works whatever the Mac's
+    /// language; the user's own language is added on top (see `nameMatches`).
+    private static let englishCalendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.locale = Locale(identifier: "en_US_POSIX")
+        return c
+    }()
+
+    /// Names of weekdays (Sunday-first) or months starting with `prefix`:
+    /// English first, then those of the calendar's own locale. A local name
+    /// equal to the English one for the same index is not repeated.
+    private static func nameMatches(
+        _ prefix: String, english: [String], local: [String]
+    ) -> [(index: Int, name: String)] {
+        var out: [(index: Int, name: String)] = []
+        for names in [english, local] {
+            for (i, name) in names.enumerated() where name.lowercased().hasPrefix(prefix)
+                && !out.contains(where: { $0.index == i && $0.name.lowercased() == name.lowercased() }) {
+                out.append((i, name))
+            }
+        }
+        return out
+    }
+
+    /// `calendar` drives the date arithmetic (first weekday, time zone) and
+    /// supplies the user's-language names; English names always work too.
+    static func suggestions(
+        for query: String, now: Date = Date(), calendar cal: Calendar = .current
+    ) -> [Suggestion] {
         let text = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !text.isEmpty else { return [] }
 
@@ -147,8 +174,9 @@ enum SnoozeDateParser {
 
         // Weekday names, prefix-matched from the first character ("s" →
         // Saturday/Sunday, "fri" → Friday).
-        let symbols = cal.weekdaySymbols  // Sunday-first
-        for (i, name) in symbols.enumerated() where name.lowercased().hasPrefix(datePart) {
+        for (i, name) in nameMatches(
+            datePart, english: englishCalendar.weekdaySymbols, local: cal.weekdaySymbols
+        ) {
             add(name, nextWeekday(i + 1))
         }
 
@@ -163,8 +191,8 @@ enum SnoozeDateParser {
         // "aug 12" / "12 aug" / "8/12", each optionally with a year
         // ("aug 17 2027", "8/12/27"). Without a year we roll to next year
         // if the date has already passed.
-        let monthNames = cal.monthSymbols
-        let months = monthNames.map { $0.lowercased() }
+        let englishMonths = englishCalendar.monthSymbols
+        let localMonths = cal.monthSymbols
         /// The date only when that month really has that day: Calendar
         /// otherwise rolls "feb 30" into March under a label that still
         /// says February 30.
@@ -189,24 +217,33 @@ enum SnoozeDateParser {
         /// `month` is 1-based. Every typed month/day goes through this range
         /// check: the field parses on each keystroke, so "25/12" or "0/5"
         /// must give no suggestion, never an out-of-range month name lookup.
-        func addMonthDay(month: Int, day: Int, year: Int?) {
-            guard monthNames.indices.contains(month - 1), (1...31).contains(day) else { return }
-            let base = "\(monthNames[month - 1]) \(day)"
+        func addMonthDay(month: Int, name: String? = nil, day: Int, year: Int?) {
+            guard englishMonths.indices.contains(month - 1), (1...31).contains(day) else { return }
+            let base = "\(name ?? englishMonths[month - 1]) \(day)"
             add(year.map { "\(base), \($0)" } ?? base, monthDay(month: month, day: day, year: year))
         }
         func fullYear(_ raw: Int?) -> Int? {
             guard let raw else { return nil }
             return raw < 100 ? 2000 + raw : raw
         }
+        func months(_ prefix: Substring) -> [(index: Int, name: String)] {
+            nameMatches(String(prefix), english: englishMonths, local: localMonths)
+        }
         if let m = datePart.wholeMatch(of: /([a-z]{3,}) (\d{1,2})(?:,? (\d{2,4}))?/),
-           let month = months.firstIndex(where: { $0.hasPrefix(String(m.1)) }) {
+           !months(m.1).isEmpty {
             if let day = Int(m.2) {
-                addMonthDay(month: month + 1, day: day, year: fullYear(m.3.flatMap { Int($0) }))
+                for month in months(m.1) {
+                    addMonthDay(month: month.index + 1, name: month.name, day: day,
+                                year: fullYear(m.3.flatMap { Int($0) }))
+                }
             }
         } else if let m = datePart.wholeMatch(of: /(\d{1,2}) ([a-z]{3,})(?:,? (\d{2,4}))?/),
-                  let month = months.firstIndex(where: { $0.hasPrefix(String(m.2)) }) {
+                  !months(m.2).isEmpty {
             if let day = Int(m.1) {
-                addMonthDay(month: month + 1, day: day, year: fullYear(m.3.flatMap { Int($0) }))
+                for month in months(m.2) {
+                    addMonthDay(month: month.index + 1, name: month.name, day: day,
+                                year: fullYear(m.3.flatMap { Int($0) }))
+                }
             }
         } else if let m = datePart.wholeMatch(of: /(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/) {
             // `\d` also matches non-ASCII digits, which `Int()` rejects.
@@ -223,7 +260,7 @@ enum SnoozeDateParser {
             // Bare month ("s", "sep", "september") → 1st of that month at 8am
             // (rolls to next year when the 1st has already passed). Digits /
             // spaces above keep "aug 12" on the day path.
-            for (i, name) in monthNames.enumerated() where name.lowercased().hasPrefix(datePart) {
+            for (i, name) in nameMatches(datePart, english: englishMonths, local: localMonths) {
                 add(name, monthDay(month: i + 1, day: 1))
             }
         }
@@ -422,8 +459,7 @@ enum SnoozeDateParser {
         if aliases.contains(s) { return true }
         // Match the suggestion path: single-letter weekday prefixes ("s 10")
         // must also count as date words for bare trailing hours.
-        if cal.weekdaySymbols.contains(where: { $0.lowercased().hasPrefix(s) }) { return true }
-        return false
+        return !nameMatches(s, english: englishCalendar.weekdaySymbols, local: cal.weekdaySymbols).isEmpty
     }
 
     static func format(_ date: Date) -> String {
