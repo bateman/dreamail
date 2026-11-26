@@ -248,11 +248,16 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertLessThan(vendors.frame.minY, aws.frame.minY)
         XCTAssertLessThan(aws.frame.minY, stripe.frame.minY, "in sibling order, under AWS")
         XCTAssertEqual(stripe.frame.minX, aws.frame.minX, accuracy: 1, "indented like its siblings")
+        // Short names, no path: the demo has labels named "Starred / keep",
+        // so look at the sublabels' own rows, not at every text.
         let sidebar = app.outlines.firstMatch
+        XCTAssertTrue(stripe.staticTexts["Stripe"].exists, "the sublabel shows its short name")
+        XCTAssertTrue(aws.staticTexts["AWS"].exists)
+        XCTAssertFalse(sidebar.staticTexts["Vendors/Stripe"].exists, "no row is named with a path")
+        XCTAssertFalse(sidebar.staticTexts["Vendors/AWS"].exists)
+        XCTAssertTrue(vendors.staticTexts["Vendors"].exists)
         XCTAssertEqual(sidebar.staticTexts.matching(NSPredicate(
-            format: "value CONTAINS '/' OR label CONTAINS '/'")).count, 0,
-                       "no row is named with a path")
-        XCTAssertEqual(sidebar.staticTexts.matching(NSPredicate(format: "value == 'Vendors'")).count, 1,
+            format: "label == 'Vendors' OR identifier == 'Vendors'")).count, 1,
                        "the parent's name appears once")
     }
 }
