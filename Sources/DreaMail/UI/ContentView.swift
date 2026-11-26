@@ -2010,6 +2010,10 @@ struct Sidebar: View {
             // the column's trailing edge. The list still scrolls by wheel,
             // trackpad and keyboard.
             .scrollIndicators(.never)
+            // The list spans the column edge to edge: macOS 26 insets a
+            // sidebar list by its safe area (CI: column x 64-313, list scroll
+            // view x 72-312), and no row background can paint outside it.
+            .ignoresSafeArea(.container, edges: .horizontal)
 
             Divider()
             if store.demoMode {

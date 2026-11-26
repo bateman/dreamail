@@ -32,6 +32,12 @@ struct SidebarSelectionBand: NSViewRepresentable {
         private var observers: [NSObjectProtocol] = []
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        // Reported to the UI tests (the geometry test prints the view's frame
+        // to tell how wide the layer is).
+        override func isAccessibilityElement() -> Bool { true }
+        override func accessibilityIdentifier() -> String { "sidebarSelectionBand" }
+        override func accessibilityRole() -> NSAccessibility.Role? { .group }
         override var isOpaque: Bool { false }
 
         override func viewDidMoveToWindow() {

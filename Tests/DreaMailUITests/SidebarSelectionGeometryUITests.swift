@@ -97,7 +97,11 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         print("SidebarSelectionGeometry: macOS \(ProcessInfo.processInfo.operatingSystemVersionString), "
               + "window \(main.frame), outlines \(main.outlines.allElementsBoundByIndex.map(\.frame)), "
               + "scroll views \(main.scrollViews.allElementsBoundByIndex.map(\.frame)), "
-              + "scroll bars \(main.scrollBars.allElementsBoundByIndex.map(\.frame)), inbox \(inbox.frame)")
+              + "scroll bars \(main.scrollBars.allElementsBoundByIndex.map(\.frame)), inbox \(inbox.frame), "
+              + "band view \(main.descendants(matching: .any).matching(identifier: "sidebarSelectionBand").allElementsBoundByIndex.map(\.frame)), "
+              + "search field \(main.searchFields.allElementsBoundByIndex.map(\.frame)), "
+              + "labels header \(main.staticTexts.matching(identifier: "Labels").allElementsBoundByIndex.map(\.frame)), "
+              + "add label \(main.descendants(matching: .any).matching(identifier: "sidebar.labels.add").allElementsBoundByIndex.map(\.frame))")
         let starred = main.descendants(matching: .any)
             .matching(identifier: "sidebar.starred").firstMatch
         XCTAssertTrue(starred.waitForExistence(timeout: 5))
@@ -141,6 +145,16 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
             XCTAssertEqual(m.top, focused.top, accuracy: Self.fine, "\(name): the band's top moved, \(m.description)")
             XCTAssertEqual(m.bottom, focused.bottom, accuracy: Self.fine,
                            "\(name): the band's bottom moved, \(m.description)")
+        }
+        // The row content stays where it was before the band reached the edges
+        // (CI, macOS 26.7.2: icon 100 / title 124 Compact, 102 / 128 Comfortable).
+        let baseline = density == "compact" ? (100.0, 124.0) : (102.0, 128.0)
+        for (name, m) in [("focused list", focused), ("focus in the thread list", unfocused),
+                          ("inactive window", inactive)] {
+            XCTAssertEqual(m.iconX, baseline.0, accuracy: Self.tolerance,
+                           "\(name): the icon moved from \(baseline.0), \(m.description)")
+            XCTAssertEqual(m.titleX, baseline.1, accuracy: Self.tolerance,
+                           "\(name): the title moved from \(baseline.1), \(m.description)")
         }
         for (name, m) in [("focus in the thread list", unfocused), ("inactive window", inactive)] {
             XCTAssertEqual(m.iconX, focused.iconX, accuracy: Self.tolerance,
@@ -295,7 +309,10 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
             let p = pixel(x, midY)
             samples.append(String(format: "%.0f:%02x%02x%02x", Double(x) / scale, p.0, p.1, p.2))
         }
-        return Measure(left: Double(first) / scale, right: Double(last + 1) / scale,
+        // The thread list's own selection can continue the run past the
+        // column's edge: the band ends there.
+        let edgePixel = Double(to)
+        return Measure(left: Double(first) / scale, right: min(Double(last + 1), edgePixel) / scale,
                        topLeft: Double(corner.first) / scale,
                        topRight: Double(corner.last + 1) / scale,
                        firstLeft: Double(firstRow.first) / scale, firstRight: Double(firstRow.last + 1) / scale,
