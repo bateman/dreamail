@@ -487,4 +487,5 @@ Aggiornato il 25 novembre 2026.
 | — | `ux/sidebar-collapsed-icon-strip` | #94 | Unito (livello standard): la barra laterale nascosta diventa una striscia di sole icone allineata alla fascia in alto (DEC-079); da provare (C-75) |
 | — | `test/settings-panes-fit-window` | #98 | Unito (solo test): un test UI apre ogni pannello di Settings e verifica che barra laterale e controlli stiano dentro la finestra (guardia dopo il difetto corretto da #97) |
 | — | `fix/sidebar-selection-capsule-inset` | #99 | Unito (livello basso rischio): la selezione dipinta dall'app nella barra laterale (da #84) ha la geometria della capsula di sistema, misurata nei test UI (rientro 10 pt, raggio 8); da provare (C-76) |
+| — | `fix/label-color-sheet-width` | #101 | Unito (livello semplice): il foglio "Label color" del menu "⋮" è largo quanto la tavolozza (244 pt) invece della larghezza minima di sistema; nome lungo troncato; da provare a occhio |
 | — | `docs/study-google-chat`, `docs/study-google-calendar`, `docs/study-rebranding-dreamail` | #69, #70, #71 | Uniti (studi in `docs/studi/`; domande aperte per il proprietario in fondo a ciascuno) |
