@@ -63,6 +63,21 @@ final class SidebarDisclosureModel {
     }
 }
 
+/// The sidebar list's density: Compact draws the list with the small system
+/// row size, which sets the rows' height; glyphs and titles keep the size of
+/// the user's own setting. Comfortable changes nothing.
+struct SidebarListDensity: ViewModifier {
+    let density: SidebarDensity
+    @Environment(\.sidebarRowSize) private var system
+
+    func body(content: Content) -> some View {
+        let size = density.listRowSize
+        content
+            .environment(\.mailRowSizeOverride, size == nil ? nil : system)
+            .environment(\.sidebarRowSize, size ?? system)
+    }
+}
+
 /// What the "+" next to Labels, or a label's "Add sublabel…", opens.
 struct NewLabelRequest: Identifiable {
     let id = UUID()
@@ -211,7 +226,7 @@ extension SidebarLabelRow {
 struct SidebarLabelTag: View {
     let colors: LabelColors
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.sidebarRowSize) private var rowSize
+    @Environment(\.mailRowSize) private var rowSize
 
     var body: some View {
         let metrics = MailIconMetrics(rowSize: rowSize)

@@ -86,6 +86,8 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(width: 800, height: 520)
+        // The system builds "<app name> Settings"; the window is just "Settings".
+        .navigationTitle("Settings")
         .onAppear {
             // The demo inbox needs no Google client: a pane asked for (compose's
             // "Manage signatures") stays.

@@ -268,6 +268,7 @@ struct SignatureSettings: View {
                 ForEach(addresses, id: \.self) { email in
                     GridRow {
                         Text(email).lineLimit(1).truncationMode(.middle)
+                            .frame(width: Self.addressColumnWidth, alignment: .leading)
                         defaultPicker(email: email, use: .newMessage)
                         defaultPicker(email: email, use: .reply)
                     }
@@ -277,6 +278,7 @@ struct SignatureSettings: View {
     }
 
     private static let pickerColumnWidth: CGFloat = 190
+    private static let addressColumnWidth: CGFloat = 220
 
     private func defaultPicker(email: String, use: SignatureUse) -> some View {
         let isPrimary = email.caseInsensitiveCompare(accountId) == .orderedSame
@@ -294,24 +296,61 @@ struct SignatureSettings: View {
                         choice: isPrimary && choice == .none ? .followPrimary : choice)
                 }
             })
-        return Picker("", selection: binding) {
-            if !isPrimary {
-                Text("Same as \(accountId)").tag(SignatureDefaultChoice.followPrimary)
-            }
-            Text("No signature").tag(SignatureDefaultChoice.none)
-            ForEach(signatures) { signature in
-                if let id = signature.id {
-                    Text(signature.name).tag(SignatureDefaultChoice.signature(id))
-                }
-            }
+        var items = [SignatureDefaultItem]()
+        if !isPrimary {
+            items.append(.init(title: "Same as \(accountId)", value: .followPrimary))
         }
-        .labelsHidden()
-        // Every picker fills the same fixed column and starts at its
-        // header's leading edge, whatever its title (long names truncate).
-        .frame(maxWidth: .infinity)
-        .frame(width: Self.pickerColumnWidth)
+        items.append(.init(title: "No signature", value: .none))
+        for signature in signatures {
+            if let id = signature.id { items.append(.init(title: signature.name, value: .signature(id))) }
+        }
+        // A native pop-up button at a fixed width: SwiftUI's menu pickers and
+        // menus hug their title, so the widths and left edges differed from
+        // row to row.
+        return SignatureDefaultPopUp(items: items, selection: binding.wrappedValue,
+                                     width: Self.pickerColumnWidth) { binding.wrappedValue = $0 }
         .accessibilityLabel(use == .newMessage ? "Default for new messages from \(email)"
                                                : "Default for replies and forwards from \(email)")
+        .accessibilityIdentifier("settings.signatures.default.\(use == .newMessage ? "new" : "reply").\(email)")
+    }
+}
+
+/// A pop-up button of a fixed width, titles truncated at the tail.
+private struct SignatureDefaultPopUp: NSViewRepresentable {
+    let items: [SignatureDefaultItem]
+    let selection: SignatureDefaultChoice
+    let width: CGFloat
+    let onSelect: (SignatureDefaultChoice) -> Void
+
+    final class Coordinator: NSObject {
+        var items: [SignatureDefaultItem] = []
+        var onSelect: (SignatureDefaultChoice) -> Void = { _ in }
+        @objc func changed(_ sender: NSPopUpButton) {
+            if let choice = SignatureDefaultItems.pick(sender, from: items) { onSelect(choice) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: false)
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.changed(_:))
+        button.lineBreakMode = .byTruncatingTail
+        return button
+    }
+
+    func updateNSView(_ button: NSPopUpButton, context: Context) {
+        context.coordinator.items = items
+        context.coordinator.onSelect = onSelect
+        SignatureDefaultItems.fill(button, with: items)
+        if let index = items.firstIndex(where: { $0.value == selection }) {
+            button.selectItem(at: index)
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSPopUpButton, context: Context) -> CGSize? {
+        CGSize(width: width, height: nsView.intrinsicContentSize.height)
     }
 }
 

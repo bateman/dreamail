@@ -91,20 +91,20 @@ struct LabelMenuButton: View {
     let onPickColor: () -> Void
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
+    @Environment(\.mailRowSize) private var rowSize
 
-    /// 8 x 20 pt: Gmail's "more_vert" at the sidebar's glyph size. AppKit
-    /// adds its own padding (8 pt wide, 2 pt tall), so the button's box is
-    /// still taller than wide.
-    static let size = NSSize(width: 8, height: 20)
-
-    static func dots(ink: NSColor) -> NSImage {
-        let image = NSImage(size: size, flipped: false) { rect in
+    /// The three dots together stay within the title's cap height: about
+    /// 0.85 of the sidebar icon's point size (11 pt at the medium row size),
+    /// dots 0.15 of it (2 pt). The image is narrower than tall; AppKit adds
+    /// its own padding (8 pt wide, 2 pt tall), so the button's box is still
+    /// taller than wide.
+    static func dots(ink: NSColor, rowSize: SidebarRowSize) -> NSImage {
+        let l = LabelMenuDots.layout(rowSize: rowSize)
+        let image = NSImage(size: LabelMenuDots.size(rowSize: rowSize), flipped: false) { _ in
             ink.setFill()
-            let diameter: CGFloat = 3
             for index in 0..<3 {
-                let y = 3.5 + CGFloat(index) * 6.5
-                NSBezierPath(ovalIn: NSRect(x: (rect.width - diameter) / 2, y: y,
-                                            width: diameter, height: diameter)).fill()
+                let y = CGFloat(index) * (l.diameter + l.gap)
+                NSBezierPath(ovalIn: NSRect(x: 0, y: y, width: l.diameter, height: l.diameter)).fill()
             }
             return true
         }
@@ -117,7 +117,7 @@ struct LabelMenuButton: View {
         Menu {
             LabelMenuItems(node: node, onNewLabel: onNewLabel, onPickColor: onPickColor)
         } label: {
-            Image(nsImage: Self.dots(ink: ink.map { NSColor($0) } ?? .secondaryLabelColor))
+            Image(nsImage: Self.dots(ink: ink.map { NSColor($0) } ?? .secondaryLabelColor, rowSize: rowSize))
                 .renderingMode(.original)
         }
         .menuStyle(.borderlessButton)

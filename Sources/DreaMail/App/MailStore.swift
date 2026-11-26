@@ -2225,10 +2225,19 @@ struct ComposeRequest: Identifiable {
     /// Synthetic primaries when send-as hasn't been fetched yet (offline /
     /// first paint / scope missing).
     private func fallbackIdentities() -> [SendIdentity] {
-        accounts.map {
+        var identities = accounts.map {
             SendIdentity(email: $0.id, displayName: $0.senderName,
                          accountId: $0.id, isPrimary: true, isDefault: true)
         }
+        // UI tests only: a demo alias with a longer address, for the layout
+        // of Settings → Signatures → Defaults (fictional, example.com).
+        let env = ProcessInfo.processInfo.environment
+        if demoMode, env["DREAMAIL_UI_TEST"] == "1", env["DREAMAIL_DEMO_ALIAS"] == "1" {
+            identities.append(SendIdentity(
+                email: "team.alias.with.a.long.address@example.com", displayName: "Team",
+                accountId: DemoSeed.account, isPrimary: false, isDefault: false))
+        }
+        return identities
     }
 
     /// Per-account send-as fetch stamps for `SendAsRefreshPolicy`.
