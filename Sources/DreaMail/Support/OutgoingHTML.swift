@@ -41,6 +41,20 @@ enum OutgoingHTML {
         return marksDraft ? ComposeSignature.markingStyle(style, in: clean) : clean
     }
 
+    /// The same text but for spaces at line ends: Gmail may hand a draft's
+    /// text part back with the space of the `-- ` line trimmed.
+    static func sameText(_ a: String, _ b: String) -> Bool {
+        if a == b { return true }
+        func lines(_ s: String) -> [Substring] {
+            s.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+                var line = line
+                while line.last == " " || line.last == "\t" { line = line.dropLast() }
+                return line
+            }
+        }
+        return lines(a) == lines(b)
+    }
+
     static func base(body: String, forwardOf original: Message?,
                      replyTo replyParent: Message?, draft: Message?,
                      threadMessages threadMsgs: [Message]) -> String? {
@@ -56,7 +70,8 @@ enum OutgoingHTML {
            let match = ReplyComposer.matchHTMLUpgrade(body: body, original: parent) {
             return ReplyComposer.htmlBody(userText: match.userText, original: match.original)
         }
-        if let draft, let html = draft.bodyHTML, !html.isEmpty, body == draft.bodyText {
+        if let draft, let html = draft.bodyHTML, !html.isEmpty,
+           sameText(body, draft.bodyText) {
             return html
         }
         // A signature with no quote after it (new mail, or a quote the user

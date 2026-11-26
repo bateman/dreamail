@@ -147,6 +147,28 @@ enum SignatureHTML {
     /// (after the ones HTML closes by itself: p, li, td, th, tr, table
     /// sections) is dropped, so stray closers cannot hide depth from the
     /// count. Shared with `SignatureImport`.
+    /// Where `</name` (ASCII, any case) next starts in `text`, the index
+    /// just past it; nil when it does not. One scan over the UTF-8 view.
+    static func closingTag(_ name: String, in text: Substring) -> String.Index? {
+        let needle = Array(("</" + name).lowercased().utf8)
+        guard let first = needle.first else { return nil }
+        let utf8 = text.utf8
+        var i = utf8.startIndex
+        while let start = utf8[i...].firstIndex(of: first) {
+            var j = start, k = 0
+            while k < needle.count, j < utf8.endIndex {
+                var byte = utf8[j]
+                if byte >= 0x41, byte <= 0x5A { byte += 0x20 }
+                guard byte == needle[k] else { break }
+                k += 1
+                j = utf8.index(after: j)
+            }
+            if k == needle.count { return j }
+            i = utf8.index(after: start)
+        }
+        return nil
+    }
+
     static func prepare(_ html: String) -> (html: String, depth: Int) {
         var out = ""
         var open: [String] = []
@@ -156,7 +178,9 @@ enum SignatureHTML {
             out += html[i..<lt]
             let rest = html[lt...]
             if rest.hasPrefix("<!--") {
-                guard let end = rest.range(of: "-->") else { return (out, deepest) }
+                // Native scans throughout: Foundation's `range(of:)` on a
+                // Substring may copy the remainder on every call.
+                guard let end = rest.firstRange(of: "-->") else { return (out, deepest) }
                 i = end.upperBound
                 continue
             }
@@ -164,8 +188,8 @@ enum SignatureHTML {
                 guard let gt = rest.firstIndex(of: ">") else { return (out, deepest) }
                 // An internal subset (`[ … ]`) may hold `>` of its own.
                 if let open = rest[..<gt].firstIndex(of: "[") {
-                    guard let close = rest[open...].range(of: "]"),
-                          let end = rest[close.upperBound...].firstIndex(of: ">")
+                    guard let close = rest[open...].firstIndex(of: "]"),
+                          let end = rest[rest.index(after: close)...].firstIndex(of: ">")
                     else { return (out, deepest) }
                     i = html.index(after: end)
                 } else {
@@ -204,8 +228,8 @@ enum SignatureHTML {
             if droppedWhole.contains(name) {
                 guard !closing, !tag.hasSuffix("/>"),
                       !["link", "meta", "input", "base"].contains(name) else { continue }
-                guard let end = html[i...].range(of: "</\(name)", options: .caseInsensitive),
-                      let endGT = html[end.upperBound...].firstIndex(of: ">")
+                guard let end = closingTag(name, in: html[i...]),
+                      let endGT = html[end...].firstIndex(of: ">")
                 else { return (out, deepest) }
                 out += " "
                 i = html.index(after: endGT)

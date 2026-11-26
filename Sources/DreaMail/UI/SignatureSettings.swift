@@ -367,13 +367,14 @@ private struct SignatureEditor: View {
         let replacesAll = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || (selection.location == 0 && selection.length >= length)
         guard replacesAll else { return false }
-        let html = ComposeBodyTextView.pastedHTML(from: pasteboard)
+        let payload = ComposeBodyTextView.richPayload(from: pasteboard)
         let plain = pasteboard.string(forType: .string) ?? ""
         Task { @MainActor in
             var pasted: SignaturePaste.Result?
-            if let html {
+            if let payload {
+                // RTF conversion and the reduction, both off the main thread.
                 pasted = await Task.detached(priority: .userInitiated) {
-                    SignaturePaste.read(html: html)
+                    ComposeBodyTextView.html(from: payload).flatMap { SignaturePaste.read(html: $0) }
                 }.value
             }
             guard let pasted else {

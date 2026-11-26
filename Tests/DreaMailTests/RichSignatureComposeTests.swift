@@ -357,9 +357,11 @@ final class RichSignatureComposeTests: XCTestCase {
         let everywhere = "<div x=\"1\" data-dreamail-signature=\"plain\">a</div>"
             + "<div class=\"gmail_quote\"><span data-dreamail-signature='rich:9'>b</span>"
             + "<p data-dreamail-signature=rich:3>c</p></div>"
+        let quotePart = "<div class=\"gmail_quote\"><span data-dreamail-signature='rich:9'>b</span>"
+            + "<p data-dreamail-signature=rich:3>c</p></div>"
         let stripped = ComposeSignature.strippingStyle(everywhere)
-        XCTAssertFalse(stripped.lowercased().contains("data-dreamail-signature"))
-        XCTAssertTrue(stripped.contains("<div x=\"1\">a</div>"))
+        // The head's tags lose it; the quoted part stays byte for byte.
+        XCTAssertEqual(stripped, "<div x=\"1\">a</div>" + quotePart)
         // A draft reused verbatim on send loses it too.
         var draft = try earlierMessage(signature: gmailCopy())
         draft.bodyText = "Hello"
@@ -367,11 +369,74 @@ final class RichSignatureComposeTests: XCTestCase {
         let sent = try XCTUnwrap(OutgoingHTML.build(body: "Hello", forwardOf: nil, replyTo: nil,
                                                     draft: draft, threadMessages: [],
                                                     signatures: [], style: .plain))
-        XCTAssertFalse(sent.lowercased().contains("data-dreamail-signature"))
+        XCTAssertEqual(sent, "<div x=\"1\">a</div>" + quotePart)
         // Linear on a long run of white space.
         let start = Date()
         _ = ComposeSignature.strippingStyle("data-dreamail-signature" + String(repeating: " ", count: 200_000) + "x")
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+    }
+
+    /// Round 2, F1: the real reopen flow. Saved, opened again (the text
+    /// block cut from the head, what follows it kept), joined with the
+    /// quote and assembled: the saved body byte for byte, so the draft's own
+    /// HTML is reused and a forward keeps the look and its forwarded HTML.
+    func testAReopenedForwardRoundTripsByteForByte() throws {
+        let rich = try gmailCopy()
+        let id = try XCTUnwrap(rich.id)
+        var original = earlierMessage(signature: rich)
+        original.bodyHTML = "<div style=\"color:#336699\">Earlier, formatted</div>"
+        // As compose holds it: the text, then the collapsed forwarded block.
+        let full = "FYI" + "\n\n" + ForwardComposer.forwardBlock(parts: [ForwardComposer.Part(message: original)])
+        let saved = ComposeSignature.assembled(body: full, signature: rich)
+        let savedHTML = try XCTUnwrap(OutgoingHTML.build(body: saved, forwardOf: original, replyTo: nil,
+                                                         draft: nil, threadMessages: [original],
+                                                         signatures: [rich], style: .rich(id),
+                                                         marksDraft: true))
+        // text/plain keeps the blank line before the forwarded block.
+        XCTAssertTrue(saved.contains(ComposeSignature.normalizedBody(rich.body) + "\n\n" + ForwardComposer.marker))
+        for text in [saved, saved.replacingOccurrences(of: "\n-- \n", with: "\n--\n")] {
+            // Opened again (also as Gmail may return it, the space trimmed).
+            let quote = try XCTUnwrap(ComposeQuote.quoteStart(in: text))
+            let restored = ComposeSignatureState.restored(head: String(text[..<quote]), among: [rich],
+                                                          accountId: a, style: .rich(id))
+            XCTAssertEqual(restored.state.richSignatureId, id)
+            XCTAssertFalse(restored.head.contains("-- "))
+            let reopened = restored.head + String(text[quote...])
+            let outgoing = ComposeSignature.assembled(body: reopened, signature: rich)
+            if text == saved {
+                XCTAssertEqual(outgoing, saved, "assembled again: the saved body byte for byte")
+            }
+            XCTAssertTrue(OutgoingHTML.sameText(outgoing, saved))
+            XCTAssertTrue(OutgoingHTML.sameText(outgoing, text))
+            var draft = original
+            draft.bodyText = text
+            draft.bodyHTML = savedHTML
+            let sent = try XCTUnwrap(OutgoingHTML.build(body: outgoing, forwardOf: nil, replyTo: nil,
+                                                        draft: draft, threadMessages: [],
+                                                        signatures: [rich], style: .rich(id)))
+            XCTAssertTrue(sent.contains("color:#336699"), "the forwarded HTML is kept")
+            try assertOnce(html: sent, text: outgoing, signature: rich)
+        }
+    }
+
+    /// Round 2, F2: only the head's tags lose the attribute. Typed text that
+    /// reads like it, and quoted mail, stay byte for byte; nothing can be
+    /// joined into a new tag.
+    func testTheStripTouchesOnlyTagsInTheHead() {
+        let typed = "<div dir=\"ltr\">please set data-dreamail-signature=plain</div><div>next</div>"
+        XCTAssertEqual(ComposeSignature.strippingStyle(typed), typed)
+        XCTAssertNil(ComposeSignature.markedStyle(in: typed))
+        let joined = "<div>Hi</div><div class=\"gmail_quote\"><scr data-dreamail-signature=\"\"ipt>alert(1)</div>"
+        XCTAssertEqual(ComposeSignature.strippingStyle(joined), joined)
+        let split = "<div>Hi</div><div class=\"gmail_quote\">"
+            + "<a title=\"x data-dreamail-signature='rich:1' y\" href=\"https://example.com\">z</a></div>"
+        XCTAssertEqual(ComposeSignature.strippingStyle(split), split)
+        let head = "<scr data-dreamail-signature=\"\"ipt>x"
+        XCTAssertEqual(ComposeSignature.strippingStyle(head), head)
+        // As the head builder writes it: the typed sentence goes out as typed.
+        let built = ComposeQuote.authoredHeadHTML("please set data-dreamail-signature=plain\n\n-- \nAnn")
+        XCTAssertTrue(built.contains("data-dreamail-signature=plain"), built)
+        XCTAssertEqual(ComposeSignature.strippingStyle(built), built)
     }
 
     /// R3: ⌘Z after choosing the rendered signature puts its text back. The

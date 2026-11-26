@@ -291,7 +291,10 @@ struct ComposeSignatureState: Equatable {
            let found = ComposeSignature.detect(in: head, among: [signature]),
            let range = head.range(of: found.block, options: .backwards) {
             return (ComposeSignatureState(signatureId: id, accountId: accountId, richSignatureId: id),
-                    String(head[..<range.lowerBound]))
+                    // What follows the block (the blank line before a
+                    // forwarded block) stays, so assembling again gives
+                    // back the saved body byte for byte.
+                    String(head[..<range.lowerBound]) + String(head[range.upperBound...]))
         }
         var state = restored(head: head, among: signatures, accountId: accountId)
         state.legacy = style == .legacy
@@ -606,34 +609,52 @@ extension ComposeSignature {
 
     /// The style a saved draft recorded, read from its authored head only (a
     /// quoted message cannot set it); nil when it has none. Tolerant: the
-    /// attribute may sit anywhere in a tag, with either quote, as an editor
-    /// that re-saved the draft may have written it.
+    /// attribute may sit anywhere inside a tag, with either quote or none,
+    /// as an editor that re-saved the draft may have written it. Text that
+    /// merely reads like it is not a tag and does not count.
     static func markedStyle(in html: String?) -> ComposeSignatureStyle? {
         guard let html else { return nil }
-        let quote = html.range(of: "<div class=\"gmail_quote")?.lowerBound ?? html.endIndex
-        let head = String(html[..<quote])
-        guard let match = styleAttributeRegex.firstMatch(
-            in: head, range: NSRange(head.startIndex..., in: head)),
+        let head = String(html[..<quoteStart(inHTML: html)])
+        guard head.range(of: styleAttribute, options: .caseInsensitive) != nil,
+              let match = styleAttributeRegex.firstMatch(
+                in: head, range: NSRange(head.startIndex..., in: head)),
               let range = Range(match.range(at: 2), in: head) else { return nil }
         let value = head[range].trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
         let style = ComposeSignatureStyle(storageValue: value)
         return style == .legacy ? nil : style
     }
 
-    /// `html` without any style attribute, wherever it sits: what a sent
-    /// message carries (and a draft before it is marked again).
+    /// `html` without the style attribute in the tags of its authored head:
+    /// what a sent message carries (and a draft before it is marked again).
+    /// Text and the quoted part are left byte for byte as they are.
     static func strippingStyle(_ html: String) -> String {
-        guard html.range(of: styleAttribute, options: .caseInsensitive) != nil else { return html }
-        return styleAttributeRegex.stringByReplacingMatches(
-            in: html, range: NSRange(html.startIndex..., in: html), withTemplate: "")
+        let quote = quoteStart(inHTML: html)
+        var head = String(html[..<quote])
+        guard head.range(of: styleAttribute, options: .caseInsensitive) != nil else { return html }
+        // One attribute per tag per pass; a tag rarely holds more than one.
+        for _ in 0..<4 {
+            let next = styleAttributeRegex.stringByReplacingMatches(
+                in: head, range: NSRange(head.startIndex..., in: head), withTemplate: "$1")
+            if next == head { break }
+            head = next
+        }
+        return head + String(html[quote...])
     }
 
-    /// ` data-dreamail-signature="…"`, `='…'` or unquoted. No nested
-    /// quantifiers, and a match starts only where a run of white space
-    /// starts, so a long run is scanned once: linear on any input.
+    /// Where the quoted part of an outgoing HTML starts (Gmail's container,
+    /// which every DreaMail builder writes), or its end.
+    private static func quoteStart(inHTML html: String) -> String.Index {
+        html.range(of: "<div class=\"gmail_quote")?.lowerBound ?? html.endIndex
+    }
+
+    /// The attribute inside a tag: group 1 is the tag up to it, group 2 its
+    /// value (`"…"`, `'…'` or bare, followed by white space, `/` or `>`).
+    /// No `<` or `>` can be crossed, so text and other tags are never
+    /// touched; a match starts only at a `<` and the white space before the
+    /// name starts where its run starts: linear on any input.
     private static let styleAttributeRegex: NSRegularExpression = {
         try! NSRegularExpression(
-            pattern: #"((?<!\s)\s+data-dreamail-signature\s*=\s*)("[^"]{0,64}"|'[^']{0,64}'|[^\s>"']{1,64})"#,
+            pattern: #"(<[A-Za-z][^<>]*?(?<!\s))\s+data-dreamail-signature\s*=\s*("[^"<>]{0,64}"|'[^'<>]{0,64}'|[^\s<>"'/]{1,64})(?=[\s/>])"#,
             options: .caseInsensitive)
     }()
 }

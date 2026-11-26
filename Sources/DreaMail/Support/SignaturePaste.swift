@@ -36,8 +36,9 @@ enum SignaturePaste {
     /// apply to what is left.
     static let maxRawLength = 300_000
 
-    /// Longer attribute values or style declarations are dropped before any
-    /// check looks at them (no signature value comes near).
+    /// Longer attribute values (other than `style`, which a browser fills
+    /// with computed declarations) or style declarations are dropped before
+    /// any check looks at them (no signature value comes near).
     static let maxAttributeLength = 2_048
     static let maxDeclarationLength = 256
 
@@ -113,11 +114,14 @@ enum SignaturePaste {
                     value = tag[start..<j]
                 }
             }
-            guard !key.isEmpty, let value, value.utf16.count <= maxAttributeLength,
+            guard !key.isEmpty, let value,
+                  key == "style" || value.utf16.count <= maxAttributeLength,
                   key == "href" || SignatureHTML.allowedAttributes.contains(key) else { continue }
             var kept = String(value)
             if key == "style" {
-                kept = value.split(separator: ";")
+                // Entities first (linear): Chrome writes `&quot;Google
+                // Sans&quot;`, whose `;` would otherwise split a declaration.
+                kept = String(value).decodingHTMLEntities().split(separator: ";")
                     .filter { $0.utf16.count <= maxDeclarationLength }
                     .filter { declaration in
                         guard let colon = declaration.firstIndex(of: ":") else { return false }
@@ -125,6 +129,9 @@ enum SignaturePaste {
                         return SignatureHTML.allowedProperties.contains(property)
                     }
                     .joined(separator: ";")
+                    .replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;")
+                    .replacingOccurrences(of: ">", with: "&gt;")
                 guard !kept.isEmpty else { continue }
             }
             attrs.append("\(key)=\"\(kept.replacingOccurrences(of: "\"", with: "&quot;"))\"")

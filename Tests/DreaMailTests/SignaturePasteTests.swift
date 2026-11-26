@@ -73,7 +73,8 @@ final class SignaturePasteTests: XCTestCase {
             rows += element("div", "color: #666666; font-size: 12px", "Example Lab line \(i)")
         }
         let html = "<meta charset='utf-8'><!--StartFragment-->"
-            + element("div", "font-weight: bold; color: #1a73e8", "Ada Example")
+            + element("div", "font-family: &quot;Helvetica Neue&quot;, Arial; font-weight: bold; color: #1a73e8",
+                      "Ada Example")
             + rows
             + "<div><a href=\"https://www.example.com\" style=\"\(computed); color: #1155cc\">www.example.com</a></div>"
             + "<!--EndFragment-->"
@@ -90,13 +91,56 @@ final class SignaturePasteTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(start), 5, "the paste took too long")
         let look = try XCTUnwrap(pasted.html).lowercased()
         XCTAssertTrue(look.contains("color:#1a73e8"))
+        // The declaration after a quoted font name survives the entity's ";".
         XCTAssertTrue(look.contains("font-weight:bold"))
+        XCTAssertTrue(look.contains("helvetica neue"), look)
         XCTAssertTrue(look.contains("color:#666666"))
         XCTAssertFalse(look.contains("webkit"))
         XCTAssertFalse(look.contains("class="))
         XCTAssertTrue(pasted.body.contains("Ada Example"))
         XCTAssertTrue(pasted.body.contains("[www.example.com](https://www.example.com)"))
         XCTAssertNil(pasted.note)
+    }
+
+    /// Under 10,000 characters, reducing first changes nothing the
+    /// sanitiser or the text import produce.
+    func testReducingFirstGivesTheSameResultForSmallInput() throws {
+        let fragments = [
+            SignatureHTMLTests.lookAlike,
+            Self.copiedFromGmail,
+            "<div style=\"font-family: &quot;Google Sans&quot;, Roboto; font-size: small; color: #222222\">"
+                + "<b>Ada Example</b> &amp; Example Lab<br><a href=\"https://example.com/?a=1&amp;b=2\">site</a></div>",
+        ]
+        for html in fragments {
+            XCTAssertLessThan(html.utf16.count, SignatureImport.maxInputLength)
+            let reduced = try XCTUnwrap(SignaturePaste.reduce(html))
+            XCTAssertEqual(SignatureHTML.sanitize(reduced)?.html, SignatureHTML.sanitize(html)?.html, html)
+            XCTAssertEqual(SignatureImport.markdown(fromGmailHTML: reduced),
+                           SignatureImport.markdown(fromGmailHTML: html), html)
+        }
+    }
+
+    /// Round 2, F4: `prepare` stays linear at the paste bound.
+    func testPrepareIsLinearAtThePasteBound() {
+        let inputs = [
+            String(repeating: "<![]>", count: 60_000),
+            String(repeating: "<!---->", count: 42_857),
+            String(repeating: "<script></script>", count: 17_600),
+        ]
+        for html in inputs {
+            XCTAssertLessThanOrEqual(html.utf8.count, SignaturePaste.maxRawLength)
+            let start = Date()
+            _ = SignatureHTML.prepare(html)
+            _ = SignaturePaste.read(html: html)
+            XCTAssertLessThan(Date().timeIntervalSince(start), 5, "\(html.prefix(12)) took too long")
+        }
+    }
+
+    func testTheClosingTagScanIgnoresCase() {
+        let text = Substring("<p>a</SCRIPT x>b")
+        let end = SignatureHTML.closingTag("script", in: text)
+        XCTAssertEqual(end.map { String(text[$0...]) }, " x>b")
+        XCTAssertNil(SignatureHTML.closingTag("style", in: text))
     }
 
     func testTheReductionKeepsOnlyAllowedAttributesAndDeclarations() throws {

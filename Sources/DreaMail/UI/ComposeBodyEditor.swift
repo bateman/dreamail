@@ -42,7 +42,7 @@ struct ComposeBodyEditor: NSViewRepresentable {
     /// character count.
     var onTextHeightChange: ((CGFloat) -> Void)? = nil
     /// A paste whose pasteboard holds HTML or RTF is offered here first;
-    /// true means it was handled (read it with `ComposeBodyTextView.pastedHTML`).
+    /// true means it was handled (read it with `ComposeBodyTextView.richPayload`).
     /// Settings' signature editor only: compose leaves it nil and pastes
     /// plain text.
     var onRichPaste: ((NSPasteboard) -> Bool)? = nil
@@ -821,21 +821,38 @@ final class ComposeBodyTextView: ComposeCaretSettlingTextView {
     static let maxPastedHTMLBytes = SignaturePaste.maxRawLength
     static let maxPastedRTFBytes = 200_000
 
-    /// The pasteboard's HTML, or its RTF converted to HTML by AppKit (most
-    /// of RTF's look then sits in CSS classes, which the signature filter
-    /// drops). Nil when it has neither, or more than the bounds above.
-    static func pastedHTML(from pasteboard: NSPasteboard) -> String? {
+    /// What a rich paste carries, read on the main thread within the bounds
+    /// above: HTML as the pasteboard decodes it (any encoding), or RTF bytes
+    /// for `html(from:)` to convert off the main thread.
+    enum RichPayload: Sendable {
+        case html(String)
+        case rtf(Data)
+    }
+
+    static func richPayload(from pasteboard: NSPasteboard) -> RichPayload? {
         if let data = pasteboard.data(forType: .html) {
-            guard data.count <= maxPastedHTMLBytes else { return nil }
-            return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
+            guard data.count <= maxPastedHTMLBytes,
+                  let html = pasteboard.string(forType: .html) else { return nil }
+            return .html(html)
         }
-        guard let rtf = pasteboard.data(forType: .rtf), rtf.count <= maxPastedRTFBytes,
-              let text = NSAttributedString(rtf: rtf, documentAttributes: nil),
-              let data = try? text.data(
-                from: NSRange(location: 0, length: text.length),
-                documentAttributes: [.documentType: NSAttributedString.DocumentType.html])
-        else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard let rtf = pasteboard.data(forType: .rtf), rtf.count <= maxPastedRTFBytes else { return nil }
+        return .rtf(rtf)
+    }
+
+    /// The payload as HTML: RTF converted by AppKit (most of RTF's look then
+    /// sits in CSS classes, which the signature filter drops).
+    nonisolated static func html(from payload: RichPayload) -> String? {
+        switch payload {
+        case .html(let html):
+            return html
+        case .rtf(let rtf):
+            guard let text = NSAttributedString(rtf: rtf, documentAttributes: nil),
+                  let data = try? text.data(
+                    from: NSRange(location: 0, length: text.length),
+                    documentAttributes: [.documentType: NSAttributedString.DocumentType.html])
+            else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
