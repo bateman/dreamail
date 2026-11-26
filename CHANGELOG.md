@@ -165,10 +165,19 @@ minor versions may still change behavior.
   ("ven", "set 12", also without accents: "venerdi"); suggestions are
   titled in English. "mar 5" on an Italian Mac offers March 5 first.
 
+- **Labels in the sidebar as in Gmail: whole families, Gmail's order.** A
+  label and its sublabels always stay together, nested: the whole family is
+  listed above the labels' "More" or below it, following the top-level
+  label's setting in Gmail (a "show if unread" family shows up when any of
+  its labels has unread mail). No label appears twice and none is shown as
+  "parent/child". Labels are in Gmail's order (symbols and emoji first,
+  upper and lower case mixed) unless you reordered them in Organize Labels;
+  an order an older version had stored by itself is dropped once. Dragging
+  a label in Organize Labels now fixes the order of its own group only. A
+  label deleted on Gmail leaves nothing behind on this Mac.
+
 - **Sidebar and Settings touch-ups.** The Settings window is titled just
-  "Settings". The labels' "More" no longer repeats a label that is already
-  listed: a hidden sublabel of a listed label appears there once, with its
-  full name ("parent/child"). The "+" next to Labels has the size of the
+  "Settings". The "+" next to Labels has the size of the
   "+" of "Add view"; the label "⋮" is three small dots. In Settings →
   Signatures the "Defaults" menus are left-aligned and equally wide.
 
