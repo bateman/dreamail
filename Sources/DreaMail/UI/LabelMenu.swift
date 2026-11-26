@@ -92,15 +92,17 @@ struct LabelMenuButton: View {
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
 
-    /// 12 x 16 pt: Gmail's "more_vert" at the sidebar's glyph size.
-    static let size = NSSize(width: 12, height: 16)
+    /// 8 x 20 pt: Gmail's "more_vert" at the sidebar's glyph size. AppKit
+    /// adds its own padding (8 pt wide, 2 pt tall), so the button's box is
+    /// still taller than wide.
+    static let size = NSSize(width: 8, height: 20)
 
     static func dots(ink: NSColor) -> NSImage {
         let image = NSImage(size: size, flipped: false) { rect in
             ink.setFill()
             let diameter: CGFloat = 3
             for index in 0..<3 {
-                let y = 1.5 + CGFloat(index) * 5
+                let y = 3.5 + CGFloat(index) * 6.5
                 NSBezierPath(ovalIn: NSRect(x: (rect.width - diameter) / 2, y: y,
                                             width: diameter, height: diameter)).fill()
             }

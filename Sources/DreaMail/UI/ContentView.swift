@@ -2128,7 +2128,7 @@ struct Sidebar: View {
         }
         .listItemTint(.monochrome)
         .modifier(SidebarCount(count: badge ?? 0, selected: selected,
-                               painted: accent.keepsSelectionColor))
+                               painted: accent.paintsSelection || (selected && accent.keepsSelectionColor)))
         .environment(\.sidebarRowSelected, selected)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
         // The selection capsule in the custom accent (`AccentSelectionBackground`).

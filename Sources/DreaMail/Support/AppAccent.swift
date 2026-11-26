@@ -429,7 +429,7 @@ struct AccentSelectionBackground: View {
     /// Sidebar rows (main window and Settings): nil unless the app paints
     /// this row, so the system draws everything else exactly as before.
     static func sidebar(selected: Bool, accent: MailAccent) -> AccentSelectionBackground? {
-        accent.keepsSelectionColor
+        accent.paintsSelection || (selected && accent.keepsSelectionColor)
             ? AccentSelectionBackground(selected: selected, accent: accent,
                                         cornerRadius: sidebarCornerRadius)
             : nil
