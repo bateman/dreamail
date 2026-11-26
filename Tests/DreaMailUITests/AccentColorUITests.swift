@@ -56,11 +56,16 @@ final class AccentColorUITests: XCTestCase {
         // The thread list draws the same black ink on its selected row.
         let selected = try focusThreadList(app: app, window: main, accent: Self.redSwatch)
         try assertRow(selected, in: main, is: .accent(Self.redSwatch), "thread list, after picking Red")
+        // The sidebar, now unfocused, keeps the picked colour.
+        try assertRow(strip, in: main, is: .accent(Self.redSwatch), "sidebar, unfocused after picking Red")
 
         // Default again: the system highlight is back.
         try setAccent(app: app, swatch: nil)
         try refocus(inbox, app: app, main: main)
         try assertRow(strip, in: main, is: .systemBlue, "sidebar, Default again")
+        // Unfocused with Default: the system's emphasized colour, not grey.
+        app.typeKey(XCUIKeyboardKey.tab.rawValue, modifierFlags: [])
+        try assertRow(strip, in: main, is: .systemBlue, "sidebar, Default, focus in the thread list")
     }
 
     private static let redSwatch = Accent(hex: "#eb5757", rgb: (235, 87, 87), ink: (0, 0, 0))
@@ -165,8 +170,10 @@ final class AccentColorUITests: XCTestCase {
         try assertNoSystemBlue(in: CGRect(x: row.minX - 10, y: row.minY - 2,
                                           width: row.width + 10, height: row.height + 4),
                                window: main, "thread list, focused")
-        // The sidebar's selection is no longer emphasized: system grey.
-        try assertRow(sidebarStrip, in: main, is: .grey, "sidebar, focus in the thread list")
+        // The sidebar's selection is no longer emphasized: it keeps the
+        // accent (and its ink), not the system grey.
+        try assertRow(sidebarStrip, in: main, is: .accent(accent), "sidebar, focus in the thread list")
+        try assertNoSystemBlue(around: inbox, in: main, "sidebar, focus in the thread list")
 
         // Inactive window: the small, centred About panel takes key status.
         let about = app.menuItems["About DreaMail"]
@@ -187,8 +194,8 @@ final class AccentColorUITests: XCTestCase {
             XCTAssertFalse(panel.frame.intersects(strip),
                            "About panel \(panel.frame) covers the \(name) strip \(strip)")
         }
-        try assertRow(threadClear, in: main, is: .grey, "thread list, inactive window")
-        try assertRow(sidebarStrip, in: main, is: .grey, "sidebar, inactive window")
+        try assertRow(threadClear, in: main, is: .accent(accent), "thread list, inactive window")
+        try assertRow(sidebarStrip, in: main, is: .accent(accent), "sidebar, inactive window")
     }
 
     /// Gives the thread list keyboard focus with a row selected, without

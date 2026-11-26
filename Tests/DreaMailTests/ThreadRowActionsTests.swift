@@ -29,9 +29,10 @@ final class ThreadRowActionsTests: XCTestCase {
         XCTAssertEqual(Set(ids).count, ids.count)
     }
 
-    func testButtonsTakeSixtyEightPointsAtScaleOne() {
-        // Four 17 pt buttons (13 pt glyph, 2 pt padding each side), no gap.
-        XCTAssertEqual(ThreadRowActionLayout.actionsWidth(fontScale: 1.0), 68, accuracy: 0.001)
+    func testButtonsTakeSeventyFiveAndAHalfPointsAtScaleOne() {
+        // Four 17 pt buttons (13 pt glyph, 2 pt padding each side) and three
+        // 2.5 pt gaps (a little air between the icons).
+        XCTAssertEqual(ThreadRowActionLayout.actionsWidth(fontScale: 1.0), 75.5, accuracy: 0.001)
     }
 
     func testButtonsGrowWithTheFontScaleAndKeepAClickableSize() {

@@ -6,7 +6,8 @@ import XCTest
 /// default and a red accent, in each selection state:
 /// - focused list: a solid accent capsule, with white glyph and title;
 /// - focus elsewhere in an active window (the state the owner reported) and
-///   inactive window: a grey capsule, with label-colour glyph and title.
+///   inactive window: the same capsule and ink, as Gmail's current mailbox
+///   keeps its pill whatever has the focus (it was grey before).
 ///
 /// Reads the rendered pixels of the selected row: a capture of the app
 /// window, cropped to the strip from the window's leading edge to the row's
@@ -77,7 +78,7 @@ final class SidebarIconTintUITests: XCTestCase {
             .matching(identifier: "threadRow.you@example.com:t3").firstMatch
         XCTAssertTrue(thread.waitForExistence(timeout: 5))
         thread.click()
-        try Self.assertMonochrome(row: inbox, window: main, capsule: .grey,
+        try Self.assertMonochrome(row: inbox, window: main, capsule: .accent,
                                   "main sidebar, focus in the thread list")
 
         // Settings: select Snippets with the sidebar focused, then move
@@ -97,7 +98,7 @@ final class SidebarIconTintUITests: XCTestCase {
         XCTAssertTrue(Self.waitUntil { searchField.exists || textField.exists },
                       "Snippets search field")
         (searchField.exists ? searchField : textField).click()
-        try Self.assertMonochrome(row: snippets, window: settings, capsule: .grey,
+        try Self.assertMonochrome(row: snippets, window: settings, capsule: .accent,
                                   "Settings sidebar, focus in the pane")
 
         // Inactive main window: close Settings (it covers the sidebar), then
@@ -114,7 +115,7 @@ final class SidebarIconTintUITests: XCTestCase {
         let strip = Self.strip(row: inbox, window: main)
         XCTAssertFalse(panel.frame.intersects(strip),
                        "About panel \(panel.frame) covers the Inbox row \(strip)")
-        try Self.assertMonochrome(row: inbox, window: main, capsule: .grey,
+        try Self.assertMonochrome(row: inbox, window: main, capsule: .accent,
                                   "main sidebar, inactive window")
     }
 
@@ -123,7 +124,7 @@ final class SidebarIconTintUITests: XCTestCase {
     private enum Capsule {
         /// Solid accent: the background is coloured.
         case accent
-        /// Grey: unfocused or inactive selection, or no selection.
+        /// Grey: no selection.
         case grey
 
         func matches(_ background: (Double, Double, Double)) -> Bool {

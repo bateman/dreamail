@@ -1787,11 +1787,12 @@ struct ThreadRow: View, Equatable {
         lhs.model == rhs.model
     }
 
-    /// On a selection painted in a custom accent: the rule's white or
-    /// black for every text and glyph of the row; nil elsewhere (AppKit
-    /// already turns the usual colours white on its own highlight).
+    /// On the selected row, painted whatever the list's focus: the rule's
+    /// white or black for every text and glyph of the row; nil elsewhere
+    /// (AppKit already turns the usual colours white on its own emphasized
+    /// highlight).
     private var ink: Color? {
-        model.isFocused ? SelectionInk.color(prominence: prominence, accent: accent) : nil
+        SelectionInk.color(selected: model.isFocused, prominence: prominence, accent: accent)
     }
 
     /// `normal`, or the selection ink at the same emphasis, as long as the
@@ -2158,7 +2159,7 @@ struct CategoriesPopover: View {
 }
 
 /// A thread row's list background: the read-row wash, the checked-row
-/// accent wash, and (custom accent only) the selection highlight. Observes
+/// accent wash, and the selected row's highlight (focused or not). Observes
 /// list focus itself so `ThreadListSections` never rebuilds on ↓.
 private struct ThreadRowBackground: View {
     @ObservedObject var focus: ListFocusState

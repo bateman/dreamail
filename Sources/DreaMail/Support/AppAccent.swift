@@ -268,6 +268,16 @@ struct MailAccent: Equatable, Sendable {
         return false
     }
 
+    /// Whether a selected row keeps its accent colour (custom, or the
+    /// system's emphasized selection colour) when its list is not focused
+    /// or the window is inactive, as Gmail's open conversation and current
+    /// mailbox do: the colour means "this is open", not "this list has
+    /// focus". Same macOS 26 mechanism as `paintsSelection`.
+    var keepsSelectionColor: Bool {
+        if #available(macOS 26, *) { return true }
+        return false
+    }
+
     func nsColor(_ role: KeyPath<AccentPalette, LabelRGB>) -> NSColor {
         Self.adaptive(light[keyPath: role], dark[keyPath: role])
     }
@@ -381,17 +391,23 @@ extension View {
 
 // MARK: - Selection highlight
 
-/// A selectable row's `listRowBackground`, painting the selection in a
-/// custom accent.
+/// A selectable row's `listRowBackground`, painting the selection.
 ///
 /// AppKit draws a `List`'s selection (the sidebar capsule, the thread
-/// row) in the system accent and ignores `.tint`. A row's
-/// `listRowBackground` is drawn over that highlight, and it still sees the
-/// list's own selection state through `backgroundProminence` (`.increased`
-/// while the selection is emphasized: focused list in the key window). So
-/// with a custom accent (`MailAccent.paintsSelection`) the app paints the
-/// emphasized highlight itself and leaves every other state (unfocused
-/// list, inactive window: the grey highlight) to AppKit.
+/// row) in the system accent while the list is focused in the key window,
+/// in grey otherwise, and ignores `.tint`. A row's `listRowBackground` is
+/// drawn over that highlight, and it still sees the list's own selection
+/// state through `backgroundProminence` (`.increased` while the selection
+/// is emphasized). The selected row is painted whatever the focus, like
+/// Gmail's open conversation and current mailbox: the colour says "this is
+/// open". With a custom accent (`MailAccent.paintsSelection`) the fill is
+/// the accent in every state; with the default, the system's emphasized
+/// selection colour where AppKit would draw grey (unfocused list, inactive
+/// window), and AppKit's own highlight when emphasized.
+///
+/// Two lists can then show an accent row at once, so the focused one (the
+/// emphasized selection) also gets a thin bar in the selection ink at its
+/// leading edge, as Gmail marks the focused row.
 /// `List(selection:)`, keyboard navigation, VoiceOver and drag and drop
 /// are untouched: only the paint changes. A fill that would vanish into
 /// the surface (`AccentPalette.selectionBorder`) gets an outline.
@@ -407,51 +423,77 @@ struct AccentSelectionBackground: View {
 
     /// Corner radius of the sidebar capsule this paints over.
     static let sidebarCornerRadius: CGFloat = 6
+    /// Width of the focus bar at the selected row's leading edge.
+    static let focusBarWidth: CGFloat = 3
 
     /// Sidebar rows (main window and Settings): nil unless the app paints
-    /// selections, so the system draws everything exactly as before.
+    /// this row, so the system draws everything else exactly as before.
     static func sidebar(selected: Bool, accent: MailAccent) -> AccentSelectionBackground? {
-        accent.paintsSelection
+        accent.paintsSelection || (selected && accent.keepsSelectionColor)
             ? AccentSelectionBackground(selected: selected, accent: accent,
                                         cornerRadius: sidebarCornerRadius)
             : nil
     }
 
     var body: some View {
-        if selected, accent.paintsSelection, prominence == .increased {
+        if selected, accent.keepsSelectionColor {
+            let emphasized = prominence == .increased
             let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            shape
-                .fill(accent.fill)
-                .overlay {
-                    if accent.palette(scheme: colorScheme).selectionBorder {
-                        shape.strokeBorder(accent.foreground, lineWidth: 1)
-                    }
+            Group {
+                if accent.isCustom || !emphasized {
+                    shape
+                        .fill(accent.isCustom ? accent.fill : Color(nsColor: .selectedContentBackgroundColor))
+                        .overlay {
+                            if accent.isCustom, accent.palette(scheme: colorScheme).selectionBorder {
+                                shape.strokeBorder(accent.foreground, lineWidth: 1)
+                            }
+                        }
+                } else {
+                    // Default accent, emphasized: AppKit's own highlight.
+                    unselected
                 }
-                .accessibilityHidden(true)
+            }
+            .overlay(alignment: .leading) {
+                if emphasized {
+                    Rectangle()
+                        .fill(accent.isCustom ? accent.onFill : Color.mailOnEmphasizedSelection)
+                        .frame(width: Self.focusBarWidth)
+                        .padding(.vertical, cornerRadius)
+                        .padding(.leading, cornerRadius > 0 ? Self.focusBarWidth : 0)
+                }
+            }
+            .accessibilityHidden(true)
         } else {
             unselected
         }
     }
 }
 
-/// Ink for a row's text and glyphs: on a selection the app paints
-/// (`AccentSelectionBackground`), the rule's `onFill` (white or black);
-/// otherwise nil, and the row draws its usual colours (AppKit turns them
-/// white on its own highlight). Callers pass only selected rows'
-/// prominence: it is `.increased` only on the emphasized selection.
+/// Ink for a selected row's text and glyphs where the app paints the
+/// selection (`AccentSelectionBackground`): the rule's `onFill` (white or
+/// black) on a custom accent, in every state; on the default accent white
+/// where AppKit would not (unfocused list, inactive window: its ink is
+/// dark on grey). Nil elsewhere, and the row draws its usual colours
+/// (AppKit turns them white on its own emphasized highlight). Callers pass
+/// whether the row is the selected one.
 enum SelectionInk {
-    static func color(prominence: BackgroundProminence, accent: MailAccent) -> Color? {
-        guard accent.paintsSelection, prominence == .increased else { return nil }
-        return accent.onFill
+    static func color(selected: Bool, prominence: BackgroundProminence,
+                      accent: MailAccent) -> Color? {
+        guard selected, accent.keepsSelectionColor else { return nil }
+        if accent.isCustom { return accent.onFill }
+        return prominence == .increased ? nil : Color.mailOnEmphasizedSelection
     }
 }
 
-/// A sidebar count with a custom accent: the selection ink on the painted
-/// capsule, the secondary label colour elsewhere.
+/// A sidebar count on a selected row: the selection ink on the capsule (white
+/// on the system's emphasized highlight), the secondary label colour elsewhere.
 struct SidebarBadgeStyle: ShapeStyle {
+    let selected: Bool
+
     func resolve(in environment: EnvironmentValues) -> Color {
-        SelectionInk.color(prominence: environment.backgroundProminence,
+        SelectionInk.color(selected: selected, prominence: environment.backgroundProminence,
                            accent: environment.mailAccent)
-            ?? Color(nsColor: .secondaryLabelColor)
+            ?? (selected && environment.backgroundProminence == .increased
+                ? Color.mailOnEmphasizedSelection : Color(nsColor: .secondaryLabelColor))
     }
 }

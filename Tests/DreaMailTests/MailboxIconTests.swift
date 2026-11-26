@@ -101,7 +101,7 @@ final class MailboxIconTests: XCTestCase {
             guard let ink else { return normal }
             """)))
         XCTAssertTrue(squash(text).contains(squash("""
-            model.isFocused ? SelectionInk.color(prominence: prominence, accent: accent) : nil
+            SelectionInk.color(selected: model.isFocused, prominence: prominence, accent: accent)
             """)))
     }
 

@@ -38,18 +38,18 @@ enum ThreadRowHoverAction: String, CaseIterable {
 /// clipped, however long the date is or large the text.
 enum ThreadRowActionLayout {
     static let iconSize = 13.0
-    /// Horizontal padding is tight (68 pt strip); the vertical one keeps the
+    /// Horizontal padding is tight (75.5 pt strip); the vertical one keeps the
     /// row height the spacing UI tests were written against.
     static let iconPaddingH = 2.0
     static let iconPaddingV = 3.0
-    static let spacing = 0.0
+    static let spacing = 2.5
     /// Extra hit area above and below each button (a 34 pt tall target in a
     /// dense row). It also sets the row's accessibility frame, which the
     /// section-spacing UI tests measure: the old buttons used 6 pt.
     static let hitExtraV = 6.0
 
     /// Width of the four buttons at the list's font scale
-    /// (68 pt at scale 1: four 17 pt buttons).
+    /// (75.5 pt at scale 1: four 17 pt buttons and three 2.5 pt gaps).
     static func actionsWidth(fontScale: Double) -> Double {
         let count = Double(ThreadRowHoverAction.allCases.count)
         let button = iconSize * fontScale + iconPaddingH * 2

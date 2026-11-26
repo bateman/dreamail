@@ -78,6 +78,8 @@ struct LabelMenuItems: View {
 /// The "⋮" at the right of a label row: the same menu as a right-click.
 struct LabelMenuButton: View {
     let node: SidebarLabelNode
+    /// Whether the row is the open label (its ink follows the selection).
+    let selected: Bool
     let onNewLabel: (NewLabelRequest) -> Void
     let onPickColor: () -> Void
 
@@ -85,9 +87,17 @@ struct LabelMenuButton: View {
         Menu {
             LabelMenuItems(node: node, onNewLabel: onNewLabel, onPickColor: onPickColor)
         } label: {
+            // Gmail's vertical "⋮", neutral (never the accent: a
+            // hierarchical style inside a selected sidebar row resolves to
+            // it): the secondary label colour, the selection ink on the
+            // painted selection (`SidebarBadgeStyle`). The frame is the
+            // rotated glyph's, so the hit area is as tall as the dots.
             Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .regular))
                 .rotationEffect(.degrees(90))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(SidebarBadgeStyle(selected: selected))
+                .frame(width: 16, height: 18)
+                .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

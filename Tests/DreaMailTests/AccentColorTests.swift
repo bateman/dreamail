@@ -366,17 +366,36 @@ final class AccentColorTests: XCTestCase {
     func testSelectionPaintingStates() {
         let red = MailAccent(custom: LabelRGB(hex: 0xD0201A))
         // Painted only with a custom accent, and only on macOS 26 and later
-        // (where the mechanism is verified); the default never paints.
+        // (where the mechanism is verified); the default never paints the
+        // emphasized selection (AppKit's own).
         XCTAssertFalse(MailAccent.default.paintsSelection)
         if #available(macOS 26, *) {
             XCTAssertTrue(red.paintsSelection)
-            // Ink: onFill on the emphasized selection only.
-            XCTAssertNotNil(SelectionInk.color(prominence: .increased, accent: red))
+            XCTAssertTrue(red.keepsSelectionColor)
+            XCTAssertTrue(MailAccent.default.keepsSelectionColor)
+            // A selected row keeps the rule's ink in every state: focused
+            // (emphasized), unfocused and in an inactive window (standard).
+            for prominence in [BackgroundProminence.increased, .standard] {
+                XCTAssertEqual(SelectionInk.color(selected: true, prominence: prominence, accent: red),
+                               red.onFill)
+            }
+            // Default: AppKit's own ink when emphasized; the emphasized
+            // selection ink where AppKit would draw grey.
+            XCTAssertNil(SelectionInk.color(selected: true, prominence: .increased, accent: .default))
+            XCTAssertEqual(SelectionInk.color(selected: true, prominence: .standard, accent: .default),
+                           Color.mailOnEmphasizedSelection)
         } else {
             XCTAssertFalse(red.paintsSelection)
-            XCTAssertNil(SelectionInk.color(prominence: .increased, accent: red))
+            XCTAssertFalse(red.keepsSelectionColor)
+            for prominence in [BackgroundProminence.increased, .standard] {
+                XCTAssertNil(SelectionInk.color(selected: true, prominence: prominence, accent: red))
+                XCTAssertNil(SelectionInk.color(selected: true, prominence: prominence, accent: .default))
+            }
         }
-        XCTAssertNil(SelectionInk.color(prominence: .standard, accent: red))
-        XCTAssertNil(SelectionInk.color(prominence: .increased, accent: .default))
+        // An unselected row never takes the selection ink.
+        for accent in [red, MailAccent.default] {
+            XCTAssertNil(SelectionInk.color(selected: false, prominence: .standard, accent: accent))
+            XCTAssertNil(SelectionInk.color(selected: false, prominence: .increased, accent: accent))
+        }
     }
 }
