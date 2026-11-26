@@ -221,11 +221,11 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(research), "a closed More hides the open label as well")
     }
 
-    /// A hidden sublabel of a listed parent is nested under it, in place,
-    /// only while the labels' More is open: not below the Less row, not named
-    /// with a path, and gone again when More closes, the open label included.
-    /// (Vendors is open and lists AWS and Stripe; Stripe is hidden here.)
-    func testHiddenSublabelIsNestedInPlaceWhileMoreIsOpen() {
+    /// A sublabel of a listed parent is always shown nested under it, in
+    /// place, whatever its own list visibility (Gmail's sidebar): hiding
+    /// Vendors/Stripe through its menu sets Gmail's value but changes nothing
+    /// here: no More row, no path name, the parent's name once.
+    func testHiddenSublabelStaysNestedUnderItsListedParent() {
         let app = launch()
         let vendors = label("Label_vendors", in: app)
         let aws = label("Label_vendors_aws", in: app)
@@ -240,31 +240,19 @@ final class SidebarLabelMenuUITests: XCTestCase {
         let hide = menuItem("labelMenu.labelList.hide", "Hide", in: app)
         XCTAssertTrue(hide.waitForExistence(timeout: 5))
         hide.click()
-        XCTAssertTrue(waitForAbsence(stripe), "with More closed the hidden sublabel is shown nowhere")
-        XCTAssertTrue(aws.exists, "its sibling stays")
-        XCTAssertTrue(more.waitForExistence(timeout: 5), "an in-place hidden label needs the More row")
-
-        XCTAssertTrue(reveal(more, in: app))
-        more.click()
-        XCTAssertTrue(stripe.waitForExistence(timeout: 5), "More shows it")
-        // Inside Vendors' subtree: between its row and the More (Less) row,
-        // after its sibling, indented like it; not a row below Less.
+        // Give a wrong removal time to show before asserting the row stays.
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        XCTAssertTrue(stripe.exists, "a hidden sublabel of a listed parent stays listed")
+        XCTAssertFalse(more.exists, "and needs no More row")
+        // Inside Vendors' subtree: after its sibling, indented like it.
         XCTAssertLessThan(vendors.frame.minY, aws.frame.minY)
         XCTAssertLessThan(aws.frame.minY, stripe.frame.minY, "in sibling order, under AWS")
-        XCTAssertLessThan(stripe.frame.minY, more.frame.minY, "not below the Less row")
         XCTAssertEqual(stripe.frame.minX, aws.frame.minX, accuracy: 1, "indented like its siblings")
-        // No row is named with a path, and the parent's name is not repeated.
         let sidebar = app.outlines.firstMatch
         XCTAssertEqual(sidebar.staticTexts.matching(NSPredicate(
             format: "value CONTAINS '/' OR label CONTAINS '/'")).count, 0,
                        "no row is named with a path")
         XCTAssertEqual(sidebar.staticTexts.matching(NSPredicate(format: "value == 'Vendors'")).count, 1,
                        "the parent's name appears once")
-
-        // The open label goes with a closed More.
-        stripe.click()
-        XCTAssertTrue(reveal(more, in: app))
-        more.click()
-        XCTAssertTrue(waitForAbsence(stripe), "a closed More hides it again, the open label included")
     }
 }
