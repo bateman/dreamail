@@ -98,17 +98,19 @@ struct SidebarLabelTreeView: View {
     var body: some View {
         let roots = store.labelTrees[accountId] ?? []
         let parts = SidebarLabelTree.split(roots) { unread(for: $0) }
+        let open = disclosure.labelsMoreOpen(accountId)
         ForEach(parts.listed) { node in
-            SidebarLabelNodeView(node: node, disclosure: disclosure, onNewLabel: onNewLabel)
+            SidebarLabelNodeView(node: node, moreOpen: open, disclosure: disclosure,
+                                 onNewLabel: onNewLabel)
         }
-        if !parts.more.isEmpty {
-            let open = disclosure.labelsMoreOpen(accountId)
+        if parts.needsMoreRow {
             SidebarMoreToggle(open: open, identifier: "sidebar.labels.more.\(accountId)") {
                 disclosure.setLabelsMoreOpen(accountId, !open)
             }
             if open {
                 ForEach(parts.more) { node in
-                    SidebarLabelNodeView(node: node, disclosure: disclosure, onNewLabel: onNewLabel)
+                    SidebarLabelNodeView(node: node, moreOpen: open, disclosure: disclosure,
+                                         onNewLabel: onNewLabel)
                 }
             }
         }
@@ -123,19 +125,23 @@ struct SidebarLabelTreeView: View {
 /// A label row, with its sublabels under a disclosure triangle.
 struct SidebarLabelNodeView: View {
     let node: SidebarLabelNode
+    /// The account's labels' "More" is open: hidden sublabels show in place.
+    let moreOpen: Bool
     let disclosure: SidebarDisclosureModel
     let onNewLabel: (NewLabelRequest) -> Void
 
     var body: some View {
-        if node.children.isEmpty {
+        let children = node.shownChildren(moreOpen: moreOpen)
+        if children.isEmpty {
             SidebarLabelRow(node: node, onNewLabel: onNewLabel)
         } else {
             DisclosureGroup(isExpanded: Binding(
                 get: { disclosure.isExpanded(node) },
                 set: { disclosure.setExpanded(node, $0) })
             ) {
-                ForEach(node.children) { child in
-                    SidebarLabelNodeView(node: child, disclosure: disclosure, onNewLabel: onNewLabel)
+                ForEach(children) { child in
+                    SidebarLabelNodeView(node: child, moreOpen: moreOpen, disclosure: disclosure,
+                                         onNewLabel: onNewLabel)
                 }
             } label: {
                 SidebarLabelRow(node: node, onNewLabel: onNewLabel)

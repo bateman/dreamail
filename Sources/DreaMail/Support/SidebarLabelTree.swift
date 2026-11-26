@@ -20,6 +20,15 @@ struct SidebarLabelNode: Identifiable, Hashable, Sendable {
     let colors: LabelColors
     let visibility: Visibility
     var children: [SidebarLabelNode]
+    /// Set by `SidebarLabelTree.split` on a hidden label nested in the listed
+    /// tree (a hidden sublabel of a listed parent): it shows, in place, only
+    /// while the labels' "More" is open.
+    var revealedByMore = false
+
+    /// The children a row shows: those revealed by "More" only while it is open.
+    func shownChildren(moreOpen: Bool) -> [SidebarLabelNode] {
+        moreOpen ? children : children.filter { !$0.revealedByMore }
+    }
 
     /// Gmail's `labelListVisibility`.
     enum Visibility: String, Sendable {
@@ -110,62 +119,69 @@ enum SidebarLabelTree {
         }
     }
 
-    /// Gmail's two lists: labels shown in the list, and those behind the
-    /// labels' trailing "More" row (hidden, or shown only when unread and
-    /// read now). A label is never in both. A listed label under an unlisted
-    /// parent stays under it, so the parent appears in the list as its
-    /// container (and not again under "More"). An unlisted label under a
-    /// listed parent is a row of its own under "More", named by its path from
-    /// its full name (`parent/child`); unlisted labels under an
-    /// unlisted parent keep their nesting there.
+    /// Gmail's two lists, and what the labels' "More" row reveals.
+    /// - `listed`: the tree above "More". A label listed by its visibility is
+    ///   here; so is an unlisted label with a listed descendant, as the
+    ///   container of it (and it is not repeated under "More"). An unlisted
+    ///   label with no listed descendant, under a parent in this tree, stays
+    ///   nested in place, marked `revealedByMore`: the view shows it only
+    ///   while "More" is open.
+    /// - `more`: unlisted labels with no listed ancestor, with their subtrees
+    ///   nested, shown below the "More" row.
+    /// A label is in one place only, and no row carries a path name.
+    struct Split {
+        var listed: [SidebarLabelNode]
+        var more: [SidebarLabelNode]
+        /// Some label sits in `listed` only while "More" is open.
+        var hasRevealedInPlace: Bool
+        /// The "More" row is needed when any label is hidden, either way.
+        var needsMoreRow: Bool { !more.isEmpty || hasRevealedInPlace }
+    }
+
     static func split(_ roots: [SidebarLabelNode],
-                      unread: (SidebarLabelNode) -> Int)
-        -> (listed: [SidebarLabelNode], more: [SidebarLabelNode]) {
+                      unread: (SidebarLabelNode) -> Int) -> Split {
         var listed: [SidebarLabelNode] = []
         var more: [SidebarLabelNode] = []
         for root in roots {
-            let parts = split(root, unread: unread)
-            if let l = parts.listed { listed.append(l) }
-            more.append(contentsOf: parts.more)
-        }
-        return (listed, more)
-    }
-
-    /// `more`: for a listed node, its unlisted descendants as rows of their
-    /// own (already named from it); for an unlisted node, itself with its
-    /// unlisted children nested (empty when it is listed as a container).
-    private static func split(_ node: SidebarLabelNode,
-                              unread: (SidebarLabelNode) -> Int)
-        -> (listed: SidebarLabelNode?, more: [SidebarLabelNode]) {
-        var listedKids: [SidebarLabelNode] = []
-        var kidRows: [(listed: Bool, rows: [SidebarLabelNode])] = []
-        for child in node.children {
-            let parts = split(child, unread: unread)
-            if let l = parts.listed { listedKids.append(l) }
-            kidRows.append((parts.listed != nil, parts.more))
-        }
-        let own = node.visibility.isListed(unread: unread(node))
-        guard own || !listedKids.isEmpty else {
-            var copy = node
-            copy.children = kidRows.flatMap(\.rows)
-            return (nil, [copy])
-        }
-        var listed = node
-        listed.children = listedKids
-        var more: [SidebarLabelNode] = []
-        for kid in kidRows {
-            if kid.listed {
-                more.append(contentsOf: kid.rows)
+            if let l = listedForm(root, unread: unread) {
+                listed.append(l)
             } else {
-                // Named by its full name: two listed parents can each have a
-                // hidden child of the same short name.
-                for var row in kid.rows {
-                    row.displayName = row.fullName
-                    more.append(row)
-                }
+                more.append(root)
             }
         }
-        return (listed, more)
+        return Split(listed: listed, more: more,
+                     hasRevealedInPlace: listed.contains(where: containsRevealed))
+    }
+
+    private static func containsRevealed(_ node: SidebarLabelNode) -> Bool {
+        node.revealedByMore || node.children.contains(where: containsRevealed)
+    }
+
+    /// `node` as it sits in the listed tree, or nil when neither it nor a
+    /// descendant is listed.
+    private static func listedForm(_ node: SidebarLabelNode,
+                                   unread: (SidebarLabelNode) -> Int) -> SidebarLabelNode? {
+        var kids: [SidebarLabelNode] = []
+        var anyListed = false
+        for child in node.children {
+            if let l = listedForm(child, unread: unread) {
+                kids.append(l)
+                anyListed = true
+            } else {
+                kids.append(revealed(child))
+            }
+        }
+        guard node.visibility.isListed(unread: unread(node)) || anyListed else { return nil }
+        var copy = node
+        copy.children = kids
+        return copy
+    }
+
+    private static func revealed(_ node: SidebarLabelNode) -> SidebarLabelNode {
+        var copy = node
+        copy.revealedByMore = true
+        copy.children = node.children.map(revealed)
+        return copy
     }
 }
 
