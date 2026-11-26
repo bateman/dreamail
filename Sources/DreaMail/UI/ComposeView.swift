@@ -795,6 +795,14 @@ struct ComposeView: View {
         .onChange(of: store.composeEscToken) { handleComposeEsc() }
         .onChange(of: body_) {
             if let edit = inlineEditUndo, body_ != edit.appliedBody { inlineEditUndo = nil }
+            // ⌘Z after choosing a rendered signature brings its text back:
+            // it is text again, so it is shown and sent once.
+            if signatureState.richSignatureId != nil {
+                var state = signatureState
+                if state.textReturned(in: signatureHead, signature: shownRichSignature) {
+                    signatureState = state
+                }
+            }
             scheduleAutosave()
         }
         .onChange(of: subject) { scheduleAutosave() }
@@ -2138,7 +2146,11 @@ struct ComposeView: View {
     @ViewBuilder
     private var richSignatureBlock: some View {
         if let html = ComposeSignature.richHTML(of: shownRichSignature) {
-            ComposeSignatureBlock(html: ComposeSignature.htmlBlock(innerHTML: html))
+            let block = ComposeSignature.htmlBlock(innerHTML: html)
+            ComposeSignatureBlock(html: block,
+                                  text: ComposeSignature.normalizedBody(shownRichSignature?.body ?? ""))
+                // A new signature measures afresh.
+                .id(block)
                 .padding(.bottom, 8)
         }
     }

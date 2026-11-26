@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Settings → Signatures: each account's named signatures (add, rename,
 /// edit, delete; the Gmail one of each address arrives by itself) and the default of each address the
@@ -356,25 +357,46 @@ private struct SignatureEditor: View {
         return signature.html
     }
 
-    /// A paste carrying HTML: when it replaces the whole text, the text and
-    /// the look come from it (`SignaturePaste`). A paste into part of the
-    /// text, or one with no readable text, goes in as plain text.
-    private func pasteRich(_ html: String) -> Bool {
+    /// A paste carrying HTML (or RTF): when it replaces the whole text, the
+    /// text and the look come from it (`SignaturePaste`, off the main
+    /// thread: a browser copy can be large). A paste into part of the text
+    /// goes in as plain text; one with no readable text, or over the size
+    /// bounds, puts the pasteboard's plain text in instead, and says so.
+    private func pasteRich(_ pasteboard: NSPasteboard) -> Bool {
         let length = (text as NSString).length
         let replacesAll = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || (selection.location == 0 && selection.length >= length)
         guard replacesAll else { return false }
-        guard let pasted = SignaturePaste.read(html: html) else {
-            pasteNote = SignaturePaste.unreadableNote
-            return false
+        let html = ComposeBodyTextView.pastedHTML(from: pasteboard)
+        let plain = pasteboard.string(forType: .string) ?? ""
+        Task { @MainActor in
+            var pasted: SignaturePaste.Result?
+            if let html {
+                pasted = await Task.detached(priority: .userInitiated) {
+                    SignaturePaste.read(html: html)
+                }.value
+            }
+            guard let pasted else {
+                pastedBody = nil
+                pastedLook = nil
+                pasteNote = SignaturePaste.unreadableNote
+                replaceText(with: plain)
+                return
+            }
+            pastedBody = pasted.body
+            pastedLook = pasted.html
+            lookRemoved = false
+            pasteNote = pasted.note
+            replaceText(with: pasted.body)
         }
-        pastedBody = pasted.body
-        pastedLook = pasted.html
-        lookRemoved = false
-        pasteNote = pasted.note
-        text = pasted.body
-        caret = (pasted.body as NSString).length
         return true
+    }
+
+    /// Through the text system, as compose's signature swap: one undo step.
+    private func replaceText(with next: String) {
+        let caret = (next as NSString).length
+        if formatTarget.replaceText?(next, caret) != true { text = next }
+        self.caret = caret
     }
 
     private func removeFormatting() {
@@ -424,7 +446,7 @@ private struct SignatureEditor: View {
             }
             ComposeBodyEditor(text: $text, isFocused: $focused, caretUTF16: $caret,
                               selection: $selection, formatTarget: formatTarget, fontSize: 13,
-                              onPasteHTML: { pasteRich($0) })
+                              onRichPaste: { pasteRich($0) })
                 .frame(minHeight: 140)
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
                 .accessibilityIdentifier("settings.signatures.body")

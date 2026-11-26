@@ -305,6 +305,103 @@ final class RichSignatureComposeTests: XCTestCase {
         XCTAssertNil(ComposeSignature.markedStyle(in: quoted))
     }
 
+    // MARK: - Review round 1
+
+    /// R1: a reopened forward draft has no original to rebuild from: its own
+    /// HTML (same style) is reused, the look once, the forwarded HTML kept,
+    /// no marker on the send. Through `OutgoingHTML.build` (no test goes
+    /// through `MailStore.send`).
+    func testAReopenedForwardDraftKeepsTheLookAndTheForwardedHTML() throws {
+        let rich = try gmailCopy()
+        let id = try XCTUnwrap(rich.id)
+        var original = earlierMessage(signature: rich)
+        original.bodyHTML = "<div style=\"color:#336699\">Earlier, formatted</div>"
+        let full = "FYI\n\n" + ForwardComposer.forwardBlock(parts: [ForwardComposer.Part(message: original)])
+        let body = ComposeSignature.assembled(body: full, signature: rich)
+        for style in [ComposeSignatureStyle.rich(id), .plain] {
+            let saved = try XCTUnwrap(OutgoingHTML.build(body: body, forwardOf: original, replyTo: nil,
+                                                         draft: nil, threadMessages: [original],
+                                                         signatures: [rich], style: style,
+                                                         marksDraft: true))
+            XCTAssertTrue(saved.contains("color:#336699"))
+            var draft = original
+            draft.bodyText = body
+            draft.bodyHTML = saved
+            let sent = try XCTUnwrap(OutgoingHTML.build(body: body, forwardOf: nil, replyTo: nil,
+                                                        draft: draft, threadMessages: [],
+                                                        signatures: [rich], style: style))
+            XCTAssertTrue(sent.contains("color:#336699"), "the forwarded HTML is kept")
+            XCTAssertFalse(sent.contains(ComposeSignature.styleAttribute))
+            if style == .rich(id) {
+                try assertOnce(html: sent, text: body, signature: rich)
+            } else {
+                XCTAssertFalse(sent.lowercased().contains(look))
+            }
+            // Saved again: marked once, afresh.
+            let resaved = try XCTUnwrap(OutgoingHTML.build(body: body, forwardOf: nil, replyTo: nil,
+                                                           draft: draft, threadMessages: [],
+                                                           signatures: [rich], style: style,
+                                                           marksDraft: true))
+            XCTAssertEqual(count(ComposeSignature.styleAttribute, in: resaved), 1)
+            XCTAssertEqual(ComposeSignature.markedStyle(in: resaved), style)
+        }
+    }
+
+    /// R2: an editor that re-saved the draft may move the attribute or change
+    /// its quotes; it is still read, and a send never carries it, wherever it is.
+    func testTheMarkerIsReadTolerantlyAndNeverSent() throws {
+        let reordered = "<div data-dreamail-signature='rich:5' dir=\"ltr\" class=\"gmail_signature\">"
+            + "-- <br>Ann</div>"
+        XCTAssertEqual(ComposeSignature.markedStyle(in: reordered), .rich(5))
+        XCTAssertEqual(ComposeSignature.markedStyle(in: "<div DATA-DREAMAIL-SIGNATURE = plain>x</div>"), .plain)
+        let everywhere = "<div x=\"1\" data-dreamail-signature=\"plain\">a</div>"
+            + "<div class=\"gmail_quote\"><span data-dreamail-signature='rich:9'>b</span>"
+            + "<p data-dreamail-signature=rich:3>c</p></div>"
+        let stripped = ComposeSignature.strippingStyle(everywhere)
+        XCTAssertFalse(stripped.lowercased().contains("data-dreamail-signature"))
+        XCTAssertTrue(stripped.contains("<div x=\"1\">a</div>"))
+        // A draft reused verbatim on send loses it too.
+        var draft = try earlierMessage(signature: gmailCopy())
+        draft.bodyText = "Hello"
+        draft.bodyHTML = everywhere
+        let sent = try XCTUnwrap(OutgoingHTML.build(body: "Hello", forwardOf: nil, replyTo: nil,
+                                                    draft: draft, threadMessages: [],
+                                                    signatures: [], style: .plain))
+        XCTAssertFalse(sent.lowercased().contains("data-dreamail-signature"))
+        // Linear on a long run of white space.
+        let start = Date()
+        _ = ComposeSignature.strippingStyle("data-dreamail-signature" + String(repeating: " ", count: 200_000) + "x")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+    }
+
+    /// R3: ⌘Z after choosing the rendered signature puts its text back. The
+    /// assembly keeps it once, and the compose state turns back to text.
+    func testUndoAfterChoosingTheRenderedSignatureKeepsItOnce() throws {
+        let rich = try gmailCopy()
+        var state = ComposeSignatureState()
+        let typed = state.choose(rich, in: "Hello", known: [rich.body])
+        XCTAssertEqual(state.richSignatureId, rich.id)
+        // ⌘Z: the editor holds the text again while the state is still rich.
+        let undone = ComposeSignature.assembled(body: typed, signature: rich)
+        XCTAssertEqual(ComposeSignature.assembled(body: undone, signature: rich), undone)
+        let html = OutgoingHTML.build(body: undone, forwardOf: nil, replyTo: nil, draft: nil,
+                                      threadMessages: [], signatures: [rich],
+                                      style: .rich(try XCTUnwrap(rich.id)))
+        try assertOnce(html: html, text: undone, signature: rich)
+        // With a quote after it, too.
+        let original = earlierMessage(signature: rich)
+        let reply = undone + "\n\n" + ReplyComposer.plainQuote(of: original)
+        XCTAssertEqual(ComposeSignature.assembled(body: reply, signature: rich), reply)
+        // The window follows: text again, no rendered block.
+        XCTAssertTrue(state.textReturned(in: undone, signature: rich))
+        XCTAssertNil(state.richSignatureId)
+        XCTAssertEqual(state.selection(in: undone), .signature(try XCTUnwrap(rich.id)))
+        XCTAssertFalse(state.textReturned(in: undone, signature: rich))
+        var other = ComposeSignatureState()
+        _ = other.choose(rich, in: "Hello", known: [])
+        XCTAssertFalse(other.textReturned(in: "Hello", signature: rich))
+    }
+
     // MARK: - Stored style
 
     func testTheStyleRoundTripsThroughStorage() {

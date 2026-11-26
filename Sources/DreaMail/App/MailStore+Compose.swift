@@ -29,7 +29,9 @@ extension MailStore {
         var messageId: String = MIMEBuilder.makeMessageID()
         /// How the signature goes out (`ComposeSignatureStyle`); `body`
         /// carries a rendered signature's text block for text/plain.
-        var signatureStyle: ComposeSignatureStyle = .legacy
+        /// Nil: none recorded (a row from an earlier build; MCP reads the
+        /// draft's own marker instead).
+        var signatureStyle: ComposeSignatureStyle? = nil
 
         /// Effective From identity email.
         var effectiveFromEmail: String {
@@ -50,7 +52,7 @@ extension MailStore {
                 replacingDraftId: replacingDraft?.id,
                 attachmentsJSON: ScheduledSend.encodeAttachments(attachments),
                 createdAt: Date(), messageId: messageId,
-                signatureStyle: signatureStyle.storageValue)
+                signatureStyle: signatureStyle?.storageValue)
         }
     }
 
@@ -402,7 +404,7 @@ extension MailStore {
                            replyTo: replyTo, forward: s.forward,
                            attachments: s.attachments, replacingDraft: draft,
                            messageId: messageId,
-                           signatureStyle: ComposeSignatureStyle(storageValue: s.signatureStyle))
+                           signatureStyle: s.signatureStyle.map(ComposeSignatureStyle.init(storageValue:)))
     }
 
     private func armScheduledSendTimer() {
@@ -543,7 +545,7 @@ extension MailStore {
               attachments: [MIMEBuilder.Attachment] = [],
               replacingDraft draft: Message? = nil,
               messageId: String? = nil,
-              signatureStyle: ComposeSignatureStyle = .legacy) async throws {
+              signatureStyle: ComposeSignatureStyle? = nil) async throws {
         // For a forward, `message` is the forwarded original: it supplies the
         // HTML body below, but must not thread the send into its conversation.
         let threadParent = forward ? nil : message
@@ -557,10 +559,9 @@ extension MailStore {
             replyAccountId: threadParent?.accountId,
             draftAccountId: draft?.accountId)
         let identityEmail = fromEmail.isEmpty ? apiAccountId : fromEmail
-        // No style given (a draft sent as it is, from MCP): the one the
-        // draft was saved with.
-        let style = signatureStyle == .legacy
-            ? ComposeSignature.markedStyle(in: draft?.bodyHTML) ?? .legacy : signatureStyle
+        // No style given (a draft sent as it is): the one the draft was
+        // saved with; none recorded anywhere is an earlier build's (#79).
+        let style = signatureStyle ?? ComposeSignature.markedStyle(in: draft?.bodyHTML) ?? .legacy
         let bodyHTML = htmlAlternative(body: body,
                                        forwardOf: forward ? message : nil,
                                        replyTo: forward ? nil : message,
@@ -670,7 +671,7 @@ extension MailStore {
                    silent: Bool = false,
                    syncAfter: Bool? = nil,
                    composingRequestId: UUID? = nil,
-                   signatureStyle: ComposeSignatureStyle = .legacy) async throws -> Message? {
+                   signatureStyle: ComposeSignatureStyle? = nil) async throws -> Message? {
         let shouldSync = syncAfter ?? !silent
         guard !demoMode else {
             if !silent { showNotice("Drafts aren't saved in the demo inbox") }
@@ -698,7 +699,8 @@ extension MailStore {
                                       forwardOf: forward ? message : nil,
                                       replyTo: forward ? nil : message,
                                       draft: draft, accountId: accountId,
-                                      signatureStyle: signatureStyle, marksDraft: true),
+                                      signatureStyle: signatureStyle ?? .legacy,
+                                      marksDraft: true),
             inReplyTo: threadParent?.messageIdHeader,
             references: threadParent?.referencesHeader ?? draft?.referencesHeader,
             attachments: attachments
@@ -859,7 +861,7 @@ extension MailStore {
                       silent: Bool = false,
                       syncAfter: Bool? = nil,
                       composingRequestId: UUID? = nil,
-                      signatureStyle: ComposeSignatureStyle = .legacy) async -> DraftSaveOutcome {
+                      signatureStyle: ComposeSignatureStyle? = nil) async -> DraftSaveOutcome {
         // Read-only cache (F-02): neither Gmail (see saveDraft) nor the
         // Outbox (a local write) can take the draft.
         guard cacheAcceptsWrites(silent: silent) else { return .failed }
@@ -891,7 +893,7 @@ extension MailStore {
             replyToMessageId: message?.id, forward: forward, forwardAll: forwardAll,
             replacingDraftId: draft?.id,
             attachmentsJSON: ScheduledSend.encodeAttachments(attachments),
-            createdAt: now, updatedAt: now, signatureStyle: signatureStyle.storageValue)
+            createdAt: now, updatedAt: now, signatureStyle: signatureStyle?.storageValue)
         row.accountId = accountId
         row.fromEmail = fromEmail
         row.toHeader = to; row.ccHeader = cc; row.bccHeader = bcc
@@ -900,7 +902,7 @@ extension MailStore {
         row.forward = forward; row.forwardAll = forwardAll
         row.replacingDraftId = draft?.id
         row.attachmentsJSON = ScheduledSend.encodeAttachments(attachments)
-        row.signatureStyle = signatureStyle.storageValue
+        row.signatureStyle = signatureStyle?.storageValue
         row.updatedAt = now
         let stored: LocalDraft
         let pending = row
@@ -960,7 +962,7 @@ extension MailStore {
                                   replyTo: replyTo, forward: local.forward,
                                   forwardAll: local.forwardAll,
                                   attachments: local.attachments, replacingDraft: draft,
-                                  signatureStyle: ComposeSignatureStyle(storageValue: local.signatureStyle))
+                                  signatureStyle: local.signatureStyle.map(ComposeSignatureStyle.init(storageValue:)))
         var request = ComposeRequest(replyTo: replyTo, forward: local.forward,
                                      forwardAll: local.forwardAll,
                                      editDraft: draft, restore: restore)
@@ -1008,7 +1010,7 @@ extension MailStore {
                     body: local.body, replyTo: replyTo, forward: local.forward,
                     attachments: local.attachments, replacing: draft, silent: true,
                     syncAfter: false,
-                    signatureStyle: ComposeSignatureStyle(storageValue: local.signatureStyle)) != nil
+                    signatureStyle: local.signatureStyle.map(ComposeSignatureStyle.init(storageValue:))) != nil
                 else { continue }
                 isOffline = false
                 uploadedAccounts.insert(local.accountId)

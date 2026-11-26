@@ -379,6 +379,18 @@ struct ComposeSignatureState: Equatable {
         return next
     }
 
+    /// The rendered signature's text is back at the end of `head` (⌘Z after
+    /// choosing it): the signature is text again, shown once.
+    mutating func textReturned(in head: String, signature: SignatureRecord?) -> Bool {
+        guard richSignatureId != nil, let signature, signature.id == richSignatureId,
+              let found = ComposeSignature.detect(in: head, among: [signature]) else { return false }
+        richSignatureId = nil
+        legacy = false
+        block = found.block
+        signatureId = signature.id
+        return true
+    }
+
     /// "Edit signature as text": the rendered block becomes its text at the
     /// end of `head`, which then goes out as typed. Nil when no block is shown.
     mutating func editAsText(_ signature: SignatureRecord?, in head: String) -> String? {
@@ -543,9 +555,13 @@ extension ComposeSignature {
     /// The separator before the quote stays as it was (the quote matchers
     /// compare the end of the body); trailing blank lines of the head go,
     /// as they would above a block in the editor.
+    /// A head that already ends with that signature's text (⌘Z put it back
+    /// after the block was chosen) is left as it is: the signature once.
     static func assembled(body: String, signature: SignatureRecord) -> String {
         guard let block = block(for: signature.body) else { return body }
         let quote = ComposeQuote.quoteStart(in: body)
+        let head = String(body[..<(quote ?? body.endIndex)])
+        if detect(in: head, among: [signature]) != nil { return body }
         var cut = quote ?? body.endIndex
         while cut > body.startIndex, body[body.index(before: cut)].isWhitespace {
             cut = body.index(before: cut)
@@ -589,16 +605,35 @@ extension ComposeSignature {
     }
 
     /// The style a saved draft recorded, read from its authored head only (a
-    /// quoted message cannot set it); nil when it has none.
+    /// quoted message cannot set it); nil when it has none. Tolerant: the
+    /// attribute may sit anywhere in a tag, with either quote, as an editor
+    /// that re-saved the draft may have written it.
     static func markedStyle(in html: String?) -> ComposeSignatureStyle? {
         guard let html else { return nil }
         let quote = html.range(of: "<div class=\"gmail_quote")?.lowerBound ?? html.endIndex
-        let prefix = blockOpening + " \(styleAttribute)=\""
-        guard let start = html.range(of: prefix, range: html.startIndex..<quote)?.upperBound,
-              let end = html[start..<quote].firstIndex(of: "\"") else { return nil }
-        let value = String(html[start..<end])
-        guard value.count <= 32 else { return nil }
+        let head = String(html[..<quote])
+        guard let match = styleAttributeRegex.firstMatch(
+            in: head, range: NSRange(head.startIndex..., in: head)),
+              let range = Range(match.range(at: 2), in: head) else { return nil }
+        let value = head[range].trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
         let style = ComposeSignatureStyle(storageValue: value)
         return style == .legacy ? nil : style
     }
+
+    /// `html` without any style attribute, wherever it sits: what a sent
+    /// message carries (and a draft before it is marked again).
+    static func strippingStyle(_ html: String) -> String {
+        guard html.range(of: styleAttribute, options: .caseInsensitive) != nil else { return html }
+        return styleAttributeRegex.stringByReplacingMatches(
+            in: html, range: NSRange(html.startIndex..., in: html), withTemplate: "")
+    }
+
+    /// ` data-dreamail-signature="…"`, `='…'` or unquoted. No nested
+    /// quantifiers, and a match starts only where a run of white space
+    /// starts, so a long run is scanned once: linear on any input.
+    private static let styleAttributeRegex: NSRegularExpression = {
+        try! NSRegularExpression(
+            pattern: #"((?<!\s)\s+data-dreamail-signature\s*=\s*)("[^"]{0,64}"|'[^']{0,64}'|[^\s>"']{1,64})"#,
+            options: .caseInsensitive)
+    }()
 }

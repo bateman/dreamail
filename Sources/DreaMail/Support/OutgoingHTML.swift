@@ -14,9 +14,14 @@ enum OutgoingHTML {
                       signatures: [SignatureRecord],
                       style: ComposeSignatureStyle = .legacy,
                       marksDraft: Bool = false) -> String? {
-        // A draft DreaMail saved with a style is rebuilt from the body, never
-        // reused: its HTML carries the look of the style it was saved with.
-        let reusable = draft.flatMap { ComposeSignature.markedStyle(in: $0.bodyHTML) == nil ? $0 : nil }
+        // A draft DreaMail saved with another style is rebuilt from the body:
+        // its HTML carries the look of the style it was saved with. With the
+        // same style it is reused (a reopened forward has no original to
+        // rebuild the forwarded HTML from).
+        let reusable = draft.flatMap { draft -> Message? in
+            guard let marked = ComposeSignature.markedStyle(in: draft.bodyHTML) else { return draft }
+            return marked == style ? draft : nil
+        }
         guard let html = base(body: body, forwardOf: original, replyTo: replyParent,
                               draft: reusable, threadMessages: threadMessages) else { return nil }
         let head = String(body[..<(ComposeQuote.quoteStart(in: body) ?? body.endIndex)])
@@ -31,7 +36,9 @@ enum OutgoingHTML {
                 ComposeSignature.withRichSignature(html, head: head, signature: $0)
             } ?? html
         }
-        return marksDraft ? ComposeSignature.markingStyle(style, in: styled) : styled
+        // Never on a send, wherever an editor left it; a draft is marked afresh.
+        let clean = ComposeSignature.strippingStyle(styled)
+        return marksDraft ? ComposeSignature.markingStyle(style, in: clean) : clean
     }
 
     static func base(body: String, forwardOf original: Message?,

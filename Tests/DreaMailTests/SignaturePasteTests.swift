@@ -53,9 +53,66 @@ final class SignaturePasteTests: XCTestCase {
 
     func testTooLargeOrEmptyHTMLFallsBackToAPlainPaste() {
         let large = "<div>" + String(repeating: "a", count: SignatureImport.maxInputLength) + "</div>"
-        XCTAssertNil(SignaturePaste.read(html: large))
+        XCTAssertNil(SignaturePaste.read(html: large), "over 10,000 once reduced")
+        XCTAssertNil(SignaturePaste.read(html: "<div>" + String(repeating: "a", count: SignaturePaste.maxRawLength) + "</div>"))
         XCTAssertNil(SignaturePaste.read(html: "<meta charset='utf-8'><img src=\"https://example.com/x.png\">"))
         XCTAssertNil(SignaturePaste.read(html: "<script>alert('Ada')</script>"))
+    }
+
+    /// R4: what Chrome or Safari put on the pasteboard: every element with
+    /// about 1 KB of computed style, far over 10,000 characters in all. The
+    /// reduction keeps the look, quickly.
+    static func browserCopy() -> String {
+        let computed = (0..<40).map { "-webkit-property-\($0): initial" }.joined(separator: "; ")
+            + "; font-variant-ligatures: normal; orphans: 2; widows: 2; text-decoration-thickness: initial"
+        func element(_ tag: String, _ kept: String, _ inner: String) -> String {
+            "<\(tag) class=\"gmail_x\" style=\"\(computed); \(kept)\">\(inner)</\(tag)>"
+        }
+        var rows = ""
+        for i in 0..<40 {
+            rows += element("div", "color: #666666; font-size: 12px", "Example Lab line \(i)")
+        }
+        let html = "<meta charset='utf-8'><!--StartFragment-->"
+            + element("div", "font-weight: bold; color: #1a73e8", "Ada Example")
+            + rows
+            + "<div><a href=\"https://www.example.com\" style=\"\(computed); color: #1155cc\">www.example.com</a></div>"
+            + "<!--EndFragment-->"
+        return html
+    }
+
+    func testABrowserCopyWithLongComputedStylesKeepsItsLook() throws {
+        let html = Self.browserCopy()
+        XCTAssertGreaterThan(html.utf16.count, 50_000)
+        // Read raw, it would be over Gmail's limit and refused.
+        XCTAssertEqual(GmailSignature.from(html: html), .unusable(reason: "too large"))
+        let start = Date()
+        let pasted = try XCTUnwrap(SignaturePaste.read(html: html))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5, "the paste took too long")
+        let look = try XCTUnwrap(pasted.html).lowercased()
+        XCTAssertTrue(look.contains("color:#1a73e8"))
+        XCTAssertTrue(look.contains("font-weight:bold"))
+        XCTAssertTrue(look.contains("color:#666666"))
+        XCTAssertFalse(look.contains("webkit"))
+        XCTAssertFalse(look.contains("class="))
+        XCTAssertTrue(pasted.body.contains("Ada Example"))
+        XCTAssertTrue(pasted.body.contains("[www.example.com](https://www.example.com)"))
+        XCTAssertNil(pasted.note)
+    }
+
+    func testTheReductionKeepsOnlyAllowedAttributesAndDeclarations() throws {
+        let reduced = try XCTUnwrap(SignaturePaste.reduce(
+            "<!--x--><DIV id=a CLASS='b' onclick=\"c()\" dir=ltr style='color: red; position: absolute;"
+            + " font-weight:bold'>t</DIV><a href=\"https://example.com\" target=_blank>l</a>"
+            + "<script>alert(1)</script><img src=x/>"))
+        XCTAssertEqual(reduced, "<div dir=\"ltr\" style=\"color: red; font-weight:bold\">t</div>"
+            + "<a href=\"https://example.com\">l</a> <img>")
+        XCTAssertNil(SignaturePaste.reduce(String(repeating: "a", count: SignaturePaste.maxRawLength + 1)))
+        // Hostile shapes stay linear.
+        let start = Date()
+        _ = SignaturePaste.read(html: "<div style=\"" + String(repeating: "rgb(", count: 70_000) + "\">x</div>")
+        _ = SignaturePaste.read(html: String(repeating: "<div a=\"", count: 30_000))
+        _ = SignaturePaste.read(html: String(repeating: "<b>", count: 90_000))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
     }
 
     // MARK: - Stored as a local rich signature
