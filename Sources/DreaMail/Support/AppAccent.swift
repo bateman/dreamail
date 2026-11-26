@@ -418,6 +418,10 @@ struct AccentSelectionBackground: View {
     /// rounded.
     let cornerRadius: CGFloat
     var unselected: Color = .clear
+    /// Gap to the row's left and right edges. Only the full sidebar rows
+    /// (`sidebar(selected:accent:)`) set it; the thread list's band and the
+    /// icon strip's own 32 pt capsule keep their geometry (0).
+    var horizontalInset: CGFloat = 0
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.colorScheme) private var colorScheme
 
@@ -433,18 +437,13 @@ struct AccentSelectionBackground: View {
     /// the system shapes differ. The one place to change it.
     static let sidebarHorizontalInset: CGFloat = 10
 
-    /// Horizontal inset of the painted shape: the sidebar's capsule is inset
-    /// from both edges; the thread list's band runs edge to edge.
-    static func horizontalInset(cornerRadius: CGFloat) -> CGFloat {
-        cornerRadius > 0 ? sidebarHorizontalInset : 0
-    }
-
     /// Sidebar rows (main window and Settings): nil unless the app paints
     /// this row, so the system draws everything else exactly as before.
     static func sidebar(selected: Bool, accent: MailAccent) -> AccentSelectionBackground? {
         accent.paintsSelection || (selected && accent.keepsSelectionColor)
             ? AccentSelectionBackground(selected: selected, accent: accent,
-                                        cornerRadius: sidebarCornerRadius)
+                                        cornerRadius: sidebarCornerRadius,
+                                        horizontalInset: sidebarHorizontalInset)
             : nil
     }
 
@@ -475,7 +474,7 @@ struct AccentSelectionBackground: View {
                         .padding(.leading, cornerRadius > 0 ? Self.focusBarWidth : 0)
                 }
             }
-            .padding(.horizontal, Self.horizontalInset(cornerRadius: cornerRadius))
+            .padding(.horizontal, horizontalInset)
             .accessibilityHidden(true)
         } else {
             unselected
