@@ -74,9 +74,6 @@ final class SidebarLabelMenuUITests: XCTestCase {
         research.hover()
         let dots = element("sidebar.label.menu.\(account).Label_research", in: app)
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "hovering a label shows its ⋮")
-        // Gmail's "⋮" is vertical: its box is taller than wide (the old
-        // horizontal ellipsis, drawn by AppKit, was wider than tall).
-        XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
         dots.click()
         let items: [(String, String)] = [
             ("labelMenu.color", "Label color"),
@@ -93,6 +90,13 @@ final class SidebarLabelMenuUITests: XCTestCase {
                           "\(title) must be in the ⋮ menu\n\(app.debugDescription)")
         }
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        // Gmail's "⋮" is vertical: its box is taller than wide (the old
+        // horizontal ellipsis, drawn by AppKit, was wider than tall).
+        // Read after the click: resolving the frame first made the click
+        // "not hittable" in CI.
+        research.hover()
+        XCTAssertTrue(dots.waitForExistence(timeout: 5), "the ⋮ is still there on hover")
+        XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
 
         research.rightClick()
         for (id, title) in items {
