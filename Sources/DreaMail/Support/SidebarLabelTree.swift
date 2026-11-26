@@ -172,6 +172,19 @@ enum SidebarLabelTree {
     }
 }
 
+/// The views the sidebar keeps behind "More". While "More" is closed, the
+/// open one of them stays listed ("Less" keeps the open view visible).
+enum SidebarMoreRows {
+    static func isUnderMore(_ view: MailboxView, hasReminders: Bool) -> Bool {
+        switch view {
+        case .scheduled, .spam, .promotions, .social: return true
+        // Listed above "More" once something has a reminder.
+        case .reminders: return !hasReminders
+        default: return false
+        }
+    }
+}
+
 /// Which disclosure rows of the sidebar are open, remembered on this Mac.
 ///
 /// Keys carry account addresses and Gmail label ids only, never label names.
@@ -180,8 +193,6 @@ enum SidebarLabelTree {
 enum SidebarDisclosure {
     /// The "More" row under the system views (not per account).
     static let moreKey = "sidebar.more.expanded"
-    /// "Categories" inside it (Promotions, Social). Not per account.
-    static let categoriesKey = "sidebar.categories.expanded"
 
     /// Gmail label ids of the parent labels open in an account's tree.
     /// Closed by default, as in Gmail.

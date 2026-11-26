@@ -10,7 +10,7 @@ final class TmpVendorsDiagUITests: XCTestCase {
         app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES", "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO", "-threadOpenStyle", "readingPane",
-                                "-sidebar.more.expanded", "NO", "-sidebar.categories.expanded", "NO",
+                                "-sidebar.more.expanded", "NO",
                                 "-sidebar.labels.expanded.\(account)", "()"]
         app.terminate(); app.launch()
         addTeardownBlock { app.terminate() }

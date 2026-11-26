@@ -158,6 +158,32 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertTrue(SidebarLabelTree.split(tree) { _ in 0 }.more.isEmpty)
     }
 
+    // MARK: Rows behind "More"
+
+    /// Promotions and Social are plain rows under "More", with Scheduled,
+    /// Reminders and Spam (there is no "Categories" group any more): closed,
+    /// the open one of them stays listed.
+    func testCategoriesAreRowsBehindMore() {
+        for view in [MailboxView.scheduled, .spam, .promotions, .social] {
+            XCTAssertTrue(SidebarMoreRows.isUnderMore(view, hasReminders: false), "\(view)")
+            XCTAssertTrue(SidebarMoreRows.isUnderMore(view, hasReminders: true), "\(view)")
+        }
+        XCTAssertTrue(SidebarMoreRows.isUnderMore(.reminders, hasReminders: false))
+        XCTAssertFalse(SidebarMoreRows.isUnderMore(.reminders, hasReminders: true),
+                       "Reminders sits above More once there is one")
+        XCTAssertFalse(SidebarMoreRows.isUnderMore(.inbox, hasReminders: false))
+        XCTAssertFalse(SidebarMoreRows.isUnderMore(.starred, hasReminders: false))
+    }
+
+    /// The old "Categories" open/closed flag is neither read nor written.
+    func testNoCategoriesDisclosureKeyIsWritten() throws {
+        let (d, suite) = try defaults()
+        defer { d.removePersistentDomain(forName: suite) }
+        SidebarDisclosure.setMoreExpanded(true, d)
+        XCTAssertEqual(Set(d.dictionaryRepresentation().keys.filter { $0.hasPrefix("sidebar.") }),
+                       [SidebarDisclosure.moreKey])
+    }
+
     // MARK: Disclosure state
 
     private func defaults() throws -> (UserDefaults, String) {

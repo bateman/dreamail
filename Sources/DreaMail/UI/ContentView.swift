@@ -2027,18 +2027,10 @@ struct Sidebar: View {
         if !hasReminders {
             sidebarItem(.reminders, badge: moreBadge(.reminders))
         }
+        // The category views are plain rows, just above Spam.
+        sidebarItem(.promotions, badge: moreBadge(.promotions))
+        sidebarItem(.social, badge: moreBadge(.social))
         sidebarItem(.spam, badge: moreBadge(.spam))
-        DisclosureGroup(isExpanded: disclosureBinding(\.categoriesOpen)) {
-            sidebarItem(.promotions, badge: moreBadge(.promotions))
-            sidebarItem(.social, badge: moreBadge(.social))
-        } label: {
-            Label {
-                Text("Categories").mailRowTitleStyle()
-            } icon: {
-                Image(systemName: "tag.square").mailIconStyle(selected: false)
-            }
-            .accessibilityIdentifier("sidebar.categories")
-        }
     }
 
     /// Drafts kept locally while offline; gone once uploaded.
@@ -2052,20 +2044,9 @@ struct Sidebar: View {
     }
 
     /// Whether `view` is listed flat while "More" is closed: it lives under
-    /// "More" and no closed "Categories" hides it.
+    /// "More" (`SidebarMoreRows`).
     private func isShownBehindClosedMore(_ view: MailboxView) -> Bool {
-        switch view {
-        case .scheduled, .spam: return true
-        // A closed "Categories" hides its children, the open one included.
-        case .promotions, .social: return disclosure.categoriesOpen
-        case .reminders: return !hasReminders
-        default: return false
-        }
-    }
-
-    private func disclosureBinding(_ path: ReferenceWritableKeyPath<SidebarDisclosureModel, Bool>) -> Binding<Bool> {
-        Binding(get: { disclosure[keyPath: path] },
-                set: { disclosure[keyPath: path] = $0 })
+        SidebarMoreRows.isUnderMore(view, hasReminders: hasReminders)
     }
 
     private func moreBadge(_ view: MailboxView) -> Int? {

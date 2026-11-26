@@ -20,7 +20,6 @@ final class SidebarLabelTreeUITests: XCTestCase {
                                 // Start from Gmail's defaults: "More" closed,
                                 // every parent label closed.
                                 "-sidebar.more.expanded", "NO",
-                                "-sidebar.categories.expanded", "NO",
                                 "-sidebar.labels.expanded.\(account)", "()"]
         app.terminate()
         app.launch()
@@ -79,7 +78,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
         let steps: [(String, (XCUIApplication) -> Void)] = [
             ("System views and the More row", stepSystemViewsAndMoreRow),
             ("A label row opens its view", stepLabelRowOpensItsView),
-            ("Closed Categories hides the open category", stepClosedCategoriesHidesTheOpenCategory),
+            ("Less keeps only the open category", stepClosedMoreKeepsTheOpenCategory),
             ("A parent label collapses its sublabels", stepParentLabelCollapsesItsSublabels),
         ]
         for (name, step) in steps {
@@ -102,7 +101,13 @@ final class SidebarLabelTreeUITests: XCTestCase {
         more.click()
         XCTAssertTrue(spam.waitForExistence(timeout: 5), "More opens Spam")
         XCTAssertTrue(element("sidebar.reminders", in: app).exists)
-        XCTAssertTrue(element("sidebar.categories", in: app).exists)
+        // The categories are plain rows above Spam, with no "Categories" group.
+        XCTAssertFalse(element("sidebar.categories", in: app).exists)
+        let promotions = element("sidebar.promotions", in: app)
+        let social = element("sidebar.social", in: app)
+        XCTAssertTrue(promotions.exists && social.exists, "More lists Promotions and Social")
+        XCTAssertLessThan(promotions.frame.minY, social.frame.minY)
+        XCTAssertLessThan(social.frame.minY, spam.frame.minY, "the categories sit above Spam")
         more.click()
         XCTAssertTrue(waitForAbsence(spam), "Less closes it again")
     }
@@ -137,34 +142,29 @@ final class SidebarLabelTreeUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(child), "closing it hides AWS again")
     }
 
-    private func stepClosedCategoriesHidesTheOpenCategory(_ app: XCUIApplication) {
+    /// Less with a category open keeps only that category listed; `g p`
+    /// opens Promotions with More closed (PR #76's rule: the open view stays).
+    private func stepClosedMoreKeepsTheOpenCategory(_ app: XCUIApplication) {
         let more = element("sidebar.more", in: app)
         XCTAssertTrue(more.waitForExistence(timeout: 5))
         more.click()
-        let categories = element("sidebar.categories", in: app)
-        XCTAssertTrue(categories.waitForExistence(timeout: 5))
-        let row = app.outlineRows.containing(.any, identifier: categories.identifier).firstMatch
-        let triangle = row.disclosureTriangles.firstMatch
-        XCTAssertTrue(triangle.waitForExistence(timeout: 5),
-                      "Categories has a disclosure triangle\n\(app.debugDescription)")
         let promotions = element("sidebar.promotions", in: app)
-        XCTAssertFalse(promotions.exists, "Categories starts closed")
-        triangle.click()
-        XCTAssertTrue(promotions.waitForExistence(timeout: 5), "open Categories lists Promotions")
+        XCTAssertTrue(promotions.waitForExistence(timeout: 5), "More lists Promotions")
+        XCTAssertFalse(element("sidebar.categories", in: app).exists, "no Categories row")
         promotions.click()
-        triangle.click()
-        XCTAssertTrue(waitForAbsence(promotions),
-                      "a closed Categories hides the open category too")
-        XCTAssertFalse(element("sidebar.social", in: app).exists)
-        // Closing "More" must not bring it back.
+        more.click()
+        let social = element("sidebar.social", in: app)
         let spam = element("sidebar.spam", in: app)
-        more.click()
-        XCTAssertTrue(waitForAbsence(spam), "More is closed")
-        XCTAssertFalse(promotions.exists)
-        more.click()
-        XCTAssertTrue(categories.waitForExistence(timeout: 5))
-        triangle.click()
+        XCTAssertTrue(waitForAbsence(social), "Less hides the other categories")
+        XCTAssertTrue(waitForAbsence(spam), "Less hides Spam")
+        XCTAssertTrue(promotions.exists, "Less keeps the open category listed")
+        // `g i` leaves it, `g p` opens it again with More closed: it is listed.
+        app.typeKey("g", modifierFlags: [])
+        app.typeKey("i", modifierFlags: [])
+        XCTAssertTrue(waitForAbsence(promotions), "Promotions is listed only while open")
+        app.typeKey("g", modifierFlags: [])
+        app.typeKey("p", modifierFlags: [])
         XCTAssertTrue(promotions.waitForExistence(timeout: 5),
-                      "reopening Categories shows Promotions again")
+                      "g p lists Promotions under a closed More")
     }
 }
