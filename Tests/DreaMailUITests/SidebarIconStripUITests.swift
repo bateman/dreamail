@@ -55,10 +55,25 @@ final class SidebarIconStripUITests: XCTestCase {
     private func stepStripShowsIconsAlignedWithTheBand(_ app: XCUIApplication) {
         let strip = element(app, "sidebarStrip")
         XCTAssertTrue(strip.waitForExistence(timeout: 5), "the collapsed sidebar is the icon strip")
+        // Gmail's order (the default), top to bottom.
+        var lastY = -CGFloat.infinity
         for id in ["search", "inbox", "starred", "snoozed", "important", "sent", "drafts",
                    "allMail", "trash", "more"] {
-            XCTAssertTrue(element(app, "sidebarStrip.\(id)").exists, "strip icon \(id)")
+            let icon = element(app, "sidebarStrip.\(id)")
+            XCTAssertTrue(icon.exists, "strip icon \(id)")
+            XCTAssertGreaterThan(icon.frame.minY, lastY, "\(id) below the icon before it")
+            lastY = icon.frame.minY
         }
+        // The Inbox count is the icon's value, not its name: the same
+        // "N unread" the rail's account avatar reads for the demo inbox.
+        let inboxIcon = element(app, "sidebarStrip.inbox")
+        XCTAssertEqual(inboxIcon.label, "Inbox")
+        let account = element(app, "accountRail.account.you@example.com")
+        let unread = NSPredicate(format: "value MATCHES %@", "[0-9]+ unread")
+        expectation(for: unread, evaluatedWith: account)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(waitUntil { (inboxIcon.value as? String) == (account.value as? String) },
+                      "Inbox icon value \(String(describing: inboxIcon.value)) matches the demo count \(String(describing: account.value))")
         // Icons only: no full-sidebar rows, labels, saved views or titles.
         XCTAssertFalse(element(app, "sidebar.inbox").exists, "no full sidebar row")
         XCTAssertFalse(element(app, "composeButton").exists, "no sidebar header")

@@ -62,4 +62,27 @@ final class MailLayoutTests: XCTestCase {
                                        hasSelection: false, threadFocus: true),
                        .list)
     }
+
+    /// Collapsing the sidebar to its icon strip never drops the reading
+    /// pane: in a 1160 pt window the mailbox host is 1160 − 104 (rail and
+    /// strip) collapsed and 1160 − 64 expanded, and both give three panes.
+    func testCollapsingTheSidebarKeepsThreePanes() {
+        let window: CGFloat = 1_160
+        let collapsed = MailLayout.modeWidth(host: window - 104, askAIPanel: 0, stripShown: true)
+        let expanded = MailLayout.modeWidth(host: window - 64, askAIPanel: 0, stripShown: false)
+        XCTAssertEqual(collapsed, expanded)
+        for width in [collapsed, expanded] {
+            XCTAssertEqual(MailLayout.mode(width: width, readingPaneHidden: false, hasSelection: true),
+                           .threePane)
+        }
+        // The threshold is where it was before the strip: 1080 + the 64 pt rail.
+        XCTAssertEqual(MailLayout.mode(
+            width: MailLayout.modeWidth(host: 1_143 - 104, askAIPanel: 0, stripShown: true),
+            readingPaneHidden: false, hasSelection: true), .compactDetail)
+        XCTAssertEqual(MailLayout.mode(
+            width: MailLayout.modeWidth(host: 1_144 - 104, askAIPanel: 0, stripShown: true),
+            readingPaneHidden: false, hasSelection: true), .threePane)
+        // Ask AI still takes its width.
+        XCTAssertEqual(MailLayout.modeWidth(host: 1_000, askAIPanel: 300, stripShown: true), 740)
+    }
 }

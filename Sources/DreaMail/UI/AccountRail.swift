@@ -257,6 +257,18 @@ struct TrailingEdgeReader: NSViewRepresentable {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            observeAncestors()
+            report()
+        }
+
+        /// Re-parented inside the same window: the chain of ancestors changed.
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            observeAncestors()
+            report()
+        }
+
+        private func observeAncestors() {
             observers.forEach(NotificationCenter.default.removeObserver)
             observers = []
             if window != nil {
@@ -270,8 +282,8 @@ struct TrailingEdgeReader: NSViewRepresentable {
                     ancestor = view.superview
                 }
             }
-            report()
         }
+
         override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); report() }
         override func layout() { super.layout(); report() }
 

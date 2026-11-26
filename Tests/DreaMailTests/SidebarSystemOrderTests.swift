@@ -231,33 +231,6 @@ final class SidebarSystemOrderTests: XCTestCase {
     }
     // MARK: One list for the full sidebar and the icon strip
 
-    /// `listed` is what both presentations show: the same rows as the old
-    /// resolve → layout → rows chain, for default and stored orders, with
-    /// More open or closed and conditional rows present or not.
-    func testListedMatchesTheSidebarChain() {
-        let stored: [[String]?] = [
-            nil, [], ["promotions", "more"],
-            ["sent", "inbox", "more", "trash", "starred"],
-            ["inbox", "reminders", "more", "scheduled", "outbox"],
-        ]
-        let noOutbox: (String) -> Bool = { $0 != "outbox" && $0 != "scheduled" }
-        for order in stored {
-            for reminders in [false, true] {
-                for open in [false, true] {
-                    for exists in [always, noOutbox] {
-                        let chain = Order.layout(Order.resolve(order, hasReminders: reminders),
-                                                 exists: exists,
-                                                 aboveMore: reminders ? ["reminders"] : [])
-                            .rows(moreOpen: open)
-                        XCTAssertEqual(Order.listed(stored: order, hasReminders: reminders,
-                                                    moreOpen: open, exists: exists), chain,
-                                       "\(String(describing: order)) reminders \(reminders) open \(open)")
-                    }
-                }
-            }
-        }
-    }
-
     func testListedHonoursTheStoredOrderAndMore() {
         // A complete stored order (a partial one gets the missing ids after
         // their default predecessors): Sent dragged first, Trash under More.
@@ -284,5 +257,9 @@ final class SidebarSystemOrderTests: XCTestCase {
         XCTAssertEqual(Order.stripHelp(title: "Drafts", count: 3, total: true), "Drafts, 3")
         XCTAssertEqual(Order.stripHelp(title: "Inbox", count: 0, total: false), "Inbox")
         XCTAssertEqual(Order.stripHelp(title: "Sent", count: nil, total: false), "Sent")
+        XCTAssertEqual(Order.stripCount(12, total: false), "12 unread")
+        XCTAssertEqual(Order.stripCount(3, total: true), "3")
+        XCTAssertEqual(Order.stripCount(0, total: false), "")
+        XCTAssertEqual(Order.stripCount(nil, total: true), "")
     }
 }

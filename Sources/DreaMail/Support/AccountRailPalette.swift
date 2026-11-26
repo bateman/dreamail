@@ -39,7 +39,8 @@ enum AccountRailMetrics {
     /// so it covers the three window buttons even when the sidebar is hidden.
     static let bandMinimumWidth: CGFloat = windowButtonsExtent + windowButtonsMargin
     /// Width of the collapsed sidebar (`SidebarIconStrip`), right of the
-    /// rail: a 16 pt glyph in a `stripItemWidth` × `stripItemHeight`
+    /// rail: the sidebar glyph (`mailIconStyle`: 11, 13 or 15 pt by the
+    /// "Sidebar icon size" setting) in a `stripItemWidth` × `stripItemHeight`
     /// selection capsule, with `stripItemInset` on each side. Gmail's
     /// collapsed navigation, icons only.
     static let stripItemWidth: CGFloat = 32

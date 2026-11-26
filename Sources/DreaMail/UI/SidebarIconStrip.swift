@@ -90,21 +90,23 @@ struct SidebarIconStrip: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 2) {
                 item(id: "sidebarStrip.search", glyph: "magnifyingglass", selected: false,
-                     help: "Search (/)", label: "Search", action: onSearch)
+                     help: "Search (/)", label: "Search", value: "", action: onSearch)
                     .padding(.bottom, 6)
                 ForEach(system.rows, id: \.self) { id in
                     if id == SidebarSystemOrder.moreId {
                         let open = disclosure.moreOpen
                         item(id: "sidebarStrip.more", glyph: open ? "chevron.up" : "chevron.down",
                              selected: false, help: open ? "Less" : "More",
-                             label: open ? "Less" : "More") { disclosure.moreOpen.toggle() }
+                             label: open ? "Less" : "More", value: "") { disclosure.moreOpen.toggle() }
                     } else if let view = SidebarSystemOrder.view(for: id) {
                         let selected = store.selectedView == view
-                        let help = SidebarSystemOrder.stripHelp(
-                            title: view.title, count: system.badge(view),
-                            total: SidebarSystemRows.countsTotal(view))
+                        let count = system.badge(view)
+                        let total = SidebarSystemRows.countsTotal(view)
                         item(id: "sidebarStrip.\(id)", glyph: view.icon(selected: selected),
-                             selected: selected, help: help, label: help) { store.goTo(view) }
+                             selected: selected,
+                             help: SidebarSystemOrder.stripHelp(title: view.title, count: count, total: total),
+                             label: view.title,
+                             value: SidebarSystemOrder.stripCount(count, total: total)) { store.goTo(view) }
                     }
                 }
             }
@@ -118,8 +120,10 @@ struct SidebarIconStrip: View {
         .accessibilityIdentifier("sidebarStrip")
     }
 
+    /// `label` is the view's name, `value` its count ("12 unread"), so the
+    /// element's name stays the same as mail arrives.
     private func item(id: String, glyph: String, selected: Bool, help: String, label: String,
-                      action: @escaping () -> Void) -> some View {
+                      value: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: glyph)
                 .mailIconStyle(selected: selected)
@@ -130,6 +134,7 @@ struct SidebarIconStrip: View {
         .buttonStyle(.plain)
         .help(help)
         .accessibilityLabel(label)
+        .accessibilityValue(value)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier(id)
     }

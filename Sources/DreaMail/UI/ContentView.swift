@@ -154,7 +154,8 @@ struct ContentView: View {
             let panelWidth = askAIVisible
                 ? AskAILayout.panelWidth(hostWidth: proxy.size.width) : 0
             let mode = MailLayout.mode(
-                width: proxy.size.width - panelWidth,
+                width: MailLayout.modeWidth(host: proxy.size.width, askAIPanel: panelWidth,
+                                            stripShown: sidebarStripOnScreen),
                 readingPaneHidden: readingPaneHidden,
                 hasSelection: store.openedThreadId != nil,
                 threadFocus: store.threadFocusMode,
@@ -411,10 +412,24 @@ struct ContentView: View {
             AccountRail()
             if sidebarStripOnScreen {
                 SidebarIconStrip(onSearch: revealSearch)
+                    // Under the center peek's backdrop, as the full
+                    // sidebar is (`centerPeekOverlay`).
+                    .overlay {
+                        if centerPeekThreads, layoutMode == .threadFocus {
+                            Color.black.opacity(CenterPeekLayout.backdropOpacity)
+                                .contentShape(Rectangle())
+                                .onTapGesture { store.threadFocusMode = false }
+                        }
+                    }
             }
             interactionLayer
         }
         .environment(sidebarDisclosure)
+        // "Deleted means gone" (DEC-019): a removed account's disclosure
+        // state leaves memory with its defaults.
+        .onChange(of: store.accounts.map(\.id)) { old, new in
+            for id in Set(old).subtracting(new) { sidebarDisclosure.forget(accountId: id) }
+        }
         .overlay(alignment: .topLeading) {
             AccountRailTopBand(sidebarVisible: sidebarOnScreen, stripVisible: sidebarStripOnScreen)
         }
@@ -730,7 +745,7 @@ struct ContentView: View {
         GeometryReader { host in
             let card = CenterPeekLayout.cardSize(host: host.size)
             ZStack {
-                Color.black.opacity(0.30)
+                Color.black.opacity(CenterPeekLayout.backdropOpacity)
                     .contentShape(Rectangle())
                     .onTapGesture { store.threadFocusMode = false }
                 detailPane(compact: false)

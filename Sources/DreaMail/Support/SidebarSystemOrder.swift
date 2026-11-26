@@ -115,8 +115,15 @@ enum SidebarSystemOrder {
     /// numbers: the view's name, then its count. `total`: the count is not
     /// of unread mail (Drafts, Scheduled, Outbox, Reminders).
     static func stripHelp(title: String, count: Int?, total: Bool) -> String {
-        guard let count, count > 0 else { return title }
-        return total ? "\(title), \(count)" : "\(title), \(count) unread"
+        let text = stripCount(count, total: total)
+        return text.isEmpty ? title : "\(title), \(text)"
+    }
+
+    /// The count alone, VoiceOver's value for the icon: "12 unread", "3",
+    /// empty at zero.
+    static func stripCount(_ count: Int?, total: Bool) -> String {
+        guard let count, count > 0 else { return "" }
+        return total ? "\(count)" : "\(count) unread"
     }
 
     /// The order after the listed rows `rows` (as `List.onMove` reports:

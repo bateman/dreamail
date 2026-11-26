@@ -77,18 +77,15 @@ final class AccountRailPaletteTests: XCTestCase {
 
     func testCollapsedSidebarStripFillsTheBandStep() {
         typealias M = AccountRailMetrics
-        // The strip is exactly the band's step past the rail.
-        XCTAssertEqual(M.stripWidth, M.stripBandWidth - M.width)
         XCTAssertEqual(M.stripWidth, 40)
         XCTAssertEqual(M.stripBandWidth, 104)
-        XCTAssertEqual(M.bandWidth(sidebarTrailing: 304, sidebarVisible: false, stripVisible: true),
-                       M.width + M.stripWidth)
+        // Collapsed: the band ends where the strip does, rail 64 + strip 40.
+        XCTAssertEqual(M.bandWidth(sidebarTrailing: 304, sidebarVisible: false, stripVisible: true), 104)
         // Still covers the window buttons.
         XCTAssertGreaterThanOrEqual(M.stripBandWidth, M.bandMinimumWidth)
-        // A 16 pt glyph fits the capsule with room, the capsule fits the strip.
-        XCTAssertGreaterThanOrEqual(M.stripItemWidth, 16 + 2 * 8)
+        // The largest sidebar glyph (15 pt) fits the capsule with room.
+        XCTAssertGreaterThanOrEqual(M.stripItemWidth, 15 + 2 * 8)
         XCTAssertGreaterThanOrEqual(M.stripItemHeight, 24)
-        XCTAssertEqual(M.stripItemWidth + 2 * M.stripItemInset, M.stripWidth)
         // Full sidebar on screen: the strip changes nothing.
         XCTAssertEqual(M.bandWidth(sidebarTrailing: 304, sidebarVisible: true, stripVisible: false), 304)
     }

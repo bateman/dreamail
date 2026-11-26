@@ -103,6 +103,32 @@ final class AccountRailUITests: XCTestCase {
         assertButtonsInBand("sidebar hidden again")
     }
 
+    /// The band's 90 pt state: a full-window conversation has no sidebar and
+    /// no icon strip, and the band still covers the window buttons.
+    func testBandInAFullWindowConversation() {
+        let app = launch(extra: ["-threadOpenStyle", "fullWindow"])
+        let window = app.windows.firstMatch
+        let band = element(app, "accountRail.topBand")
+        XCTAssertTrue(band.waitForExistence(timeout: 10))
+        let row = element(app, "threadRow.you@example.com:t1")
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+        XCTAssertTrue(app.buttons.matching(identifier: "exitFocusButton").firstMatch
+            .waitForExistence(timeout: 5), "the conversation fills the window")
+        XCTAssertTrue(waitUntil { !self.element(app, "sidebarStrip").exists },
+                      "no icon strip beside a full-window conversation")
+        XCTAssertFalse(element(app, "composeButton").exists, "no sidebar either")
+        XCTAssertTrue(waitUntil { abs(band.frame.width - 90) < 1 },
+                      "full-window conversation: the band is 90 pt wide (\(band.frame))")
+        for button in [window.buttons[XCUIIdentifierCloseWindow],
+                       window.buttons[XCUIIdentifierMinimizeWindow],
+                       window.buttons[XCUIIdentifierFullScreenWindow]] {
+            let b = band.frame, f = button.frame
+            XCTAssertTrue(f.minX >= b.minX && f.maxX <= b.maxX && f.minY >= b.minY && f.maxY <= b.maxY,
+                          "\(button.identifier) \(f) in band \(b)")
+        }
+    }
+
     private func stepAppearanceToggleHidesAndShowsTheAddEntry(_ app: XCUIApplication) {
         let add = element(app, "accountRail.add")
         XCTAssertTrue(add.waitForExistence(timeout: 10), "+ is shown by default")
