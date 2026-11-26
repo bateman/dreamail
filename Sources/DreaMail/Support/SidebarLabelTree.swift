@@ -99,15 +99,36 @@ enum SidebarLabelTree {
         return nil
     }
 
+    /// Siblings in the organizer's order (`sortOrder`, a Mac-only
+    /// customization) when there is one, else in Gmail's: the names
+    /// compared the way Finder does (`localizedStandardCompare`: case and
+    /// diacritics ignored, symbols and emoji first, then digits, then
+    /// letters), so `Notes` sits between `juve` and `prenotazioni`.
+    ///
+    /// A stored order that is exactly the names in plain code-point order is
+    /// not a customization: a version that listed labels in the database's
+    /// binary order wrote it for every label on any drag, and it would hide
+    /// Gmail's order for good. It is ignored; any other stored order, which a
+    /// person arranged, wins. (`sortOrder` has no marker of who wrote it, so
+    /// this is the one tell.)
     static func sorted(_ rows: [LabelRow]) -> [LabelRow] {
-        rows.sorted { a, b in
-            if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
-            switch a.name.compare(b.name, options: [.caseInsensitive]) {
+        let useStored = !isMachineOrder(rows)
+        return rows.sorted { a, b in
+            if useStored, a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
+            switch a.name.localizedStandardCompare(b.name) {
             case .orderedAscending: return true
             case .orderedDescending: return false
             case .orderedSame: return a.id < b.id
             }
         }
+    }
+
+    /// The siblings with a stored order sit in code-point name order.
+    private static func isMachineOrder(_ rows: [LabelRow]) -> Bool {
+        let stored = rows.filter { $0.sortOrder != LabelRow.unsorted }
+        let byStored = stored.sorted { ($0.sortOrder, $0.id) < ($1.sortOrder, $1.id) }
+        let byName = stored.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
+        return byStored.map(\.id) == byName.map(\.id)
     }
 
     /// Gmail's two lists: labels shown in the list, and those behind the

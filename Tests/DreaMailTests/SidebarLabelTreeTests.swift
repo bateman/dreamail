@@ -83,6 +83,52 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(tree), ["b", "a", "c"])
     }
 
+    /// Gmail's order on the character classes of a real sidebar (emoji and
+    /// symbols first, case ignored, `Notes` between `juve` and
+    /// `prenotazioni`), above and below More. Old: the same names stood in
+    /// code-point order when a stored order froze it (see the next test).
+    func testGmailOrderAboveAndBelowMore() {
+        let above = ["✉️ post", "$", "apple", "casa", "dev", "juve", "Notes", "prenotazioni", "uniba"]
+        let below = ["♫ tunes", "gaming", "licenze", "NAS", "ssis", "telefonia"]
+        var rows: [LabelRow] = []
+        for (i, n) in (above + below).reversed().enumerated() {
+            rows.append(row("L\(i)", n, visibility: below.contains(n) ? "labelHide" : nil))
+        }
+        let parts = SidebarLabelTree.split(SidebarLabelTree.build(rows)) { _ in 0 }
+        XCTAssertEqual(shape(parts.listed), above)
+        XCTAssertEqual(shape(parts.more), below)
+    }
+
+    /// A stored order that is just the names in code-point order (what the
+    /// old organizer wrote for every label) is not a customization: Gmail's
+    /// order shows. A stored order anyone arranged still wins.
+    func testMachineAssignedStoredOrderIsIgnored() {
+        let names = ["$", "Notes", "apple", "juve"]   // code-point order
+        let frozen = names.enumerated().map { row("L\($0.offset)", $0.element, order: $0.offset) }
+        XCTAssertEqual(shape(SidebarLabelTree.build(frozen)), ["$", "apple", "juve", "Notes"])
+        let arranged = ["apple", "$", "Notes", "juve"]
+            .enumerated().map { row("L\($0.offset)", $0.element, order: $0.offset) }
+        XCTAssertEqual(shape(SidebarLabelTree.build(arranged)), ["apple", "$", "Notes", "juve"])
+        // A label created since (unsorted) joins the frozen list in Gmail's order.
+        let withNew = frozen + [row("L9", "Beta")]
+        XCTAssertEqual(shape(SidebarLabelTree.build(withNew)),
+                       ["$", "apple", "Beta", "juve", "Notes"])
+    }
+
+    /// A hidden top-level label with three shown sublabels and a hidden one:
+    /// the whole family sits below More, nested, and nothing above it.
+    func testHiddenTopLevelWithMostlyShownSublabelsIsEntirelyBelowMore() {
+        let tree = SidebarLabelTree.build([
+            row("L1", "leisure", visibility: "labelHide"), row("L2", "leisure/cinema"),
+            row("L3", "leisure/books"), row("L4", "leisure/tv", visibility: "labelHide"),
+            row("L5", "leisure/trips"), row("L6", "home"),
+        ])
+        let parts = SidebarLabelTree.split(tree) { _ in 0 }
+        XCTAssertEqual(shape(parts.listed), ["home"])
+        XCTAssertEqual(shape(parts.more), ["leisure [books, cinema, trips, tv]"])
+        assertNothingTwice(parts)
+    }
+
     func testColorsAreTheDisplayColors() {
         var r = row("L1", "work")
         r.gmailBackgroundColor = "#111111"
