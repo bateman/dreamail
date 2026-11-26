@@ -421,7 +421,7 @@ final class AccentColorUITests: XCTestCase {
                                     file: file, line: line)
         // … and are the rule's ink, blended over the accent at their
         // antialiased edges: not the other of white/black, not a colour.
-        let inked = stats.inkFraction(accent: accent)
+        let inked = stats.inkFraction(ink: accent.ink)
         XCTAssertGreaterThan(inked, 0.85,
                              "\(context): \(Int(inked * 100))% of the drawn pixels are the expected ink; \(stats.summary)",
                              file: file, line: line)
