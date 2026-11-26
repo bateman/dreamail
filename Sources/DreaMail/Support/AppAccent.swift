@@ -425,16 +425,21 @@ struct AccentSelectionBackground: View {
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Corner radius of the sidebar capsule this paints over.
+    /// Corner radius of the icon strip's capsule (its own geometry).
     static let sidebarCornerRadius: CGFloat = 6
+    /// Corner radius of the full sidebar rows' capsule: AppKit's own, from
+    /// the same measurement (its corner, 2 pt below the top edge, starts
+    /// 2 pt in: a radius of 8 where 6 starts 1 pt in).
+    static let sidebarRowCornerRadius: CGFloat = 8
     /// Width of the focus bar at the selected row's leading edge.
     static let focusBarWidth: CGFloat = 3
-    /// Gap between the sidebar's edges and the painted capsule on each side.
-    /// A row background spans the whole row, wider than AppKit's own capsule,
-    /// and SwiftUI does not expose the system's inset. Provisional value:
-    /// `SidebarSelectionGeometryUITests` compares the painted shape with
-    /// AppKit's own (default accent, focused list) and prints both; replace
-    /// it with the measured number. The one place to change it.
+    /// Gap between the row background's edges and the painted capsule on
+    /// each side. A row background spans the whole row, wider than AppKit's
+    /// own capsule, and SwiftUI does not expose the system's inset. Measured
+    /// by `SidebarSelectionGeometryUITests` on macOS 26.7.2 (CI run
+    /// 45892085129): with 10 pt the painted capsule and AppKit's own
+    /// (default accent, focused list) both span x 82-285 in the window, at
+    /// the same height. The one place to change it.
     static let sidebarHorizontalInset: CGFloat = 10
 
     /// Sidebar rows (main window and Settings): nil unless the app paints
@@ -442,7 +447,7 @@ struct AccentSelectionBackground: View {
     static func sidebar(selected: Bool, accent: MailAccent) -> AccentSelectionBackground? {
         accent.paintsSelection || (selected && accent.keepsSelectionColor)
             ? AccentSelectionBackground(selected: selected, accent: accent,
-                                        cornerRadius: sidebarCornerRadius,
+                                        cornerRadius: sidebarRowCornerRadius,
                                         horizontalInset: sidebarHorizontalInset)
             : nil
     }

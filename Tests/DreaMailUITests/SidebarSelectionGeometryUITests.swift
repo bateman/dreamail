@@ -176,10 +176,22 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let midY = min(height - 1, max(0, Int(((inbox.frame.midY - frame.minY) * scale).rounded())))
         let from = max(0, Int(((sidebar.minX - frame.minX) * scale).rounded()))
         let to = min(width - 1, Int(((sidebar.maxX - frame.minX) * scale).rounded()))
-        guard from < to,
-              let first = (from...to).first(where: { isAccent($0, midY) }),
-              let last = (from...to).last(where: { isAccent($0, midY) })
-        else { return nil }
+        guard from < to else { return nil }
+        // The capsule's run on a line: from its first accent pixel to the
+        // last one before a gap wider than the glyphs and the title leave
+        // inside it. A thread-list row selected in the accent starts well
+        // beyond the gap and is not part of it.
+        let maxGap = Int((12 * scale).rounded())
+        func run(_ y: Int) -> (first: Int, last: Int)? {
+            guard let first = (from...to).first(where: { isAccent($0, y) }) else { return nil }
+            var last = first
+            for x in first...(width - 1) {
+                if isAccent(x, y) { last = x } else if x - last > maxGap { break }
+            }
+            return (first, last)
+        }
+        guard let mid = run(midY) else { return nil }
+        let first = mid.first, last = mid.last
 
         // Vertical edges, on a line through the capsule's middle.
         let midX = (first + last) / 2
@@ -189,9 +201,8 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         else { return nil }
         // The corner: the run 2 pt below the top edge.
         let cornerY = min(bottom, top + Int((2 * scale).rounded()))
-        guard let cornerFirst = (from...to).first(where: { isAccent($0, cornerY) }),
-              let cornerLast = (from...to).last(where: { isAccent($0, cornerY) })
-        else { return nil }
+        guard let corner = run(cornerY) else { return nil }
+        let cornerFirst = corner.first, cornerLast = corner.last
         // The focus bar: near-white pixels 3-6 pt inside the left end.
         let bar = (Int((3 * scale).rounded())...Int((6 * scale).rounded())).contains {
             isWhite(first + $0, midY)
