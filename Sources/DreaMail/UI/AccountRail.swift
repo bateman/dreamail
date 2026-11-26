@@ -248,8 +248,30 @@ struct TrailingEdgeReader: NSViewRepresentable {
         var onChange: ((CGFloat) -> Void)?
         private var last: CGFloat?
 
+        /// Frame observers on the ancestors: when one moves without resizing
+        /// this view (the icon strip leaving shifts the split view left), the
+        /// edge moves too and no layout of this view reports it.
+        /// Dropped when the view leaves its window.
+        private var observers: [NSObjectProtocol] = []
+
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            if window != nil {
+                var ancestor = superview
+                while let view = ancestor {
+                    observers.append(NotificationCenter.default.addObserver(
+                        forName: NSView.frameDidChangeNotification, object: view, queue: .main
+                    ) { [weak self] _ in
+                        MainActor.assumeIsolated { self?.report() }
+                    })
+                    ancestor = view.superview
+                }
+            }
+            report()
+        }
         override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); report() }
         override func layout() { super.layout(); report() }
 
