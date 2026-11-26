@@ -236,6 +236,19 @@ struct ComposeSignatureState: Equatable {
     /// for. A From change to another account with a block DreaMail cannot
     /// swap asks the user instead of leaving it silently.
     var accountId: String?
+    /// A Gmail signature shown as its rendered HTML under the editor, not as
+    /// text in the body (`block` is then nil). It goes out as that HTML.
+    var richSignatureId: Int64?
+    /// A body opened again without a recorded style (a draft from an earlier
+    /// build, or made in Gmail): its signature text keeps #79's rule, Gmail's
+    /// look while the text is unedited. Cleared once the signature changes.
+    var legacy = false
+
+    /// How the signature goes out.
+    var style: ComposeSignatureStyle {
+        if let richSignatureId { return .rich(richSignatureId) }
+        return legacy ? .legacy : .plain
+    }
 
     /// What the menu shows as chosen, from the body as it is now.
     enum Selection: Equatable {
