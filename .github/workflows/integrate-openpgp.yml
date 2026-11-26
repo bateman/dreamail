@@ -7,8 +7,11 @@ name: Integrate dreamail-openpgp
 #      main's head, reused if one already passed there, so that a failure
 #      on the branch can only come from the new pin.
 #   2. .github/scripts/integrate-openpgp.py picks the release, checks that
-#      Package.swift, the release's .sha256 asset and the downloaded zip
-#      agree, and edits project.yml, docs/DEPENDENCIES.md and CHANGELOG.md.
+#      it was built from the pinned commit's history and that Package.swift,
+#      the release's .sha256 asset and the downloaded zip agree, and edits
+#      project.yml, docs/DEPENDENCIES.md and CHANGELOG.md. The zip's build
+#      provenance attestation is then verified against dreamail-openpgp's
+#      Release workflow.
 #   3. Branch deps/dreamail-openpgp-v<version> is pushed and the whole CI
 #      workflow runs on it as a manual run: workflow hardening, package
 #      pins, the build with warnings as errors, the unit tests (the
@@ -21,10 +24,10 @@ name: Integrate dreamail-openpgp
 #      checksum, or rust/deny.toml changed. CI red: a draft pull request
 #      with the failed run, and this job fails.
 #
-# Trust: the three checksums all come from the dreamail-openpgp release
-# workflow, so they prove the files agree, not who made them. Running this
-# workflow with `merge` on accepts that release without reading its diff
-# (the pull request links it).
+# Trust: the checksums prove the files agree; the attestation proves the
+# zip was built by dreamail-openpgp's Release workflow from its main. Running
+# this workflow with `merge` on accepts that release without reading its
+# diff (the pull request links it).
 #
 # Pull requests opened with GITHUB_TOKEN start no CI either, hence the
 # manual CI runs. Needs "Allow GitHub Actions to create and approve pull
@@ -93,6 +96,18 @@ jobs:
           else
             python3 .github/scripts/integrate-openpgp.py
           fi
+
+      # The zip was made by dreamail-openpgp's Release workflow, not just
+      # uploaded by someone who can write to its releases. Releases up to
+      # v0.2.0 have no attestation and cannot be integrated this way.
+      - name: Verify the release's build provenance
+        if: steps.integrate.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify build/openpgp/DreaMailRPGP.xcframework.zip \
+            --repo bateman/dreamail-openpgp \
+            --signer-workflow bateman/dreamail-openpgp/.github/workflows/release.yml
 
       - name: Push the branch and run CI on it
         id: ci

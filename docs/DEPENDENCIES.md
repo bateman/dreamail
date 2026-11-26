@@ -52,16 +52,21 @@ checksum `441e553914f89dc6565fddc1abd5bf643ec172d5115733914959400e3f78dd3b`;
 `v0.1.0` was commit `adad8a18d07c0ec10695e43bb700479d0d971dfa`.
 
 To move to a new release, run the **Integrate dreamail-openpgp** workflow
-(Actions, manual only; empty version: the newest release). It refuses to
-start unless CI is green on `main`, and
-`.github/scripts/integrate-openpgp.py` checks that `Package.swift` at the
-pinned commit, the release's `.sha256` asset and the downloaded zip agree,
-then updates `project.yml`, this table and `CHANGELOG.md`. The whole CI
-workflow, UI shards included, then runs on branch
-`deps/dreamail-openpgp-v<version>` with only that change. Green: the pull
-request is merged (unless the run's `merge` input is off). Red: it stays a
-draft with the failed run. A change in the accepted advisories always waits
-for a person, because DEC-051 must be updated with it.
+(Actions, manual only; empty version: the newest release). It first needs
+the whole CI, UI shards included, green on `main` (a manual run there,
+reused if one already passed). `.github/scripts/integrate-openpgp.py` then
+checks that the release was built from the pinned commit's history and that
+`Package.swift` at that commit, the release's `.sha256` asset and the
+downloaded zip agree; the workflow verifies the zip's build provenance
+attestation (`gh attestation verify`, against the library's Release
+workflow; releases up to `v0.2.0` have none). It updates `project.yml`,
+this table and `CHANGELOG.md`, and runs the whole CI again on branch
+`deps/dreamail-openpgp-v<version>`, where only the pin changed. Green: the
+pull request is merged, unless the run's `merge` input is off. Red: it stays
+a draft with the failed run. It always waits for a person when
+`Package.swift` changed beyond its version and checksum, when the library's
+`rust/deny.toml` changed, or when the accepted advisories differ from this
+table (DEC-051 must be updated with them).
 
 ## What enforces what
 

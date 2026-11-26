@@ -13,7 +13,9 @@ release (docs/DEPENDENCIES.md, "OpenPGP library").
      the SHA-256 of the downloaded zip agree.
   4. Edits project.yml (revision and its version comment),
      docs/DEPENDENCIES.md (table and a "Recorded for" note) and CHANGELOG.md.
-  5. Writes the pull request body to build/openpgp-integration.md and, under
+  5. Saves the zip to build/openpgp/ for the workflow, which verifies its
+     build provenance attestation (gh attestation verify) before pushing.
+  6. Writes the pull request body to build/openpgp-integration.md and, under
      GitHub Actions, the outputs (changed, version, commit, review).
 
 `review=true` means a change needs a person, and the workflow does not
@@ -44,6 +46,8 @@ PROJECT = REPO / "project.yml"
 DEPENDENCIES = REPO / "docs" / "DEPENDENCIES.md"
 CHANGELOG = REPO / "CHANGELOG.md"
 BODY = REPO / "build" / "openpgp-integration.md"
+# The downloaded zip, kept for the workflow's attestation check.
+ZIP = REPO / "build" / "openpgp" / ASSET
 # ASCII digits only: \d would also take other scripts' digits.
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 # What an rPGP licence expression may contain; anything else is refused
@@ -285,11 +289,14 @@ def main(argv: list[str]) -> int:
 
     base = f"{UPSTREAM}/releases/download/v{version}/{ASSET}"
     asset_sum = download(base + ".sha256").decode().split()[0]
-    zip_sum = hashlib.sha256(download(base)).hexdigest()
+    archive = download(base)
+    zip_sum = hashlib.sha256(archive).hexdigest()
     if not checksum == asset_sum == zip_sum:
         raise Failure(f"checksums disagree: Package.swift {checksum}, .sha256 asset {asset_sum}, "
                       f"downloaded zip {zip_sum}")
     print(f"v{version}: commit {commit}, SHA-256 {checksum} (Package.swift, asset and zip agree)")
+    ZIP.parent.mkdir(parents=True, exist_ok=True)
+    ZIP.write_bytes(archive)
 
     today = datetime.date.today()
     new = {"version": version, "commit": commit, "checksum": checksum,
@@ -323,6 +330,8 @@ def main(argv: list[str]) -> int:
         "",
         f"- Commit pinned: `{commit}` ({UPSTREAM}/commit/{commit})",
         f"- SHA-256 `{checksum}`: the same in Package.swift, the release's `.sha256` asset and the downloaded zip.",
+        "- Build provenance: the zip's attestation verified against dreamail-openpgp's Release workflow "
+        "(`gh attestation verify`).",
         f"- Changes since v{old_version}: {UPSTREAM}/compare/{pinned}...{commit}",
         "",
         "Regression check: the full CI workflow (workflow hardening, package pins, build with warnings "
