@@ -57,13 +57,20 @@ struct SignaturePreview: NSViewRepresentable {
             view.loadHTMLString(SignaturePreview.document(html), baseURL: nil)
         }
 
+        /// Only the page DreaMail loads (`loadHTMLString` with no base URL
+        /// is about:blank); a click, a drop or anything else is cancelled.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            decisionHandler(action.navigationType == .other ? .allow : .cancel)
+            let url = action.request.url?.absoluteString ?? ""
+            let initial = action.navigationType == .other
+                && action.targetFrame?.isMainFrame == true
+                && (url.isEmpty || url == "about:blank")
+            decisionHandler(initial ? .allow : .cancel)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript("document.documentElement.scrollHeight") { [weak self] value, _ in
+            // The body's own height (not the viewport's), so it can shrink.
+            webView.evaluateJavaScript("Math.ceil(document.body.getBoundingClientRect().height)") { [weak self] value, _ in
                 guard let self, let h = value as? Double else { return }
                 let next = min(CGFloat(h), self.parent.maxHeight)
                 if abs(next - self.parent.height) > 0.5 { self.parent.height = next }
@@ -89,9 +96,49 @@ struct SignaturePreviewBox: View {
     }
 }
 
+/// The signature in the compose window: shown once, as it is sent, with
+/// no label and only a hairline edge (its white page sets it off in dark
+/// mode). Read-only; sized to its content up to `maxHeight`, past which it
+/// scrolls inside.
+struct ComposeSignatureBlock: View {
+    let html: String
+    /// The signature's text, for VoiceOver: it is not in the editor.
+    let text: String
+    static let maxHeight: CGFloat = 240
+    @State private var height: CGFloat = 40
+
+    var body: some View {
+        SignaturePreview(html: html, maxHeight: Self.maxHeight, height: $height)
+            .frame(height: height)
+            .frame(maxWidth: 480, alignment: .leading)
+            .background(Color.white)
+            .overlay(Rectangle().strokeBorder(.separator, lineWidth: 0.5))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Signature")
+            .accessibilityValue(text)
+            .accessibilityIdentifier("compose.richSignature")
+    }
+}
+
 /// No context menu: "Open Link" or "Download Linked File" would reach past
 /// the preview's no-navigation rule.
+///
+/// Not a drop target either: a file or link dropped on it is refused (the
+/// web view would otherwise try to open it) instead of being taken here.
 private final class PreviewWebView: WKWebView {
+    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        unregisterDraggedTypes()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        unregisterDraggedTypes()
+    }
+
+    override func registerForDraggedTypes(_ newTypes: [NSPasteboard.PasteboardType]) {}
+
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         menu.removeAllItems()
     }

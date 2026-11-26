@@ -82,6 +82,20 @@ enum Notifier {
         }
     }
 
+    /// Removes the badge at quit: the label (gone with the process anyway)
+    /// and the notification-center count, which the system keeps after the
+    /// process exits. Waits for the system, but never longer than
+    /// `timeout`, so quitting cannot hang on it. Delivered notifications
+    /// stay.
+    @MainActor
+    static func clearBadge(timeout: Duration = .seconds(1)) async {
+        badgeRequest += 1 // a late `setBadge` callback must not repaint
+        NSApplication.shared.dockTile.badgeLabel = ""
+        await BoundedWait.run(timeout: timeout) { done in
+            UNUserNotificationCenter.current().setBadgeCount(0) { _ in done() }
+        }
+    }
+
     /// Reads what the notification settings allow for the badge.
     @MainActor
     static func readBadgeStatus(

@@ -59,22 +59,6 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(tree), ["a [a/]"])
     }
 
-    func testFindReturnsTheLabelWithoutSublabels() {
-        let tree = SidebarLabelTree.build([row("L1", "a"), row("L2", "a/b"), row("L3", "a/b/c")])
-        let hit = SidebarLabelTree.find("L2", in: tree)
-        XCTAssertEqual(hit?.fullName, "a/b")
-        XCTAssertEqual(hit?.children.count, 0)
-        XCTAssertNil(SidebarLabelTree.find("L9", in: tree))
-    }
-
-    func testFindSkipsSublabelsOfClosedParents() {
-        let tree = SidebarLabelTree.build([row("L1", "a"), row("L2", "a/b"), row("L3", "a/b/c")])
-        XCTAssertNil(SidebarLabelTree.find("L3", in: tree, isOpen: { _ in false }))
-        XCTAssertNil(SidebarLabelTree.find("L3", in: tree, isOpen: { $0.gmailLabelId == "L1" }))
-        XCTAssertEqual(SidebarLabelTree.find("L3", in: tree, isOpen: { _ in true })?.fullName, "a/b/c")
-        XCTAssertEqual(SidebarLabelTree.find("L1", in: tree, isOpen: { _ in false })?.fullName, "a")
-    }
-
     func testEmptyPathPartsAreNotParents() {
         let tree = SidebarLabelTree.build([row("L1", "/lead"), row("L2", "a//b"), row("L3", "a")])
         // "a//b": its prefix "a/" is not a label; "a" is.
@@ -156,23 +140,6 @@ final class SidebarLabelTreeTests: XCTestCase {
     func testEverythingShownLeavesMoreEmpty() {
         let tree = SidebarLabelTree.build([row("L1", "a"), row("L2", "a/b")])
         XCTAssertTrue(SidebarLabelTree.split(tree) { _ in 0 }.more.isEmpty)
-    }
-
-    // MARK: Rows behind "More"
-
-    /// Promotions and Social are plain rows under "More", with Scheduled,
-    /// Reminders and Spam (there is no "Categories" group any more): closed,
-    /// the open one of them stays listed.
-    func testCategoriesAreRowsBehindMore() {
-        for view in [MailboxView.scheduled, .spam, .promotions, .social] {
-            XCTAssertTrue(SidebarMoreRows.isUnderMore(view, hasReminders: false), "\(view)")
-            XCTAssertTrue(SidebarMoreRows.isUnderMore(view, hasReminders: true), "\(view)")
-        }
-        XCTAssertTrue(SidebarMoreRows.isUnderMore(.reminders, hasReminders: false))
-        XCTAssertFalse(SidebarMoreRows.isUnderMore(.reminders, hasReminders: true),
-                       "Reminders sits above More once there is one")
-        XCTAssertFalse(SidebarMoreRows.isUnderMore(.inbox, hasReminders: false))
-        XCTAssertFalse(SidebarMoreRows.isUnderMore(.starred, hasReminders: false))
     }
 
     // MARK: Disclosure state

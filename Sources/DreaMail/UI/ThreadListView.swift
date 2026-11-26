@@ -1763,6 +1763,7 @@ struct ThreadRowModel: Equatable {
 /// visible row. Actions arrive as closures; body skips when `model` is equal.
 struct ThreadRow: View, Equatable {
     @AppStorage("fontScale") private var fontScale = 1.0
+    @AppStorage(ListDensity.storageKey) private var densityRaw = ListDensity.comfortable.rawValue
     let model: ThreadRowModel
     let onToggleCheck: (Bool) -> Void
     let onOpenIfFocused: () -> Void
@@ -1800,6 +1801,10 @@ struct ThreadRow: View, Equatable {
     private func inked(_ normal: Color, emphasis: Double = 1) -> Color {
         guard let ink else { return normal }
         return ink.opacity(accent.palette(scheme: colorScheme).inkOpacity(emphasis))
+    }
+
+    private var metrics: ThreadListMetrics {
+        ThreadListMetrics(density: .from(raw: densityRaw), fontScale: fontScale)
     }
 
     private var thread: MailThread { model.thread }
@@ -1951,10 +1956,10 @@ struct ThreadRow: View, Equatable {
             }
             // Match the visual icon size (~13pt + small pad). Hit expansion is
             // layout-neutral via pmHitTarget so rows stay dense.
-            .frame(height: ThreadRowChipLayout.trailingStripHeight * fontScale)
+            .frame(height: metrics.rowContentHeight)
             .animation(.easeOut(duration: 0.12), value: hovering)
         }
-        .padding(.vertical, 6 * fontScale)
+        .padding(.vertical, metrics.rowVerticalPadding)
         .padding(.horizontal, 6)
         .background(hovering ? Color.primary.opacity(0.05) : .clear,
                     in: RoundedRectangle(cornerRadius: PMRadius.sm))
@@ -2016,6 +2021,7 @@ struct ThreadRow: View, Equatable {
         LabelPill(name: chip.name, colors: chip.colors, surface: pillSurface,
                   fontSize: ThreadRowChipLayout.fontSize * fontScale,
                   maxWidth: ThreadRowChipLayout.maxWidth * fontScale)
+            .accessibilityIdentifier("rowLabelChip")
     }
 
     /// Checked rows (a 10% accent wash) count as plain content: the wash
@@ -2042,9 +2048,9 @@ struct ThreadRow: View, Equatable {
                 .padding(.horizontal, ThreadRowActionLayout.iconPaddingH)
                 .padding(.vertical, ThreadRowActionLayout.iconPaddingV)
                 // Dense row: expand hit without inflating the 18pt trailing strip.
-                .padding(.vertical, ThreadRowActionLayout.hitExtraV)
+                .padding(.vertical, metrics.hitExtraV)
                 .contentShape(Rectangle())
-                .padding(.vertical, -ThreadRowActionLayout.hitExtraV)
+                .padding(.vertical, -metrics.hitExtraV)
         }
         .buttonStyle(PressScaleButtonStyle())
         .help(title)

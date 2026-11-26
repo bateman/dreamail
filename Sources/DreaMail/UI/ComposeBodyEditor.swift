@@ -41,6 +41,11 @@ struct ComposeBodyEditor: NSViewRepresentable {
     /// Compose sizes the editor from this instead of estimating from the
     /// character count.
     var onTextHeightChange: ((CGFloat) -> Void)? = nil
+    /// A paste whose pasteboard holds HTML or RTF is offered here first;
+    /// true means it was handled (read it with `ComposeBodyTextView.richPayload`).
+    /// Settings' signature editor only: compose leaves it nil and pastes
+    /// plain text.
+    var onRichPaste: ((NSPasteboard) -> Bool)? = nil
     /// System spelling / grammar checks (Settings ▸ Appearance ▸ Spelling).
     @AppStorage(ComposeSpellCheck.spellingKey) private var spellCheck = true
     @AppStorage(ComposeSpellCheck.grammarKey) private var grammarCheck = true
@@ -109,6 +114,7 @@ struct ComposeBodyEditor: NSViewRepresentable {
         textView.onFilesDropped = { [weak coord = context.coordinator] urls in
             coord?.onFilesDropped?(urls)
         }
+        textView.onRichPaste = onRichPaste
         // Do NOT call registerForDraggedTypes here — NSView replaces (not
         // merges) the type set, which would wipe NSTextView's built-in
         // string/RTF/image registrations and break text drags into the body.
@@ -150,6 +156,7 @@ struct ComposeBodyEditor: NSViewRepresentable {
         textView.onFilesDropped = { [weak coord = context.coordinator] urls in
             coord?.onFilesDropped?(urls)
         }
+        textView.onRichPaste = onRichPaste
         // Only on a Settings change: re-applying every update would undo a
         // per-view Edit ▸ Spelling and Grammar toggle on the next keystroke.
         if context.coordinator.appliedSpellOptions != spellOptions {
@@ -630,6 +637,8 @@ final class ComposeBodyTextView: ComposeCaretSettlingTextView {
     var onFocusChange: ((Bool) -> Void)?
     /// Finder / other-app file drops → compose attachments (not path text).
     var onFilesDropped: (([URL]) -> Void)?
+    /// See `ComposeBodyEditor.onRichPaste`.
+    var onRichPaste: ((NSPasteboard) -> Bool)?
     /// Grey ghost suffix after the caret (greeting autocomplete). Drawn only;
     /// never part of `string` / the SwiftUI binding.
     var ghostText: String = "" {
@@ -796,6 +805,54 @@ final class ComposeBodyTextView: ComposeCaretSettlingTextView {
         // Never insert file paths / NSTextAttachments into the markdown body.
         onFilesDropped?(urls)
         return true
+    }
+
+    /// ⌘V: a pasteboard with HTML or RTF goes to `onRichPaste` when set
+    /// (nothing is read or converted here); otherwise, or when it declines,
+    /// the usual plain-text paste.
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        if let onRichPaste, pasteboard.availableType(from: [.html, .rtf]) != nil,
+           onRichPaste(pasteboard) { return }
+        super.paste(sender)
+    }
+
+    /// Bounds on what is read from the pasteboard (`SignaturePaste.maxRawLength`).
+    static let maxPastedHTMLBytes = SignaturePaste.maxRawLength
+    static let maxPastedRTFBytes = 200_000
+
+    /// What a rich paste carries, read on the main thread within the bounds
+    /// above: HTML as the pasteboard decodes it (any encoding), or RTF bytes
+    /// for `html(from:)` to convert off the main thread.
+    enum RichPayload: Sendable {
+        case html(String)
+        case rtf(Data)
+    }
+
+    static func richPayload(from pasteboard: NSPasteboard) -> RichPayload? {
+        if let data = pasteboard.data(forType: .html) {
+            guard data.count <= maxPastedHTMLBytes,
+                  let html = pasteboard.string(forType: .html) else { return nil }
+            return .html(html)
+        }
+        guard let rtf = pasteboard.data(forType: .rtf), rtf.count <= maxPastedRTFBytes else { return nil }
+        return .rtf(rtf)
+    }
+
+    /// The payload as HTML: RTF converted by AppKit (most of RTF's look then
+    /// sits in CSS classes, which the signature filter drops).
+    nonisolated static func html(from payload: RichPayload) -> String? {
+        switch payload {
+        case .html(let html):
+            return html
+        case .rtf(let rtf):
+            guard let text = NSAttributedString(rtf: rtf, documentAttributes: nil),
+                  let data = try? text.data(
+                    from: NSRange(location: 0, length: text.length),
+                    documentAttributes: [.documentType: NSAttributedString.DocumentType.html])
+            else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

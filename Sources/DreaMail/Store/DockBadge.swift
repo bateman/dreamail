@@ -118,6 +118,9 @@ enum DockBadge {
         /// Bumped by every local action, so a recount whose read started
         /// before it cannot undo its delta.
         private(set) var epoch = 0
+        /// Set at quit (`close()`): the app is going away, so nothing may
+        /// paint a count again.
+        private(set) var closed = false
 
         /// Taken when a recount's read starts.
         struct Ticket: Equatable {
@@ -134,10 +137,18 @@ enum DockBadge {
         /// the action's own reconciliation recount follows.
         @discardableResult
         mutating func applyRecount(_ value: Int, ticket: Ticket) -> Bool {
-            guard ticket.epoch == epoch else { return false }
+            guard !closed, ticket.epoch == epoch else { return false }
             count = max(0, value)
             account = ticket.account
             return true
+        }
+
+        /// Quit: forgets the count and refuses every later recount and
+        /// delta, so a read finishing after the badge was cleared cannot
+        /// paint it again.
+        mutating func close() {
+            closed = true
+            count = nil
         }
 
         /// A local action, `delta` summed over every thread it touched.
@@ -147,7 +158,7 @@ enum DockBadge {
         @discardableResult
         mutating func applyDelta(_ delta: Int, account: String?) -> Bool {
             epoch += 1
-            guard delta != 0, let current = count, self.account == account else {
+            guard !closed, delta != 0, let current = count, self.account == account else {
                 return false
             }
             count = max(0, current + delta)

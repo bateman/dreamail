@@ -201,5 +201,10 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(reveal(more, in: app), "the labels' More row can be scrolled to")
         more.click()
         XCTAssertTrue(research.waitForExistence(timeout: 5), "More shows it")
+        // Closed means closed: the open label goes too.
+        research.click()
+        XCTAssertTrue(reveal(more, in: app))
+        more.click()
+        XCTAssertTrue(waitForAbsence(research), "a closed More hides the open label as well")
     }
 }

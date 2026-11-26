@@ -39,9 +39,9 @@ minor versions may still change behavior.
   Gmail does. An image that still fails shows its alternative text in small
   type, when it has one, instead of leaving an empty space.
 
-- **Fixed: a closed "Categories" kept showing the open category.** Closing
-  "Categories" (or a parent label) now hides everything under it, as in
-  Gmail; "Less" still keeps the open view visible.
+- **Fixed: a closed parent label kept showing the open sublabel.** Closing
+  a parent label now hides everything under it, as in Gmail; "Less" still
+  keeps the open view visible.
 
 - **OpenPGP (off by default).** Signature check and decryption of PGP/MIME
   and cleartext-signed mail, with an indicator in the message header, and
@@ -54,7 +54,7 @@ minor versions may still change behavior.
   GnuPG 2.4 with its default settings is decrypted too (library v0.1.1).
 
 - **Sidebar like Gmail.** System views in Gmail's order with Important, a
-  "More" row (Scheduled, Reminders, Spam, Categories), and your labels as a
+  "More" row (Scheduled, Reminders, Promotions, Social, Spam), and your labels as a
   tree with colours, unread counts and Gmail's show/hide setting. "+" next to
   Labels creates a label, also nested. Outbox and Reminders stay visible when
   they hold something. Spam shows what this Mac has: spam received since the
@@ -96,6 +96,15 @@ minor versions may still change behavior.
   notifications. "Connecting…" now ends as soon as the account is saved, and
   while DreaMail waits for the browser there is a Cancel.
 
+- **Escape closes every dialog, and shortcuts stay out of the way.** While a
+  sheet or an alert is open (new label, Organize Labels, filters,
+  signatures, the label menu's dialogs) the keys go to it: Escape closes it,
+  and the mail shortcuts no longer act on the window behind. With compose's
+  "Discard" confirmation open, Escape now cancels the confirmation.
+
+- **Categories without a sub-menu.** Under "More", Promotions and Social are
+  plain rows just above Spam; the "Categories" group is gone.
+
 - **Organize Labels keeps families together.** In Organize Labels the
   sublabels are listed under their label, indented. Dragging a label moves
   it with all its sublabels; a sublabel can be reordered among its siblings
@@ -126,8 +135,23 @@ minor versions may still change behavior.
   stays, marked "No longer on Gmail". The compose window has Gmail's pen menu
   to pick a signature or none. The message is sent with the signature's
   formatting from Gmail (fonts, colours, links, tables; images are dropped)
-  as long as you did not edit the signature; a "Signature as sent" preview
-  in the compose window shows that look, since the editor shows plain text.
+  as long as you did not edit the signature. In the compose window such a
+  signature is shown once, as a read-only block with that look, under the
+  text; "Edit signature as text" in the pen menu turns it into plain text
+  you can change (it is then sent as typed).
+
+- **Your own messages show the right account's photo.** With two accounts
+  that share a sending address (one account's address is a "send as"
+  address of the other), a message you sent showed the other account's
+  profile photo. It now shows the photo, or the initial, of the account the
+  message is in.
+
+- **Pasting a signature copied from Gmail.** In Settings → Signatures, ⌘V
+  of a signature copied from Gmail's settings page (into an empty box, or
+  over the whole text) keeps its look: fonts, colours, links and tables;
+  images are dropped. The sheet shows the look above the text; editing the
+  text, or "Remove formatting", makes it a plain signature. For the Gmail
+  signatures the API does not hand over (it gives one per address).
 
 - **Signatures per account.** DreaMail → Settings (⌘,) → Signatures: several
   signatures per account, a default for new messages and one for replies per

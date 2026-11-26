@@ -663,7 +663,9 @@ extension MailStore {
             replyTo: parent,
             forward: false,
             attachments: [],
-            replacingDraft: draft)
+            replacingDraft: draft,
+            // The style the draft was saved with, so an undo reopens it so.
+            signatureStyle: ComposeSignature.markedStyle(in: draft.bodyHTML))
         queueSend(pending)
 
         // "queued", never "sent": the undo window still has to elapse.
