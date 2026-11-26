@@ -8,8 +8,9 @@ release (docs/DEPENDENCIES.md, "OpenPGP library").
   2. Finds the commit on its main whose Package.swift points at that
      release (the commit DreaMail pins), and reads from it the checksum, the
      rPGP version and licence, the crate count and the accepted advisories.
-  3. Checks that the checksum in Package.swift, the release's .sha256 asset
-     and the SHA-256 of the downloaded zip agree.
+  3. Checks that the release's tag commit is in the history of that commit,
+     and that the checksum in Package.swift, the release's .sha256 asset and
+     the SHA-256 of the downloaded zip agree.
   4. Edits project.yml (revision and its version comment),
      docs/DEPENDENCIES.md (table and a "Recorded for" note) and CHANGELOG.md.
   5. Writes the pull request body to build/openpgp-integration.md and, under
@@ -265,6 +266,12 @@ def main(argv: list[str]) -> int:
         clone = Path(tmp) / "openpgp"
         git("clone", "--quiet", "--filter=blob:none", "--no-checkout", UPSTREAM, str(clone))
         commit = pinning_commit(clone, version)
+        # The release was built from main's history: its tag's commit is an
+        # ancestor of the commit pinned (the Release workflow refuses others).
+        built = git("rev-parse", f"v{version}^{{commit}}", cwd=clone).strip()
+        if subprocess.run(["git", "merge-base", "--is-ancestor", built, commit], cwd=clone).returncode:
+            raise Failure(f"release v{version} was built from {built}, which is not in the history "
+                          f"of the pinned commit {commit}")
         if commit == pinned:
             print(f"v{version} (commit {commit}) is already pinned: nothing to do.")
             outputs(changed="false")
