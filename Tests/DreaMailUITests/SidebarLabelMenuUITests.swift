@@ -140,6 +140,12 @@ final class SidebarLabelMenuUITests: XCTestCase {
         // the frame before a click left the click "not hittable" in CI.
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label keeps its ⋮")
         XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
+        // And no heavier than the sidebar's other glyphs: its box is not
+        // taller than the row's title text plus a small margin.
+        let title = research.staticTexts.firstMatch
+        XCTAssertTrue(title.exists, "the label row has its title")
+        XCTAssertLessThanOrEqual(dots.frame.height, title.frame.height + 4,
+                                 "the ⋮ \(dots.frame) is taller than the title \(title.frame)")
     }
 
     func testParentColorGoesToItsSublabelsAndRemoveAsksFirst() {

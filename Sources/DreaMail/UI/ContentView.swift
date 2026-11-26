@@ -1961,16 +1961,15 @@ struct Sidebar: View {
                                 accountId: store.activeAccountId
                                     ?? (store.accounts.count == 1 ? store.accounts.first?.id : nil))
                         } label: {
-                            // Gmail's "+": larger and neutral, the sidebar's
-                            // glyph colour (not the accent).
+                            // Gmail's "+": the glyph of the "Add view" row
+                            // below (same style), in the neutral sidebar ink.
                             Image(systemName: "plus")
-                                .font(.system(size: 16, weight: .regular))
-                                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                                .mailIconStyle(selected: false)
                                 // Layout height of a header line (the glyph
-                                // overflows it). No hit area outside the
+                                // may overflow it). No hit area outside the
                                 // frame: one padded past it reached the label
                                 // row below and covered its "⋮" in the UI test.
-                                .frame(width: 22, height: 16)
+                                .frame(height: 16)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -1993,7 +1992,7 @@ struct Sidebar: View {
                         store.editingView = SavedView.empty()
                     } label: {
                         Label {
-                            Text("Add view")
+                            Text("Add view").mailRowFont()
                         } icon: {
                             Image(systemName: "plus")
                                 .mailIconStyle(selected: false)
@@ -2005,6 +2004,7 @@ struct Sidebar: View {
             }
             .listStyle(.sidebar)
             .environment(\.defaultMinListRowHeight, sidebarDensity.minRowHeight)
+            .modifier(SidebarListDensity(density: sidebarDensity))
             .scrollContentBackground(.hidden)
 
             Divider()
@@ -2173,9 +2173,21 @@ struct SidebarCount: ViewModifier {
     let selected: Bool
     let painted: Bool
 
+    @Environment(\.mailRowSizeOverride) private var sizeOverride
+
+    /// The count as `Text` (`badge` takes one); in a Compact sidebar it keeps
+    /// the font of the user's own row size.
+    private var countText: Text {
+        let text = Text("\(count)")
+        guard let size = sizeOverride else { return text }
+        return text.font(.system(size: MailIconMetrics(rowSize: size).pointSize))
+    }
+
     func body(content: Content) -> some View {
         if painted {
-            content.badge(count > 0 ? Text("\(count)").foregroundStyle(SidebarBadgeStyle(selected: selected)) : nil)
+            content.badge(count > 0 ? countText.foregroundStyle(SidebarBadgeStyle(selected: selected)) : nil)
+        } else if sizeOverride != nil {
+            content.badge(count > 0 ? countText : nil)
         } else {
             content.badge(count)
         }

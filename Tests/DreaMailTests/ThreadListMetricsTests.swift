@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 
 final class ThreadListMetricsTests: XCTestCase {
@@ -28,8 +30,43 @@ final class ThreadListMetricsTests: XCTestCase {
     func testSidebarDensity() {
         XCTAssertEqual(SidebarDensity.comfortable.minRowHeight, 30)
         XCTAssertLessThan(SidebarDensity.compact.minRowHeight, 30)
+        XCTAssertNil(SidebarDensity.comfortable.listRowSize)
+        XCTAssertEqual(SidebarDensity.compact.listRowSize, .small)
         XCTAssertEqual(SidebarDensity.from(raw: "nope"), .comfortable)
         XCTAssertEqual(SidebarDensity.from(raw: ""), .comfortable)
         XCTAssertEqual(SidebarDensity.from(raw: "compact"), .compact)
+    }
+
+    /// The label "⋮" is no taller than the row's glyph, whatever the sidebar
+    /// icon size, and its dots sit on whole points.
+    func testLabelMenuDotsAreNoTallerThanTheGlyph() {
+        for rowSize in [SidebarRowSize.small, .medium, .large] {
+            let l = LabelMenuDots.layout(rowSize: rowSize)
+            let glyph = MailIconMetrics(rowSize: rowSize).pointSize
+            XCTAssertLessThanOrEqual(LabelMenuDots.size(rowSize: rowSize).height, glyph)
+            XCTAssertGreaterThan(LabelMenuDots.size(rowSize: rowSize).height,
+                                 LabelMenuDots.size(rowSize: rowSize).width)
+            XCTAssertEqual(l.gap, l.gap.rounded())
+            XCTAssertEqual(l.diameter, l.diameter.rounded())
+        }
+    }
+
+    /// Titles that repeat (an empty name becomes "Signature"; one may be
+    /// called "No signature") keep one menu item each, so the item picked is
+    /// the signature stored.
+    func testSignatureDefaultPopUpKeepsSameNamedItems() {
+        let items: [SignatureDefaultItem] = [
+            .init(title: "No signature", value: .none),
+            .init(title: "Signature", value: .signature(1)),
+            .init(title: "Signature", value: .signature(2)),
+            .init(title: "No signature", value: .signature(3)),
+        ]
+        let button = NSPopUpButton(frame: .zero, pullsDown: false)
+        SignatureDefaultItems.fill(button, with: items)
+        XCTAssertEqual(button.numberOfItems, items.count)
+        button.selectItem(at: 2)
+        XCTAssertEqual(SignatureDefaultItems.pick(button, from: items), .signature(2))
+        button.selectItem(at: 3)
+        XCTAssertEqual(SignatureDefaultItems.pick(button, from: items), .signature(3))
     }
 }

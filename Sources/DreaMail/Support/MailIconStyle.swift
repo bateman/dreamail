@@ -36,7 +36,7 @@ struct MailIconMetrics: Equatable {
 private struct MailIconModifier: ViewModifier {
     let selected: Bool
     /// The "Sidebar icon size" setting (macOS 14+, this app's minimum).
-    @Environment(\.sidebarRowSize) private var rowSize
+    @Environment(\.mailRowSize) private var rowSize
     /// `.increased` inside a row drawn over the emphasized (accent) selection.
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
@@ -50,6 +50,22 @@ private struct MailIconModifier: ViewModifier {
             .foregroundStyle(.mailIcon(selected: selected, prominence: prominence, accent: accent))
             .frame(width: metrics.columnWidth)
     }
+}
+
+private struct MailRowSizeOverrideKey: EnvironmentKey {
+    static let defaultValue: SidebarRowSize? = nil
+}
+
+extension EnvironmentValues {
+    /// Set by a Compact sidebar: the row size the user chose, while the list
+    /// itself is drawn with the small one. Glyphs and titles keep that size.
+    var mailRowSizeOverride: SidebarRowSize? {
+        get { self[MailRowSizeOverrideKey.self] }
+        set { self[MailRowSizeOverrideKey.self] = newValue }
+    }
+
+    /// The row size glyph and title metrics follow.
+    var mailRowSize: SidebarRowSize { mailRowSizeOverride ?? sidebarRowSize }
 }
 
 private struct SidebarRowSelectedKey: EnvironmentKey {
@@ -71,11 +87,31 @@ private struct MailRowTitleModifier: ViewModifier {
     @Environment(\.mailAccent) private var accent
 
     func body(content: Content) -> some View {
-        content.foregroundStyle(.mailRowTitle(selected: selected, prominence: prominence, accent: accent))
+        content
+            .mailRowFont()
+            .foregroundStyle(.mailRowTitle(selected: selected, prominence: prominence, accent: accent))
+    }
+}
+
+/// The font of the user's own row size, applied only while a Compact sidebar
+/// draws its list with the small one; otherwise nothing is applied.
+private struct MailRowFontModifier: ViewModifier {
+    @Environment(\.mailRowSizeOverride) private var sizeOverride
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let size = sizeOverride {
+            content.font(.system(size: MailIconMetrics(rowSize: size).pointSize))
+        } else {
+            content
+        }
     }
 }
 
 extension View {
+    /// Keeps a text at the size of the user's own sidebar row size in a
+    /// Compact sidebar (the list itself is drawn with the small one).
+    func mailRowFont() -> some View { modifier(MailRowFontModifier()) }
+
     /// The one style for sidebar glyphs (see `MailIconMetrics`), in the
     /// monochrome `mailIcon` tint: never the accent, selected or not. On the
     /// solid accent capsule of an emphasized selection it is white (with a

@@ -51,6 +51,27 @@ versions are those of `v0.1.1`. Earlier pins: `v0.1.1` (decryption of GnuPG
 checksum `441e553914f89dc6565fddc1abd5bf643ec172d5115733914959400e3f78dd3b`;
 `v0.1.0` was commit `adad8a18d07c0ec10695e43bb700479d0d971dfa`.
 
+To move to a new release, run the **Integrate dreamail-openpgp** workflow
+(Actions, manual only; empty version: the newest release). It first needs
+the whole CI, UI shards included, green on `main` (a manual run there,
+reused if one already passed). `.github/scripts/integrate-openpgp.py` then
+checks that the release's tag commit lies between the current pin and the
+new one on the library's `main`, and that `Package.swift` at the new commit,
+the release's `.sha256` asset and the downloaded zip agree. The workflow
+then verifies the zip's build provenance attestation (`gh attestation
+verify`): signed by the library's `release.yml` running on `refs/heads/main`,
+from that tag commit, on a GitHub-hosted runner (releases up to `v0.2.0`
+have none). It updates `project.yml`,
+this table and `CHANGELOG.md`, and runs the whole CI again on branch
+`deps/dreamail-openpgp-v<version>`, where only the pin changed. Green: the
+pull request is merged, unless the run's `merge` input is off. Red: it stays
+a draft with the failed run. It always waits for a person when
+`Package.swift` changed beyond its version and checksum, when the library's
+build, check or release pipeline was touched by any commit between the
+two pins (`.github`, `scripts`, `.cargo`, `rust/.cargo`, `rust/deny.toml`,
+the toolchain files), or when the accepted advisories differ from this
+table (DEC-051 must be updated with them).
+
 ## What enforces what
 
 1. **The revision pin fixes the manifest.** `revision:` names one commit, so
