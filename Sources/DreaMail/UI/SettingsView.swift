@@ -1690,6 +1690,8 @@ private struct VIPManager: View {
         }
         .padding(16)
         .frame(width: 500, height: 660)
+        // Escape closes it: "Done" is only the default action.
+        .onExitCommand { dismiss() }
         .onDrop(of: ["public.file-url"], isTargeted: nil) { handleDrop($0) }
     }
 }
@@ -2630,6 +2632,7 @@ private struct ProviderEditSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Save") { Task { await save() } }
                     .keyboardShortcut(.defaultAction)
                     .disabled(saveDisabled)
