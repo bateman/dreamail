@@ -151,19 +151,26 @@ enum MessageAvatar: Equatable {
     ///   - senderName: the display name shown in the row.
     ///   - labelIds: the message's Gmail labels, space-separated.
     ///   - owners: `ownerMap(accountIds:aliases:)`.
+    ///   - accountId: the account the message was synced into. A SENT message
+    ///     there was sent by that account, even when `owners` maps the address
+    ///     to another account (a send-as alias listed by several accounts).
+    ///     `nil` when unknown: the address lookup decides.
     ///   - accountNames: the name each account shows elsewhere (switcher),
     ///     so its initial matches; falls back to `senderName`.
     ///   - accountsWithPhoto: accounts that have a stored photo.
     static func resolve(senderEmail: String, senderName: String,
                         labelIds: String,
                         owners: [String: String],
+                        accountId: String? = nil,
                         accountNames: [String: String] = [:],
                         accountsWithPhoto: Set<String>) -> MessageAvatar {
         let email = senderEmail.trimmingCharacters(in: .whitespaces).lowercased()
         let name = senderName.trimmingCharacters(in: .whitespaces)
         let shownName = name.isEmpty ? email : name
         let isSent = labelIds.split(separator: " ").contains("SENT")
-        if isSent, !email.isEmpty, let account = owners[email] {
+        if isSent, !email.isEmpty, let owner = owners[email] {
+            // The From address must still be one of ours (forged From guard).
+            let account = accountId ?? owner
             if accountsWithPhoto.contains(account) {
                 return .accountPhoto(accountId: account)
             }

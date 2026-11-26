@@ -151,4 +151,55 @@ final class ThreadMessageRowLayoutTests: XCTestCase {
         XCTAssertEqual(avatar("noreply@x.example", name: "  ", labels: "INBOX"),
                        .initial(name: "noreply@x.example", key: "noreply@x.example"))
     }
+
+    // MARK: Avatar: an address shared by two accounts
+
+    private func shared(_ email: String, in account: String?, labels: String = "SENT",
+                        accounts: [String], aliases: [(email: String, accountId: String)],
+                        photos: Set<String> = ["a@example.com", "b@example.com"]) -> MessageAvatar {
+        MessageAvatar.resolve(
+            senderEmail: email, senderName: "Me", labelIds: labels,
+            owners: MessageAvatar.ownerMap(accountIds: accounts, aliases: aliases),
+            accountId: account, accountsWithPhoto: photos)
+    }
+
+    func testSharedAddressAliasOfAAndOwnAddressOfB() {
+        let accounts = ["a@example.com", "b@example.com"]
+        let aliases = [(email: "b@example.com", accountId: "a@example.com")]
+        XCTAssertEqual(shared("b@example.com", in: "b@example.com", accounts: accounts, aliases: aliases),
+                       .accountPhoto(accountId: "b@example.com"))
+        XCTAssertEqual(shared("b@example.com", in: "a@example.com", accounts: accounts, aliases: aliases),
+                       .accountPhoto(accountId: "a@example.com"))
+        // Unknown account: the account whose own address it is wins over the alias.
+        XCTAssertEqual(shared("b@example.com", in: nil, accounts: accounts, aliases: aliases),
+                       .accountPhoto(accountId: "b@example.com"))
+        // Received mail from that address stays an initial disc.
+        XCTAssertEqual(shared("b@example.com", in: "b@example.com", labels: "INBOX",
+                              accounts: accounts, aliases: aliases),
+                       .initial(name: "Me", key: "b@example.com"))
+    }
+
+    func testSharedAliasOfBothAccounts() {
+        let accounts = ["a@example.com", "b@example.com"]
+        let aliases = [(email: "team@example.com", accountId: "a@example.com"),
+                       (email: "team@example.com", accountId: "b@example.com")]
+        XCTAssertEqual(shared("team@example.com", in: "b@example.com", accounts: accounts, aliases: aliases),
+                       .accountPhoto(accountId: "b@example.com"))
+        XCTAssertEqual(shared("team@example.com", in: "a@example.com", accounts: accounts, aliases: aliases),
+                       .accountPhoto(accountId: "a@example.com"))
+        // No photo: that account's initial disc.
+        XCTAssertEqual(shared("team@example.com", in: "b@example.com", accounts: accounts,
+                              aliases: aliases, photos: ["a@example.com"]),
+                       .initial(name: "Me", key: "b@example.com"))
+        XCTAssertEqual(shared("team@example.com", in: "b@example.com", labels: "INBOX",
+                              accounts: accounts, aliases: aliases),
+                       .initial(name: "Me", key: "team@example.com"))
+    }
+
+    func testSingleAccountWithAccountIdIsUnchanged() {
+        XCTAssertEqual(shared("a@example.com", in: "a@example.com", accounts: ["a@example.com"], aliases: []),
+                       .accountPhoto(accountId: "a@example.com"))
+        XCTAssertEqual(shared("x@other.example", in: "a@example.com", accounts: ["a@example.com"], aliases: []),
+                       .initial(name: "Me", key: "x@other.example"))
+    }
 }

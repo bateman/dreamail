@@ -2201,6 +2201,7 @@ struct MessageCard: View {
             owners: MessageAvatar.ownerMap(
                 accountIds: store.accounts.map(\.id),
                 aliases: store.sendIdentities.map { (email: $0.email, accountId: $0.accountId) }),
+            accountId: message.accountId,
             // The account switcher's title, so the initial matches it.
             accountNames: Dictionary(
                 store.accounts.map { ($0.id, AccountLabelColor.title($0)) },
