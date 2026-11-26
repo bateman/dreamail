@@ -883,6 +883,50 @@ extension MailStore {
         }
     }
 
+    /// Gmail ids of each thread's messages outside the trash, read before
+    /// a trash so its undo restores exactly those.
+    func liveMessageIds(ofThreads ids: [String]) -> [String: [String]] {
+        (try? db.read { db -> [String: [String]] in
+            var out: [String: [String]] = [:]
+            for id in ids {
+                let messages = try Message.filter(Column("threadId") == id).fetchAll(db)
+                out[id] = TrashedMessages.liveIds(messages)
+            }
+            return out
+        }) ?? [:]
+    }
+
+    /// "Move to" from the Trash view on a conversation that is otherwise
+    /// live: only its trashed messages leave the trash, as in Gmail; its
+    /// live messages are not touched (`messages.batchModify` on their ids).
+    func restoreTrashedMessages(_ targets: [MailThread], toLabel labelId: String) {
+        guard !isShuttingDown, !targets.isEmpty else { return }
+        let move = ConversationAction.moveTo(labelId: labelId, alsoRemove: ["TRASH"]).remote
+        let ids = Set(targets.map(\.id))
+        advanceForRemoval(ids, action: "move")
+        threads.removeAll { ids.contains($0.id) }
+        trashViewProjectedIds.subtract(ids)
+        guard !demoMode else { return }
+        let pool = db
+        Task {
+            for thread in targets {
+                let messages = (try? await pool.read { db in
+                    try Message.filter(Column("threadId") == thread.id).fetchAll(db)
+                }) ?? []
+                let trashed = TrashedMessages.trashedIds(messages)
+                guard !trashed.isEmpty else { continue }
+                await self.applyRemoteThreadChange(
+                    .modifyMessages(ids: trashed, add: move.addLabels, remove: move.removeLabels),
+                    client: self.client(for: thread.accountId), accountId: thread.accountId,
+                    gmailThreadId: thread.gmailThreadId)
+            }
+            var synced = Set<String>()
+            for thread in targets where synced.insert(thread.accountId).inserted {
+                await self.sync(accountId: thread.accountId)
+            }
+        }
+    }
+
     func trash(_ thread: MailThread) {
         // Gmail-style auto-advance: when the selected thread is trashed, land
         // on the next conversation down (or the one above if it was last)
@@ -892,6 +936,9 @@ extension MailStore {
         // Keep labelIds + denorm flags coherent (same pattern as markSpam) so
         // search filters on inTrash and any labelIds-based UI agree.
         let wasInInbox = thread.inInbox
+        // What the trash reaches: an undo brings back only these, not the
+        // messages deleted earlier.
+        let liveIds = liveMessageIds(ofThreads: [thread.id])[thread.id]
         let acted = mutateThread(thread, autoAdvanceAction: "trash",
                                  remote: ThreadUndo.remote(.trash)) {
             ThreadUndo.apply(.trash, &$0)
@@ -903,7 +950,8 @@ extension MailStore {
             // on trash).
             self.pinReadStateKeep([thread.id])
             self.mutateThread(
-                acted, remote: ThreadUndo.undoRemote(.trash, wasInInbox: wasInInbox)
+                acted, remote: ThreadUndo.undoTrashRemote(
+                    wasInInbox: wasInInbox, liveMessageIds: liveIds)
             ) {
                 ThreadUndo.restore(.trash, wasInInbox: wasInInbox, &$0)
             }
@@ -916,6 +964,7 @@ extension MailStore {
         let targets = checkedThreadsInOrder
         guard !targets.isEmpty else { return }
         let focus = selectedThreadId
+        let liveIds = liveMessageIds(ofThreads: targets.map(\.id))
         let acted = mutateThreads(targets, autoAdvanceAction: "trash",
                                   remote: ThreadUndo.remote(.trash), local: {
             ThreadUndo.apply(.trash, &$0)
@@ -926,7 +975,17 @@ extension MailStore {
         offerUndo(n == 1 ? "Moved to Trash" : "Moved \(n) to Trash") { [weak self] in
             guard let self else { return }
             self.pinReadStateKeep(ids)
-            self.undoThreads(.trash, acted: acted, originals: targets)
+            // One change per thread: each brings back its own messages.
+            for group in ThreadUndo.undoGroups(acted: acted, originals: targets) {
+                let wasInInbox = group.wasInInbox
+                for thread in group.threads {
+                    self.mutateThreads(
+                        [thread],
+                        remote: ThreadUndo.undoTrashRemote(
+                            wasInInbox: wasInInbox, liveMessageIds: liveIds[thread.id]),
+                        local: { ThreadUndo.restore(.trash, wasInInbox: wasInInbox, &$0) })
+                }
+            }
             self.restoreSelectionFocus(focus)
         }
     }

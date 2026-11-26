@@ -5,6 +5,8 @@ import Foundation
 protocol GmailThreadEditing: Sendable {
     func modifyThread(id: String, add: [String], remove: [String]) async throws
     func trashThread(id: String) async throws
+    /// `messages.batchModify` on exactly `ids`: labels only, never a delete.
+    func modifyMessages(ids: [String], add: [String], remove: [String]) async throws
 }
 
 extension GmailClient: GmailThreadEditing {}
@@ -19,6 +21,13 @@ enum RemoteThreadSend {
             try await client.modifyThread(id: gmailThreadId, add: add, remove: remove)
         case .trash:
             try await client.trashThread(id: gmailThreadId)
+        case .modifyMessages(let ids, let add, let remove):
+            guard !ids.isEmpty, !(add.isEmpty && remove.isEmpty) else { return }
+            try await client.modifyMessages(ids: ids, add: add, remove: remove)
+        case .sequence(let steps):
+            for step in steps {
+                try await send(step, via: client, gmailThreadId: gmailThreadId)
+            }
         }
     }
 

@@ -711,6 +711,7 @@ actor GmailClient {
         if path.hasPrefix("/settings/filters") && method != "GET" { return 5 }
         if path == "/messages" { return 5 }
         if path == "/messages/send" { return 100 }
+        if path == "/messages/batchModify" { return 50 }
         if path.contains("/attachments/") { return 20 }
         if path.hasPrefix("/messages/") {
             if method == "GET" { return GmailQuotaBucket.messageGetUnits(format: format) }
@@ -1100,6 +1101,18 @@ actor GmailClient {
     func trashThread(id: String) async throws {
         struct ThreadResp: Decodable { let id: String }
         let _: ThreadResp = try await request("POST", "/threads/\(id)/trash")
+    }
+
+    /// `messages.batchModify`: labels on exactly these messages (at most
+    /// 1,000 per request). Empty response. Never deletes.
+    func modifyMessages(ids: [String], add: [String], remove: [String]) async throws {
+        guard !add.isEmpty || !remove.isEmpty else { return }
+        for start in stride(from: 0, to: ids.count, by: 1_000) {
+            var body: [String: Any] = ["ids": Array(ids[start..<min(start + 1_000, ids.count)])]
+            if !add.isEmpty { body["addLabelIds"] = add }
+            if !remove.isEmpty { body["removeLabelIds"] = remove }
+            _ = try await requestData("POST", "/messages/batchModify", jsonBody: body)
+        }
     }
 
     /// `maxResults` defaults to Gmail's cap (500) rather than its implicit
