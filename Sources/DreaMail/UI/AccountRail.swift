@@ -205,12 +205,15 @@ struct AccountRailTopBand: View {
     @Environment(MailStore.self) private var store
     /// Whether the sidebar is on screen (decided by `ContentView`).
     let sidebarVisible: Bool
+    /// Whether the collapsed sidebar (`SidebarIconStrip`) is on screen.
+    var stripVisible = false
 
     var body: some View {
         // Read here, not inside the GeometryReader closure, so the view
         // observes the store.
         let width = AccountRailMetrics.bandWidth(
-            sidebarTrailing: store.sidebarTrailingEdge, sidebarVisible: sidebarVisible)
+            sidebarTrailing: store.sidebarTrailingEdge, sidebarVisible: sidebarVisible,
+            stripVisible: stripVisible)
         GeometryReader { proxy in
             let top = proxy.safeAreaInsets.top
             AccountRailPalette.background

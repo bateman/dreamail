@@ -229,4 +229,55 @@ final class SidebarSystemOrderTests: XCTestCase {
         XCTAssertEqual(Order.stored(b, d), ["promotions", "more"], "resetting A leaves B's")
         XCTAssertEqual(Set([Order.defaultsKey(a), Order.defaultsKey(b), Order.defaultsKey(.all)]).count, 3)
     }
+    // MARK: One list for the full sidebar and the icon strip
+
+    /// `listed` is what both presentations show: the same rows as the old
+    /// resolve → layout → rows chain, for default and stored orders, with
+    /// More open or closed and conditional rows present or not.
+    func testListedMatchesTheSidebarChain() {
+        let stored: [[String]?] = [
+            nil, [], ["promotions", "more"],
+            ["sent", "inbox", "more", "trash", "starred"],
+            ["inbox", "reminders", "more", "scheduled", "outbox"],
+        ]
+        let noOutbox: (String) -> Bool = { $0 != "outbox" && $0 != "scheduled" }
+        for order in stored {
+            for reminders in [false, true] {
+                for open in [false, true] {
+                    for exists in [always, noOutbox] {
+                        let chain = Order.layout(Order.resolve(order, hasReminders: reminders),
+                                                 exists: exists,
+                                                 aboveMore: reminders ? ["reminders"] : [])
+                            .rows(moreOpen: open)
+                        XCTAssertEqual(Order.listed(stored: order, hasReminders: reminders,
+                                                    moreOpen: open, exists: exists), chain,
+                                       "\(String(describing: order)) reminders \(reminders) open \(open)")
+                    }
+                }
+            }
+        }
+    }
+
+    func testListedHonoursTheStoredOrderAndMore() {
+        let stored = ["sent", "inbox", "more", "trash", "starred"]
+        XCTAssertEqual(Array(Order.listed(stored: stored, hasReminders: false, moreOpen: false,
+                                          exists: always).prefix(2)), ["sent", "inbox"],
+                       "the stored order comes first")
+        let closed = Order.listed(stored: stored, hasReminders: false, moreOpen: false, exists: always)
+        XCTAssertEqual(closed.last, "more", "nothing under a closed More")
+        XCTAssertFalse(closed.contains("trash"))
+        let open = Order.listed(stored: stored, hasReminders: false, moreOpen: true, exists: always)
+        XCTAssertTrue(open.contains("trash"))
+        XCTAssertGreaterThan(open.firstIndex(of: "trash")!, open.firstIndex(of: "more")!)
+        // Reminders above More while one exists (DEC-063).
+        let lifted = Order.listed(stored: nil, hasReminders: true, moreOpen: false, exists: always)
+        XCTAssertLessThan(lifted.firstIndex(of: "reminders")!, lifted.firstIndex(of: "more")!)
+    }
+
+    func testStripHelpCarriesTheCount() {
+        XCTAssertEqual(Order.stripHelp(title: "Inbox", count: 12, total: false), "Inbox, 12 unread")
+        XCTAssertEqual(Order.stripHelp(title: "Drafts", count: 3, total: true), "Drafts, 3")
+        XCTAssertEqual(Order.stripHelp(title: "Inbox", count: 0, total: false), "Inbox")
+        XCTAssertEqual(Order.stripHelp(title: "Sent", count: nil, total: false), "Sent")
+    }
 }
