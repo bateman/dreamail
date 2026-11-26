@@ -176,4 +176,60 @@ final class SettingsWindowUITests: XCTestCase {
         XCTAssertEqual(picker("new", account).frame.width, picker("reply", alias).frame.width,
                        accuracy: 0.5, "both columns use the same width")
     }
+
+    /// Every pane fits the fixed Settings window: the sidebar (first row and
+    /// the "Per account" header) is not cut on the left, and no control of the
+    /// pane reaches past the right edge. Two addresses of different lengths
+    /// make the Signatures defaults grid as wide as it gets.
+    func testEveryPaneFitsTheSettingsWindow() {
+        let app = launch(alias: true)
+        let settings = openSettings(app)
+        let window = settings.frame
+        XCTAssertGreaterThan(window.width, 0)
+
+        let rows = settings.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'settings.pane.'"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10))
+        var ids = [String]()
+        for i in 0..<rows.count {
+            let id = rows.element(boundBy: i).identifier
+            if !ids.contains(id) { ids.append(id) }
+        }
+        XCTAssertGreaterThanOrEqual(ids.count, 9, "every pane has a sidebar row: \(ids)")
+
+        for id in ids {
+            let row = element(id, in: settings)
+            XCTAssertTrue(row.waitForExistence(timeout: 5), id)
+            row.click()
+            if id == "settings.pane.signatures" {
+                XCTAssertTrue(element("settings.signatures.new", in: settings).waitForExistence(timeout: 10))
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+
+            // Sidebar: the first row and the section header lie inside the window.
+            let first = element(ids[0], in: settings).frame
+            XCTAssertGreaterThanOrEqual(first.minX, window.minX - 0.5, "\(id): first sidebar row cut on the left")
+            let header = settings.staticTexts["Per account"].firstMatch
+            XCTAssertTrue(header.exists, "\(id): the 'Per account' header")
+            XCTAssertGreaterThanOrEqual(header.frame.minX, window.minX - 0.5, "\(id): section header cut on the left")
+            XCTAssertLessThanOrEqual(row.frame.maxX, window.maxX + 0.5, "\(id): sidebar row outside the window")
+
+            // Pane: no control past the right edge.
+            for type in [XCUIElement.ElementType.button, .popUpButton, .textField, .checkBox, .staticText] {
+                let query = settings.descendants(matching: type)
+                for i in 0..<min(query.count, 200) {
+                    let f = query.element(boundBy: i).frame
+                    guard f.width > 0, f.height > 0 else { continue }
+                    XCTAssertLessThanOrEqual(f.maxX, window.maxX + 0.5,
+                                             "\(id): \(type) '\(query.element(boundBy: i).label)' is cut on the right")
+                    XCTAssertGreaterThanOrEqual(f.minX, window.minX - 0.5,
+                                                "\(id): \(type) '\(query.element(boundBy: i).label)' is cut on the left")
+                }
+            }
+            if id == "settings.pane.signatures" {
+                let new = element("settings.signatures.new", in: settings).frame
+                XCTAssertLessThanOrEqual(new.maxX, window.maxX + 0.5, "New signature is cut on the right")
+            }
+        }
+    }
 }
