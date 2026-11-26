@@ -74,6 +74,8 @@ struct LabelOrganizer: View {
             .padding(16)
         }
         .frame(width: 440, height: 480)
+        // Escape closes it: "Done" is only the default action.
+        .onExitCommand { dismiss() }
         .onAppear {
             if selectedAccount == nil {
                 selectedAccount = store.activeAccountId ?? store.accounts.first?.id

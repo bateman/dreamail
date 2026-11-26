@@ -1107,8 +1107,24 @@ private extension ContentView {
             guard let store else { return event }
             // Settings is capturing a key for rebinding — don't run shortcuts.
             if store.keyBindings.capturing { return event }
+            // Any sheet or alert is up (new label, Organize Labels, filter,
+            // signature, default-mail prompt, label menu dialogs, the "l"
+            // picker's "Create new"...): its keys, Esc included, belong to
+            // it. The event's window is the sheet (`sheetParent`), or the
+            // main window holding one (`attachedSheet`), or a popover of a
+            // sheet (the colour palette in Organize Labels: its `parent`
+            // is the sheet). Single letters like "e" and "#" were already
+            // blocked behind a sheet (`MailboxKeyGate`); what this stops is
+            // Escape walking the mailbox ladder (reading pane, checks,
+            // search) and the other shortcuts (⌘1-9, ⌃F, ⌘K) acting behind
+            // a dialog. The shortcuts help is the one sheet that needs `?`
+            // and Esc handled below.
+            if !store.showShortcutsHelp, DialogKeyOwnership.owns(event.window) {
+                return event
+            }
             // A label menu dialog is up (Edit, colour, Remove, failure):
-            // its keys, Esc included, belong to it.
+            // its keys, Esc included, belong to it. Kept: it is set before
+            // the sheet window attaches.
             if store.labelMenu.presentsDialog { return event }
             // Quick Look panel is up: every key (Esc, space, arrows) belongs
             // to the panel — the Esc ladder below must not close the reading
@@ -1349,8 +1365,8 @@ private extension ContentView {
             }
             if store.showLabelPicker {
                 let picker = store.labelPicker
-                // "Create new" sheet on top: its text field gets every key.
-                if picker.sheetOpen { return event }
+                // The "Create new" sheet on top is covered by the sheet
+                // rule at the top of the monitor.
                 switch event.keyCode {
                 case 53:  // esc
                     store.mailboxOverlay = nil
@@ -2012,18 +2028,10 @@ struct Sidebar: View {
         if !hasReminders {
             sidebarItem(.reminders, badge: moreBadge(.reminders))
         }
+        // The category views are plain rows, just above Spam.
+        sidebarItem(.promotions, badge: moreBadge(.promotions))
+        sidebarItem(.social, badge: moreBadge(.social))
         sidebarItem(.spam, badge: moreBadge(.spam))
-        DisclosureGroup(isExpanded: disclosureBinding(\.categoriesOpen)) {
-            sidebarItem(.promotions, badge: moreBadge(.promotions))
-            sidebarItem(.social, badge: moreBadge(.social))
-        } label: {
-            Label {
-                Text("Categories").mailRowTitleStyle()
-            } icon: {
-                Image(systemName: "tag.square").mailIconStyle(selected: false)
-            }
-            .accessibilityIdentifier("sidebar.categories")
-        }
     }
 
     /// Drafts kept locally while offline; gone once uploaded.
@@ -2037,20 +2045,9 @@ struct Sidebar: View {
     }
 
     /// Whether `view` is listed flat while "More" is closed: it lives under
-    /// "More" and no closed "Categories" hides it.
+    /// "More" (`SidebarMoreRows`).
     private func isShownBehindClosedMore(_ view: MailboxView) -> Bool {
-        switch view {
-        case .scheduled, .spam: return true
-        // A closed "Categories" hides its children, the open one included.
-        case .promotions, .social: return disclosure.categoriesOpen
-        case .reminders: return !hasReminders
-        default: return false
-        }
-    }
-
-    private func disclosureBinding(_ path: ReferenceWritableKeyPath<SidebarDisclosureModel, Bool>) -> Binding<Bool> {
-        Binding(get: { disclosure[keyPath: path] },
-                set: { disclosure[keyPath: path] = $0 })
+        SidebarMoreRows.isUnderMore(view, hasReminders: hasReminders)
     }
 
     private func moreBadge(_ view: MailboxView) -> Int? {
