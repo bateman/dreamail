@@ -153,6 +153,17 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let cg = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
         let scale = Double(cg.width) / Double(frame.width)
         let sidebar = window.outlines.firstMatch.frame
+        // A legacy (always visible) scroller takes its own strip at the
+        // column's trailing edge, beside the rows; an overlay one floats over
+        // them. The band must reach the edge of the rows' own area.
+        var trailing = sidebar.maxX
+        if NSScroller.preferredScrollerStyle == .legacy {
+            let bars = window.scrollBars.allElementsBoundByIndex.map(\.frame).filter {
+                $0.minX > sidebar.minX + 50 && $0.maxX <= sidebar.maxX + 2 && $0.height > 100
+            }
+            trailing = bars.map(\.minX).min()
+                ?? sidebar.maxX - NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+        }
         let width = cg.width, height = cg.height
         var data = [UInt8](repeating: 0, count: width * height * 4)
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -205,22 +216,22 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         else { return nil }
         // The corner: the run 1 pt below the top edge.
         guard let corner = run(min(bottom, top + Int(scale.rounded()))) else { return nil }
-        // A different blue beside the band (left of the glyph, right of the
-        // title) from 6 pt above to 6 pt below it: where a system capsule
-        // would show.
+        // A different blue inside the band, left of the glyph and right of
+        // the count, 2 pt clear of its edges (antialiasing): where AppKit's own
+        // capsule would show.
         let (br, bg, bb) = pixel(probeX, midY)
         func differentBlue(_ x: Int, _ y: Int) -> Bool {
             let p = pixel(x, y)
             let d = (abs(p.0 - br) + abs(p.1 - bg) + abs(p.2 - bb)) / 3
             return p.2 - p.0 > 60 && d > 40
         }
-        let pad = Int((6 * scale).rounded())
+        let margin = Int((2 * scale).rounded())
         let glyphX = Int(((inbox.frame.minX - frame.minX - 4) * scale).rounded())
-        let sides = Array(from..<max(from, min(to, glyphX)))
-            + Array((to - Int((10 * scale).rounded()))...to)
+        let leftZone = (first + margin)..<max(first + margin, glyphX)
+        let rightZone = max(first, last - Int((10 * scale).rounded()))..<max(first, last - margin)
         var stray = 0
-        for y in max(0, top - pad)...min(height - 1, bottom + pad) {
-            for x in sides where differentBlue(x, y) { stray += 1 }
+        for y in (top + margin)..<max(top + margin, bottom - margin) {
+            for x in Array(leftZone) + Array(rightZone) where differentBlue(x, y) { stray += 1 }
         }
         // Where the icon and the title start: the first white-ink columns
         // inside the band, the title after a gap wider than a letter space.
@@ -247,7 +258,7 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
                        topLeft: Double(corner.first) / scale,
                        topRight: Double(corner.last + 1) / scale, strayBlue: stray,
                        iconX: Double(iconStart) / scale, titleX: Double(titleStart) / scale,
-                       sidebarMin: sidebar.minX - frame.minX, sidebarMax: sidebar.maxX - frame.minX,
+                       sidebarMin: sidebar.minX - frame.minX, sidebarMax: trailing - frame.minX,
                        samples: samples.joined(separator: " "))
     }
 }
