@@ -128,23 +128,6 @@ enum SidebarLabelTree {
         return (listed, more)
     }
 
-    /// The label with `labelId` behind the labels' "More" row, without its
-    /// sublabels: what the sidebar keeps visible while "More" is closed and
-    /// that label is open (as the system "More" does). A closed node hides
-    /// its sublabels: with `isOpen` false for it, they are not searched.
-    static func find(_ labelId: String, in nodes: [SidebarLabelNode],
-                     isOpen: (SidebarLabelNode) -> Bool = { _ in true }) -> SidebarLabelNode? {
-        for node in nodes {
-            if node.gmailLabelId == labelId {
-                var leaf = node
-                leaf.children = []
-                return leaf
-            }
-            if isOpen(node), let hit = find(labelId, in: node.children, isOpen: isOpen) { return hit }
-        }
-        return nil
-    }
-
     private static func split(_ node: SidebarLabelNode,
                               unread: (SidebarLabelNode) -> Int)
         -> (listed: SidebarLabelNode?, more: SidebarLabelNode?) {
@@ -169,19 +152,6 @@ enum SidebarLabelTree {
             more = copy
         }
         return (listed, more)
-    }
-}
-
-/// The views the sidebar keeps behind "More". While "More" is closed, the
-/// open one of them stays listed ("Less" keeps the open view visible).
-enum SidebarMoreRows {
-    static func isUnderMore(_ view: MailboxView, hasReminders: Bool) -> Bool {
-        switch view {
-        case .scheduled, .spam, .promotions, .social: return true
-        // Listed above "More" once something has a reminder.
-        case .reminders: return !hasReminders
-        default: return false
-        }
     }
 }
 
@@ -214,7 +184,9 @@ enum SidebarDisclosure {
     static func keys(accountId: String) -> [String] {
         [expandedLabelsKey(accountId: accountId),
          labelsMoreKey(accountId: accountId),
-         accountCollapsedKey(accountId: accountId)]
+         accountCollapsedKey(accountId: accountId),
+         // The account's own order of the system views.
+         SidebarSystemOrder.defaultsKey(.account(accountId))]
     }
 
     static func isMoreExpanded(_ defaults: UserDefaults = .standard) -> Bool {

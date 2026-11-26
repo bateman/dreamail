@@ -8,6 +8,19 @@ final class SidebarDisclosureModel {
     var moreOpen = SidebarDisclosure.isMoreExpanded() {
         didSet { SidebarDisclosure.setMoreExpanded(moreOpen) }
     }
+    /// The dragged order of each sidebar's system views
+    /// (`SidebarSystemOrder`); nil is the default.
+    private var systemOrders: [SidebarSystemOrder.Scope: [String]?] = [:]
+
+    func systemOrder(_ scope: SidebarSystemOrder.Scope) -> [String]? {
+        if let known = systemOrders[scope] { return known }
+        return SidebarSystemOrder.stored(scope)
+    }
+
+    func setSystemOrder(_ order: [String]?, _ scope: SidebarSystemOrder.Scope) {
+        systemOrders[scope] = .some(order)
+        SidebarSystemOrder.store(order, scope)
+    }
     /// Loaded per account on first use.
     private var expanded: [String: Set<String>] = [:]
     private var labelsMore: [String: Bool] = [:]
@@ -82,22 +95,8 @@ struct SidebarLabelTreeView: View {
                 ForEach(parts.more) { node in
                     SidebarLabelNodeView(node: node, disclosure: disclosure, onNewLabel: onNewLabel)
                 }
-            } else if let selected = selectedBehindMore(parts) {
-                // Closed "More": the open label stays visible.
-                SidebarLabelRow(node: selected, onNewLabel: onNewLabel)
             }
         }
-    }
-
-    /// The open label of this account when only the "More" list holds it.
-    private func selectedBehindMore(
-        _ parts: (listed: [SidebarLabelNode], more: [SidebarLabelNode])
-    ) -> SidebarLabelNode? {
-        guard case .label(let account, let labelId, _) = store.selectedView,
-              account == accountId,
-              SidebarLabelTree.find(labelId, in: parts.listed) == nil else { return nil }
-        // A closed parent hides its sublabels, the open one included.
-        return SidebarLabelTree.find(labelId, in: parts.more, isOpen: disclosure.isExpanded)
     }
 
     private func unread(for node: SidebarLabelNode) -> Int {
