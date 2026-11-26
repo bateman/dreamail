@@ -136,7 +136,7 @@ final class LabelSyncTests: XCTestCase {
         XCTAssertEqual(try orders(q), expected, "idempotent")
         // A drag made afterwards is kept by later launches.
         try q.write { db in
-            try LabelRow.filter(Column("id") == "\(account):p/b")
+            _ = try LabelRow.filter(Column("id") == "\(account):p/b")
                 .updateAll(db, Column("sortOrder").set(to: 0))
         }
         try AppDatabase.migrator.migrate(q)
