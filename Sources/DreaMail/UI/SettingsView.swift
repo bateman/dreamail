@@ -1333,11 +1333,7 @@ struct AppearanceSettings: View {
                         get: { ListDensity.from(raw: listDensityRaw).rawValue },
                         set: { listDensityRaw = $0 })) {
                         ForEach(ListDensity.allCases) { density in
-                            HStack(spacing: 8) {
-                                DensityPreview(density: density)
-                                Text(density.title)
-                            }
-                            .tag(density.rawValue)
+                            Text(density.title).tag(density.rawValue)
                         }
                     }
                     .pickerStyle(.radioGroup)
@@ -2931,22 +2927,5 @@ struct AccentColorSetting: View {
     private func save(_ value: String) {
         pending = nil
         raw = value
-    }
-}
-
-/// A tiny schematic of the list at a density: bars spaced like its rows.
-private struct DensityPreview: View {
-    let density: ListDensity
-
-    var body: some View {
-        let pitch: CGFloat = density == .compact ? 4 : 7
-        VStack(alignment: .leading, spacing: pitch - 2) {
-            ForEach(0..<(density == .compact ? 5 : 3), id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 1).fill(.secondary.opacity(0.5))
-                    .frame(width: 28, height: 2)
-            }
-        }
-        .frame(width: 34, height: 22, alignment: .leading)
-        .accessibilityHidden(true)
     }
 }

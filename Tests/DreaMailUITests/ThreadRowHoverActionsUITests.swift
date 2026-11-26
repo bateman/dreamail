@@ -6,7 +6,7 @@ import XCTest
 final class ThreadRowHoverActionsUITests: XCTestCase {
     private let order = ["archive", "trash", "toggleRead", "snooze"]
 
-    private func launch(density: String = "comfortable") -> XCUIApplication {
+    private func launch() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
@@ -17,8 +17,7 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
-                                "-threadOpenStyle", "readingPane",
-                                "-listDensity", density]
+                                "-threadOpenStyle", "readingPane"]
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
@@ -53,22 +52,6 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         for (name, step) in steps {
             XCTContext.runActivity(named: name) { _ in step(app) }
         }
-    }
-
-    /// Compact rows: the hover actions still sit inside the row.
-    func testCompactRowKeepsTheHoverActionsInside() {
-        let app = launch(density: "compact")
-        let row = row(app)
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "demo inbox should load")
-        let before = row.frame.height
-        row.hover()
-        for id in order {
-            let b = button(row, id)
-            XCTAssertTrue(b.waitForExistence(timeout: 5))
-            XCTAssertGreaterThanOrEqual(b.frame.midY, row.frame.minY, id)
-            XCTAssertLessThanOrEqual(b.frame.midY, row.frame.maxY, id)
-        }
-        XCTAssertEqual(row.frame.height, before, accuracy: 0.5, "hover must not change the row height")
     }
 
     private func stepHoverShowsTheFourActionsInOrderAndKeepsTheRowHeight(_ app: XCUIApplication) {

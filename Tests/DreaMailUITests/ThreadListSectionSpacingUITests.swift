@@ -5,8 +5,7 @@ import XCTest
 /// row, then a full-height header. A section break must cost less than one
 /// row, and the header must sit inside the break: never on a row.
 final class ThreadListSectionSpacingUITests: XCTestCase {
-    private func launch(readingPane: Bool, fontScale: Double = 1.0,
-                        density: String = "comfortable") -> XCUIApplication {
+    private func launch(readingPane: Bool, fontScale: Double = 1.0) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
@@ -19,8 +18,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
                                 "-readingPaneHidden", readingPane ? "NO" : "YES",
                                 "-threadOpenStyle", "readingPane",
                                 "-groupBy", "date",
-                                "-fontScale", String(fontScale),
-                                "-listDensity", density]
+                                "-fontScale", String(fontScale)]
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
@@ -71,19 +69,6 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         }
         XCTFail("the thread list layout did not settle", file: file, line: line)
         return last
-    }
-
-    /// Height of the first section break's band: the gap between the two
-    /// rows around a header, minus the plain gap between two rows.
-    private func headerBand(_ rows: [CGRect], _ headers: [CGRect]) -> CGFloat {
-        var plain: [CGFloat] = []
-        var band: CGFloat?
-        for (a, b) in zip(rows, rows.dropFirst()) {
-            if headers.contains(where: { $0.midY > a.midY && $0.midY < b.midY }) {
-                band = band ?? (b.minY - a.maxY)
-            } else { plain.append(b.minY - a.maxY) }
-        }
-        return (band ?? 0) - (plain.min() ?? 0)
     }
 
     private func medianRowHeight(_ rows: [CGRect]) -> CGFloat {
@@ -172,24 +157,6 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
             XCTAssertGreaterThan(scaled, 1.15 * base,
                                  "font scale 1.6 did not reach the list (rows \(base) → \(scaled) pt)")
             assertCompactSectionBreaks(scaledApp)
-        }
-        XCTContext.runActivity(named: "Compact density: shorter rows, same section header band") { _ in
-            let compactApp = launch(readingPane: true, density: "compact")
-            let compact = medianRowHeight(settledLayout(compactApp).rows)
-            // Only the vertical padding changes: 2 x (6 - 2) pt.
-            XCTAssertEqual(base - compact, 8, accuracy: 1.0,
-                           "compact rows \(compact) pt against comfortable \(base) pt")
-            print("ThreadListDensity: comfortable row \(base) pt, compact row \(compact) pt")
-            // Headers are not shrunk: the header band (break minus row gap)
-            // is the same as in comfortable. A compact row may be shorter
-            // than the header; that is accepted.
-            let (rows, headers) = settledLayout(compactApp)
-            let (baseRows, baseHeaders) = settledLayout(app)
-            XCTAssertEqual(headerBand(rows, headers), headerBand(baseRows, baseHeaders), accuracy: 1.0)
-        }
-        XCTContext.runActivity(named: "Back to comfortable restores today's row height") { _ in
-            let again = launch(readingPane: true, density: "comfortable")
-            XCTAssertEqual(medianRowHeight(settledLayout(again).rows), base, accuracy: 0.5)
         }
     }
 

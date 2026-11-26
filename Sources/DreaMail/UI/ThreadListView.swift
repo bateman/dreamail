@@ -560,10 +560,11 @@ private struct ThreadListSections: View, Equatable {
     let onToggleCollapsed: (String) -> Void
 
     private static let prioritySection = "Priority"
-    @AppStorage(ListDensity.storageKey) private var densityRaw = ListDensity.comfortable.rawValue
-    private var metrics: ThreadListMetrics {
-        ThreadListMetrics(density: .from(raw: densityRaw), fontScale: fontScale)
-    }
+    /// Air between a section's last row and the next header's title,
+    /// times the font scale.
+    private static let sectionGap: CGFloat = 6
+    /// What the plain List adds above a header's content (macOS 26).
+    private static let systemHeaderTopInset: CGFloat = 4
 
     // `grouped` and `rowDisplay` only change inside a layout pass, which
     // bumps `layoutGeneration`. The closure mutates the parent's @State
@@ -654,7 +655,7 @@ private struct ThreadListSections: View, Equatable {
                 // on macOS 26) and ignores `listRowInsets` on headers. Take
                 // back the top one only: a system with a different inset can
                 // then only widen the gap, never clip the title or the pill.
-                .padding(.top, metrics.sectionHeaderTopPadding)
+                .padding(.top, Self.sectionGap * fontScale - Self.systemHeaderTopInset)
             }
         }
         if store.hasMoreThreads || store.isLoadingMore {
@@ -2019,6 +2020,7 @@ struct ThreadRow: View, Equatable {
         LabelPill(name: chip.name, colors: chip.colors, surface: pillSurface,
                   fontSize: ThreadRowChipLayout.fontSize * fontScale,
                   maxWidth: ThreadRowChipLayout.maxWidth * fontScale)
+            .accessibilityIdentifier("rowLabelChip")
     }
 
     /// Checked rows (a 10% accent wash) count as plain content: the wash
@@ -2045,9 +2047,9 @@ struct ThreadRow: View, Equatable {
                 .padding(.horizontal, ThreadRowActionLayout.iconPaddingH)
                 .padding(.vertical, ThreadRowActionLayout.iconPaddingV)
                 // Dense row: expand hit without inflating the 18pt trailing strip.
-                .padding(.vertical, ThreadRowActionLayout.hitExtraV)
+                .padding(.vertical, metrics.hitExtraV)
                 .contentShape(Rectangle())
-                .padding(.vertical, -ThreadRowActionLayout.hitExtraV)
+                .padding(.vertical, -metrics.hitExtraV)
         }
         .buttonStyle(PressScaleButtonStyle())
         .help(title)

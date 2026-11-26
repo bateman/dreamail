@@ -19,8 +19,8 @@ enum ListDensity: String, CaseIterable, Identifiable {
     static func from(raw: String) -> ListDensity { ListDensity(rawValue: raw) ?? .comfortable }
 }
 
-/// The one source of every vertical measure that depends on the density:
-/// the thread row's padding and the section header gap (which does not change). Comfortable is today's layout.
+/// The one source of the thread row's vertical measures that depend on the
+/// density. Comfortable is today's layout. Section headers do not change.
 struct ThreadListMetrics: Equatable {
     let density: ListDensity
     let fontScale: Double
@@ -30,22 +30,16 @@ struct ThreadListMetrics: Equatable {
         self.fontScale = fontScale
     }
 
-    /// Padding above and below a thread row's content, at font scale 1.
-    var rowVerticalPaddingBase: Double { density == .compact ? 2 : 6 }
-    var rowVerticalPadding: Double { rowVerticalPaddingBase * fontScale }
+    /// Padding above and below a thread row's content.
+    var rowVerticalPadding: Double { (density == .compact ? 2 : 6) * fontScale }
 
     /// The row's content: the trailing strip (chips, icons, date).
     var rowContentHeight: Double { ThreadRowChipLayout.trailingStripHeight * fontScale }
-    var rowHeight: Double { rowContentHeight + 2 * rowVerticalPadding }
 
-    /// Air between a section's last row and the next header's title.
-    /// The same in both densities: only the rows get denser.
-    var sectionGap: Double { 6 * fontScale }
-
-    /// What the plain List adds above a header's content (macOS 26).
-    static let systemHeaderTopInset = 4.0
-
-    /// Top padding of a section header's content: the gap minus the
-    /// system inset, never negative (a smaller system inset only widens it).
-    var sectionHeaderTopPadding: Double { max(0, sectionGap - Self.systemHeaderTopInset) }
+    /// Extra hit area of a hover action, above and below. Compact: no more
+    /// than the row's padding, so a target never reaches the next row.
+    var hitExtraV: Double {
+        density == .compact ? min(ThreadRowActionLayout.hitExtraV, rowVerticalPadding)
+                            : ThreadRowActionLayout.hitExtraV
+    }
 }
