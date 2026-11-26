@@ -89,7 +89,8 @@ enum SearchThreadQuery {
         case .standard:
             q = q.filter(Column("inTrash") == false && Column("inSpam") == false)
         case .trash:
-            q = q.filter(Column("inTrash") == true)
+            // As the Trash view: partly trashed conversations too.
+            q = q.filter(sql: TrashedMessages.inTrashViewSQL())
         case .spam:
             q = q.filter(Column("inSpam") == true)
         case .anywhere:
@@ -143,7 +144,7 @@ enum SearchThreadQuery {
                     args.append(contentsOf: starKeepIds)
                 }
             case "INBOX": parts.append("inInbox = 1")
-            case "TRASH": parts.append("inTrash = 1")
+            case "TRASH": parts.append(TrashedMessages.inTrashViewSQL())
             case "SENT": parts.append("inSent = 1")
             case "DRAFT": parts.append("inDrafts = 1")
             case "SPAM": parts.append("inSpam = 1")

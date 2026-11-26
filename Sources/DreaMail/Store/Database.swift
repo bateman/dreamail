@@ -397,6 +397,13 @@ struct ScheduledSend: Codable, Identifiable, Hashable, FetchableRecord, Persista
 enum RemoteThreadChange: Codable, Equatable, Sendable {
     case modify(add: [String] = [], remove: [String] = [])
     case trash
+    /// Labels added or removed on these messages of the thread only
+    /// (Gmail message ids, `messages.batchModify`): restoring the trashed
+    /// messages of a conversation, or undoing a trash, must not touch the
+    /// thread's other messages. Never a delete.
+    case modifyMessages(ids: [String], add: [String] = [], remove: [String] = [])
+    /// Changes that cannot fold into one request, sent in order.
+    indirect case sequence([RemoteThreadChange])
 
     var addLabels: [String] {
         if case .modify(let add, _) = self { return add }
@@ -416,6 +423,23 @@ enum RemoteThreadChange: Codable, Equatable, Sendable {
         switch (self, next) {
         case (_, .trash):
             return .trash
+        case (.sequence(let steps), _):
+            // Fold into the last step when it can; otherwise append.
+            guard let last = steps.last else { return next }
+            let folded = last.merged(with: next)
+            let tail: [RemoteThreadChange]
+            if case .sequence(let parts) = folded { tail = parts } else { tail = [folded] }
+            return Self.ordered(Array(steps.dropLast()) + tail)
+        case (.modifyMessages(let ids, let add, let remove),
+              .modifyMessages(let nextIds, let nextAdd, let nextRemove))
+            where ids == nextIds:
+            if case .modify(let a, let r) = RemoteThreadChange.modify(add: add, remove: remove)
+                .merged(with: .modify(add: nextAdd, remove: nextRemove)) {
+                return .modifyMessages(ids: ids, add: a, remove: r)
+            }
+            return Self.ordered([self, next])
+        case (.modifyMessages, _), (_, .modifyMessages), (_, .sequence):
+            return Self.ordered([self, next])
         case (.trash, .modify(let add, let remove)):
             if remove.contains("TRASH") {
                 return .modify(add: add, remove: remove)
@@ -438,8 +462,24 @@ enum RemoteThreadChange: Codable, Equatable, Sendable {
 
     /// True when replaying this would be a no-op (a folded pair cancelled out).
     var isEmpty: Bool {
-        if case .modify(let add, let remove) = self { return add.isEmpty && remove.isEmpty }
-        return false
+        switch self {
+        case .modify(let add, let remove): return add.isEmpty && remove.isEmpty
+        case .trash: return false
+        case .modifyMessages(let ids, let add, let remove):
+            return ids.isEmpty || (add.isEmpty && remove.isEmpty)
+        case .sequence(let steps): return steps.allSatisfy(\.isEmpty)
+        }
+    }
+
+    /// The steps in order, nested sequences flattened and no-ops dropped;
+    /// a single step stands alone.
+    static func ordered(_ steps: [RemoteThreadChange]) -> RemoteThreadChange {
+        let flat = steps.flatMap { step -> [RemoteThreadChange] in
+            if case .sequence(let inner) = step { return inner }
+            return [step]
+        }.filter { !$0.isEmpty }
+        if flat.count == 1 { return flat[0] }
+        return .sequence(flat)
     }
 }
 

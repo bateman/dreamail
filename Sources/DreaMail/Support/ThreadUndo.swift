@@ -95,6 +95,17 @@ enum ThreadUndo {
 
     /// Gmail side of the undo. Can be empty (archive or snooze of a thread
     /// that had no INBOX): the caller must not send an empty modify.
+    /// Undo of a trash when the messages the trash reached are known
+    /// (`liveMessageIds`: Gmail ids outside the trash before the action).
+    /// Only those come back: messages deleted earlier stay in the trash.
+    /// Unknown (nil) or none: the whole thread, as before.
+    static func undoTrashRemote(wasInInbox: Bool, liveMessageIds: [String]?) -> RemoteThreadChange {
+        guard let ids = liveMessageIds, !ids.isEmpty else {
+            return undoRemote(.trash, wasInInbox: wasInInbox)
+        }
+        return .modifyMessages(ids: ids, add: wasInInbox ? ["INBOX"] : [], remove: ["TRASH"])
+    }
+
     static func undoRemote(_ action: Action, wasInInbox: Bool) -> RemoteThreadChange {
         let inbox = wasInInbox ? ["INBOX"] : []
         switch action {

@@ -597,7 +597,19 @@ actor ThreadDetailRepository {
     /// blanket invalidation this scoping exists to remove.
     func payload(threadId: String, suppressingDrafts suppressedIds: Set<String>,
                  revision: ThreadContentRevision,
-                 fontScale: Double = 1.0) -> ThreadDetailLoad {
+                 fontScale: Double = 1.0, trashView: Bool = false) -> ThreadDetailLoad {
+        // The Trash view shows another selection of the same thread
+        // (`TrashedMessages.inTrashView`): never from or into the cache.
+        if trashView {
+            var loaded = (try? db.read { db in
+                try Self.fetchPayload(threadId: threadId, db: db, trashView: true)
+            }) ?? ThreadDetailPayload(
+                messages: [], attachmentsByMessageId: [:], bodyPrepByMessageId: [:])
+            loaded.bodyPrepByMessageId = Self.buildBodyPrep(
+                messages: loaded.messages, fontScale: fontScale)
+            return ThreadDetailLoad(payload: loaded.suppressingDrafts(suppressedIds),
+                                    cacheHit: false)
+        }
         if let cached = cache.value(for: threadId),
            cached.revision == revision {
             var payload = cached.payload
@@ -857,8 +869,8 @@ actor ThreadDetailRepository {
 
     /// Fetch messages, hydrated bodies, and attachments only. Callers must run
     /// `buildBodyPrep` after the read transaction returns.
-    nonisolated static func fetchPayload(threadId: String,
-                                         db: Database) throws -> ThreadDetailPayload {
+    nonisolated static func fetchPayload(threadId: String, db: Database,
+                                         trashView: Bool = false) throws -> ThreadDetailPayload {
         var messages = try Message.fetchAll(
             db,
             sql: """
@@ -876,7 +888,9 @@ actor ThreadDetailRepository {
         // Deleted messages of a live conversation stay out of it (Gmail).
         let threadInTrash = try Bool.fetchOne(
             db, sql: "SELECT inTrash FROM thread WHERE id = ?", arguments: [threadId]) ?? false
-        messages = TrashedMessages.shown(messages, threadInTrash: threadInTrash)
+        messages = trashView
+            ? TrashedMessages.inTrashView(messages, threadInTrash: threadInTrash)
+            : TrashedMessages.shown(messages, threadInTrash: threadInTrash)
 
         // First frame expands the newest sent message. Live draft cards also
         // need their previews immediately, so hydrate exactly those bodies.
