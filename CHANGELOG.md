@@ -145,8 +145,21 @@ minor versions may still change behavior.
 - **List and sidebar density.** Settings → Appearance has "List density"
   and "Sidebar density", each Comfortable (as before) or Compact. Compact
   trims the space above and below each row (a conversation row is 8 pt
-  shorter, a sidebar row 22 pt instead of 30 pt); fonts, icons and the
-  section headers ("Today", "Yesterday"...) keep their size.
+  shorter, a sidebar row about 7 pt shorter); fonts, icons and the section
+  headers ("Today", "Yesterday"...) keep their size.
+
+- **Snooze understands English day and month names on any Mac.** With the
+  Mac set to another language, "fri", "sat", "sep 5" gave no suggestion.
+  English names now always work, and those of the Mac's language still do
+  ("ven", "set 12", also without accents: "venerdi"); suggestions are
+  titled in English. "mar 5" on an Italian Mac offers March 5 first.
+
+- **Sidebar and Settings touch-ups.** The Settings window is titled just
+  "Settings". The labels' "More" no longer repeats a label that is already
+  listed: a hidden sublabel of a listed label appears there once, with its
+  full name ("parent/child"). The "+" next to Labels has the size of the
+  "+" of "Add view"; the label "⋮" is three small dots. In Settings →
+  Signatures the "Defaults" menus are left-aligned and equally wide.
 
 - **The Dock badge goes away when you quit.** The unread count stayed on
   the Dock icon after quitting; it is now cleared at quit, and at launch if
