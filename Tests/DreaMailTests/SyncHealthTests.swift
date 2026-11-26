@@ -11,7 +11,7 @@ final class SyncHealthTests: XCTestCase {
     func testFailureMarksTheAccountUntilTheNextSuccess() {
         var health = SyncHealth()
         XCTAssertFalse(health.failed(account: account, needsReauth: false))
-        health.recordFailure(account: account, at: now)
+        health.recordFailure(account: account)
         XCTAssertTrue(health.failed(account: account, needsReauth: false))
         XCTAssertTrue(health.anyFailed(accounts: [account], needingReauth: []))
         health.recordSuccess(account: account)
@@ -26,8 +26,10 @@ final class SyncHealthTests: XCTestCase {
 
     func testARemovedAccountNoLongerCounts() {
         var health = SyncHealth()
-        health.recordFailure(account: account, at: now)
+        health.recordFailure(account: account)
         XCTAssertFalse(health.anyFailed(accounts: ["other@example.com"], needingReauth: []))
+        XCTAssertEqual(health.failing(accounts: ["other@example.com", account], needingReauth: []),
+                       [account])
         health.forget(account: account)
         XCTAssertEqual(health, SyncHealth())
     }

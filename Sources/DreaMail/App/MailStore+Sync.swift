@@ -534,11 +534,12 @@ extension MailStore {
     /// network is not a failure here: the sync control reads "Offline".
     func noteSyncOutcome(account id: String, error: Error?) {
         guard let error else {
-            syncHealth.recordSuccess(account: id)
+            // Only a change republishes: this runs on every pass.
+            if syncHealth.failedAccounts.contains(id) { syncHealth.recordSuccess(account: id) }
             return
         }
         // Reauth and partial fetches surface too (neither is transient).
-        if OfflinePolicy.surfacesSyncFailure(error) {
+        if OfflinePolicy.surfacesSyncFailure(error), !syncHealth.failedAccounts.contains(id) {
             syncHealth.recordFailure(account: id)
         }
     }

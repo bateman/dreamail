@@ -985,7 +985,8 @@ struct FilterBar: View {
                                 Image(systemName: lastSyncFailed
                                       ? "exclamationmark.triangle" : "arrow.clockwise")
                                 if let text = SyncHealth.toolbarText(
-                                    lastSuccess: lastSync, failed: lastSyncFailed, now: context.date) {
+                                    lastSuccess: lastSyncFailed ? lastSyncOfFailing : lastSync,
+                                    failed: lastSyncFailed, now: context.date) {
                                     Text(text)
                                         .accessibilityIdentifier("syncStatusLastSync")
                                 }
@@ -1424,6 +1425,14 @@ struct FilterBar: View {
     private var lastSyncFailed: Bool {
         store.syncHealth.anyFailed(
             accounts: store.accounts.map(\.id), needingReauth: store.accountsNeedingReauth)
+    }
+
+    /// Oldest last completed pass among the failing accounts only, so the
+    /// failure line never borrows another account's fresh stamp.
+    private var lastSyncOfFailing: Date? {
+        store.syncHealth.failing(
+            accounts: store.accounts.map(\.id), needingReauth: store.accountsNeedingReauth)
+            .compactMap { store.lastSyncByAccount[$0] }.min()
     }
 
     private var lastSync: Date? {

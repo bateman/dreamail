@@ -74,9 +74,6 @@ final class LabelSyncTests: XCTestCase {
         XCTAssertEqual(SidebarDisclosure.expandedLabels(accountId: account, d), ["Label_2"])
     }
 
-    /// v69: a stored order that only repeats the names in code-point order is
-    /// put back to unsorted, per sibling group; a hand-made order stays;
-    /// running it again changes nothing.
     /// Rows as the migrations really leave them: written before v10 (no
     /// order, no color), system and category rows next to user ones, every
     /// optional column NULL. Reading them as whole `LabelRow`s (as
@@ -118,6 +115,9 @@ final class LabelSyncTests: XCTestCase {
         XCTAssertTrue(rows.allSatisfy { $0.sortOrder == LabelRow.unsorted })
     }
 
+    /// v69: a stored order that only repeats the names in code-point order is
+    /// put back to unsorted, per sibling group; a hand-made order stays;
+    /// running it again changes nothing.
     func testMigrationV69ResetsMachineOrderOnly() throws {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q, upTo: "v68")

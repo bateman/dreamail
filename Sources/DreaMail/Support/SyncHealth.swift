@@ -5,30 +5,35 @@ import Foundation
 /// that is `Account.lastSyncAt`, stamped only by a pass that completed. The
 /// text is generic: no error detail, no mail data. Pure — unit-tested.
 struct SyncHealth: Equatable {
-    /// When each account's latest pass failed; cleared by its next success.
-    private(set) var failedAt: [String: Date] = [:]
+    /// Accounts whose latest pass failed; each leaves at its next success.
+    private(set) var failedAccounts: Set<String> = []
 
-    mutating func recordFailure(account: String, at date: Date = Date()) {
-        failedAt[account] = date
+    mutating func recordFailure(account: String) {
+        failedAccounts.insert(account)
     }
 
     mutating func recordSuccess(account: String) {
-        failedAt.removeValue(forKey: account)
+        failedAccounts.remove(account)
     }
 
     /// An account the app no longer has (removed while a pass ran).
     mutating func forget(account: String) {
-        failedAt.removeValue(forKey: account)
+        failedAccounts.remove(account)
     }
 
     /// The account's latest pass did not complete, or Google refuses its
     /// saved sign-in (background passes then skip it until the user acts).
     func failed(account: String, needsReauth: Bool) -> Bool {
-        needsReauth || failedAt[account] != nil
+        needsReauth || failedAccounts.contains(account)
+    }
+
+    /// The accounts of `accounts` that failed, in order.
+    func failing(accounts: [String], needingReauth: Set<String>) -> [String] {
+        accounts.filter { failed(account: $0, needsReauth: needingReauth.contains($0)) }
     }
 
     func anyFailed(accounts: [String], needingReauth: Set<String>) -> Bool {
-        accounts.contains { failed(account: $0, needsReauth: needingReauth.contains($0)) }
+        !failing(accounts: accounts, needingReauth: needingReauth).isEmpty
     }
 
     // MARK: - Text

@@ -367,13 +367,56 @@ final class ThreadDerivationTests: XCTestCase {
         XCTAssertEqual(t.lastDate, reply.date)
     }
 
-    /// Every message of a conversation trashed: still in Trash. A live draft
-    /// beside it does not bring it back (drafts are not mail that arrived).
+    /// Every message of a conversation trashed: still in Trash.
     func testFullyTrashedConversationStaysInTrash() throws {
         let trashed = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 1, labels: "TRASH")
         XCTAssertTrue(try XCTUnwrap(derive([trashed])).inTrash)
+    }
+
+    /// Only a draft left outside the trash: as in Gmail, the draft stays in
+    /// Drafts (and only the draft is the conversation shown there); the
+    /// trashed mail does not come back to the Inbox.
+    func testDraftLeftOutsideTheTrashStaysInDrafts() throws {
         let draft = msg(id: "d1", from: account, daysAgo: 0, labels: "DRAFT")
-        XCTAssertTrue(try XCTUnwrap(derive([draft, trashed])).inTrash)
+        let trashed = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 1, labels: "TRASH")
+        let t = try XCTUnwrap(derive([draft, trashed]))
+        XCTAssertFalse(t.inTrash)
+        XCTAssertTrue(t.inDrafts)
+        XCTAssertFalse(t.inInbox)
+        XCTAssertEqual(t.messageCount, 1)
+        XCTAssertEqual(t.snippet, "snippet-d1")
+    }
+
+    /// One message of several deleted (here or on another client): the
+    /// conversation stays live and its row comes from the others.
+    func testOneDeletedMessageLeavesTheConversationLive() throws {
+        let newest = msg(id: "m3", from: "Bob <bob@example.com>", daysAgo: 0,
+                         labels: "TRASH UNREAD STARRED", unread: true, attachment: true)
+        let middle = msg(id: "m2", from: "Ann <ann@example.com>", daysAgo: 1, labels: "INBOX")
+        let oldest = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 2, labels: "INBOX")
+        let t = try XCTUnwrap(derive([newest, middle, oldest]))
+        XCTAssertFalse(t.inTrash)
+        XCTAssertTrue(t.inInbox)
+        XCTAssertEqual(t.messageCount, 2)
+        XCTAssertEqual(t.snippet, "snippet-m2")
+        XCTAssertEqual(t.lastDate, middle.date)
+        XCTAssertFalse(t.isUnread)
+        XCTAssertFalse(t.isStarred)
+        XCTAssertFalse(t.hasAttachment)
+        XCTAssertEqual(t.fromEmail, "ann@example.com")
+    }
+
+    /// Trashed mail beside spam: the conversation is in Spam, not Trash,
+    /// and not in the Inbox; its row comes from the spam message.
+    func testTrashedPlusSpamIsInSpam() throws {
+        let spam = msg(id: "m2", from: "Spam <spam@example.com>", daysAgo: 0, labels: "SPAM")
+        let trashed = msg(id: "m1", from: "Ann <ann@example.com>", daysAgo: 1, labels: "TRASH")
+        let t = try XCTUnwrap(derive([spam, trashed]))
+        XCTAssertFalse(t.inTrash)
+        XCTAssertTrue(t.inSpam)
+        XCTAssertFalse(t.inInbox)
+        XCTAssertEqual(t.messageCount, 1)
+        XCTAssertEqual(t.fromEmail, "spam@example.com")
     }
 
     /// Rows derived by the old rule stay hidden until a message of theirs

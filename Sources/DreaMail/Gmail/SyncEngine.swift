@@ -509,18 +509,22 @@ actor SyncEngine {
         "repair.revivedTrashThreads.v1.\(accountId)"
     }
 
-    /// Threads stored as trashed that hold a message outside the trash
-    /// (neither TRASH nor DRAFT). A thread with a queued offline edit is
-    /// left alone: a trash made here and not yet sent has message rows
-    /// without TRASH, and re-deriving it would undo the trash on screen.
-    /// Pure SQL — tested.
+    /// Threads stored as trashed that hold a message outside the trash,
+    /// and only where the old rule fired: the thread also has a trashed
+    /// non-draft message. A trash made here and not yet confirmed by Gmail
+    /// leaves no TRASH on any message row, so it is never selected; one
+    /// with a queued offline edit is left alone too. Pure SQL — tested.
     static func trashedThreadKeysWithLiveMail(_ db: Database, accountId: String) throws -> Set<String> {
         Set(try String.fetchAll(db, sql: """
             SELECT DISTINCT thread.id FROM thread
             JOIN message ON message.threadId = thread.id
             WHERE thread.accountId = ? AND thread.inTrash = 1
               AND (' ' || message.labelIds || ' ') NOT LIKE '% TRASH %'
-              AND (' ' || message.labelIds || ' ') NOT LIKE '% DRAFT %'
+              AND EXISTS (
+                  SELECT 1 FROM message AS trashed
+                  WHERE trashed.threadId = thread.id
+                    AND (' ' || trashed.labelIds || ' ') LIKE '% TRASH %'
+                    AND (' ' || trashed.labelIds || ' ') NOT LIKE '% DRAFT %')
               AND thread.gmailThreadId NOT IN (
                   SELECT gmailThreadId FROM pendingThreadOp WHERE accountId = ?)
             """, arguments: [accountId, accountId]))
@@ -1870,12 +1874,12 @@ actor SyncEngine {
     /// the conversation stays in Inbox. A historical union of TRASH would hide
     /// the thread from Inbox / All Mail / badges (`inInbox && !inTrash`).
     ///
-    /// - **inTrash**: a non-draft message is trashed and no non-draft message
-    ///   is left outside the trash, or every message is trashed (covers
-    ///   discarded-compose-only threads that never left drafts). As in
-    ///   Gmail, mail that arrives in a trashed conversation brings it back:
-    ///   the new message is not in the trash, so Inbox and All Mail show the
-    ///   conversation again (its trashed messages stay trashed).
+    /// - **inTrash**: every message is trashed (also discarded-compose-only
+    ///   threads that never left drafts). As in Gmail, any message outside
+    ///   the trash keeps the conversation live: mail arriving in a trashed
+    ///   conversation brings it back to the Inbox, and a draft left outside
+    ///   the trash stays in Drafts. Its trashed messages stay trashed and are
+    ///   left out of the live conversation (`TrashedMessages`).
     /// - **inDrafts**: any live draft (`DRAFT` without `TRASH`).
     /// Pure — unit-tested. Also used by migration v30.
     static func trashDraftFlags(messages: [Message]) -> (inTrash: Bool, inDrafts: Bool) {
@@ -1888,23 +1892,14 @@ actor SyncEngine {
     static func trashDraftFlags(labelIdStrings: [String]) -> (inTrash: Bool, inDrafts: Bool) {
         guard !labelIdStrings.isEmpty else { return (false, false) }
         var anyLiveDraft = false
-        var anyLiveMessage = false
-        var anyNonDraftTrash = false
-        var anyTrash = false
         var allTrashed = true
         for s in labelIdStrings {
             let labs = Set(s.split(whereSeparator: \.isWhitespace).map(String.init))
             let hasTrash = labs.contains("TRASH")
-            let hasDraft = labs.contains("DRAFT")
-            if hasDraft && !hasTrash { anyLiveDraft = true }
-            if !hasDraft && !hasTrash { anyLiveMessage = true }
-            if hasTrash && !hasDraft { anyNonDraftTrash = true }
-            if hasTrash { anyTrash = true } else { allTrashed = false }
+            if labs.contains("DRAFT") && !hasTrash { anyLiveDraft = true }
+            if !hasTrash { allTrashed = false }
         }
-        return (
-            inTrash: (anyNonDraftTrash && !anyLiveMessage) || (anyTrash && allTrashed),
-            inDrafts: anyLiveDraft
-        )
+        return (inTrash: allTrashed, inDrafts: anyLiveDraft)
     }
 
     /// Local `snoozeUntil` across re-derives, with Gmail-style wake-on-reply.

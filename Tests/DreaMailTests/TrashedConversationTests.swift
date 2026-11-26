@@ -125,10 +125,20 @@ final class TrashedConversationTests: XCTestCase {
 
     // MARK: - One-time repair (F2)
 
-    /// A trash made here and still queued offline: the message rows have
-    /// no TRASH yet, but the repair must not bring the conversation back.
-    func testRepairSkipsAConversationWithAQueuedEdit() throws {
+    /// A conversation trashed here and not yet confirmed by Gmail: the row
+    /// says trashed, no message row carries TRASH. The old rule never
+    /// produced that, so the repair must leave it alone.
+    func testRepairNeverRevertsAnUnconfirmedLocalTrash() throws {
         let q = try makeDB([msg("m1", minutesAgo: 10, labels: "INBOX")], storedInTrash: true)
+        XCTAssertEqual(try q.read { db in
+            try SyncEngine.trashedThreadKeysWithLiveMail(db, accountId: self.account)
+        }, [])
+    }
+
+    /// Selected only with a queued offline edit absent.
+    func testRepairSkipsAConversationWithAQueuedEdit() throws {
+        let q = try makeDB([msg("m2", minutesAgo: 5, labels: "INBOX"),
+                            msg("m1", minutesAgo: 10, labels: "TRASH")], storedInTrash: true)
         XCTAssertEqual(try q.read { db in
             try SyncEngine.trashedThreadKeysWithLiveMail(db, accountId: self.account)
         }, [thread])
