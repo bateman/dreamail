@@ -10,12 +10,20 @@ final class LabelOrganizerOrderUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
+    /// A row's name: its label, else its value or title (the label was empty
+    /// on CI once the identifier was set).
+    private func name(_ e: XCUIElement) -> String {
+        if !e.label.isEmpty { return e.label }
+        if let v = e.value as? String, !v.isEmpty { return v }
+        return e.title
+    }
+
     /// Top-level label names of the sheet, top to bottom.
     private func topLevelNames(_ app: XCUIApplication) -> [String] {
         let rows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "labelOrganizer.name.")).allElementsBoundByIndex
-        return rows.filter { $0.exists && !$0.label.contains("/") }
-            .sorted { $0.frame.minY < $1.frame.minY }.map(\.label)
+        return rows.filter { $0.exists && !name($0).contains("/") }
+            .sorted { $0.frame.minY < $1.frame.minY }.map(name)
     }
 
     func testUseGmailsOrderRestoresTheNameOrderAfterADrag() {
@@ -52,10 +60,13 @@ final class LabelOrganizerOrderUITests: XCTestCase {
         // Drag the first label to the bottom: an order is stored.
         let names = topLevelNames(app)
         XCTAssertGreaterThan(names.count, 3)
-        let first = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "labelOrganizer.name.", names[0])).firstMatch
-        let last = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "labelOrganizer.name.", names[names.count - 1])).firstMatch
+        XCTAssertFalse(names.contains(""), "the rows' names are readable: \(names)")
+        let rows = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "labelOrganizer.name."))
+            .allElementsBoundByIndex.filter { !name($0).contains("/") }
+            .sorted { $0.frame.minY < $1.frame.minY }
+        let first = rows[0]
+        let last = rows[rows.count - 1]
         first.press(forDuration: 0.5, thenDragTo: last)
         var dragged = topLevelNames(app)
         let moved = Date().addingTimeInterval(3)
