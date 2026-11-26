@@ -276,6 +276,8 @@ struct SignatureSettings: View {
         }
     }
 
+    private static let pickerColumnWidth: CGFloat = 190
+
     private func defaultPicker(email: String, use: SignatureUse) -> some View {
         let isPrimary = email.caseInsensitiveCompare(accountId) == .orderedSame
         let binding = Binding<SignatureDefaultChoice>(
@@ -304,7 +306,10 @@ struct SignatureSettings: View {
             }
         }
         .labelsHidden()
-        .frame(width: 190)
+        // Every picker fills the same fixed column and starts at its
+        // header's leading edge, whatever its title (long names truncate).
+        .frame(maxWidth: .infinity)
+        .frame(width: Self.pickerColumnWidth)
         .accessibilityLabel(use == .newMessage ? "Default for new messages from \(email)"
                                                : "Default for replies and forwards from \(email)")
     }

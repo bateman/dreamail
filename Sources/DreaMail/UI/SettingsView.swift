@@ -102,6 +102,7 @@ struct SettingsView: View {
                 Image(systemName: p.icon).mailIconStyle(selected: pane == p)
             }
             .listItemTint(.monochrome)
+            .environment(\.sidebarRowSelected, pane == p)
             if p == .updates, updates.available != nil {
                 Spacer()
                 Circle().fill(.accentForegroundOrSystem).frame(width: 7, height: 7)

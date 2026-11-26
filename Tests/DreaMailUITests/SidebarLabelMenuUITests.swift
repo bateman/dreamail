@@ -67,6 +67,26 @@ final class SidebarLabelMenuUITests: XCTestCase {
         return !element.exists
     }
 
+    /// Clicks the ⋮ where it is drawn. XCUITest's own `click()` refuses the
+    /// ⋮ as "not hittable" on the CI runners, in a way that comes and goes
+    /// from one run to the next whatever the label is (a SwiftUI menu, a
+    /// borderless one, an image), and scrolls the sidebar away from under
+    /// the pointer, so the ⋮ vanishes. What `isHittable` would prove is
+    /// checked here instead: the ⋮ lies inside the row and inside the
+    /// window; and that it receives the click is proved by the callers (the
+    /// menu opens, the row does not reopen). The frames go to the log.
+    private func clickDots(_ dots: XCUIElement, in row: XCUIElement, app: XCUIApplication,
+                           file: StaticString = #filePath, line: UInt = #line) {
+        let box = dots.frame
+        let window = app.windows.firstMatch.frame
+        print("SidebarLabelMenu: ⋮ frame \(box), row \(row.frame), window \(window), hittable \(dots.isHittable)")
+        XCTAssertTrue(window.contains(box), "the ⋮ \(box) is inside the window \(window)",
+                      file: file, line: line)
+        XCTAssertTrue(row.frame.insetBy(dx: -2, dy: -2).contains(CGPoint(x: box.midX, y: box.midY)),
+                      "the ⋮ \(box) is inside its row \(row.frame)", file: file, line: line)
+        dots.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+    }
+
     func testMenuFromDotsAndRightClickAndDotsDoNotReopenTheLabel() {
         let app = launch()
         let research = label("Label_research", in: app)
@@ -74,7 +94,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         research.hover()
         let dots = element("sidebar.label.menu.\(account).Label_research", in: app)
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "hovering a label shows its ⋮")
-        dots.click()
+        clickDots(dots, in: research, app: app)
         let items: [(String, String)] = [
             ("labelMenu.color", "Label color"),
             ("labelMenu.labelList.show", "Show"),
@@ -90,7 +110,6 @@ final class SidebarLabelMenuUITests: XCTestCase {
                           "\(title) must be in the ⋮ menu\n\(app.debugDescription)")
         }
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-
         research.rightClick()
         for (id, title) in items {
             XCTAssertTrue(menuItem(id, title, in: app).waitForExistence(timeout: 5),
@@ -111,10 +130,16 @@ final class SidebarLabelMenuUITests: XCTestCase {
 
         research.hover()
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label shows its ⋮")
-        dots.click()
+        clickDots(dots, in: research, app: app)
         XCTAssertTrue(menuItem("labelMenu.edit", "Edit", in: app).waitForExistence(timeout: 5))
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         XCTAssertTrue(subject.exists, "the ⋮ click did not reopen the label")
+        // Gmail's "⋮" is vertical: its box is taller than wide (the old
+        // horizontal ellipsis, drawn by AppKit, was wider than tall). Read
+        // last, on the open label (which keeps its ⋮ without hover): reading
+        // the frame before a click left the click "not hittable" in CI.
+        XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label keeps its ⋮")
+        XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
     }
 
     func testParentColorGoesToItsSublabelsAndRemoveAsksFirst() {

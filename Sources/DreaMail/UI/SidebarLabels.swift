@@ -157,7 +157,11 @@ struct SidebarLabelRow: View {
                     .mailRowTitleStyle()
                 if showsMenuButton(selected) {
                     Spacer(minLength: 4)
-                    LabelMenuButton(node: node, onNewLabel: onNewLabel, onPickColor: pickColor)
+                    LabelMenuButton(node: node, selected: selected, onNewLabel: onNewLabel, onPickColor: pickColor)
+                        // Clear of the list's right edge: flush against it the
+                        // ⋮ was half out of the visible area and the UI test
+                        // found it "not hittable" (a 16 pt box at x 264-280).
+                        .padding(.trailing, 8)
                 }
             }
         } icon: {
@@ -166,8 +170,9 @@ struct SidebarLabelRow: View {
         .listItemTint(.monochrome)
         // Gmail's "⋮" takes the count's place on hover; on the open label it
         // is drawn beside the count, which stays.
-        .modifier(SidebarCount(count: hidesCount ? 0 : unread,
-                               painted: accent.paintsSelection))
+        .modifier(SidebarCount(count: hidesCount ? 0 : unread, selected: selected,
+                               painted: accent.paintsSelection || (selected && accent.keepsSelectionColor)))
+        .environment(\.sidebarRowSelected, selected)
         .help(node.fullName)
         // A container, so the "⋮" in the title stays its own element (for
         // VoiceOver and the UI tests) instead of merging into the label.

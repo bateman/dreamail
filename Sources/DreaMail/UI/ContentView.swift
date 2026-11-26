@@ -1919,9 +1919,19 @@ struct Sidebar: View {
                                 accountId: store.activeAccountId
                                     ?? (store.accounts.count == 1 ? store.accounts.first?.id : nil))
                         } label: {
+                            // Gmail's "+": larger and neutral, the sidebar's
+                            // glyph colour (not the accent).
                             Image(systemName: "plus")
+                                .font(.system(size: 16, weight: .regular))
+                                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                                // Layout height of a header line (the glyph
+                                // overflows it). No hit area outside the
+                                // frame: one padded past it reached the label
+                                // row below and covered its "⋮" in the UI test.
+                                .frame(width: 22, height: 16)
+                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.plain)
                         .help("Create new label")
                         .accessibilityLabel("Create new label")
                         .accessibilityIdentifier("sidebar.labels.add")
@@ -2135,7 +2145,9 @@ struct Sidebar: View {
                 .mailIconStyle(selected: selected)
         }
         .listItemTint(.monochrome)
-        .modifier(SidebarCount(count: badge ?? 0, painted: accent.paintsSelection))
+        .modifier(SidebarCount(count: badge ?? 0, selected: selected,
+                               painted: accent.paintsSelection || (selected && accent.keepsSelectionColor)))
+        .environment(\.sidebarRowSelected, selected)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
         // The selection capsule in the custom accent (`AccentSelectionBackground`).
         .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
@@ -2163,15 +2175,16 @@ struct Sidebar: View {
 
 
 /// A sidebar row's count, hidden at zero. Without a painted selection it
-/// is exactly the old `.badge(Int)`; on a selection the app paints in a
-/// custom accent the number takes the selection ink (`SidebarBadgeStyle`).
+/// is exactly the old `.badge(Int)`; on a selection the app paints the
+/// number takes the selection ink (`SidebarBadgeStyle`).
 struct SidebarCount: ViewModifier {
     let count: Int
+    let selected: Bool
     let painted: Bool
 
     func body(content: Content) -> some View {
         if painted {
-            content.badge(count > 0 ? Text("\(count)").foregroundStyle(SidebarBadgeStyle()) : nil)
+            content.badge(count > 0 ? Text("\(count)").foregroundStyle(SidebarBadgeStyle(selected: selected)) : nil)
         } else {
             content.badge(count)
         }

@@ -52,12 +52,26 @@ private struct MailIconModifier: ViewModifier {
     }
 }
 
+private struct SidebarRowSelectedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Whether the sidebar row drawing this is the selected one (the title
+    /// takes the selection ink on a painted selection, focused or not).
+    var sidebarRowSelected: Bool {
+        get { self[SidebarRowSelectedKey.self] }
+        set { self[SidebarRowSelectedKey.self] = newValue }
+    }
+}
+
 private struct MailRowTitleModifier: ViewModifier {
+    @Environment(\.sidebarRowSelected) private var selected
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
 
     func body(content: Content) -> some View {
-        content.foregroundStyle(.mailRowTitle(prominence: prominence, accent: accent))
+        content.foregroundStyle(.mailRowTitle(selected: selected, prominence: prominence, accent: accent))
     }
 }
 

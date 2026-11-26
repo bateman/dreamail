@@ -160,16 +160,18 @@ extension ShapeStyle where Self == Color {
 
     /// The glyph tint with the accent in effect: on an emphasized selection
     /// painted in a custom accent (`AccentSelectionBackground`), the
-    /// accent's `onFill` (white or black), else as above.
+    /// accent's `onFill` (white or black) and, unfocused, the same on the
+    /// painted selection, else as above.
     static func mailIcon(selected: Bool, prominence: BackgroundProminence,
                          accent: MailAccent) -> Color {
-        SelectionInk.color(prominence: prominence, accent: accent)
+        SelectionInk.color(selected: selected, prominence: prominence, accent: accent)
             ?? mailIcon(selected: selected, prominence: prominence)
     }
 
     /// The row title colour with the accent in effect, by the same rule.
-    static func mailRowTitle(prominence: BackgroundProminence, accent: MailAccent) -> Color {
-        SelectionInk.color(prominence: prominence, accent: accent)
+    static func mailRowTitle(selected: Bool, prominence: BackgroundProminence,
+                             accent: MailAccent) -> Color {
+        SelectionInk.color(selected: selected, prominence: prominence, accent: accent)
             ?? mailRowTitle(prominence: prominence)
     }
 

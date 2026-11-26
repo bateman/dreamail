@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Gmail's label menu (the "⋮" on a label row, and its context menu), in
@@ -76,18 +77,48 @@ struct LabelMenuItems: View {
 }
 
 /// The "⋮" at the right of a label row: the same menu as a right-click.
+///
+/// A borderless menu is drawn by AppKit, which ignores a label's rotation
+/// and tint (the dots came out horizontal and in the accent), so the label
+/// is a ready-made image: three stacked dots, in the secondary label colour
+/// (never the accent), or in the selection ink on the open label. It is
+/// not a template image, so AppKit draws it as it is.
 struct LabelMenuButton: View {
     let node: SidebarLabelNode
+    /// Whether the row is the open label (its ink follows the selection).
+    let selected: Bool
     let onNewLabel: (NewLabelRequest) -> Void
     let onPickColor: () -> Void
+    @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.mailAccent) private var accent
+
+    /// 8 x 20 pt: Gmail's "more_vert" at the sidebar's glyph size. AppKit
+    /// adds its own padding (8 pt wide, 2 pt tall), so the button's box is
+    /// still taller than wide.
+    static let size = NSSize(width: 8, height: 20)
+
+    static func dots(ink: NSColor) -> NSImage {
+        let image = NSImage(size: size, flipped: false) { rect in
+            ink.setFill()
+            let diameter: CGFloat = 3
+            for index in 0..<3 {
+                let y = 3.5 + CGFloat(index) * 6.5
+                NSBezierPath(ovalIn: NSRect(x: (rect.width - diameter) / 2, y: y,
+                                            width: diameter, height: diameter)).fill()
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
 
     var body: some View {
+        let ink = SidebarBadgeStyle.ink(selected: selected, prominence: prominence, accent: accent)
         Menu {
             LabelMenuItems(node: node, onNewLabel: onNewLabel, onPickColor: onPickColor)
         } label: {
-            Image(systemName: "ellipsis")
-                .rotationEffect(.degrees(90))
-                .foregroundStyle(.secondary)
+            Image(nsImage: Self.dots(ink: ink.map { NSColor($0) } ?? .secondaryLabelColor))
+                .renderingMode(.original)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
