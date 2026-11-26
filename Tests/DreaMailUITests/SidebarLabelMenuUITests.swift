@@ -140,6 +140,29 @@ final class SidebarLabelMenuUITests: XCTestCase {
         // the frame before a click left the click "not hittable" in CI.
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label keeps its ⋮")
         XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
+        // And no heavier than the sidebar's other glyphs: its box is not
+        // taller than the row's title text plus a small margin.
+        let title = research.staticTexts.firstMatch
+        XCTAssertTrue(title.exists, "the label row has its title")
+        XCTAssertLessThanOrEqual(dots.frame.height, title.frame.height + 4,
+                                 "the ⋮ \(dots.frame) is taller than the title \(title.frame)")
+    }
+
+    /// The "+" next to Labels is the glyph of the "Add view" row: not larger.
+    func testLabelsPlusIsNotLargerThanAddViewPlus() {
+        let app = launch()
+        let plus = app.buttons["Create new label"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 10))
+        let addView = app.buttons["Add view"]
+        XCTAssertTrue(addView.waitForExistence(timeout: 10))
+        if !addView.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -400) }
+        let glyph = addView.images.firstMatch
+        XCTAssertTrue(glyph.exists, "the Add view row has its + glyph")
+        print("SidebarLabelMenu: Labels + \(plus.frame), Add view + \(glyph.frame)")
+        XCTAssertLessThanOrEqual(plus.frame.width, glyph.frame.width + 2,
+                                 "Labels + \(plus.frame) is wider than the Add view + \(glyph.frame)")
+        XCTAssertLessThanOrEqual(plus.frame.height, glyph.frame.height + 4,
+                                 "Labels + \(plus.frame) is taller than the Add view + \(glyph.frame)")
     }
 
     func testParentColorGoesToItsSublabelsAndRemoveAsksFirst() {

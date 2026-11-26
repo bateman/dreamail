@@ -1919,16 +1919,16 @@ struct Sidebar: View {
                                 accountId: store.activeAccountId
                                     ?? (store.accounts.count == 1 ? store.accounts.first?.id : nil))
                         } label: {
-                            // Gmail's "+": larger and neutral, the sidebar's
-                            // glyph colour (not the accent).
+                            // Gmail's "+": the glyph of the "Add view" row
+                            // below (same style), in the neutral sidebar ink.
                             Image(systemName: "plus")
-                                .font(.system(size: 16, weight: .regular))
+                                .mailIconStyle(selected: false)
                                 .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                                 // Layout height of a header line (the glyph
-                                // overflows it). No hit area outside the
+                                // may overflow it). No hit area outside the
                                 // frame: one padded past it reached the label
                                 // row below and covered its "⋮" in the UI test.
-                                .frame(width: 22, height: 16)
+                                .frame(height: 16)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)

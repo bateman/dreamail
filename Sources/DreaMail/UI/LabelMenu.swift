@@ -91,18 +91,26 @@ struct LabelMenuButton: View {
     let onPickColor: () -> Void
     @Environment(\.backgroundProminence) private var prominence
     @Environment(\.mailAccent) private var accent
+    @Environment(\.sidebarRowSize) private var rowSize
 
-    /// 8 x 20 pt: Gmail's "more_vert" at the sidebar's glyph size. AppKit
-    /// adds its own padding (8 pt wide, 2 pt tall), so the button's box is
-    /// still taller than wide.
-    static let size = NSSize(width: 8, height: 20)
+    /// The three dots together stay within the title's cap height: about
+    /// 0.85 of the sidebar icon's point size (11 pt at the medium row size),
+    /// dots 0.15 of it (2 pt). The image is narrower than tall; AppKit adds
+    /// its own padding (8 pt wide, 2 pt tall), so the button's box is still
+    /// taller than wide.
+    static func size(rowSize: SidebarRowSize) -> NSSize {
+        let point = MailIconMetrics(rowSize: rowSize).pointSize
+        return NSSize(width: 4, height: (point * 0.85).rounded())
+    }
 
-    static func dots(ink: NSColor) -> NSImage {
+    static func dots(ink: NSColor, rowSize: SidebarRowSize) -> NSImage {
+        let size = size(rowSize: rowSize)
         let image = NSImage(size: size, flipped: false) { rect in
             ink.setFill()
-            let diameter: CGFloat = 3
+            let diameter = (MailIconMetrics(rowSize: rowSize).pointSize * 0.15).rounded()
+            let gap = (rect.height - 3 * diameter) / 2
             for index in 0..<3 {
-                let y = 3.5 + CGFloat(index) * 6.5
+                let y = CGFloat(index) * (diameter + gap)
                 NSBezierPath(ovalIn: NSRect(x: (rect.width - diameter) / 2, y: y,
                                             width: diameter, height: diameter)).fill()
             }
@@ -117,7 +125,7 @@ struct LabelMenuButton: View {
         Menu {
             LabelMenuItems(node: node, onNewLabel: onNewLabel, onPickColor: onPickColor)
         } label: {
-            Image(nsImage: Self.dots(ink: ink.map { NSColor($0) } ?? .secondaryLabelColor))
+            Image(nsImage: Self.dots(ink: ink.map { NSColor($0) } ?? .secondaryLabelColor, rowSize: rowSize))
                 .renderingMode(.original)
         }
         .menuStyle(.borderlessButton)
