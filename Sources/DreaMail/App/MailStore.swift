@@ -2746,7 +2746,11 @@ struct ComposeRequest: Identifiable {
             account.lastSyncAt = nil
             return account
         }
+        // Each account's labels grouped by family (the organizer's and the
+        // sidebar's order), so every flat reader (the "l" picker, the Labels
+        // view) lists them in the same order.
         let nextLabels = Dictionary(grouping: snapshot.labels, by: \.accountId)
+            .mapValues { LabelOrganizerOrder.entries($0).map(\.row) }
         // Under Observation, assigning an equal value still publishes a
         // change notification. accounts (with lastSyncAt stripped),
         // lastSyncByAccount, and labelsByAccount each get their own guard
@@ -4294,14 +4298,15 @@ struct ComposeRequest: Identifiable {
         accounts = ids.compactMap { byId[$0] }
     }
 
-    /// Persists a drag-reorder of one account's labels from the organizer.
-    func reorderLabels(account accountId: String, from source: IndexSet, to destination: Int) {
-        var labels = labelsByAccount[accountId] ?? []
-        labels.move(fromOffsets: source, toOffset: destination)
+    /// Persists a drag-reorder of one account's labels from the organizer:
+    /// `order` is the whole new list (`LabelOrganizerOrder.moved`).
+    func reorderLabels(account accountId: String, to order: [LabelRow]) {
         try? db.write { db in
-            for (idx, var row) in labels.enumerated() {
-                row.sortOrder = idx
-                try row.save(db)
+            // Only the order column, and only rows still there: a stale copy
+            // must not write an old name back or re-create a deleted label.
+            for (idx, row) in order.enumerated() where row.accountId == accountId {
+                try LabelRow.filter(Column("id") == row.id)
+                    .updateAll(db, Column("sortOrder").set(to: idx))
             }
         }
         reloadAccounts()
