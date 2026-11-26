@@ -1,5 +1,4 @@
 import XCTest
-@testable import DreaMail
 
 final class ThreadListMetricsTests: XCTestCase {
     func testComfortableIsTodaysLayout() {
