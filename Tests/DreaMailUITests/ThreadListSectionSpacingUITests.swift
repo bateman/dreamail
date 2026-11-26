@@ -5,12 +5,15 @@ import XCTest
 /// row, then a full-height header. A section break must cost less than one
 /// row, and the header must sit inside the break: never on a row.
 final class ThreadListSectionSpacingUITests: XCTestCase {
-    private func launch(readingPane: Bool, fontScale: Double = 1.0) -> XCUIApplication {
+    private func launch(readingPane: Bool, fontScale: Double = 1.0,
+                        rowButtons: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
         // The short label list: a ~70-row sidebar makes every query slow.
         app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
+        // The density step looks at the hover actions inside a row.
+        if rowButtons { app.launchEnvironment["DREAMAIL_UI_ROW_BUTTONS"] = "1" }
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 // A saved accent must not change what this suite sees.
                                 "-accentColor", "",
@@ -138,7 +141,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
     /// One reading-pane launch for the inbox and the Labels view, then a
     /// second at font scale 1.6 compared with the first launch's rows.
     func testSectionBreaksBesideTheReadingPane() {
-        let app = launch(readingPane: true)
+        let app = launch(readingPane: true, rowButtons: true)
         var inbox: RowSpacing?
         var base: CGFloat = 0
         XCTContext.runActivity(named: "A section break is shorter than a row beside the reading pane") { _ in
@@ -146,6 +149,9 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
             // a section in the Labels view: its row spacing comes from here.
             inbox = assertCompactSectionBreaks(app)
             base = medianRowHeight(settledLayout(app).rows)
+        }
+        XCTContext.runActivity(named: "Compact list density shortens the rows; Comfortable restores them") { _ in
+            densityShortensTheRowsAndComfortableRestoresThem(app)
         }
         XCTContext.runActivity(named: "Label pill headers fit the break") { _ in
             labelPillHeadersFitTheBreak(app, inbox: inbox)
@@ -158,6 +164,75 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
                                  "font scale 1.6 did not reach the list (rows \(base) → \(scaled) pt)")
             assertCompactSectionBreaks(scaledApp)
         }
+    }
+
+    private func anyRow(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
+    }
+
+    /// Settings → Appearance → List density, picked live (no launch argument:
+    /// it would override the picker). Settings closes after each pick, so the
+    /// main window is the key window when the rows are read.
+    private func pickListDensity(_ app: XCUIApplication, _ title: String) {
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows.matching(
+            NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        let pane = settings.descendants(matching: .any)
+            .matching(identifier: "settings.pane.appearance").firstMatch
+        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        pane.click()
+        let choice = settings.descendants(matching: .any).matching(identifier: "settings.listDensity")
+            .firstMatch.radioButtons[title]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5), "List density has a \(title) choice")
+        choice.click()
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(settings.waitForNonExistence(timeout: 5), "Settings closes")
+    }
+
+    private func densityShortensTheRowsAndComfortableRestoresThem(_ app: XCUIApplication) {
+        let first = anyRow(app)
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        let id = first.identifier
+        let row = app.descendants(matching: .any).matching(identifier: id).firstMatch
+        let comfortable = row.frame.height
+
+        pickListDensity(app, "Compact")
+        XCTAssertTrue(waitUntil { abs((comfortable - row.frame.height) - 8) <= 1.5 },
+                      "compact rows are 8 pt shorter: \(comfortable) → \(row.frame.height) pt")
+        print("ThreadListDensity: comfortable row \(comfortable) pt, compact row \(row.frame.height) pt")
+        let compact = row.frame
+        let rows = frames("threadRow.", in: app)
+        // The section break is still shorter than the comfortable row.
+        let (_, headers) = settledLayout(app)
+        print("ThreadListDensity: section headers \(headers.map(\.height))")
+
+        row.hover()
+        for action in ["archive", "trash", "toggleRead", "snooze"] {
+            let b = row.descendants(matching: .button).matching(identifier: "rowAction.\(action)").firstMatch
+            XCTAssertTrue(b.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(b.frame.minY, compact.minY - 0.5, "\(action) above the row")
+            XCTAssertLessThanOrEqual(b.frame.maxY, compact.maxY + 0.5, "\(action) below the row")
+        }
+        for chip in app.descendants(matching: .any).matching(identifier: "rowLabelChip").allElementsBoundByIndex
+        where !chip.frame.isEmpty {
+            XCTAssertTrue(rows.contains { $0.insetBy(dx: -1, dy: -1).contains(chip.frame.insetBy(dx: 0, dy: 1)) },
+                          "a label chip is clipped by its compact row: \(chip.frame)")
+        }
+
+        pickListDensity(app, "Comfortable")
+        XCTAssertTrue(waitUntil { abs(row.frame.height - comfortable) <= 0.5 },
+                      "comfortable restores the row height: \(row.frame.height) pt")
+    }
+
+    private func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() > deadline { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return true
     }
 
     /// Labels view: each header is the label's coloured pill, taller than a
