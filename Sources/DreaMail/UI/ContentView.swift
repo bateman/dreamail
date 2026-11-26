@@ -2006,6 +2006,10 @@ struct Sidebar: View {
             .environment(\.defaultMinListRowHeight, sidebarDensity.minRowHeight)
             .modifier(SidebarListDensity(density: sidebarDensity))
             .scrollContentBackground(.hidden)
+            // No scroller gutter beside the rows: the selection band reaches
+            // the column's trailing edge. The list still scrolls by wheel,
+            // trackpad and keyboard.
+            .scrollIndicators(.never)
 
             Divider()
             if store.demoMode {
@@ -2045,7 +2049,13 @@ struct Sidebar: View {
             // Settings moved to the account rail (AccountRail).
             Color.clear.frame(height: 8)
         }
-        .background(Color.mailSidebar)
+        .background {
+            // The selected row's band across the column, behind the list.
+            ZStack {
+                Color.mailSidebar
+                SidebarSelectionBand(accent: accent)
+            }
+        }
         .background(TrailingEdgeReader { store.sidebarTrailingEdge = $0 })
         .sheet(item: $newLabel) { request in
             NewLabelSheet(request: request)

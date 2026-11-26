@@ -2,7 +2,7 @@ import AppKit
 import XCTest
 
 /// A custom accent colour (Settings → Appearance → Accent color) paints
-/// the selection: the selected sidebar row's capsule and the selected
+/// the selection: the selected sidebar row's band and the selected
 /// thread row are drawn in the stored colour whatever has the focus (their
 /// list focused in the key window, another list focused, an inactive
 /// window), as Gmail's open conversation and current mailbox are, with
@@ -307,8 +307,12 @@ final class AccentColorUITests: XCTestCase {
                 bandFound = true
                 let end = min(w, start + Int((6 * scale).rounded()))
                 let rows = Int((2 * scale).rounded())..<max(Int((2 * scale).rounded()) + 1, h - Int((2 * scale).rounded()))
+                // Only rows where the band is (the pixel at its start is the
+                // accent), so the sidebar and the rail never count as ink.
                 inked = rows.reduce(0) { sum, y in
-                    sum + (start..<end).filter { Pixels.distance(edge[y * w + $0], accent.ink) < 40 }.count
+                    guard Pixels.distance(edge[y * w + start], accent.rgb) < 40 else { return sum }
+                    return sum + (start..<end).filter {
+                        Pixels.distance(edge[y * w + $0], accent.ink) < 40 }.count
                 }
             }
             changed = same.map { Self.differing(edge, $0) } ?? 0
@@ -328,7 +332,7 @@ final class AccentColorUITests: XCTestCase {
 
     // MARK: - Strips
 
-    /// Glyph and title, inside the capsule around them.
+    /// Glyph and title, inside the band around them.
     private static func sidebarStrip(row: XCUIElement, window: XCUIElement) -> CGRect {
         let r = row.frame
         return CGRect(x: r.minX - 4, y: r.minY, width: r.width + 4, height: r.height)
@@ -361,7 +365,7 @@ final class AccentColorUITests: XCTestCase {
     }
 
     /// No system-blue pixel shows around a painted selection (the corners
-    /// of a capsule painted smaller than AppKit's, a seam at an edge).
+    /// of a band painted smaller than AppKit's capsule, a seam at an edge).
     private func assertNoSystemBlue(around row: XCUIElement, in window: XCUIElement,
                                     _ context: String, file: StaticString = #filePath,
                                     line: UInt = #line) throws {
@@ -412,7 +416,7 @@ final class AccentColorUITests: XCTestCase {
                       "\(context): background should be \(expected), \(stats.summary)",
                       file: file, line: line)
         guard case .accent(let accent) = expected else { return }
-        // Glyph and title (or sender) stand out from the capsule …
+        // Glyph and title (or sender) stand out from the band …
         XCTAssertGreaterThanOrEqual(stats.foreground, 40, "\(context): nothing drawn on the accent",
                                     file: file, line: line)
         // … and are the rule's ink, blended over the accent at their

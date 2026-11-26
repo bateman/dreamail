@@ -78,6 +78,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollIndicators(.never)
             .frame(width: 190)
 
             Divider()

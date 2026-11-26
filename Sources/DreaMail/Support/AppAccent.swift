@@ -259,8 +259,7 @@ struct MailAccent: Equatable, Sendable {
     /// Whether the app paints list selections in the accent
     /// (`AccentSelectionBackground`). Only with a custom accent, and only
     /// where the mechanism is verified (macOS 26: a row background drawn
-    /// over AppKit's highlight, `backgroundProminence` reporting the
-    /// emphasized selection). Elsewhere selections keep the system
+    /// over AppKit's highlight). Elsewhere selections keep the system
     /// highlight and ink; the accent still applies everywhere else.
     var paintsSelection: Bool {
         guard isCustom else { return false }

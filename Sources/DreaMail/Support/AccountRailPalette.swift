@@ -41,8 +41,9 @@ enum AccountRailMetrics {
     /// Width of the collapsed sidebar (`SidebarIconStrip`), right of the
     /// rail: the sidebar glyph (`mailIconStyle`: 11, 13 or 15 pt by the
     /// "Sidebar icon size" setting) in a `stripItemWidth` × `stripItemHeight`
-    /// selection band (`stripWidth` wide), with `stripItemInset` on each side. Gmail's
-    /// collapsed navigation, icons only.
+    /// area, with `stripItemInset` on each side. The selected item's band
+    /// (a square) spans the whole strip, `stripWidth`. Gmail's collapsed
+    /// navigation, icons only.
     static let stripItemWidth: CGFloat = 32
     static let stripItemHeight: CGFloat = 28
     static let stripItemInset: CGFloat = 4
