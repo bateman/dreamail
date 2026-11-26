@@ -303,9 +303,9 @@ struct SignatureSettings: View {
             case .signature(let id): return signatures.first { $0.id == id }?.name ?? "No signature"
             }
         }()
-        // A `Menu` whose label fills the column: a menu-style `Picker` keeps
-        // its own width and centres in the frame, so the left edges and the
-        // widths differed from row to row.
+        // A borderless `Menu` draws its label as given (a bordered one hugs
+        // its title, so the widths differed from row to row): the label is a
+        // fixed-size box, drawn like a pop-up button.
         return Menu {
             Picker("", selection: binding) {
                 if !isPrimary {
@@ -321,12 +321,17 @@ struct SignatureSettings: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
-            // A fixed label width: the button hugs its label, so the width
-            // does not depend on the selected title.
-            Text(title).lineLimit(1).truncationMode(.tail)
-                .frame(width: Self.pickerColumnWidth - 30, alignment: .leading)
+            HStack(spacing: 4) {
+                Text(title).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9))
+            }
+            .padding(.horizontal, 8)
+            .frame(width: Self.pickerColumnWidth, height: 22)
+            .background(RoundedRectangle(cornerRadius: 5).strokeBorder(.quaternary))
         }
-        .menuStyle(.borderedButton)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .fixedSize()
         .accessibilityLabel(use == .newMessage ? "Default for new messages from \(email)"
                                                : "Default for replies and forwards from \(email)")

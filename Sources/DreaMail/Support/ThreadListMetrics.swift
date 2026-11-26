@@ -64,8 +64,9 @@ enum SidebarDensity: String, CaseIterable, Identifiable {
     /// Minimum height of a sidebar row, in points. Icons and fonts keep their size.
     var minRowHeight: Double { self == .compact ? 22 : 30 }
 
-    /// Vertical space taken off each side of a sidebar row's content, in
-    /// points: the row's own height (the system's insets around the title)
-    /// is what the minimum above never reached. Comfortable takes none.
-    var rowVerticalTrim: Double { self == .compact ? 3 : 0 }
+    /// Vertical row inset, above and below a sidebar row's content, in
+    /// points. The system's own insets set the row's height (the minimum
+    /// above never reached it, and a negative padding inside the row did not
+    /// either). Comfortable has none: the system's default stays.
+    var rowVerticalInset: Double? { self == .compact ? 3 : nil }
 }

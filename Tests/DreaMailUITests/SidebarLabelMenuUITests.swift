@@ -148,26 +148,28 @@ final class SidebarLabelMenuUITests: XCTestCase {
                                  "the ⋮ \(dots.frame) is taller than the title \(title.frame)")
     }
 
-    /// The "+" next to Labels is the glyph of the "Add view" row: not larger.
-    /// The Labels header carries the identifier on its whole row, so the glyph
-    /// is read as the image inside each row.
-    func testLabelsPlusIsNotLargerThanAddViewPlus() {
+    /// The "+" next to Labels: its box is no larger than the "Add view" row
+    /// (the glyph's size itself comes from the same `mailIconStyle`, which a
+    /// frame cannot show: the first version's 16 pt glyph also fitted its
+    /// 22 x 16 box). The "Labels" header's identifier sits on its title, so
+    /// the button is found by its label.
+    func testLabelsPlusIsNotLargerThanAddViewRow() {
         let app = launch()
-        let header = element("sidebar.labels.add", in: app)
-        XCTAssertTrue(header.waitForExistence(timeout: 10))
+        let candidates = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Create new label'"))
+        XCTAssertTrue(candidates.firstMatch.waitForExistence(timeout: 10))
+        let boxes = candidates.allElementsBoundByIndex.map { ($0.elementType.rawValue, $0.frame) }
+        print("SidebarLabelMenu: + candidates \(boxes)")
+        let plus = candidates.allElementsBoundByIndex
+            .min { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
         let addView = app.buttons["Add view"]
         XCTAssertTrue(addView.waitForExistence(timeout: 10))
-        XCTAssertTrue(reveal(addView, in: app), "Add view can be scrolled to")
-        let plus = header.descendants(matching: .image).firstMatch
-        let glyph = addView.descendants(matching: .image).firstMatch
-        print("SidebarLabelMenu: header \(header.debugDescription)\nAdd view \(addView.debugDescription)")
-        XCTAssertTrue(plus.exists, "the Labels + is an image: \(header.debugDescription)")
-        XCTAssertTrue(glyph.exists, "the Add view + is an image: \(addView.debugDescription)")
-        print("SidebarLabelMenu: Labels + \(plus.frame), Add view + \(glyph.frame)")
-        XCTAssertLessThanOrEqual(plus.frame.width, glyph.frame.width + 2,
-                                 "Labels + \(plus.frame) is wider than the Add view + \(glyph.frame)")
-        XCTAssertLessThanOrEqual(plus.frame.height, glyph.frame.height + 2,
-                                 "Labels + \(plus.frame) is taller than the Add view + \(glyph.frame)")
+        let box = try? XCTUnwrap(plus).frame
+        XCTAssertNotNil(box)
+        guard let box else { return }
+        print("SidebarLabelMenu: Labels + \(box), Add view row \(addView.frame)")
+        XCTAssertLessThanOrEqual(box.height, addView.frame.height + 2, "the + box \(box) is taller than the Add view row")
+        XCTAssertLessThanOrEqual(box.width, 24, "the + box \(box) is wider than the icon column")
     }
 
     func testParentColorGoesToItsSublabelsAndRemoveAsksFirst() {

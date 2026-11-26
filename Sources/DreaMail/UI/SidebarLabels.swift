@@ -63,13 +63,21 @@ final class SidebarDisclosureModel {
     }
 }
 
-/// Compact sidebar density: trims the row's vertical space (`SidebarDensity
-/// .rowVerticalTrim`); Comfortable adds nothing. Not on section headers.
+/// Compact sidebar density: the row's vertical insets (`SidebarDensity
+/// .rowVerticalInset`); Comfortable keeps the system's insets (`nil`). Not
+/// on section headers.
 struct SidebarRowDensity: ViewModifier {
     @AppStorage(SidebarDensity.storageKey) private var raw = SidebarDensity.comfortable.rawValue
+    // Horizontal insets of a sidebar row, kept as the system draws them.
+    private static let horizontal: CGFloat = 10
 
     func body(content: Content) -> some View {
-        content.padding(.vertical, -SidebarDensity.from(raw: raw).rowVerticalTrim)
+        if let v = SidebarDensity.from(raw: raw).rowVerticalInset {
+            content.listRowInsets(EdgeInsets(top: v, leading: Self.horizontal,
+                                             bottom: v, trailing: Self.horizontal))
+        } else {
+            content.listRowInsets(nil)
+        }
     }
 }
 
@@ -126,6 +134,10 @@ struct SidebarLabelNodeView: View {
     let onNewLabel: (NewLabelRequest) -> Void
 
     var body: some View {
+        rows.sidebarRowDensity()
+    }
+
+    @ViewBuilder private var rows: some View {
         if node.children.isEmpty {
             SidebarLabelRow(node: node, onNewLabel: onNewLabel)
         } else {
