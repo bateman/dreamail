@@ -3,15 +3,35 @@ import Foundation
 /// The HTML alternative of an outgoing message, from the compose body. Pure:
 /// `MailStore` passes the thread and the sender's signatures; tests call it.
 enum OutgoingHTML {
-    /// The base HTML (`base`), then a Gmail signature the body carries
-    /// unchanged gets Gmail's look (`ComposeSignature.withRichSignature`).
+    /// The base HTML (`base`), then the signature's look by `style`: a
+    /// rendered Gmail signature (`.rich`) gets its HTML in the authored
+    /// head; `.legacy` keeps #79's rule (a Gmail signature the body carries
+    /// unchanged gets Gmail's look); `.plain` goes out as typed. For a draft
+    /// (`marksDraft`) the style is recorded on the signature block so the
+    /// draft opens again the same way; a sent message never carries it.
     static func build(body: String, forwardOf original: Message?, replyTo replyParent: Message?,
                       draft: Message?, threadMessages: [Message],
-                      signatures: [SignatureRecord]) -> String? {
+                      signatures: [SignatureRecord],
+                      style: ComposeSignatureStyle = .legacy,
+                      marksDraft: Bool = false) -> String? {
+        // A draft DreaMail saved with a style is rebuilt from the body, never
+        // reused: its HTML carries the look of the style it was saved with.
+        let reusable = draft.flatMap { ComposeSignature.markedStyle(in: $0.bodyHTML) == nil ? $0 : nil }
         guard let html = base(body: body, forwardOf: original, replyTo: replyParent,
-                              draft: draft, threadMessages: threadMessages) else { return nil }
+                              draft: reusable, threadMessages: threadMessages) else { return nil }
         let head = String(body[..<(ComposeQuote.quoteStart(in: body) ?? body.endIndex)])
-        return ComposeSignature.withRichSignature(html, head: head, signatures: signatures)
+        let styled: String
+        switch style {
+        case .legacy:
+            styled = ComposeSignature.withRichSignature(html, head: head, signatures: signatures)
+        case .plain:
+            styled = html
+        case .rich(let id):
+            styled = signatures.first(where: { $0.id == id }).map {
+                ComposeSignature.withRichSignature(html, head: head, signature: $0)
+            } ?? html
+        }
+        return marksDraft ? ComposeSignature.markingStyle(style, in: styled) : styled
     }
 
     static func base(body: String, forwardOf original: Message?,

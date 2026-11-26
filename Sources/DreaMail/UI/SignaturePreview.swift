@@ -89,6 +89,28 @@ struct SignaturePreviewBox: View {
     }
 }
 
+/// The signature in the compose window: shown once, as it is sent, with
+/// no label and only a hairline edge (its white page sets it off in dark
+/// mode). Read-only; sized to its content up to `maxHeight`, past which it
+/// scrolls inside.
+struct ComposeSignatureBlock: View {
+    let html: String
+    static let maxHeight: CGFloat = 240
+    @State private var height: CGFloat = 40
+
+    var body: some View {
+        SignaturePreview(html: html, maxHeight: Self.maxHeight, height: $height)
+            .frame(height: height)
+            .frame(maxWidth: 480, alignment: .leading)
+            .background(Color.white)
+            .overlay(Rectangle().strokeBorder(.separator, lineWidth: 0.5))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Signature")
+            .accessibilityIdentifier("compose.richSignature")
+    }
+}
+
 /// No context menu: "Open Link" or "Download Linked File" would reach past
 /// the preview's no-navigation rule.
 private final class PreviewWebView: WKWebView {
