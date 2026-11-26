@@ -157,7 +157,12 @@ final class SignatureMenuUITests: XCTestCase {
             .matching(identifier: "settings.signatures.new").firstMatch
         XCTAssertTrue(new.waitForExistence(timeout: 5))
         new.click()
-        let editor = app.textViews.matching(identifier: "settings.signatures.body").firstMatch
+        // The identifier sits on the editor's container; its text view is inside.
+        let container = app.descendants(matching: .any)
+            .matching(identifier: "settings.signatures.body").firstMatch
+        XCTAssertTrue(container.waitForExistence(timeout: 5))
+        let inner = container.textViews.firstMatch
+        let editor = inner.exists ? inner : app.sheets.firstMatch.textViews.firstMatch
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
         editor.click()
         app.typeKey("v", modifierFlags: .command)
