@@ -296,7 +296,7 @@ struct SignatureSettings: View {
                         choice: isPrimary && choice == .none ? .followPrimary : choice)
                 }
             })
-        var items = [SignatureDefaultPopUp.Item]()
+        var items = [SignatureDefaultItem]()
         if !isPrimary {
             items.append(.init(title: "Same as \(accountId)", value: .followPrimary))
         }
@@ -316,20 +316,17 @@ struct SignatureSettings: View {
 }
 
 /// A pop-up button of a fixed width, titles truncated at the tail.
-struct SignatureDefaultPopUp: NSViewRepresentable {
-    struct Item { let title: String; let value: SignatureDefaultChoice }
-    let items: [Item]
+private struct SignatureDefaultPopUp: NSViewRepresentable {
+    let items: [SignatureDefaultItem]
     let selection: SignatureDefaultChoice
     let width: CGFloat
     let onSelect: (SignatureDefaultChoice) -> Void
 
     final class Coordinator: NSObject {
-        // Set by `updateNSView`; read by the pick.
-        var items: [Item] = []
+        var items: [SignatureDefaultItem] = []
         var onSelect: (SignatureDefaultChoice) -> Void = { _ in }
         @objc func changed(_ sender: NSPopUpButton) {
-            let index = sender.indexOfSelectedItem
-            if items.indices.contains(index) { onSelect(items[index].value) }
+            if let choice = SignatureDefaultItems.pick(sender, from: items) { onSelect(choice) }
         }
     }
 
@@ -346,19 +343,9 @@ struct SignatureDefaultPopUp: NSViewRepresentable {
     func updateNSView(_ button: NSPopUpButton, context: Context) {
         context.coordinator.items = items
         context.coordinator.onSelect = onSelect
-        Self.fill(button, with: items)
+        SignatureDefaultItems.fill(button, with: items)
         if let index = items.firstIndex(where: { $0.value == selection }) {
             button.selectItem(at: index)
-        }
-    }
-
-    /// One menu item per entry, in order, even when titles repeat
-    /// (`addItem(withTitle:)` would drop the earlier item of the same
-    /// title and shift every index after it).
-    static func fill(_ button: NSPopUpButton, with items: [Item]) {
-        button.removeAllItems()
-        for item in items {
-            button.menu?.addItem(NSMenuItem(title: item.title, action: nil, keyEquivalent: ""))
         }
     }
 

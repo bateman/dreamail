@@ -98,22 +98,9 @@ struct LabelMenuButton: View {
     /// dots 0.15 of it (2 pt). The image is narrower than tall; AppKit adds
     /// its own padding (8 pt wide, 2 pt tall), so the button's box is still
     /// taller than wide.
-    static func layout(rowSize: SidebarRowSize) -> (diameter: CGFloat, gap: CGFloat, height: CGFloat) {
-        let point = MailIconMetrics(rowSize: rowSize).pointSize
-        let diameter = (point * 0.15).rounded()
-        // Whole points, so no dot lands on a half pixel at 1x.
-        let gap = (((point * 0.85).rounded() - 3 * diameter) / 2).rounded(.down)
-        return (diameter, gap, 3 * diameter + 2 * gap)
-    }
-
-    static func size(rowSize: SidebarRowSize) -> NSSize {
-        let l = layout(rowSize: rowSize)
-        return NSSize(width: l.diameter, height: l.height)
-    }
-
     static func dots(ink: NSColor, rowSize: SidebarRowSize) -> NSImage {
-        let l = layout(rowSize: rowSize)
-        let image = NSImage(size: size(rowSize: rowSize), flipped: false) { _ in
+        let l = LabelMenuDots.layout(rowSize: rowSize)
+        let image = NSImage(size: LabelMenuDots.size(rowSize: rowSize), flipped: false) { _ in
             ink.setFill()
             for index in 0..<3 {
                 let y = CGFloat(index) * (l.diameter + l.gap)

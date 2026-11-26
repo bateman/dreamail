@@ -41,11 +41,11 @@ final class ThreadListMetricsTests: XCTestCase {
     /// icon size, and its dots sit on whole points.
     func testLabelMenuDotsAreNoTallerThanTheGlyph() {
         for rowSize in [SidebarRowSize.small, .medium, .large] {
-            let l = LabelMenuButton.layout(rowSize: rowSize)
+            let l = LabelMenuDots.layout(rowSize: rowSize)
             let glyph = MailIconMetrics(rowSize: rowSize).pointSize
-            XCTAssertLessThanOrEqual(LabelMenuButton.size(rowSize: rowSize).height, glyph)
-            XCTAssertGreaterThan(LabelMenuButton.size(rowSize: rowSize).height,
-                                 LabelMenuButton.size(rowSize: rowSize).width)
+            XCTAssertLessThanOrEqual(LabelMenuDots.size(rowSize: rowSize).height, glyph)
+            XCTAssertGreaterThan(LabelMenuDots.size(rowSize: rowSize).height,
+                                 LabelMenuDots.size(rowSize: rowSize).width)
             XCTAssertEqual(l.gap, l.gap.rounded())
             XCTAssertEqual(l.diameter, l.diameter.rounded())
         }
@@ -55,24 +55,18 @@ final class ThreadListMetricsTests: XCTestCase {
     /// called "No signature") keep one menu item each, so the item picked is
     /// the signature stored.
     func testSignatureDefaultPopUpKeepsSameNamedItems() {
-        let items: [SignatureDefaultPopUp.Item] = [
+        let items: [SignatureDefaultItem] = [
             .init(title: "No signature", value: .none),
             .init(title: "Signature", value: .signature(1)),
             .init(title: "Signature", value: .signature(2)),
             .init(title: "No signature", value: .signature(3)),
         ]
         let button = NSPopUpButton(frame: .zero, pullsDown: false)
-        SignatureDefaultPopUp.fill(button, with: items)
+        SignatureDefaultItems.fill(button, with: items)
         XCTAssertEqual(button.numberOfItems, items.count)
-        var picked: SignatureDefaultChoice?
-        let coordinator = SignatureDefaultPopUp.Coordinator()
-        coordinator.items = items
-        coordinator.onSelect = { picked = $0 }
         button.selectItem(at: 2)
-        coordinator.changed(button)
-        XCTAssertEqual(picked, .signature(2))
+        XCTAssertEqual(SignatureDefaultItems.pick(button, from: items), .signature(2))
         button.selectItem(at: 3)
-        coordinator.changed(button)
-        XCTAssertEqual(picked, .signature(3))
+        XCTAssertEqual(SignatureDefaultItems.pick(button, from: items), .signature(3))
     }
 }
