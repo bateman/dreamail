@@ -82,8 +82,8 @@ final class SignaturePasteTests: XCTestCase {
         XCTAssertEqual(row.html, pasted.html)
         // The import of another Gmail signature leaves it alone.
         try q.write { db in
-            try SignatureStore.applyGmail(db, accountId: self.a,
-                                          gmail: [self.a: .text("Ada", html: "<b>Ada</b>")])
+            _ = try SignatureStore.applyGmail(db, accountId: self.a,
+                                              gmail: [self.a: .text("Ada", html: "<b>Ada</b>")])
         }
         let stored = try XCTUnwrap(try q.read { try SignatureStore.load($0) }.signature(id: XCTUnwrap(row.id)))
         XCTAssertEqual(stored.html, pasted.html)
