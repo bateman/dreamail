@@ -163,6 +163,7 @@ final class AccountLifecycleTests: XCTestCase {
             defaults.set(true, forKey: SyncEngine.attachmentRepairDefaultsKey(accountId: id))
             defaults.set(90, forKey: WindowBackfill.listedKey(accountId: id))
             defaults.set(30, forKey: "syncWindowDays.\(id)")
+            defaults.set(["inbox", "more"], forKey: SidebarSystemOrder.defaultsKey(.account(id)))
             defaults.set(Data("{}".utf8), forKey: "categoryFilter.label.\(id).Label_1")
             defaults.set("accepted", forKey: CalendarInvite.rsvpDefaultsKey(
                 accountId: id, uid: "event@cal"))
@@ -174,6 +175,7 @@ final class AccountLifecycleTests: XCTestCase {
             "backfill.window.a@x.com", "backfill.starred.a@x.com",
             "backfill.attachments.a@x.com", "backfill.windowListed.a@x.com",
             "syncWindowDays.a@x.com", "categoryFilter.label.a@x.com.Label_1",
+            SidebarSystemOrder.defaultsKey(.account("a@x.com")),
             CalendarInvite.rsvpDefaultsKey(accountId: "a@x.com", uid: "event@cal"),
         ]
         for key in gone { XCTAssertNil(defaults.object(forKey: key), key) }
@@ -183,6 +185,7 @@ final class AccountLifecycleTests: XCTestCase {
             XCTAssertTrue(defaults.bool(forKey: "backfill.attachments.\(id)"), id)
             XCTAssertEqual(defaults.integer(forKey: "backfill.windowListed.\(id)"), 90, id)
             XCTAssertEqual(defaults.integer(forKey: "syncWindowDays.\(id)"), 30, id)
+            XCTAssertNotNil(defaults.stringArray(forKey: SidebarSystemOrder.defaultsKey(.account(id))), id)
             XCTAssertNotNil(defaults.data(forKey: "categoryFilter.label.\(id).Label_1"), id)
             XCTAssertEqual(defaults.string(forKey: CalendarInvite.rsvpDefaultsKey(
                 accountId: id, uid: "event@cal")), "accepted", id)

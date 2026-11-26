@@ -1889,13 +1889,15 @@ struct Sidebar: View {
                         systemRow(id)
                             .moveDisabled(id == SidebarSystemOrder.moreId)
                             .contextMenu {
-                                Button("Reset Sidebar Order") { disclosure.systemOrder = nil }
-                                    .disabled(disclosure.systemOrder == nil)
+                                Button("Reset Sidebar Order") {
+                                    disclosure.setSystemOrder(nil, orderScope)
+                                }
+                                .disabled(disclosure.systemOrder(orderScope) == nil)
                             }
                     }
                     .onMove { from, to in
-                        disclosure.systemOrder = SidebarSystemOrder.move(
-                            systemOrder, rows: systemRows, from: from, to: to)
+                        disclosure.setSystemOrder(SidebarSystemOrder.move(
+                            systemOrder, rows: systemRows, from: from, to: to), orderScope)
                     }
                 }
                 Section {
@@ -2005,9 +2007,17 @@ struct Sidebar: View {
     }
 
 
+    /// Whose order the sidebar shows: the account in scope (the only one, as
+    /// for the labels), else the all-accounts view's own.
+    private var orderScope: SidebarSystemOrder.Scope {
+        if let account = store.activeAccountId { return .account(account) }
+        if store.accounts.count == 1, let only = store.accounts.first { return .account(only.id) }
+        return .all
+    }
+
     /// The full order of the system views, with the "More" row.
     private var systemOrder: [String] {
-        SidebarSystemOrder.resolve(disclosure.systemOrder, hasReminders: hasReminders)
+        SidebarSystemOrder.resolve(disclosure.systemOrder(orderScope), hasReminders: hasReminders)
     }
 
     /// The rows listed now: nothing under a closed "More", the open view

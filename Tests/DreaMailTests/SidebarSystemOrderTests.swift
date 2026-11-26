@@ -163,12 +163,35 @@ final class SidebarSystemOrderTests: XCTestCase {
         let suite = "SidebarSystemOrderTests.\(UUID().uuidString)"
         let d = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { d.removePersistentDomain(forName: suite) }
-        XCTAssertNil(Order.stored(d))
-        Order.store(["promotions", "more"], d)
-        XCTAssertEqual(Order.stored(d), ["promotions", "more"])
-        Order.store(nil, d)
-        XCTAssertNil(d.object(forKey: Order.defaultsKey), "reset restores the default")
-        XCTAssertEqual(Order.resolve(Order.stored(d), hasReminders: false),
+        XCTAssertNil(Order.stored(.all, d))
+        Order.store(["promotions", "more"], .all, d)
+        XCTAssertEqual(Order.stored(.all, d), ["promotions", "more"])
+        Order.store(nil, .all, d)
+        XCTAssertNil(d.object(forKey: Order.defaultsKey(.all)), "reset restores the default")
+        XCTAssertEqual(Order.resolve(Order.stored(.all, d), hasReminders: false),
                        Order.defaultOrder(hasReminders: false))
+    }
+
+    /// Each account, and the all-accounts view, has its own order.
+    func testOrdersAreIndependentPerSidebar() throws {
+        let suite = "SidebarSystemOrderTests.\(UUID().uuidString)"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let a = Order.Scope.account("a@x.com"), b = Order.Scope.account("b@x.com")
+        let orderA = Order.defaultOrder(hasReminders: false)
+        let rows = listed(orderA)
+        let movedA = Order.move(orderA, rows: rows, from: [rows.firstIndex(of: "sent")!], to: 0)
+        Order.store(movedA, a, d)
+        XCTAssertEqual(Order.stored(a, d), movedA)
+        for other in [b, .all] {
+            XCTAssertNil(Order.stored(other, d))
+            XCTAssertEqual(Order.resolve(Order.stored(other, d), hasReminders: false), orderA,
+                           "a sidebar with no stored order shows the default")
+        }
+        Order.store(["promotions", "more"], b, d)
+        XCTAssertEqual(Order.stored(a, d), movedA, "B's order leaves A's alone")
+        Order.store(nil, a, d)
+        XCTAssertEqual(Order.stored(b, d), ["promotions", "more"], "resetting A leaves B's")
+        XCTAssertEqual(Set([Order.defaultsKey(a), Order.defaultsKey(b), Order.defaultsKey(.all)]).count, 3)
     }
 }

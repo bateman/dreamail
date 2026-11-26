@@ -23,7 +23,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
                                 // every parent label closed.
                                 "-sidebar.more.expanded", "NO",
                                 "-sidebar.labels.expanded.\(account)", "()"]
-        if let systemOrder { app.launchArguments += ["-sidebar.system.order", systemOrder] }
+        if let systemOrder { app.launchArguments += ["-sidebar.system.order.\(account)", systemOrder] }
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }

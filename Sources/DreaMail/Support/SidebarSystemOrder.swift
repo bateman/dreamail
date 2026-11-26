@@ -10,9 +10,21 @@ import Foundation
 /// the open view included.
 enum SidebarSystemOrder {
     static let moreId = "more"
-    /// UserDefaults key: one order for the app (every account and the
-    /// all-accounts view). Absent means the default order.
-    static let defaultsKey = "sidebar.system.order"
+    /// The sidebar being shown: one account, or the all-accounts view.
+    enum Scope: Hashable {
+        case all
+        case account(String)
+    }
+
+    /// UserDefaults key of a sidebar's order: one per account, and one for
+    /// the all-accounts view. Absent means the default order. An account
+    /// address always has an `@`, so it never clashes with `all`.
+    static func defaultsKey(_ scope: Scope) -> String {
+        switch scope {
+        case .all: return "sidebar.system.order.all"
+        case .account(let id): return "sidebar.system.order.\(id)"
+        }
+    }
 
     private static let views: [(id: String, view: MailboxView)] = [
         ("inbox", .inbox), ("starred", .starred), ("snoozed", .snoozed),
@@ -116,12 +128,16 @@ enum SidebarSystemOrder {
         return result
     }
 
-    static func stored(_ defaults: UserDefaults = .standard) -> [String]? {
-        defaults.stringArray(forKey: defaultsKey)
+    static func stored(_ scope: Scope, _ defaults: UserDefaults = .standard) -> [String]? {
+        defaults.stringArray(forKey: defaultsKey(scope))
     }
 
     /// `nil` restores the default (the key is removed).
-    static func store(_ order: [String]?, _ defaults: UserDefaults = .standard) {
-        if let order { defaults.set(order, forKey: defaultsKey) } else { defaults.removeObject(forKey: defaultsKey) }
+    static func store(_ order: [String]?, _ scope: Scope, _ defaults: UserDefaults = .standard) {
+        if let order {
+            defaults.set(order, forKey: defaultsKey(scope))
+        } else {
+            defaults.removeObject(forKey: defaultsKey(scope))
+        }
     }
 }

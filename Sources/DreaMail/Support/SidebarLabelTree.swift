@@ -201,7 +201,9 @@ enum SidebarDisclosure {
     static func keys(accountId: String) -> [String] {
         [expandedLabelsKey(accountId: accountId),
          labelsMoreKey(accountId: accountId),
-         accountCollapsedKey(accountId: accountId)]
+         accountCollapsedKey(accountId: accountId),
+         // The account's own order of the system views.
+         SidebarSystemOrder.defaultsKey(.account(accountId))]
     }
 
     static func isMoreExpanded(_ defaults: UserDefaults = .standard) -> Bool {

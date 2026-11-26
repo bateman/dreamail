@@ -8,10 +8,18 @@ final class SidebarDisclosureModel {
     var moreOpen = SidebarDisclosure.isMoreExpanded() {
         didSet { SidebarDisclosure.setMoreExpanded(moreOpen) }
     }
-    /// The dragged order of the system views (`SidebarSystemOrder`); nil is
-    /// the default. Every change is stored at once.
-    var systemOrder = SidebarSystemOrder.stored() {
-        didSet { SidebarSystemOrder.store(systemOrder) }
+    /// The dragged order of each sidebar's system views
+    /// (`SidebarSystemOrder`); nil is the default.
+    private var systemOrders: [SidebarSystemOrder.Scope: [String]?] = [:]
+
+    func systemOrder(_ scope: SidebarSystemOrder.Scope) -> [String]? {
+        if let known = systemOrders[scope] { return known }
+        return SidebarSystemOrder.stored(scope)
+    }
+
+    func setSystemOrder(_ order: [String]?, _ scope: SidebarSystemOrder.Scope) {
+        systemOrders[scope] = .some(order)
+        SidebarSystemOrder.store(order, scope)
     }
     /// Loaded per account on first use.
     private var expanded: [String: Set<String>] = [:]
