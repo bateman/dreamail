@@ -31,7 +31,7 @@ struct LabelOrganizer: View {
             }
             .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 10)
 
-            Text("Drag to reorder (only on this Mac). Click a swatch to change the color on Gmail, or set a color only on this Mac. A label's color also goes to its sublabels.")
+            Text("Drag to reorder (only on this Mac); sublabels move with their label and stay under it. Click a swatch to change the color on Gmail, or set a color only on this Mac. A label's color also goes to its sublabels.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 16).padding(.bottom, 8)
 
@@ -39,6 +39,8 @@ struct LabelOrganizer: View {
 
             let account = resolvedAccount
             let labels = account.map { store.userLabels(forAccount: $0) } ?? []
+            let entries = LabelOrganizerOrder.entries(
+                tree: account.flatMap { store.labelTrees[$0] } ?? [], rows: labels)
             if labels.isEmpty {
                 ContentUnavailableView("No labels",
                                        systemImage: "tag",
@@ -46,12 +48,15 @@ struct LabelOrganizer: View {
                     .frame(maxWidth: .infinity, minHeight: 220)
             } else {
                 List {
-                    ForEach(labels, id: \.id) { label in
-                        LabelOrganizerRow(label: label)
+                    ForEach(entries) { entry in
+                        LabelOrganizerRow(entry: entry)
                     }
                     .onMove { source, destination in
-                        if let account {
-                            store.reorderLabels(account: account, from: source, to: destination)
+                        // A drop that would leave the label's family (or land
+                        // inside another) is refused: the row goes back.
+                        if let account, source.count == 1, let from = source.first,
+                           let order = LabelOrganizerOrder.moved(entries, from: from, to: destination) {
+                            store.reorderLabels(account: account, to: order)
                         }
                     }
                 }
@@ -87,7 +92,8 @@ struct LabelOrganizer: View {
 /// drag handle courtesy of List's move support.
 private struct LabelOrganizerRow: View {
     @Environment(MailStore.self) var store
-    let label: LabelRow
+    let entry: LabelOrganizerEntry
+    private var label: LabelRow { entry.row }
     @State private var showPalette = false
 
     var body: some View {
@@ -100,12 +106,15 @@ private struct LabelOrganizerRow: View {
                 LabelColorPalette(label: label) { showPalette = false }
             }
 
-            Text(label.name).font(.system(size: 13))
+            Text(entry.displayName).font(.system(size: 13))
+                .help(label.name)
+                .accessibilityLabel(label.name)
             Spacer()
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 12)).foregroundStyle(.tertiary)
         }
         .padding(.vertical, 2)
+        .padding(.leading, CGFloat(entry.depth) * 18)
     }
 }
 
