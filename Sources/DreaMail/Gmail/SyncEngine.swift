@@ -316,25 +316,27 @@ actor SyncEngine {
     }
 
     private func syncLabels() async throws {
-        var labels = try await client.labels()
+        let listed = try await client.labels()
         // A user label the list shows without a color is read in full, at
         // most once per `colorRecheck` each: the list is not documented to
         // carry `color`, and storing "none" for a label that has one would
         // leave it uncolored until the next change. Costs one `labels.get`
         // per uncolored user label, per launch and then per interval.
         let now = Date()
-        let due = Set(labels.filter {
+        let due = Set(listed.filter {
             $0.type == "user" && $0.color?.backgroundColor == nil
                 && now.timeIntervalSince(colorCheckedAt[$0.id] ?? .distantPast) >= Self.colorRecheck
         }.map(\.id))
+        var completed = listed
         if !due.isEmpty {
             let client = self.client
-            let (completed, checked) = try await Self.completingColors(labels, ids: due) { id in
+            let result = try await Self.completingColors(listed, ids: due) { id in
                 try await client.label(id)
             }
-            labels = completed
-            for id in checked { colorCheckedAt[id] = now }
+            completed = result.labels
+            for id in result.checked { colorCheckedAt[id] = now }
         }
+        let labels = completed
         try await db.write { [accountId] db in
             try Self.applyLabels(db, accountId: accountId, labels: labels)
         }
