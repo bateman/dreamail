@@ -9,6 +9,9 @@ enum CenterPeekLayout {
     static let minimumCardWidth: CGFloat = 520
     /// Reading measure cap — the peek stays a column, not a sheet.
     static let maximumCardWidth: CGFloat = 980
+    /// The dimming behind the card, over the list and the collapsed
+    /// sidebar's icon strip alike.
+    static let backdropOpacity: Double = 0.30
     /// Preferred share of the host width.
     static let widthFraction: CGFloat = 0.72
     /// Backdrop margins that keep the list visible around the card.
