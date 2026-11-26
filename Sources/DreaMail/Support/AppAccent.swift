@@ -425,6 +425,19 @@ struct AccentSelectionBackground: View {
     static let sidebarCornerRadius: CGFloat = 6
     /// Width of the focus bar at the selected row's leading edge.
     static let focusBarWidth: CGFloat = 3
+    /// Gap between the sidebar's edges and the painted capsule on each side.
+    /// A row background spans the whole row, wider than AppKit's own capsule;
+    /// SwiftUI does not expose the system's inset, so this is the value
+    /// measured from the system capsule (default accent, focused list) by
+    /// `SidebarSelectionGeometryUITests`, which fails when the painted and
+    /// the system shapes differ. The one place to change it.
+    static let sidebarHorizontalInset: CGFloat = 10
+
+    /// Horizontal inset of the painted shape: the sidebar's capsule is inset
+    /// from both edges; the thread list's band runs edge to edge.
+    static func horizontalInset(cornerRadius: CGFloat) -> CGFloat {
+        cornerRadius > 0 ? sidebarHorizontalInset : 0
+    }
 
     /// Sidebar rows (main window and Settings): nil unless the app paints
     /// this row, so the system draws everything else exactly as before.
@@ -462,6 +475,7 @@ struct AccentSelectionBackground: View {
                         .padding(.leading, cornerRadius > 0 ? Self.focusBarWidth : 0)
                 }
             }
+            .padding(.horizontal, Self.horizontalInset(cornerRadius: cornerRadius))
             .accessibilityHidden(true)
         } else {
             unselected

@@ -400,4 +400,15 @@ final class AccentColorTests: XCTestCase {
             XCTAssertNil(SelectionInk.color(selected: false, prominence: .increased, accent: accent))
         }
     }
+
+    // MARK: - Sidebar capsule geometry
+
+    func testSidebarCapsuleIsInsetAndTheThreadBandIsNot() {
+        let inset = AccentSelectionBackground.horizontalInset(
+            cornerRadius: AccentSelectionBackground.sidebarCornerRadius)
+        XCTAssertEqual(inset, AccentSelectionBackground.sidebarHorizontalInset)
+        XCTAssertGreaterThanOrEqual(inset, 4, "a real gap to the sidebar's edges")
+        XCTAssertEqual(AccentSelectionBackground.horizontalInset(cornerRadius: 0), 0,
+                       "the thread list's band stays full width")
+    }
 }
