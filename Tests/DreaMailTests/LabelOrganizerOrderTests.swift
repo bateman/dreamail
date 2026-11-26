@@ -86,4 +86,37 @@ final class LabelOrganizerOrderTests: XCTestCase {
         XCTAssertEqual(SidebarLabelTree.build(stored).map(\.fullName), ["b", "a"])
         XCTAssertEqual(LabelOrganizerOrder.entries(stored).map(\.row.name), ["b", "a", "a/1", "a/2"])
     }
+
+    private func flat(_ nodes: [SidebarLabelNode]) -> [String] {
+        nodes.flatMap { [$0.id] + flat($0.children) }
+    }
+
+    func testEntriesEqualTheFlattenedSidebarTree() {
+        let cases: [[LabelRow]] = [
+            rows(["z", "a", "a/new", "m"], orders: [LabelRow.unsorted, LabelRow.unsorted, LabelRow.unsorted, LabelRow.unsorted]),
+            rows(["b", "a", "a/1", "b/1"], orders: [5, 5, 5, 5]),
+            rows(["a", "a/b", "a/bc", "a/b/x", "a/bc/y"]),
+            rows(["a/b/c", "a/b", "a", "a/d"], orders: [3, 2, 9, 1]),
+        ]
+        for c in cases {
+            XCTAssertEqual(LabelOrganizerOrder.entries(c).map(\.id), flat(SidebarLabelTree.build(c)))
+        }
+    }
+
+    func testUnorderedLabelsAreAlphabeticalAndGrouped() {
+        let u = LabelRow.unsorted
+        let e = LabelOrganizerOrder.entries(rows(["b", "a/z", "a", "a/y"], orders: [u, u, u, u]))
+        XCTAssertEqual(shown(e), ["a", "-y", "-z", "b"])
+    }
+
+    func testPrefixSiblingsAreNotNested() {
+        let e = LabelOrganizerOrder.entries(rows(["a/b", "a/bc", "a"]))
+        XCTAssertEqual(shown(e), ["a", "-b", "-bc"])
+    }
+
+    func testNewSublabelFromSyncLandsInsideItsFamilyInFlatReaders() {
+        let u = LabelRow.unsorted
+        let r = rows(["a", "a/1", "b", "a/new"], orders: [0, 1, 2, u])
+        XCTAssertEqual(LabelOrganizerOrder.entries(r).map(\.row.name), ["a", "a/1", "a/new", "b"])
+    }
 }

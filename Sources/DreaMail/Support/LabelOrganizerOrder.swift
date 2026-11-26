@@ -23,6 +23,11 @@ enum LabelOrganizerOrder {
     /// One account's labels as the sheet shows them: every family contiguous
     /// at its parent's position, children in their stored relative order.
     static func entries(_ rows: [LabelRow]) -> [LabelOrganizerEntry] {
+        entries(tree: SidebarLabelTree.build(rows), rows: rows)
+    }
+
+    /// As `entries(_:)`, from a tree already built for `rows` (`MailStore.labelTrees`).
+    static func entries(tree: [SidebarLabelNode], rows: [LabelRow]) -> [LabelOrganizerEntry] {
         var out: [LabelOrganizerEntry] = []
         let byId = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         func walk(_ nodes: [SidebarLabelNode], depth: Int) {
@@ -33,7 +38,7 @@ enum LabelOrganizerOrder {
                 walk(node.children, depth: depth + 1)
             }
         }
-        walk(SidebarLabelTree.build(rows), depth: 0)
+        walk(tree, depth: 0)
         return out
     }
 

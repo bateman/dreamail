@@ -39,7 +39,8 @@ struct LabelOrganizer: View {
 
             let account = resolvedAccount
             let labels = account.map { store.userLabels(forAccount: $0) } ?? []
-            let entries = LabelOrganizerOrder.entries(labels)
+            let entries = LabelOrganizerOrder.entries(
+                tree: account.flatMap { store.labelTrees[$0] } ?? [], rows: labels)
             if labels.isEmpty {
                 ContentUnavailableView("No labels",
                                        systemImage: "tag",
