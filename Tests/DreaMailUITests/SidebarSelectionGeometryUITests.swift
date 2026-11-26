@@ -49,6 +49,8 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let bar: Bool
         let sidebarMin: Double
         let sidebarMax: Double
+        /// Raw pixels on the mid-line every 4 pt, for reading a failure.
+        let samples: String
         var description: String {
             String(format: "capsule x %.1f-%.1f (inset %.1f/%.1f), y %.1f-%.1f (height %.1f), "
                    + "2 pt below the top x %.1f-%.1f, bar %@, sidebar x %.1f-%.1f",
@@ -81,6 +83,8 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
             .matching(identifier: "sidebar.inbox").firstMatch
         XCTAssertTrue(inbox.waitForExistence(timeout: 5))
         inbox.click()
+        print("SidebarSelectionGeometry: macOS \(ProcessInfo.processInfo.operatingSystemVersionString), "
+              + "window \(main.frame), outline \(main.outlines.firstMatch.frame), inbox \(inbox.frame)")
         let focused = try measure(inbox: inbox, window: main, bar: true, "focused list")
 
         let thread = main.descendants(matching: .any)
@@ -129,6 +133,7 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
             if let m = try capture(inbox: inbox, window: window) {
                 if m.bar == bar {
                     print("SidebarSelectionGeometry: \(context): \(m.description)")
+                    print("SidebarSelectionGeometry: \(context): mid-line \(m.samples)")
                     return m
                 }
                 last = "focus bar \(m.bar ? "still there" : "missing"): \(m.description)"
@@ -191,10 +196,18 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let bar = (Int((3 * scale).rounded())...Int((6 * scale).rounded())).contains {
             isWhite(first + $0, midY)
         }
+        var samples: [String] = []
+        let sampleFrom = max(0, Int((((sidebar.minX - frame.minX) - 16) * scale).rounded()))
+        let sampleTo = min(width - 1, Int((((sidebar.maxX - frame.minX) + 24) * scale).rounded()))
+        for x in stride(from: sampleFrom, through: sampleTo, by: max(1, Int((4 * scale).rounded()))) {
+            let p = pixel(x, midY)
+            samples.append(String(format: "%.0f:%02x%02x%02x", Double(x) / scale, p.0, p.1, p.2))
+        }
         return Measure(left: Double(first) / scale, right: Double(last + 1) / scale,
                        top: Double(top) / scale, bottom: Double(bottom + 1) / scale,
                        cornerLeft: Double(cornerFirst) / scale,
                        cornerRight: Double(cornerLast + 1) / scale, bar: bar,
-                       sidebarMin: sidebar.minX - frame.minX, sidebarMax: sidebar.maxX - frame.minX)
+                       sidebarMin: sidebar.minX - frame.minX, sidebarMax: sidebar.maxX - frame.minX,
+                       samples: samples.joined(separator: " "))
     }
 }
