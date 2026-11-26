@@ -31,13 +31,39 @@ final class OAuthLoopbackLimitsTests: XCTestCase {
             onEvent: events.record)
         defer { codeTask.cancel() }
 
+        let admitted = events.expectation("both clients admitted", count: 2, matching: \.isAdmission)
         let expired = events.expectation("both deadlines expired", count: 2) {
             $0 == .deadlineExpired
         }
         let idle = SlowLocalClient(port: port, partialRequest: nil)
         let partial = SlowLocalClient(port: port, partialRequest: "GET /oauth2/callback?code=sl")
-        await fulfillment(of: [idle.closedByServer, partial.closedByServer, expired], timeout: wait)
+        await fulfillment(of: [admitted, idle.closedByServer, partial.closedByServer, expired], timeout: wait)
         // The deadline closes connections, not the sign-in.
+        XCTAssertFalse(events.contains(.closedAll))
+    }
+
+    /// A client whose connect fails on its own side (EADDRINUSE) never
+    /// reached the listener, so that is not a close by the server: it
+    /// connects again and is admitted, expired and closed in that order.
+    /// Here its first source port is held by another listener; in CI the
+    /// 4-tuple was still in TIME_WAIT from the previous test's listener.
+    func testAClientWhoseSourcePortIsTakenIsNotCountedAsClosedByTheServer() async throws {
+        let events = LoopbackEventRecorder()
+        let service = OAuthService()
+        let (port, codeTask) = try service.startLoopbackListener(
+            expectedState: "taken-\(UUID().uuidString)",
+            limits: LoopbackLimits(maxConnections: 4, connectionDeadline: .milliseconds(300)),
+            onEvent: events.record)
+        defer { codeTask.cancel() }
+        let (takenPort, holderTask) = try OAuthService().startLoopbackListener(
+            expectedState: "holder-\(UUID().uuidString)")
+        defer { holderTask.cancel() }
+
+        let admitted = events.expectation("client admitted") { $0 == .accepted(open: 1) }
+        let expired = events.expectation("deadline expired") { $0 == .deadlineExpired }
+        let client = SlowLocalClient(port: port, partialRequest: nil, firstLocalPort: takenPort)
+        await fulfillment(of: [admitted, expired, client.closedByServer], timeout: wait, enforceOrder: true)
+        XCTAssertGreaterThanOrEqual(client.localBindFailures, 1, "the first connect must fail locally")
         XCTAssertFalse(events.contains(.closedAll))
     }
 
@@ -263,52 +289,103 @@ private extension LoopbackListenerEvent {
 /// A local client that connects, optionally sends the start of a request
 /// line (never its CRLF), and then waits. `closedByServer` is fulfilled when
 /// the other side closes or resets the connection, or refuses it.
+///
+/// A connect that fails on the client's side with EADDRINUSE never reached
+/// the listener, so it is not a close by the server: the client connects
+/// again from another source port. On macOS the kernel can hand a client
+/// the port of the previous test's listener while that listener's closed
+/// connections sit in TIME_WAIT; when the new listener's port was one of
+/// their peers, the 4-tuple is still taken.
 private final class SlowLocalClient {
     let closedByServer: XCTestExpectation
-    private let connection: NWConnection
+    private let port: NWEndpoint.Port
+    private let partialRequest: String?
+    /// One serial queue for every attempt, so their handlers never interleave.
+    private let queue = DispatchQueue(label: "SlowLocalClient")
     private let lock = NSLock()
+    private var connection: NWConnection?
     private var finished = false
+    private var bindFailures = 0
+    /// After this many local failures `closedByServer` stays unfulfilled,
+    /// so the test's wait fails instead of passing on a client that never
+    /// connected.
+    private static let maxBindFailures = 20
 
-    init(port: UInt16, partialRequest: String? = "GET /oauth2/callback?code=slow") {
+    /// Connects that failed on the client's side with EADDRINUSE.
+    var localBindFailures: Int { lock.withLock { bindFailures } }
+
+    /// `firstLocalPort` binds the first attempt to that source port.
+    init(port: UInt16, partialRequest: String? = "GET /oauth2/callback?code=slow",
+         firstLocalPort: UInt16? = nil) {
         closedByServer = XCTestExpectation(description: "server closed the slow client")
-        connection = NWConnection(
-            host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
-        connection.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
+        self.port = NWEndpoint.Port(rawValue: port)!
+        self.partialRequest = partialRequest
+        connect(from: firstLocalPort.flatMap { NWEndpoint.Port(rawValue: $0) })
+    }
+
+    deinit { connection?.cancel() }
+
+    /// Closes the connection from the client side; not a server close.
+    func stop() {
+        let current = lock.withLock { () -> NWConnection? in
+            finished = true
+            return connection
+        }
+        current?.cancel()
+    }
+
+    private func connect(from localPort: NWEndpoint.Port?) {
+        let params = NWParameters.tcp
+        if let localPort {
+            params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: localPort)
+        }
+        let attempt = NWConnection(host: .ipv4(.loopback), port: port, using: params)
+        attempt.stateUpdateHandler = { [weak self, weak attempt] state in
+            guard let self, let attempt, self.isCurrent(attempt) else { return }
             switch state {
             case .ready:
-                if let partialRequest {
-                    self.connection.send(content: Data(partialRequest.utf8), completion: .idempotent)
+                if let partialRequest = self.partialRequest {
+                    attempt.send(content: Data(partialRequest.utf8), completion: .idempotent)
                 }
-                self.receive()
-            case .failed, .waiting:
-                // Reset, or refused once the listener is gone.
-                self.markClosed()
+                self.receive(on: attempt)
+            case .waiting(let error), .failed(let error):
+                if case .posix(.EADDRINUSE) = error {
+                    attempt.cancel()
+                    self.retryAfterBindFailure()
+                } else {
+                    // Reset, or refused once the listener is gone.
+                    self.markClosed()
+                }
             default:
                 break
             }
         }
-        connection.start(queue: .global())
+        lock.withLock { connection = attempt }
+        attempt.start(queue: queue)
     }
 
-    deinit { connection.cancel() }
-
-    /// Closes the connection from the client side; not a server close.
-    func stop() {
-        lock.lock()
-        finished = true
-        lock.unlock()
-        connection.cancel()
+    private func isCurrent(_ attempt: NWConnection) -> Bool {
+        lock.withLock { connection === attempt }
     }
 
-    private func receive() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
+    private func retryAfterBindFailure() {
+        let retry = lock.withLock { () -> Bool in
+            bindFailures += 1
+            return !finished && bindFailures <= Self.maxBindFailures
+        }
+        guard retry else { return }
+        // A random ephemeral port: the kernel may hand back the same one.
+        connect(from: NWEndpoint.Port(rawValue: UInt16.random(in: 49152...65535)))
+    }
+
+    private func receive(on attempt: NWConnection) {
+        attempt.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
             [weak self] _, _, isComplete, error in
             guard let self else { return }
             if isComplete || error != nil {
                 self.markClosed()
             } else {
-                self.receive()
+                self.receive(on: attempt)
             }
         }
     }
