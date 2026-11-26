@@ -18,10 +18,12 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         return !element.exists
     }
 
+    /// The demo threads t1…t9 that are listed (a predicate over every
+    /// identifier found none on CI, one query per id does).
     private func rowIds(_ app: XCUIApplication) -> [String] {
-        app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'"))
-            .allElementsBoundByIndex.map(\.identifier).sorted()
+        (1...9).map { "t\($0)" }.filter {
+            element("threadRow.\(account):\($0)", in: app).exists
+        }
     }
 
     func testNewLabelSheetKeepsShortcutsAndEscapeCloses() {
