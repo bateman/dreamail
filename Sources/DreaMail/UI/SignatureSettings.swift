@@ -261,7 +261,9 @@ struct SignatureSettings: View {
                 GridRow {
                     Text("Address").font(.system(size: 11, weight: .medium))
                     Text("New messages").font(.system(size: 11, weight: .medium))
+                        .gridColumnAlignment(.leading)
                     Text("Replies and forwards").font(.system(size: 11, weight: .medium))
+                        .gridColumnAlignment(.leading)
                 }
                 .foregroundStyle(.secondary)
                 ForEach(addresses, id: \.self) { email in
@@ -274,6 +276,8 @@ struct SignatureSettings: View {
             }
         }
     }
+
+    private static let pickerColumnWidth: CGFloat = 190
 
     private func defaultPicker(email: String, use: SignatureUse) -> some View {
         let isPrimary = email.caseInsensitiveCompare(accountId) == .orderedSame
@@ -303,7 +307,10 @@ struct SignatureSettings: View {
             }
         }
         .labelsHidden()
-        .frame(width: 190)
+        // Every picker fills the same fixed column and starts at its
+        // header's leading edge, whatever its title (long names truncate).
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: Self.pickerColumnWidth, alignment: .leading)
         .accessibilityLabel(use == .newMessage ? "Default for new messages from \(email)"
                                                : "Default for replies and forwards from \(email)")
     }
