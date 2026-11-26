@@ -49,8 +49,6 @@ struct ComposeView: View {
     @State private var signatureConflict: SignatureConflict?
     /// Where the signature menu pops up.
     @State private var signatureMenuAnchor = SignatureMenuAnchor()
-    /// "Signature as sent" under the body, open or folded (kept).
-    @AppStorage("composeSignaturePreviewExpanded") private var signaturePreviewExpanded = true
     @State private var attachmentURLs: [URL] = []
     /// Attachments carried back from an undone send, or pulled off the
     /// original message on a forward (data already loaded).
@@ -275,6 +273,21 @@ struct ComposeView: View {
         quotedTail.isEmpty ? body_ : body_ + "\n\n" + quotedTail
     }
 
+    /// What is saved and sent: `fullBody`, plus the text of a rendered
+    /// signature at the end of the authored head (text/plain carries it;
+    /// the HTML part swaps it for the signature's HTML by `outgoingSignatureStyle`).
+    private var outgoingBody: String {
+        guard let rich = shownRichSignature else { return fullBody }
+        return ComposeSignature.assembled(body: fullBody, signature: rich)
+    }
+
+    /// The compose signature state as the send path takes it. A rendered
+    /// signature deleted meanwhile in Settings goes out as nothing.
+    private var outgoingSignatureStyle: ComposeSignatureStyle {
+        if signatureState.richSignatureId != nil, shownRichSignature == nil { return .plain }
+        return signatureState.style
+    }
+
     /// While the quote is collapsed, size the body editor to the authored
     /// text so a normal reply (greeting + a few lines + sign-off) fits
     /// without internal scroll — the "…" pill stays just under the text
@@ -397,7 +410,8 @@ struct ComposeView: View {
     /// must still dirty the draft.
     private var contentFingerprint: String {
         [fromAccountId, fromEmail, toTokens.joined(separator: ","), ccTokens.joined(separator: ","),
-         bccTokens.joined(separator: ","), subject, fullBody,
+         bccTokens.joined(separator: ","), subject, outgoingBody,
+         outgoingSignatureStyle.storageValue ?? "",
          attachmentURLs.map(\.lastPathComponent).joined(separator: "|"),
          restoredAttachments.map(\.filename).joined(separator: "|")]
             .joined(separator: "\u{1e}")
@@ -514,8 +528,9 @@ struct ComposeView: View {
         let (apiAccount, identity, to, cc, bcc, subj, body, old) =
             (fromAccountId, fromEmail,
              toTokens.joined(separator: ", "), ccTokens.joined(separator: ", "),
-             bccTokens.joined(separator: ", "), subject, fullBody,
+             bccTokens.joined(separator: ", "), subject, outgoingBody,
              liveDraft)
+        let signatureStyle = outgoingSignatureStyle
         // Like the send path, a forward's original rides along so the
         // draft keeps its HTML formatting (it won't thread the draft).
         let (reply, isForward) = (request.replyTo, request.forward)
@@ -532,7 +547,7 @@ struct ComposeView: View {
                                           to: to, cc: cc, bcc: bcc, subject: subj,
                                           body: body, replyTo: reply, forward: isForward,
                                           attachments: atts, replacing: old,
-                                          silent: false)
+                                          silent: false, signatureStyle: signatureStyle)
             }
             draftStatus = .idle
             return
@@ -545,7 +560,8 @@ struct ComposeView: View {
                                                local: localDraft,
                                                silent: silent,
                                                syncAfter: syncAfter,
-                                               composingRequestId: request.id)
+                                               composingRequestId: request.id,
+                                               signatureStyle: signatureStyle)
         switch outcome {
         case .keptLocally(let row):
             if ComposeFinish.dropsLateDraftSave(finish) {
@@ -779,6 +795,14 @@ struct ComposeView: View {
         .onChange(of: store.composeEscToken) { handleComposeEsc() }
         .onChange(of: body_) {
             if let edit = inlineEditUndo, body_ != edit.appliedBody { inlineEditUndo = nil }
+            // ⌘Z after choosing a rendered signature brings its text back:
+            // it is text again, so it is shown and sent once.
+            if signatureState.richSignatureId != nil {
+                var state = signatureState
+                if state.textReturned(in: signatureHead, signature: shownRichSignature) {
+                    signatureState = state
+                }
+            }
             scheduleAutosave()
         }
         .onChange(of: subject) { scheduleAutosave() }
@@ -1192,6 +1216,11 @@ struct ComposeView: View {
                     applyDefaultSignature()
                     scheduleAutosave()
                 }
+                // A rendered signature swapped or removed leaves the text
+                // alone: the draft still changed.
+                .onChange(of: signatureState.richSignatureId) {
+                    scheduleAutosave()
+                }
                 .onChange(of: store.allSnippets) {
                     // Delete/edit in Settings while the picker is open.
                     syncSlashSelection()
@@ -1230,6 +1259,10 @@ struct ComposeView: View {
                 .padding(.bottom, 8)
                 .transition(.opacity)
             }
+
+            // A Gmail signature, once, as it is sent: under the text the user
+            // writes and above the quote, where it goes in the message.
+            richSignatureBlock
 
             // The quoted original stays collapsed behind this pill (Gmail's
             // "…"). Clicking inlines it into the editor for viewing/editing.
@@ -1357,7 +1390,6 @@ struct ComposeView: View {
             }
 
             signatureConflictNotice
-            signatureAsSentPreview
 
             // Priority split: right cluster (draft status + trash + Send) is
             // fixedSize so it never clips under the card's topLeading frame;
@@ -1934,8 +1966,16 @@ struct ComposeView: View {
             signatureState.accountId = fromAccountId.isEmpty ? nil : fromAccountId
             applyDefaultSignature()
         } else {
-            signatureState = .restored(head: signatureHead, among: senderSignatures,
-                                       accountId: fromAccountId.isEmpty ? nil : fromAccountId)
+            // The style it was saved with: kept beside an undone, scheduled or
+            // Outbox body, recorded in a Gmail draft's HTML; none for a draft
+            // from an earlier build or Gmail web.
+            let style = request.restore?.signatureStyle
+                ?? ComposeSignature.markedStyle(in: editingDraft?.bodyHTML) ?? .legacy
+            let restored = ComposeSignatureState.restored(
+                head: signatureHead, among: senderSignatures,
+                accountId: fromAccountId.isEmpty ? nil : fromAccountId, style: style)
+            signatureState = restored.state
+            writeSignatureHead(restored.head, state: restored.state)
         }
     }
 
@@ -1972,6 +2012,16 @@ struct ComposeView: View {
             known += store.signatureBook.signatures(for: owner).map(\.body)
         }
         let head = state.choose(signature, in: signatureHead, known: known)
+        signatureState = state
+        signatureConflict = nil
+        writeSignatureHead(head, state: state)
+    }
+
+    /// "Edit signature as text": the rendered signature becomes its text in
+    /// the editor, sent as typed from then on.
+    private func editSignatureAsText() {
+        var state = signatureState
+        guard let head = state.editAsText(shownRichSignature, in: signatureHead) else { return }
         signatureState = state
         signatureConflict = nil
         writeSignatureHead(head, state: state)
@@ -2048,7 +2098,8 @@ struct ComposeView: View {
         let menu = NSMenu()
         menu.autoenablesItems = false
         for row in ComposeSignatureMenu.rows(signatures: senderSignatures,
-                                             selection: signatureSelection) {
+                                             selection: signatureSelection,
+                                             richShown: shownRichSignature != nil) {
             switch row {
             case .manage:
                 menu.addItem(ClosureMenuItem(title: "Manage signatures", checked: false) {
@@ -2066,6 +2117,10 @@ struct ComposeView: View {
                 menu.addItem(ClosureMenuItem(title: name, checked: checked) {
                     chooseSignature(signatures.first { $0.id == id })
                 })
+            case .editAsText:
+                menu.addItem(ClosureMenuItem(title: "Edit signature as text", checked: false) {
+                    editSignatureAsText()
+                })
             }
         }
         if let view = signatureMenuAnchor.view {
@@ -2075,36 +2130,28 @@ struct ComposeView: View {
         }
     }
 
-    /// The editor shows a Gmail signature as text; the recipient gets
-    /// Gmail's look. While the body carries it unchanged, this shows that
-    /// look (sandboxed, like Settings). Edited, it goes out as typed, and
-    /// this goes away.
+    /// The Gmail signature compose shows rendered, while it exists and keeps
+    /// its look (deleted or edited in Settings meanwhile: none).
+    private var shownRichSignature: SignatureRecord? {
+        guard let id = signatureState.richSignatureId else { return nil }
+        let owner = signatureState.accountId ?? fromAccountId
+        let signature = store.signatureBook.signatures(for: owner).first { $0.id == id }
+        return ComposeSignature.richHTML(of: signature) == nil ? nil : signature
+    }
+
+    /// A Gmail signature, shown once and as it is sent: read-only, in the
+    /// sandboxed view of `SignaturePreview` (no script, nothing remote, links
+    /// do nothing). "Edit signature as text" in the pen menu turns it into
+    /// text in the editor.
     @ViewBuilder
-    private var signatureAsSentPreview: some View {
-        if let rich = ComposeSignature.richSignature(in: signatureHead, signatures: senderSignatures),
-           let html = rich.html.flatMap({ SignatureHTML.cachedSanitize($0) })?.html {
-            VStack(alignment: .leading, spacing: 4) {
-                Button {
-                    signaturePreviewExpanded.toggle()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: signaturePreviewExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("Signature as sent")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("The recipient sees “\(rich.name)” with Gmail's layout and colours; the editor shows its text")
-                .accessibilityLabel(signaturePreviewExpanded ? "Hide signature as sent" : "Show signature as sent")
-                if signaturePreviewExpanded {
-                    SignaturePreviewBox(html: ComposeSignature.htmlBlock(innerHTML: html))
-                }
-            }
-            .padding(.bottom, 6)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("compose.signaturePreview")
+    private var richSignatureBlock: some View {
+        if let html = ComposeSignature.richHTML(of: shownRichSignature) {
+            let block = ComposeSignature.htmlBlock(innerHTML: html)
+            ComposeSignatureBlock(html: block,
+                                  text: ComposeSignature.normalizedBody(shownRichSignature?.body ?? ""))
+                // A new signature measures afresh.
+                .id(block)
+                .padding(.bottom, 8)
         }
     }
 
@@ -3025,14 +3072,15 @@ struct ComposeView: View {
                 to: toTokens.joined(separator: ", "),
                 cc: ccTokens.joined(separator: ", "),
                 bcc: bccTokens.joined(separator: ", "),
-                subject: subject, body: fullBody,
+                subject: subject, body: outgoingBody,
                 // For forwards this is the forwarded original (supplies the
                 // HTML body at send time); the send path knows not to thread it.
                 replyTo: request.replyTo, forward: request.forward,
                 forwardAll: request.forwardAll,
                 attachments: attachments,
                 // Live autosave chain — not the original editDraft only (B1).
-                replacingDraft: liveDraft)
+                replacingDraft: liveDraft,
+                signatureStyle: outgoingSignatureStyle)
         } catch {
             self.error = error.localizedDescription
             return nil

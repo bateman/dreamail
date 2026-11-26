@@ -236,6 +236,19 @@ struct ComposeSignatureState: Equatable {
     /// for. A From change to another account with a block DreaMail cannot
     /// swap asks the user instead of leaving it silently.
     var accountId: String?
+    /// A Gmail signature shown as its rendered HTML under the editor, not as
+    /// text in the body (`block` is then nil). It goes out as that HTML.
+    var richSignatureId: Int64?
+    /// A body opened again without a recorded style (a draft from an earlier
+    /// build, or made in Gmail): its signature text keeps #79's rule, Gmail's
+    /// look while the text is unedited. Cleared once the signature changes.
+    var legacy = false
+
+    /// How the signature goes out.
+    var style: ComposeSignatureStyle {
+        if let richSignatureId { return .rich(richSignatureId) }
+        return legacy ? .legacy : .plain
+    }
 
     /// What the menu shows as chosen, from the body as it is now.
     enum Selection: Equatable {
@@ -265,7 +278,31 @@ struct ComposeSignatureState: Equatable {
                                      accountId: accountId)
     }
 
+    /// A body opened again with the style it was saved with. `.rich`: the
+    /// signature text DreaMail wrote at the end of `head` for the outgoing
+    /// copy is taken out again and shown as the rendered block (the head
+    /// without it is returned). Anything else, or a rich one whose text is no
+    /// longer there word for word, stays text.
+    static func restored(head: String, among signatures: [SignatureRecord], accountId: String?,
+                         style: ComposeSignatureStyle) -> (state: ComposeSignatureState, head: String) {
+        if case .rich(let id) = style,
+           let signature = signatures.first(where: { $0.id == id }),
+           ComposeSignature.richHTML(of: signature) != nil,
+           let found = ComposeSignature.detect(in: head, among: [signature]),
+           let range = head.range(of: found.block, options: .backwards) {
+            return (ComposeSignatureState(signatureId: id, accountId: accountId, richSignatureId: id),
+                    // What follows the block (the blank line before a
+                    // forwarded block) stays, so assembling again gives
+                    // back the saved body byte for byte.
+                    String(head[..<range.lowerBound]) + String(head[range.upperBound...]))
+        }
+        var state = restored(head: head, among: signatures, accountId: accountId)
+        state.legacy = style == .legacy
+        return (state, head)
+    }
+
     func selection(in head: String) -> Selection {
+        if let richSignatureId { return .signature(richSignatureId) }
         if let block, ComposeSignature.intactRange(of: block, in: head) != nil {
             return signatureId.map { .signature($0) } ?? .custom
         }
@@ -278,7 +315,22 @@ struct ComposeSignatureState: Equatable {
     /// asked when the sender is another account.
     mutating func senderChanged(to signature: SignatureRecord?, accountId newAccount: String,
                                 head: String) -> SenderOutcome {
-        let wanted = signature.flatMap { ComposeSignature.block(for: $0.body) }
+        let richId = ComposeSignature.richId(of: signature)
+        let wanted = richId == nil ? signature.flatMap { ComposeSignature.block(for: $0.body) } : nil
+        if richSignatureId != nil {
+            // The rendered block is DreaMail's and cannot be edited: it
+            // always swaps. A text signature is added only where the body
+            // has none of the user's own.
+            accountId = newAccount
+            legacy = false
+            richSignatureId = richId
+            signatureId = richId
+            block = nil
+            guard let wanted, ComposeSignature.lastDelimiter(in: head) == nil else { return .unchanged }
+            block = wanted
+            signatureId = signature?.id
+            return .replaced(head + wanted)
+        }
         let sameAccount = accountId.map {
             $0.caseInsensitiveCompare(newAccount) == .orderedSame
         } ?? true
@@ -286,12 +338,19 @@ struct ComposeSignatureState: Equatable {
         let intact = block.map { ComposeSignature.intactRange(of: $0, in: head) != nil } ?? false
         if wanted == block, intact || (block == nil && !hasDelimiter) {
             if block != nil { signatureId = signature?.id }
+            if let richId {
+                richSignatureId = richId
+                signatureId = richId
+                legacy = false
+            }
             accountId = newAccount
             return .unchanged
         }
         if let next = ComposeSignature.replacingAutomatically(in: head, current: block, with: wanted) {
             block = wanted
-            signatureId = wanted == nil ? nil : signature?.id
+            signatureId = richId ?? (wanted == nil ? nil : signature?.id)
+            richSignatureId = richId
+            legacy = false
             accountId = newAccount
             return .replaced(next)
         }
@@ -308,22 +367,55 @@ struct ComposeSignatureState: Equatable {
     /// `known` is the text of the account's stored signatures.
     mutating func choose(_ signature: SignatureRecord?, in head: String,
                          known: [String] = []) -> String {
-        let wanted = signature.flatMap { ComposeSignature.block(for: $0.body) }
-        let next = ComposeSignature.replacingManually(in: head, current: block, with: wanted,
-                                                      known: known)
+        let richId = ComposeSignature.richId(of: signature)
+        let wanted = richId == nil ? signature.flatMap { ComposeSignature.block(for: $0.body) } : nil
+        // A rendered block is not in the text: nothing to cut.
+        let next = richSignatureId != nil
+            ? head + (wanted ?? "")
+            : ComposeSignature.replacingManually(in: head, current: block, with: wanted,
+                                                 known: known)
         block = wanted
-        signatureId = wanted == nil ? nil : signature?.id
+        signatureId = richId ?? (wanted == nil ? nil : signature?.id)
+        richSignatureId = richId
+        legacy = false
         if let owner = signature?.accountId { accountId = owner }
         return next
+    }
+
+    /// The rendered signature's text is back at the end of `head` (⌘Z after
+    /// choosing it): the signature is text again, shown once.
+    mutating func textReturned(in head: String, signature: SignatureRecord?) -> Bool {
+        guard richSignatureId != nil, let signature, signature.id == richSignatureId,
+              let found = ComposeSignature.detect(in: head, among: [signature]) else { return false }
+        richSignatureId = nil
+        legacy = false
+        block = found.block
+        signatureId = signature.id
+        return true
+    }
+
+    /// "Edit signature as text": the rendered block becomes its text at the
+    /// end of `head`, which then goes out as typed. Nil when no block is shown.
+    mutating func editAsText(_ signature: SignatureRecord?, in head: String) -> String? {
+        guard richSignatureId != nil, let signature, signature.id == richSignatureId,
+              let wanted = ComposeSignature.block(for: signature.body) else { return nil }
+        richSignatureId = nil
+        legacy = false
+        block = wanted
+        signatureId = signature.id
+        return head + wanted
     }
 
     /// The user answered `.needsDecision`: replace with (or remove for nil)
     /// the new sender's default, cutting the old block from its delimiter.
     mutating func resolveReplacing(with signature: SignatureRecord?, accountId newAccount: String,
                                    head: String) -> String {
-        let wanted = signature.flatMap { ComposeSignature.block(for: $0.body) }
+        let richId = ComposeSignature.richId(of: signature)
+        let wanted = richId == nil ? signature.flatMap { ComposeSignature.block(for: $0.body) } : nil
         block = wanted
-        signatureId = wanted == nil ? nil : signature?.id
+        signatureId = richId ?? (wanted == nil ? nil : signature?.id)
+        richSignatureId = richId
+        legacy = false
         accountId = newAccount
         return ComposeSignature.replacingFromDelimiter(in: head, with: wanted)
     }
@@ -344,16 +436,20 @@ enum ComposeSignatureMenu {
         case divider
         case none(checked: Bool)
         case signature(id: Int64, name: String, checked: Bool)
+        /// "Edit signature as text", while a rendered signature is shown.
+        case editAsText
     }
 
     static func rows(signatures: [SignatureRecord],
-                     selection: ComposeSignatureState.Selection) -> [Row] {
+                     selection: ComposeSignatureState.Selection,
+                     richShown: Bool = false) -> [Row] {
         var rows: [Row] = [.manage, .divider, .none(checked: selection == .none)]
         for signature in signatures {
             guard let id = signature.id else { continue }
             rows.append(.signature(id: id, name: signature.name,
                                    checked: selection == .signature(id)))
         }
+        if richShown { rows += [.divider, .editAsText] }
         return rows
     }
 }
@@ -403,4 +499,162 @@ extension SignatureUse {
     static func forDraft(referencesHeader: String, body: String) -> SignatureUse {
         referencesHeader.isEmpty && !body.contains(ForwardComposer.marker) ? .newMessage : .reply
     }
+}
+
+/// How a compose body's signature goes out, kept beside the body wherever
+/// the body is kept (undo send, scheduled and offline sends, the Outbox, the
+/// Gmail draft), so a body opened again shows the signature as it was.
+enum ComposeSignatureStyle: Equatable, Hashable {
+    /// Opened again with no style recorded (an earlier build, Gmail web):
+    /// #79's rule, Gmail's look while the signature text is unedited.
+    case legacy
+    /// As typed: the text in the body is what goes out.
+    case plain
+    /// The Gmail signature with this id, shown and sent as its HTML. The
+    /// body handed to the send path carries its text block, for text/plain.
+    case rich(Int64)
+
+    /// The value stored in `scheduledSend` and `localDraft` (v68); nil is legacy.
+    var storageValue: String? {
+        switch self {
+        case .legacy: return nil
+        case .plain: return "plain"
+        case .rich(let id): return "rich:\(id)"
+        }
+    }
+
+    init(storageValue: String?) {
+        guard let value = storageValue else { self = .legacy; return }
+        if value == "plain" { self = .plain; return }
+        if value.hasPrefix("rich:"), let id = Int64(value.dropFirst("rich:".count)), id > 0 {
+            self = .rich(id)
+            return
+        }
+        self = .legacy
+    }
+
+    var richSignatureId: Int64? {
+        if case .rich(let id) = self { return id }
+        return nil
+    }
+}
+
+extension ComposeSignature {
+    /// The rebuilt HTML of a signature that keeps Gmail's look; nil for one
+    /// made or edited here, or one the sanitiser refuses.
+    static func richHTML(of signature: SignatureRecord?) -> String? {
+        signature?.html.flatMap { SignatureHTML.cachedSanitize($0) }?.html
+    }
+
+    /// The id of a signature compose shows rendered; nil for a text one.
+    static func richId(of signature: SignatureRecord?) -> Int64? {
+        guard let id = signature?.id, richHTML(of: signature) != nil else { return nil }
+        return id
+    }
+
+    /// The body handed to the send path for a rendered signature: its text
+    /// block goes where it would sit in the editor, at the end of the
+    /// authored head, before any quote. The editor never holds it.
+    /// The separator before the quote stays as it was (the quote matchers
+    /// compare the end of the body); trailing blank lines of the head go,
+    /// as they would above a block in the editor.
+    /// A head that already ends with that signature's text (⌘Z put it back
+    /// after the block was chosen) is left as it is: the signature once.
+    static func assembled(body: String, signature: SignatureRecord) -> String {
+        guard let block = block(for: signature.body) else { return body }
+        let quote = ComposeQuote.quoteStart(in: body)
+        let head = String(body[..<(quote ?? body.endIndex)])
+        if detect(in: head, among: [signature]) != nil { return body }
+        var cut = quote ?? body.endIndex
+        while cut > body.startIndex, body[body.index(before: cut)].isWhitespace {
+            cut = body.index(before: cut)
+        }
+        let tail = quote == nil ? "" : String(body[cut...])
+        return String(body[..<cut]) + block + tail
+    }
+
+    /// The outgoing HTML with `signature`'s look in the authored head: the
+    /// block `authoredHeadHTML` wrote for its text is swapped for its HTML.
+    /// The choice is the compose state's, not a text match; the text after
+    /// the last delimiter is still checked to be that signature's, so the
+    /// swap can never replace other text. Unchanged when it is not there.
+    static func withRichSignature(_ html: String, head: String,
+                                  signature: SignatureRecord) -> String {
+        guard let parts = split(head), let rich = richHTML(of: signature) else { return html }
+        let text = parts.signature.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, normalizedBody(signature.body) == text else { return html }
+        let plain = ComposeQuote.signatureBlockHTML(text)
+        let quote = html.range(of: "<div class=\"gmail_quote")?.lowerBound ?? html.endIndex
+        guard let range = html.range(of: plain, range: html.startIndex..<quote) else { return html }
+        return html.replacingCharacters(in: range, with: htmlBlock(innerHTML: rich))
+    }
+
+    // MARK: - The style in a Gmail draft
+
+    /// The attribute a saved draft's signature block carries so that the
+    /// draft, opened again, shows its signature the same way. Drafts only:
+    /// a sent message never carries it.
+    static let styleAttribute = "data-dreamail-signature"
+
+    private static let blockOpening = "<div class=\"gmail_signature\" data-smartmail=\"gmail_signature\""
+
+    /// `html` with `style` recorded on the signature block of its authored
+    /// head. Unchanged without such a block, or for `.legacy`.
+    static func markingStyle(_ style: ComposeSignatureStyle, in html: String) -> String {
+        guard let value = style.storageValue else { return html }
+        let quote = html.range(of: "<div class=\"gmail_quote")?.lowerBound ?? html.endIndex
+        guard let range = html.range(of: blockOpening, range: html.startIndex..<quote) else { return html }
+        return html.replacingCharacters(in: range, with: blockOpening + " \(styleAttribute)=\"\(value)\"")
+    }
+
+    /// The style a saved draft recorded, read from its authored head only (a
+    /// quoted message cannot set it); nil when it has none. Tolerant: the
+    /// attribute may sit anywhere inside a tag, with either quote or none,
+    /// as an editor that re-saved the draft may have written it. Text that
+    /// merely reads like it is not a tag and does not count.
+    static func markedStyle(in html: String?) -> ComposeSignatureStyle? {
+        guard let html else { return nil }
+        let head = String(html[..<quoteStart(inHTML: html)])
+        guard head.range(of: styleAttribute, options: .caseInsensitive) != nil,
+              let match = styleAttributeRegex.firstMatch(
+                in: head, range: NSRange(head.startIndex..., in: head)),
+              let range = Range(match.range(at: 2), in: head) else { return nil }
+        let value = head[range].trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        let style = ComposeSignatureStyle(storageValue: value)
+        return style == .legacy ? nil : style
+    }
+
+    /// `html` without the style attribute in the tags of its authored head:
+    /// what a sent message carries (and a draft before it is marked again).
+    /// Text and the quoted part are left byte for byte as they are.
+    static func strippingStyle(_ html: String) -> String {
+        let quote = quoteStart(inHTML: html)
+        var head = String(html[..<quote])
+        guard head.range(of: styleAttribute, options: .caseInsensitive) != nil else { return html }
+        // One attribute per tag per pass; a tag rarely holds more than one.
+        for _ in 0..<4 {
+            let next = styleAttributeRegex.stringByReplacingMatches(
+                in: head, range: NSRange(head.startIndex..., in: head), withTemplate: "$1")
+            if next == head { break }
+            head = next
+        }
+        return head + String(html[quote...])
+    }
+
+    /// Where the quoted part of an outgoing HTML starts (Gmail's container,
+    /// which every DreaMail builder writes), or its end.
+    private static func quoteStart(inHTML html: String) -> String.Index {
+        html.range(of: "<div class=\"gmail_quote")?.lowerBound ?? html.endIndex
+    }
+
+    /// The attribute inside a tag: group 1 is the tag up to it, group 2 its
+    /// value (`"…"`, `'…'` or bare, followed by white space, `/` or `>`).
+    /// No `<` or `>` can be crossed, so text and other tags are never
+    /// touched; a match starts only at a `<` and the white space before the
+    /// name starts where its run starts: linear on any input.
+    private static let styleAttributeRegex: NSRegularExpression = {
+        try! NSRegularExpression(
+            pattern: #"(<[A-Za-z][^<>]*?(?<!\s))\s+data-dreamail-signature\s*=\s*("[^"<>]{0,64}"|'[^'<>]{0,64}'|[^\s<>"'/]{1,64})(?=[\s/>])"#,
+            options: .caseInsensitive)
+    }()
 }

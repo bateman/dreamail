@@ -374,6 +374,8 @@ struct ScheduledSend: Codable, Identifiable, Hashable, FetchableRecord, Persista
     /// Stable RFC 2822 id used to deduplicate a replay after an ambiguous
     /// network timeout. Empty only for rows created before v40.
     var messageId: String = ""
+    /// `ComposeSignatureStyle.storageValue` (v68); nil for older rows.
+    var signatureStyle: String? = nil
     mutating func didInsert(_ inserted: InsertionSuccess) { id = inserted.rowID }
 
     /// Effective From address for MIME (send-as or the mailbox primary).
@@ -508,6 +510,8 @@ struct LocalDraft: Codable, Identifiable, Hashable, FetchableRecord, Persistable
     var attachmentsJSON: Data
     var createdAt: Date
     var updatedAt: Date
+    /// `ComposeSignatureStyle.storageValue` (v68); nil for older rows.
+    var signatureStyle: String? = nil
     mutating func didInsert(_ inserted: InsertionSuccess) { id = inserted.rowID }
 
     var effectiveFromEmail: String {
@@ -2928,6 +2932,13 @@ final class AppDatabase: @unchecked Sendable {
         // address's signature is kept beside it. Both go with the account.
         m.registerMigration("v67") { db in
             try SignatureStore.addGmailSync(db)
+        }
+        // v68: how an Outbox draft's or a scheduled send's signature goes
+        // out (`ComposeSignatureStyle`): a Gmail signature shown rendered in
+        // compose stays rendered when the message is opened again or sent.
+        m.registerMigration("v68") { db in
+            try db.alter(table: "scheduledSend") { t in t.add(column: "signatureStyle", .text) }
+            try db.alter(table: "localDraft") { t in t.add(column: "signatureStyle", .text) }
         }
         return m
     }

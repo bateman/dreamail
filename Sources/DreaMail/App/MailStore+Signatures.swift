@@ -36,14 +36,18 @@ extension MailStore {
     }
 
     @discardableResult
-    func addSignature(accountId: String, name: String, body: String) throws -> SignatureRecord {
+    func addSignature(accountId: String, name: String, body: String,
+                      html: String? = nil) throws -> SignatureRecord {
         try writeSignatures { db in
-            try SignatureStore.insert(db, accountId: accountId, name: name, body: body)
+            try SignatureStore.insert(db, accountId: accountId, name: name, body: body, html: html)
         }
     }
 
-    func updateSignature(id: Int64, name: String, body: String) throws {
-        try writeSignatures { db in try SignatureStore.update(db, id: id, name: name, body: body) }
+    func updateSignature(id: Int64, name: String, body: String,
+                         look: SignatureStore.LookChange = .keep) throws {
+        try writeSignatures { db in
+            try SignatureStore.update(db, id: id, name: name, body: body, look: look)
+        }
     }
 
     func deleteSignature(id: Int64) throws {

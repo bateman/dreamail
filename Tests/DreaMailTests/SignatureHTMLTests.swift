@@ -62,13 +62,18 @@ final class SignatureHTMLTests: XCTestCase {
         let book = try q.read { try SignatureStore.load($0) }
         let signature = try XCTUnwrap(book.signatures(for: a).first)
         assertPreserved(try XCTUnwrap(signature.html))
-        // Compose inserts the text block; the sent HTML carries Gmail's look.
+        // Compose shows it rendered, outside the text; the body handed to
+        // the send path carries its text block, and the sent HTML Gmail's look.
         var state = ComposeSignatureState()
-        let head = state.choose(signature, in: "Hello Bob", known: [signature.body])
+        let typed = state.choose(signature, in: "Hello Bob", known: [signature.body])
+        XCTAssertEqual(typed, "Hello Bob", "a rendered signature is not in the editor text")
+        XCTAssertEqual(state.style, .rich(try XCTUnwrap(signature.id)))
+        let head = ComposeSignature.assembled(body: typed, signature: signature)
         let plain = ComposeQuote.authoredHeadHTML(head)
         let sent = ComposeSignature.withRichSignature(plain, head: head,
                                                       signatures: book.signatures(for: a))
         assertPreserved(sent)
+        XCTAssertEqual(ComposeSignature.withRichSignature(plain, head: head, signature: signature), sent)
         XCTAssertTrue(sent.contains("gmail_signature"))
         XCTAssertTrue(sent.contains("Hello Bob"))
         // Exactly one signature, and no dark-mode colours added.

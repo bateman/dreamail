@@ -258,22 +258,46 @@ enum SignatureStore {
         return (String(cleanName.prefix(maxNameLength)), ComposeSignature.normalizedBody(body))
     }
 
+    /// `html`: the look of a pasted signature (`SignaturePaste`), sanitised
+    /// again here, at the sink. The signature stays local: not a Gmail copy.
     @discardableResult
     static func insert(_ db: Database, accountId: String, name: String, body: String,
-                       at date: Date = Date()) throws -> SignatureRecord {
+                       html: String? = nil, at date: Date = Date()) throws -> SignatureRecord {
         let clean = try normalized(name: name, body: body)
         var row = SignatureRecord(id: nil, accountId: accountId, name: clean.name,
                                   body: clean.body, createdAt: date)
+        row.html = html.flatMap { SignatureHTML.sanitize($0)?.html }
         try row.insert(db)
         return row
     }
 
+    /// What an edit does to a signature's look.
+    enum LookChange: Equatable {
+        /// The look follows the text (dropped when the text changes).
+        case keep
+        /// A pasted look (`SignaturePaste`), sanitised again here.
+        case set(String)
+        /// "Remove formatting".
+        case remove
+    }
+
     /// A copy of a Gmail signature counts as edited here while its text
     /// differs from Gmail's (a rename does not count).
-    static func update(_ db: Database, id: Int64, name: String, body: String) throws {
+    static func update(_ db: Database, id: Int64, name: String, body: String,
+                       look: LookChange = .keep) throws {
         let clean = try normalized(name: name, body: body)
         guard var row = try SignatureRecord.fetchOne(db, key: id) else { return }
-        if let address = row.gmailAddress, clean.body != row.body {
+        if look != .keep {
+            // A look set or removed here is the user's: a Gmail copy then
+            // counts as edited here, and the import shows Gmail's changes
+            // instead of applying them.
+            if case .set(let html) = look {
+                row.html = SignatureHTML.sanitize(html)?.html
+            } else {
+                row.html = nil
+            }
+            if row.gmailAddress != nil { row.editedHere = true }
+        } else if let address = row.gmailAddress, clean.body != row.body {
             let remote = try SignatureGmailRecord.fetchOne(
                 db, key: ["accountId": row.accountId, "sendAsEmail": address])
             row.editedHere = remote?.body != clean.body
