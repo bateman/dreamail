@@ -176,6 +176,7 @@ final class MCPBridge: MCPToolProvider, @unchecked Sendable {
                         JOIN thread ON thread.id = message.threadId
                         WHERE message_fts MATCH ?
                           AND thread.inTrash = 0
+                          AND \(TrashedMessages.shownSQL())
                         ORDER BY thread.lastDate DESC
                         LIMIT ? OFFSET ?
                         """, arguments: [pattern, limit, offset])
@@ -219,10 +220,12 @@ final class MCPBridge: MCPToolProvider, @unchecked Sendable {
                 guard let thread = try MailThread.fetchOne(db, key: threadId) else {
                     throw MCPToolError("Thread not found: \(threadId)")
                 }
-                var msgs = try Message
-                    .filter(Column("threadId") == threadId)
-                    .order(Column("date"))
-                    .fetchAll(db)
+                var msgs = TrashedMessages.shown(
+                    try Message
+                        .filter(Column("threadId") == threadId)
+                        .order(Column("date"))
+                        .fetchAll(db),
+                    threadInTrash: thread.inTrash)
                 let ids = msgs.map(\.id)
                 if !ids.isEmpty {
                     let bodies = try MessageBody
@@ -310,14 +313,16 @@ final class MCPBridge: MCPToolProvider, @unchecked Sendable {
                 throw MCPToolError("Unknown account: \(accountId)")
             }
             guard let threadId = replyToThreadId, !threadId.isEmpty else { return nil }
-            guard try MailThread.fetchOne(db, key: threadId) != nil else {
+            guard let thread = try MailThread.fetchOne(db, key: threadId) else {
                 throw MCPToolError("reply_to_thread_id not found: \(threadId)")
             }
             // Prefer the newest non-draft message as the reply parent.
-            let msgs = try Message
-                .filter(Column("threadId") == threadId)
-                .order(Column("date").desc)
-                .fetchAll(db)
+            let msgs = TrashedMessages.shown(
+                try Message
+                    .filter(Column("threadId") == threadId)
+                    .order(Column("date").desc)
+                    .fetchAll(db),
+                threadInTrash: thread.inTrash)
             return msgs.first { msg in
                 let labels = Set(msg.labelIds.split(separator: " ").map(String.init))
                 return !labels.contains("DRAFT")

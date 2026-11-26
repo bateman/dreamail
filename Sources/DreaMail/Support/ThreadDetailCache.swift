@@ -873,6 +873,10 @@ actor ThreadDetailRepository {
                 ORDER BY date
                 """,
             arguments: [threadId])
+        // Deleted messages of a live conversation stay out of it (Gmail).
+        let threadInTrash = try Bool.fetchOne(
+            db, sql: "SELECT inTrash FROM thread WHERE id = ?", arguments: [threadId]) ?? false
+        messages = TrashedMessages.shown(messages, threadInTrash: threadInTrash)
 
         // First frame expands the newest sent message. Live draft cards also
         // need their previews immediately, so hydrate exactly those bodies.

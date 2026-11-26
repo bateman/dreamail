@@ -482,13 +482,17 @@ extension MailStore {
 
     /// A first sync downloads mail that arrived before the account was
     /// added; none of it is new mail (Gmail notifies only for what arrives).
-    /// Mail that arrives during and after the pass still notifies.
+    /// Mail that arrives during and after the pass still notifies. The same
+    /// for the pass that runs the one-time repair of conversations brought
+    /// back from the trash: their mail is old.
     func quietBacklogOfFirstSyncs(_ ids: [String]) {
         for id in ids {
             // An account removed meanwhile is not a first sync: nothing of
             // it may be written back (DEC-019).
-            guard let account = accounts.first(where: { $0.id == id }),
-                  account.historyId == nil else { continue }
+            guard let account = accounts.first(where: { $0.id == id }) else { continue }
+            let repairPending = !UserDefaults.standard.bool(
+                forKey: SyncEngine.revivedTrashRepairKey(accountId: id))
+            guard account.historyId == nil || repairPending else { continue }
             quietNewMailBacklog(accountId: id)
         }
     }

@@ -15,10 +15,14 @@ import GRDB
 /// once the outer LIMIT is filled.
 enum SearchFTS {
     /// Thread ids whose messages match the FTS pattern bound to `?`.
+    /// A deleted message of a live conversation does not make it match
+    /// (`TrashedMessages`).
     static let matchingThreadIdsSQL = """
         SELECT message.threadId FROM message
         JOIN message_fts ON message_fts.rowid = message.rowid
+        JOIN thread AS fts_thread ON fts_thread.id = message.threadId
         WHERE message_fts MATCH ?
+          AND \(TrashedMessages.shownSQL(thread: "fts_thread"))
         """
 
     /// Restrict `query` to threads with a message matching `text`.

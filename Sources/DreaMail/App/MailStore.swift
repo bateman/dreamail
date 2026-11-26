@@ -3721,7 +3721,10 @@ struct ComposeRequest: Identifiable {
                 .filter(Column("threadId") == threadId)
                 .order(Column("date"))
                 .fetchAll(db)
-            return try Self.hydrateBodies(headers, db: db)
+            // Deleted messages of a live conversation are not quoted.
+            let inTrash = try MailThread.fetchOne(db, key: threadId)?.inTrash ?? false
+            return try Self.hydrateBodies(
+                TrashedMessages.shown(headers, threadInTrash: inTrash), db: db)
         }) ?? []
         return PendingDraftVisibility.visibleMessages(
             fetched, suppressing: suppressedDraftMessageIds)

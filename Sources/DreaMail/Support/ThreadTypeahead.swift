@@ -45,7 +45,9 @@ enum ThreadTypeahead {
                 SELECT message.threadId AS tid, MAX(message.date) AS newest
                 FROM message_fts
                 JOIN message ON message.rowid = message_fts.rowid
+                JOIN thread AS fts_thread ON fts_thread.id = message.threadId
                 WHERE message_fts MATCH ?
+                  AND \(TrashedMessages.shownSQL(thread: "fts_thread"))
                 GROUP BY message.threadId
                 ORDER BY newest DESC
                 LIMIT ?
