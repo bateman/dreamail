@@ -46,7 +46,10 @@ final class SidebarSheetEscapeUITests: XCTestCase {
 
         let add = element("sidebar.labels.add", in: app)
         XCTAssertTrue(add.waitForExistence(timeout: 5))
-        add.click()
+        // The identifier lands on the whole "Labels" header row (UI test
+        // log, November 2026), whose centre is blank: click the "+" at its
+        // trailing end.
+        add.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.5)).click()
         let field = element("newLabel.name", in: app)
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the + opens the new label sheet")
         field.click()

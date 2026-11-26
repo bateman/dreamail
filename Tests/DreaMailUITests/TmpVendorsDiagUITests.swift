@@ -44,27 +44,22 @@ final class TmpVendorsDiagUITests: XCTestCase {
             log += d + "\n"
         }
         for i in 10...18 { dumpRow(app.outlineRows.element(boundBy: i), "r\(i)") }
+        log += "before scroll: vendors.hittable=\(vendors.isHittable) tri.hittable=\(tri.isHittable) "
+            + "clients.hittable=\(clients.isHittable)\n"
+        let sidebar = app.outlines.firstMatch
+        var tries = 0
+        while !(vendors.exists && vendors.isHittable), tries < 15 {
+            sidebar.scroll(byDeltaX: 0, deltaY: -300)
+            tries += 1
+        }
+        log += "after \(tries) scrolls: vendors.frame=\(vendors.frame) hittable=\(vendors.isHittable) "
+            + "tri.frame=\(tri.frame) tri.hittable=\(tri.isHittable)\n"
         let before = app.outlineRows.count
         tri.click()
         Thread.sleep(forTimeInterval: 2)
-        log += "rows before=\(before) after=\(app.outlineRows.count)\n"
-        // Variant: hover then click again at the triangle's coordinate.
-        tri.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-        Thread.sleep(forTimeInterval: 2)
-        log += "rows after 2nd=\(app.outlineRows.count)\n"
-        // Variant: keyboard expand on the selected row.
-        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 2)
-        log += "rows after right arrow=\(app.outlineRows.count)\n"
-        let add = el("sidebar.labels.add")
-        log += "add exists=\(add.exists) frame=\(add.frame) hittable=\(add.isHittable)\n"
-        add.click()
-        Thread.sleep(forTimeInterval: 2)
-        log += "after add: sheets=\(app.sheets.count) field=\(el("newLabel.name").exists) "
-            + "textFields=\(app.textFields.count)\n"
-        log += "after click: aws=\(el("sidebar.label.\(account).Label_vendors_aws").exists) "
+        log += "rows before=\(before) after=\(app.outlineRows.count) "
+            + "aws=\(el("sidebar.label.\(account).Label_vendors_aws").exists) "
             + "acme=\(el("sidebar.label.\(account).Label_clients_acme").exists)\n"
-        log += "vendors.frame=\(vendors.frame) clients.frame=\(clients.frame)\n"
         XCTFail("DIAG\n" + log)
     }
 }

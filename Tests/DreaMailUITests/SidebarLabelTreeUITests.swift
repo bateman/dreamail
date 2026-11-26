@@ -6,12 +6,13 @@ import XCTest
 final class SidebarLabelTreeUITests: XCTestCase {
     private let account = "you@example.com"
 
-    private func launch() -> XCUIApplication {
+    /// `small`: the short demo label list, as most UI tests (and a real user
+    /// with few labels) have it. Without it the full, long list.
+    private func launch(small: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
-        // No DREAMAIL_DEMO_LABELS=small: the label tree is checked with
-        // the demo's full, long label list (Vendors below the fold).
+        if small { app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small" }
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
@@ -41,6 +42,31 @@ final class SidebarLabelTreeUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return !element.exists
+    }
+
+    /// The parent label on the short list, where the whole tree fits the
+    /// window: one launch, one step (the others run on the full list).
+    func testParentLabelOnTheShortList() {
+        let app = launch(small: true)
+        XCTContext.runActivity(named: "A parent label collapses its sublabels") { _ in
+            stepParentLabelCollapsesItsSublabels(app)
+        }
+    }
+
+    /// Scrolls the sidebar until `element` can be clicked. On a short list
+    /// the Vendors row sits at the bottom edge of the window: it exists, but
+    /// its frame is empty and a click on its triangle lands outside the
+    /// visible list (CI logs, November 2026), so the click did nothing.
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        let sidebar = app.outlines.firstMatch
+        for step in [-300.0, 300.0] {
+            var tries = 0
+            while !(element.exists && element.isHittable), tries < 15 {
+                sidebar.scroll(byDeltaX: 0, deltaY: step)
+                tries += 1
+            }
+            if element.exists && element.isHittable { return }
+        }
     }
 
     /// One launch for the four checks, in an order where each finds the
@@ -103,6 +129,8 @@ final class SidebarLabelTreeUITests: XCTestCase {
         let triangle = row.disclosureTriangles.firstMatch
         XCTAssertTrue(triangle.waitForExistence(timeout: 5),
                       "a parent label has a disclosure triangle\n\(app.debugDescription)")
+        reveal(parent, in: app)
+        XCTAssertTrue(triangle.isHittable, "the parent's triangle is on screen")
         triangle.click()
         XCTAssertTrue(child.waitForExistence(timeout: 5), "opening the parent shows AWS")
         triangle.click()
