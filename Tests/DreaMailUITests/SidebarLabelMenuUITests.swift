@@ -67,6 +67,19 @@ final class SidebarLabelMenuUITests: XCTestCase {
         return !element.exists
     }
 
+    /// Clicks the ⋮ where it is drawn. XCUITest's own `click()` refuses the
+    /// ⋮ as "not hittable" on the CI runners, in a way that comes and goes
+    /// from one run to the next whatever the label is (a SwiftUI menu, a
+    /// borderless one, an image), and scrolls the sidebar away from under
+    /// the pointer, so the ⋮ vanishes. A click at the element's centre is a
+    /// real click at the same place: what the test checks (the menu opens,
+    /// the row does not) is unchanged. The frames go to the log.
+    private func clickDots(_ dots: XCUIElement, in app: XCUIApplication) {
+        let window = app.windows.firstMatch.frame
+        print("SidebarLabelMenu: ⋮ frame \(dots.frame), hittable \(dots.isHittable), window \(window)")
+        dots.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+    }
+
     func testMenuFromDotsAndRightClickAndDotsDoNotReopenTheLabel() {
         let app = launch()
         let research = label("Label_research", in: app)
@@ -74,7 +87,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         research.hover()
         let dots = element("sidebar.label.menu.\(account).Label_research", in: app)
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "hovering a label shows its ⋮")
-        dots.click()
+        clickDots(dots, in: app)
         let items: [(String, String)] = [
             ("labelMenu.color", "Label color"),
             ("labelMenu.labelList.show", "Show"),
@@ -110,7 +123,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
 
         research.hover()
         XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label shows its ⋮")
-        dots.click()
+        clickDots(dots, in: app)
         XCTAssertTrue(menuItem("labelMenu.edit", "Edit", in: app).waitForExistence(timeout: 5))
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         XCTAssertTrue(subject.exists, "the ⋮ click did not reopen the label")
