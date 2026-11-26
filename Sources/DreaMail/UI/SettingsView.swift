@@ -1208,6 +1208,8 @@ struct AppearanceSettings: View {
     @Environment(MailStore.self) var store
     @AppStorage("fontScale") private var fontScale = 1.0
     @AppStorage(ListDensity.storageKey) private var listDensityRaw = ListDensity.comfortable.rawValue
+    @AppStorage(SidebarDensity.storageKey) private var sidebarDensityRaw =
+        SidebarDensity.comfortable.rawValue
     @AppStorage("badgeScope") private var badgeScopeRaw = MailStore.BadgeScope.all.rawValue
     @AppStorage("priorityMode") private var priorityModeRaw = PrioritySplit.Mode.starred.rawValue
     @AppStorage("vipAlwaysPins") private var vipAlwaysPins = true
@@ -1329,7 +1331,7 @@ struct AppearanceSettings: View {
                 }
 
                 Section {
-                    Picker("Density", selection: Binding(
+                    Picker("List density", selection: Binding(
                         get: { ListDensity.from(raw: listDensityRaw).rawValue },
                         set: { listDensityRaw = $0 })) {
                         ForEach(ListDensity.allCases) { density in
@@ -1340,6 +1342,21 @@ struct AppearanceSettings: View {
                     .accessibilityIdentifier("settings.listDensity")
                 } footer: {
                     Text("How much space the conversation list leaves around each row. Applies to every account.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Picker("Sidebar density", selection: Binding(
+                        get: { SidebarDensity.from(raw: sidebarDensityRaw).rawValue },
+                        set: { sidebarDensityRaw = $0 })) {
+                        ForEach(SidebarDensity.allCases) { density in
+                            Text(density.title).tag(density.rawValue)
+                        }
+                    }
+                    .pickerStyle(.radioGroup)
+                    .accessibilityIdentifier("settings.sidebarDensity")
+                } footer: {
+                    Text("How much space the sidebar leaves around each row. Separate from the list density.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 

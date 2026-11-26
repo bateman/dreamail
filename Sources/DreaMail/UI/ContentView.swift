@@ -1816,6 +1816,9 @@ struct Sidebar: View {
     @State private var viewToDelete: SavedView?
     @State private var disclosure = SidebarDisclosureModel()
     @State private var newLabel: NewLabelRequest?
+    @AppStorage(SidebarDensity.storageKey) private var sidebarDensityRaw =
+        SidebarDensity.comfortable.rawValue
+    private var sidebarDensity: SidebarDensity { .from(raw: sidebarDensityRaw) }
 
     private var confirmingViewDeleteShown: Binding<Bool> {
         Binding(
@@ -1940,7 +1943,8 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, 30)
+            .environment(\.defaultMinListRowHeight, sidebarDensity.minRowHeight)
+            .modifier(SidebarCompactRows(compact: sidebarDensity == .compact))
             .scrollContentBackground(.hidden)
 
             Divider()
@@ -2618,5 +2622,15 @@ struct AccountLabelsEditor: View {
         AccountLabelColor.title(displayName: labels[account.id] ?? account.displayName,
                                 senderName: senderNames[account.id] ?? account.senderName,
                                 accountId: account.id)
+    }
+}
+
+/// Compact sidebar: the small row size (smaller icons and padding). Comfortable
+/// leaves the environment alone, so the sidebar stays as the system draws it.
+private struct SidebarCompactRows: ViewModifier {
+    let compact: Bool
+
+    func body(content: Content) -> some View {
+        if compact { content.environment(\.sidebarRowSize, .small) } else { content }
     }
 }

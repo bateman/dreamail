@@ -43,3 +43,24 @@ struct ThreadListMetrics: Equatable {
                             : ThreadRowActionLayout.hitExtraV
     }
 }
+
+/// Density of the sidebar, a setting of its own (Settings → Appearance).
+/// Comfortable is today's sidebar.
+enum SidebarDensity: String, CaseIterable, Identifiable {
+    case comfortable, compact
+
+    static let storageKey = "sidebarDensity"
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .comfortable: return "Comfortable"
+        case .compact: return "Compact"
+        }
+    }
+
+    static func from(raw: String) -> SidebarDensity { SidebarDensity(rawValue: raw) ?? .comfortable }
+
+    /// Minimum height of a sidebar row, in points.
+    var minRowHeight: Double { self == .compact ? 24 : 30 }
+}
