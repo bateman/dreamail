@@ -2940,6 +2940,17 @@ final class AppDatabase: @unchecked Sendable {
             try db.alter(table: "scheduledSend") { t in t.add(column: "signatureStyle", .text) }
             try db.alter(table: "localDraft") { t in t.add(column: "signatureStyle", .text) }
         }
+        // v69: a label order that only repeats the names in code-point order
+        // was written for every label by an older organizer on any drag, and
+        // hid Gmail's order. Put those back to unsorted, once; from here on
+        // any stored order wins (`LabelOrganizerOrder.machineOrderedIds`).
+        m.registerMigration("v69") { db in
+            let rows = try LabelRow.filter(Column("type") == "user").fetchAll(db)
+            for id in LabelOrganizerOrder.machineOrderedIds(rows) {
+                try db.execute(sql: "UPDATE label SET sortOrder = ? WHERE id = ?",
+                               arguments: [LabelRow.unsorted, id])
+            }
+        }
         return m
     }
 }

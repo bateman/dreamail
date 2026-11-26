@@ -65,14 +65,14 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(tree), ["/lead", "a [/b]"])
     }
 
-    /// Gmail's order: case-insensitive, punctuation first (as in the owner's
-    /// list: `$`, apple, …, juve, Notes, prenotazioni).
+    /// Gmail's order: case-insensitive, symbols first (`$`, alpha, beta,
+    /// Gamma, delta, omega).
     func testSiblingsSortAsGmail() {
         let tree = SidebarLabelTree.build([
-            row("L1", "uniba"), row("L2", "Notes"), row("L3", "juve"), row("L4", "$"),
-            row("L5", "apple"), row("L6", "prenotazioni"),
+            row("L1", "omega"), row("L2", "Gamma"), row("L3", "beta"), row("L4", "$"),
+            row("L5", "alpha"), row("L6", "delta"),
         ])
-        XCTAssertEqual(shape(tree), ["$", "apple", "juve", "Notes", "prenotazioni", "uniba"])
+        XCTAssertEqual(shape(tree), ["$", "alpha", "beta", "delta", "Gamma", "omega"])
     }
 
     /// The organizer's order (Mac-only) comes first, then Gmail's.
@@ -83,13 +83,13 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(tree), ["b", "a", "c"])
     }
 
-    /// Gmail's order on the character classes of a real sidebar (emoji and
-    /// symbols first, case ignored, `Notes` between `juve` and
-    /// `prenotazioni`), above and below More. Old: the same names stood in
-    /// code-point order when a stored order froze it (see the next test).
+    /// Gmail's order on the character classes of a real sidebar: emoji and
+    /// symbols first, then currency, digits, letters; case, accents ignored;
+    /// a name sorts before the same name plus a space and more. Above and
+    /// below More, whatever the Mac's language (a fixed locale).
     func testGmailOrderAboveAndBelowMore() {
-        let above = ["✉️ post", "$", "apple", "casa", "dev", "juve", "Notes", "prenotazioni", "uniba"]
-        let below = ["♫ tunes", "gaming", "licenze", "NAS", "ssis", "telefonia"]
+        let above = ["✉️ post", "$", "42", "alpha", "beta", "delta", "élan", "Gamma"]
+        let below = ["♫ tunes", "kilo", "kilo base", "LIMA", "mike"]
         var rows: [LabelRow] = []
         for (i, n) in (above + below).reversed().enumerated() {
             rows.append(row("L\(i)", n, visibility: below.contains(n) ? "labelHide" : nil))
@@ -99,20 +99,14 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(parts.more), below)
     }
 
-    /// A stored order that is just the names in code-point order (what the
-    /// old organizer wrote for every label) is not a customization: Gmail's
-    /// order shows. A stored order anyone arranged still wins.
-    func testMachineAssignedStoredOrderIsIgnored() {
-        let names = ["$", "Notes", "apple", "juve"]   // code-point order
-        let frozen = names.enumerated().map { row("L\($0.offset)", $0.element, order: $0.offset) }
-        XCTAssertEqual(shape(SidebarLabelTree.build(frozen)), ["$", "apple", "juve", "Notes"])
-        let arranged = ["apple", "$", "Notes", "juve"]
-            .enumerated().map { row("L\($0.offset)", $0.element, order: $0.offset) }
-        XCTAssertEqual(shape(SidebarLabelTree.build(arranged)), ["apple", "$", "Notes", "juve"])
-        // A label created since (unsorted) joins the frozen list in Gmail's order.
-        let withNew = frozen + [row("L9", "Beta")]
-        XCTAssertEqual(shape(SidebarLabelTree.build(withNew)),
-                       ["$", "apple", "Beta", "juve", "Notes"])
+    /// A stored order always wins, even when it happens to equal the names in
+    /// code-point order: the user dragged `Zeta` above `alpha`. (An old
+    /// machine-written order is repaired once, by migration v69.)
+    func testExplicitDragWinsEvenWhenItEqualsCodePointOrder() {
+        let tree = SidebarLabelTree.build([
+            row("L1", "Zeta", order: 0), row("L2", "alpha", order: 1),
+        ])
+        XCTAssertEqual(shape(tree), ["Zeta", "alpha"])
     }
 
     /// A hidden top-level label with three shown sublabels and a hidden one:
@@ -210,16 +204,16 @@ final class SidebarLabelTreeTests: XCTestCase {
         assertNothingTwice(parts)
     }
 
-    /// Old: more = ["C/Sub", "Notes"] (a flat row named by its full name).
-    /// New: "Sub" nested under "C" in the list; more = ["Notes"].
+    /// Old: more = ["C/Sub", "Misc"] (a flat row named by its full name).
+    /// New: "Sub" nested under "C" in the list; more = ["Misc"].
     func testHiddenChildOfListedParentIsNestedUnderIt() throws {
         let tree = SidebarLabelTree.build([
             row("L1", "C"), row("L2", "C/Sub", visibility: "labelHide"),
-            row("L3", "Notes", visibility: "labelHide"),
+            row("L3", "Misc", visibility: "labelHide"),
         ])
         let parts = SidebarLabelTree.split(tree) { _ in 0 }
         XCTAssertEqual(shape(parts.listed), ["C [Sub]"])
-        XCTAssertEqual(shape(parts.more), ["Notes"])
+        XCTAssertEqual(shape(parts.more), ["Misc"])
         let sub = try XCTUnwrap(parts.listed.first?.children.first)
         XCTAssertEqual(sub.fullName, "C/Sub", "help keeps the full name")
         XCTAssertEqual(sub.gmailLabelId, "L2")
@@ -270,9 +264,10 @@ final class SidebarLabelTreeTests: XCTestCase {
         assertNothingTwice(parts)
     }
 
-    /// "Show if unread" decides for the top-level label only: its own unread
-    /// count, not a sublabel's.
-    func testShowIfUnreadOfTheTopLevelLabelDecidesTheFamily() {
+    /// "Show if unread" on the top-level label counts the whole family
+    /// (an assumption about Gmail, not verified): new mail only in a sublabel
+    /// still lists the family; no unread anywhere leaves it under More.
+    func testShowIfUnreadCountsTheWholeFamily() {
         let tree = SidebarLabelTree.build([
             row("L1", "t", visibility: "labelShowIfUnread"),
             row("L2", "t/s", visibility: "labelShowIfUnread"),
@@ -280,8 +275,11 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(SidebarLabelTree.split(tree) { $0.gmailLabelId == "L1" ? 1 : 0 }.listed),
                        ["t [s]"])
         let sublabelUnreadOnly = SidebarLabelTree.split(tree) { $0.gmailLabelId == "L2" ? 5 : 0 }
-        XCTAssertTrue(sublabelUnreadOnly.listed.isEmpty)
-        XCTAssertEqual(shape(sublabelUnreadOnly.more), ["t [s]"])
+        XCTAssertEqual(shape(sublabelUnreadOnly.listed), ["t [s]"])
+        XCTAssertTrue(sublabelUnreadOnly.more.isEmpty)
+        let none = SidebarLabelTree.split(tree) { _ in 0 }
+        XCTAssertTrue(none.listed.isEmpty)
+        XCTAssertEqual(shape(none.more), ["t [s]"])
     }
 
     /// Old: rows under More carried full names ("clients/2024/archive").

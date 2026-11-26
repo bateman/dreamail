@@ -51,9 +51,8 @@ enum SidebarLabelTree {
     ///
     /// A label nests under the longest existing label whose name is a
     /// `/`-prefix of its own. Siblings keep the organizer's order
-    /// (`sortOrder`, a Mac-only customization), then Gmail's: names
-    /// compared case-insensitively, so `Notes` sits between `juve` and
-    /// `prenotazioni`.
+    /// (`sortOrder`, written only by a drag in Organize Labels), then Gmail's
+    /// (`compareNames`).
     static func build(_ rows: [LabelRow]) -> [SidebarLabelNode] {
         // Exact names; on a duplicate name the first row is the parent.
         var byName: [String: LabelRow] = [:]
@@ -99,23 +98,13 @@ enum SidebarLabelTree {
         return nil
     }
 
-    /// Siblings in the organizer's order (`sortOrder`, a Mac-only
-    /// customization) when there is one, else in Gmail's: the names
-    /// compared the way Finder does (`localizedStandardCompare`: case and
-    /// diacritics ignored, symbols and emoji first, then digits, then
-    /// letters), so `Notes` sits between `juve` and `prenotazioni`.
-    ///
-    /// A stored order that is exactly the names in plain code-point order is
-    /// not a customization: a version that listed labels in the database's
-    /// binary order wrote it for every label on any drag, and it would hide
-    /// Gmail's order for good. It is ignored; any other stored order, which a
-    /// person arranged, wins. (`sortOrder` has no marker of who wrote it, so
-    /// this is the one tell.)
+    /// Siblings in the organizer's order (`sortOrder`, written only by a drag
+    /// in Organize Labels, and only for the siblings of the moved row) when
+    /// there is one, else in Gmail's (`compareNames`).
     static func sorted(_ rows: [LabelRow]) -> [LabelRow] {
-        let useStored = !isMachineOrder(rows)
-        return rows.sorted { a, b in
-            if useStored, a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
-            switch a.name.localizedStandardCompare(b.name) {
+        rows.sorted { a, b in
+            if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
+            switch compareNames(a.name, b.name) {
             case .orderedAscending: return true
             case .orderedDescending: return false
             case .orderedSame: return a.id < b.id
@@ -123,12 +112,13 @@ enum SidebarLabelTree {
         }
     }
 
-    /// The siblings with a stored order sit in code-point name order.
-    private static func isMachineOrder(_ rows: [LabelRow]) -> Bool {
-        let stored = rows.filter { $0.sortOrder != LabelRow.unsorted }
-        let byStored = stored.sorted { ($0.sortOrder, $0.id) < ($1.sortOrder, $1.id) }
-        let byName = stored.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
-        return byStored.map(\.id) == byName.map(\.id)
+    /// Gmail's order of names: case, diacritics and width ignored, digits
+    /// compared as numbers, symbols and emoji first, then digits, then
+    /// letters (`Gamma` sits between `delta` and `omega`). A fixed locale, so
+    /// the sidebar reads the same on every Mac whatever its language.
+    static func compareNames(_ a: String, _ b: String) -> ComparisonResult {
+        a.compare(b, options: [.caseInsensitive, .diacriticInsensitive, .numeric, .widthInsensitive],
+                  range: nil, locale: Locale(identifier: "en"))
     }
 
     /// Gmail's two lists: labels shown in the list, and those behind the
@@ -143,13 +133,21 @@ enum SidebarLabelTree {
         var listed: [SidebarLabelNode] = []
         var more: [SidebarLabelNode] = []
         for root in roots {
-            if root.visibility.isListed(unread: unread(root)) {
+            if root.visibility.isListed(unread: subtreeUnread(root, unread)) {
                 listed.append(root)
             } else {
                 more.append(root)
             }
         }
         return (listed, more)
+    }
+
+    /// Unread mail in the label and its sublabels: "show if unread" on a
+    /// top-level label counts the whole family (assumed to be Gmail's
+    /// behaviour, not verified).
+    private static func subtreeUnread(_ node: SidebarLabelNode,
+                                      _ unread: (SidebarLabelNode) -> Int) -> Int {
+        node.children.reduce(unread(node)) { $0 + subtreeUnread($1, unread) }
     }
 }
 

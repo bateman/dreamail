@@ -119,4 +119,40 @@ final class LabelOrganizerOrderTests: XCTestCase {
         let r = rows(["a", "a/1", "b", "a/new"], orders: [0, 1, 2, u])
         XCTAssertEqual(LabelOrganizerOrder.entries(r).map(\.row.name), ["a", "a/1", "a/new", "b"])
     }
+
+    /// A drag stores an order for the siblings of the moved row only: the
+    /// other groups stay unsorted and keep following Gmail's order.
+    func testDragWritesOnlyTheMovedGroup() {
+        let before = rows(["a", "a/1", "a/2", "a/3", "b", "b/x", "b/y", "c"])
+        let entries = LabelOrganizerOrder.entries(before)
+        // a/1 (index 1) after a/2: only a's sublabels change.
+        let moved = LabelOrganizerOrder.moved(entries, from: 1, to: 3)!
+        let writes = LabelOrganizerOrder.sortOrders(before: entries.map(\.row), after: moved)
+        XCTAssertEqual(Set(writes.keys), ["a:a/1", "a:a/2", "a:a/3"])
+        XCTAssertEqual(writes["a:a/2"], 0)
+        XCTAssertEqual(writes["a:a/1"], 1)
+        XCTAssertEqual(writes["a:a/3"], 2)
+        // A top-level move writes the top level only.
+        let top = LabelOrganizerOrder.moved(entries, from: 7, to: 0)!
+        let topWrites = LabelOrganizerOrder.sortOrders(before: entries.map(\.row), after: top)
+        XCTAssertEqual(Set(topWrites.keys), ["a:a", "a:b", "a:c"])
+    }
+
+    /// The rows an older organizer froze in code-point order are found; an
+    /// order arranged by hand is not; a group that is both is judged alone.
+    func testMachineOrderedIds() {
+        func labels(_ pairs: [(String, Int)]) -> [LabelRow] {
+            pairs.map { name, order in
+                LabelRow(id: "a:\(name)", accountId: "a", gmailLabelId: name, name: name, type: "user",
+                         color: nil, sortOrder: order, listVisibility: nil)
+            }
+        }
+        let u = LabelRow.unsorted
+        // Top level frozen in code-point order (Zeta < alpha); p's sublabels arranged by hand (b before a).
+        let rows = labels([("Zeta", 0), ("alpha", 1), ("p", 2), ("p/b", 3), ("p/a", 4), ("p/c", u)])
+        XCTAssertEqual(Set(LabelOrganizerOrder.machineOrderedIds(rows)),
+                       ["a:Zeta", "a:alpha", "a:p"])
+        // Unsorted rows are never touched.
+        XCTAssertTrue(LabelOrganizerOrder.machineOrderedIds(labels([("x", u), ("y", u)])).isEmpty)
+    }
 }
