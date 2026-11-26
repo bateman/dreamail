@@ -18,23 +18,36 @@ struct LabelRGB: Equatable, Hashable, Sendable {
                   b: Double(hex & 0xFF) / 255)
     }
 
-    /// Parses any color Gmail may send, leniently: `#RRGGBB` / `RRGGBB` (any
-    /// case), `#RRGGBBAA` (alpha dropped),
-    /// `0x…`, and `rgb(r, g, b)`; surrounding space ignored. nil when
-    /// missing or not a color.
+    /// Parses `#RRGGBB` / `RRGGBB` (any case); nil when missing or malformed.
     init?(hexString: String?) {
-        guard let hex = Self.normalizedHex(hexString), let value = UInt32(hex.dropFirst(), radix: 16)
-        else { return nil }
+        guard var hex = hexString?.trimmingCharacters(in: .whitespaces), !hex.isEmpty else {
+            return nil
+        }
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }),
+              let value = UInt32(hex, radix: 16) else { return nil }
         self.init(hex: value)
     }
 
-    /// `#rrggbb` (lowercase) for any color `init?(hexString:)` reads; nil
-    /// for anything else, so no arbitrary string from the API is stored.
+    /// `#rrggbb` (lowercase) for a valid 6-digit hex color, with or
+    /// without `#` and surrounding spaces; nil for anything else, so no
+    /// arbitrary string from the API is stored.
     static func normalizedHex(_ string: String?) -> String? {
-        guard var text = string?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+        guard var hex = string?.trimmingCharacters(in: .whitespaces) else { return nil }
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
+        return "#" + hex.lowercased()
+    }
+
+    /// A color as Gmail's API may send it, read leniently: what
+    /// `normalizedHex` reads, plus `#RRGGBBAA` (alpha dropped), `0x…` and
+    /// `rgb(r, g, b)`, any case, any surrounding space. Only for what comes
+    /// from Gmail; local values stay strict (`normalizedHex`).
+    static func gmailHex(_ string: String?) -> String? {
+        guard let text = string?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
               !text.isEmpty else { return nil }
-        if text.hasPrefix("rgb"), let open = text.firstIndex(of: "("), let close = text.lastIndex(of: ")"),
-           open < close {
+        if text.hasPrefix("rgb"), let open = text.firstIndex(of: "("),
+           let close = text.lastIndex(of: ")"), open < close {
             let parts = text[text.index(after: open)..<close]
                 .split(whereSeparator: { $0 == "," || $0 == " " || $0 == "/" }).map(String.init)
             guard parts.count >= 3 else { return nil }
@@ -45,12 +58,13 @@ struct LabelRGB: Equatable, Hashable, Sendable {
             }
             return out
         }
-        if text.hasPrefix("#") { text.removeFirst() } else if text.hasPrefix("0x") { text.removeFirst(2) }
-        guard text.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
-        switch text.count {
-        case 6, 8: return "#" + String(text.prefix(6))
-        default: return nil
+        var hex = text
+        if hex.hasPrefix("0x") { hex.removeFirst(2) }
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 8, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else {
+            return normalizedHex(hex)
         }
+        return normalizedHex(String(hex.prefix(6)))
     }
 
     static let black = LabelRGB(hex: 0x000000)

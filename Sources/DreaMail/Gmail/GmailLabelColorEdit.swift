@@ -131,8 +131,8 @@ enum GmailLabelColorEdit {
 
     /// The Gmail colors a label row stores for an API answer.
     static func colors(of label: GLabel) -> LabelColors {
-        LabelColors(background: LabelRGB.normalizedHex(label.color?.backgroundColor),
-                    text: LabelRGB.normalizedHex(label.color?.textColor))
+        LabelColors(background: LabelRGB.gmailHex(label.color?.backgroundColor),
+                    text: LabelRGB.gmailHex(label.color?.textColor))
     }
 
     /// Sets (or, with nil, removes) the label's Gmail color. Throws

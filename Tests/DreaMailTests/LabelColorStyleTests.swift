@@ -430,6 +430,20 @@ final class LabelColorStyleTests: XCTestCase {
         }
     }
 
+    /// Gmail's colors are read leniently; local values stay strict.
+    func testGmailHexIsLenientAndLocalParsingIsNot() {
+        for (raw, want) in [("#434343", "#434343"), ("#434343FF", "#434343"), (" 16A766 ", "#16a766"),
+                            ("0xCC3A21", "#cc3a21"), ("rgb(65, 105, 125)", "#41697d"),
+                            ("RGB(0,0,0)", "#000000")] {
+            XCTAssertEqual(LabelRGB.gmailHex(raw), want, raw)
+        }
+        for bad in [nil, "", "#", "#fff", "#fad1655", "red", "rgb(1,2)", "rgb(300,0,0)", "#gggggg"] {
+            XCTAssertNil(LabelRGB.gmailHex(bad), String(describing: bad))
+        }
+        XCTAssertNil(LabelRGB.normalizedHex("rgb(1,2,3)"))
+        XCTAssertNil(LabelRGB.normalizedHex("#434343FF"))
+    }
+
     /// The sidebar tag keeps a very dark or very light color and gives it an
     /// outline where it would vanish on the surface (dark grey on dark).
     func testDarkAndLightColorsKeepTheFillAndGetAnOutline() {
