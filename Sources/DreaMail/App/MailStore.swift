@@ -1865,6 +1865,11 @@ struct ComposeRequest: Identifiable {
         // the launch path so a future "defer more" pass does not re-open the
         // window that put it in runDeferredStartupWork.
         loadBlocked()
+        // A crash or force quit leaves the last number on the Dock icon (the
+        // system keeps it). Clear it before the first recount can paint:
+        // `reloadThreads` hops to the main actor later, and its `setBadge`
+        // goes after this one.
+        Notifier.setBadge(0)
         reloadThreads()
         startupTask = Task { await self.runDeferredStartupWork() }
         // The opt-in MCP server starts in runDeferredStartupWork, not here:
@@ -2462,6 +2467,10 @@ struct ComposeRequest: Identifiable {
     }
 
     private func executeTermination() async {
+        // From here no recount or local action may paint the badge; the
+        // clear at the end is the last word.
+        dockBadge.close()
+
         // Stop the MCP loopback listener before any DB shutdown so in-flight
         // tool handlers cannot race a closed SQLCipher pool.
         stopMCPServer()
@@ -2560,6 +2569,11 @@ struct ComposeRequest: Identifiable {
                 AppDatabase.shared.close()
             }
         )
+
+        // Last step, after everything that could set a badge: the
+        // notification-center count outlives the process, so a stale number
+        // would stay on the Dock icon. The delivered notifications stay.
+        await Notifier.clearBadge()
     }
 
     /// Top matches for an address-field token.

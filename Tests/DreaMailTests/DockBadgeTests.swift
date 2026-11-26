@@ -193,6 +193,20 @@ final class DockBadgeTests: XCTestCase {
         XCTAssertEqual(counter.count, 4)
     }
 
+    /// At quit the badge is cleared; a recount or delta that lands later
+    /// must not bring it back.
+    func testClosedCounterIgnoresLateRecountsAndDeltas() {
+        var counter = DockBadge.Counter()
+        counter.applyRecount(5, ticket: counter.ticket(account: nil))
+        let late = counter.ticket(account: nil)
+        counter.close()
+        XCTAssertNil(counter.count)
+        XCTAssertFalse(counter.applyRecount(5, ticket: late))
+        XCTAssertFalse(counter.applyRecount(5, ticket: counter.ticket(account: nil)))
+        XCTAssertFalse(counter.applyDelta(+1, account: nil))
+        XCTAssertNil(counter.count, "nothing left to paint")
+    }
+
     /// Any action invalidates older reads, even one that moves no badge.
     func testActionWithoutBadgeChangeStillRejectsOlderRecounts() {
         var counter = DockBadge.Counter()
