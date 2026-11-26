@@ -198,16 +198,6 @@ actor SyncEngine {
             UserDefaults.standard.set(syncWindowDays, forKey: windowKey)
             recordWindowListing(complete: batch.listingComplete, progress: progress)
         }
-        // One-shot catch-up: mail an earlier cursor stepped over (see
-        // `historyCursor`) is fetched by id from a listing of recent mail.
-        // Stored ids are skipped, so this costs a listing.
-        let catchUpKey = Self.recentCatchUpKey(accountId: accountId)
-        if !windowListedThisPass, !UserDefaults.standard.bool(forKey: catchUpKey) {
-            let batch = try await fetchAll(
-                query: Self.recentCatchUpQuery(windowDays: syncWindowDays),
-                limit: Self.recentCatchUpLimit, countsCachedIds: false, progress: progress)
-            if batch.listingComplete { UserDefaults.standard.set(true, forKey: catchUpKey) }
-        }
         let starKey = "backfill.starred.\(accountId)"
         if !UserDefaults.standard.bool(forKey: starKey) {
             try await fetchAll(query: "is:starred", limit: 3000, progress: progress)
@@ -279,19 +269,6 @@ actor SyncEngine {
             progress?("More mail will download on the next sync…")
         }
     }
-
-    /// UserDefaults key of the one-shot recent-mail catch-up.
-    static func recentCatchUpKey(accountId: String) -> String {
-        "backfill.recentCatchUp.v1.\(accountId)"
-    }
-
-    /// Days the catch-up lists: two weeks, or the window when shorter.
-    static func recentCatchUpQuery(windowDays: Int) -> String {
-        let days = windowDays > 0 ? min(windowDays, 14) : 14
-        return "newer_than:\(days)d"
-    }
-
-    static let recentCatchUpLimit = 2_000
 
     /// UserDefaults key for the one-shot has:attachment repair pass.
     static func attachmentRepairDefaultsKey(accountId: String) -> String {
@@ -1191,17 +1168,6 @@ actor SyncEngine {
     /// fits well inside Gmail's per-second budget even at 5 units a message.
     static let historySliceMessages = 100
 
-    /// Where the next history read starts: the last record this one
-    /// returned, never the response's `historyId`. That one is the
-    /// mailbox's current id and can be ahead of the records Gmail has made
-    /// visible: a message whose record was not listed yet would be stepped
-    /// over and never fetched. No record: the cursor stays. Pure — tested.
-    static func historyCursor(since start: String, recordIds: [String]) -> String {
-        guard let startValue = UInt64(start) else { return recordIds.last ?? start }
-        let newest = recordIds.compactMap(UInt64.init).filter { $0 > startValue }.max()
-        return newest.map(String.init) ?? start
-    }
-
     /// `commitSlice` records the id reached after each slice but the last;
     /// by default `account.historyId`.
     private func incrementalSync(
@@ -1209,13 +1175,14 @@ actor SyncEngine {
         commitSlice: ((String) async throws -> Void)? = nil
     ) async throws -> String {
         var pageToken: String?
+        var latest = historyId
         var items: [GHistoryList.Item] = []
         repeat {
             let page = try await client.history(since: historyId, pageToken: pageToken)
             items += page.history ?? []
+            if let h = page.historyId { latest = h }
             pageToken = page.nextPageToken
         } while pageToken != nil
-        let latest = Self.historyCursor(since: historyId, recordIds: items.map(\.id))
 
         // Commit after every slice: a rate limit later in the run then costs
         // one slice, not the whole range, and the next pass resumes from
