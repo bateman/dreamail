@@ -7,6 +7,23 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **New OpenPGP library releases are integrated by a manual workflow.**
+  *Integrate dreamail-openpgp* (Actions, run by hand) moves the app to the
+  newest release of the library, or to the one given, and refuses
+  downgrades. It first needs the whole CI, UI tests included, green on
+  `main`. It then checks the release:
+  - the checksum in the library's `Package.swift`, the release's `.sha256`
+    and the downloaded zip agree;
+  - the zip's build provenance attestation was signed by the library's
+    Release workflow on its `main`, from the release's tag commit.
+
+  It updates `project.yml`, `docs/DEPENDENCIES.md` and this file, and runs
+  the whole CI again with only the pin changed. If CI is green, the pull
+  request is merged. If it is red, it stays a draft. It always waits for a
+  person when the library's packaging, build or release pipeline changed,
+  or when its accepted advisories did. On the library's side, new rPGP
+  releases are now picked up every week (once they are 7 days old),
+  tested, released and attested by its own workflows.
 - **The app is now DreaMail.** The fork formerly called MishMail has a new
   name and new identifiers: `/Applications/DreaMail.app`, bundle identifier
   `io.github.bateman.DreaMail` (Debug: `io.github.bateman.DreaMail.debug`),
