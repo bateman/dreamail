@@ -430,11 +430,11 @@ struct AccentSelectionBackground: View {
     /// Width of the focus bar at the selected row's leading edge.
     static let focusBarWidth: CGFloat = 3
     /// Gap between the sidebar's edges and the painted capsule on each side.
-    /// A row background spans the whole row, wider than AppKit's own capsule;
-    /// SwiftUI does not expose the system's inset, so this is the value
-    /// measured from the system capsule (default accent, focused list) by
-    /// `SidebarSelectionGeometryUITests`, which fails when the painted and
-    /// the system shapes differ. The one place to change it.
+    /// A row background spans the whole row, wider than AppKit's own capsule,
+    /// and SwiftUI does not expose the system's inset. Provisional value:
+    /// `SidebarSelectionGeometryUITests` compares the painted shape with
+    /// AppKit's own (default accent, focused list) and prints both; replace
+    /// it with the measured number. The one place to change it.
     static let sidebarHorizontalInset: CGFloat = 10
 
     /// Sidebar rows (main window and Settings): nil unless the app paints

@@ -11,13 +11,15 @@ import XCTest
 /// 2. a real gap (at least 4 pt) of sidebar background lies between each
 ///    end of the run and the sidebar's edge, so the capsule never touches
 ///    the thread list;
-/// 3. the glyph's x does not change between states.
-/// With the default accent (the first state is then AppKit's capsule, the
+/// 3. the capsule's top and bottom edges, and its left end 2 pt below the
+///    top (the corner), are the same in the three states too.
+/// Each capture waits for the focus bar to be there or gone, so a state
+/// that has not redrawn yet is never compared with itself. With the default accent (the first state is then AppKit's capsule, the
 /// others the painted one) and a custom one.
 final class SidebarSelectionGeometryUITests: XCTestCase {
 
     private static let minimumInset = 4.0
-    private static let tolerance = 1.0
+    private static let tolerance = 0.5
 
     func testCapsuleGeometryIsStableWithTheDefaultAccent() throws {
         try check(accent: nil)
@@ -27,28 +29,42 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         try check(accent: "#d93025")
     }
 
+    func testCapsuleGeometryIsStableInTheCompactSidebar() throws {
+        try check(accent: nil, density: "compact")
+    }
+
     // MARK: - Scenario
 
     private struct Measure {
-        /// Window-relative x, in points.
+        /// Window-relative, in points: the accent run on the row's mid-line.
         let left: Double
         let right: Double
-        let glyph: Double
+        /// The accent run on a vertical line through the capsule's middle.
+        let top: Double
+        let bottom: Double
+        /// Left end of the run 2 pt below the top: the corner's size.
+        let cornerLeft: Double
+        let cornerRight: Double
+        /// A near-white pixel 3-6 pt inside the left end: the focus bar.
+        let bar: Bool
         let sidebarMin: Double
         let sidebarMax: Double
         var description: String {
-            String(format: "capsule x %.1f-%.1f, glyph x %.1f, sidebar x %.1f-%.1f",
-                   left, right, glyph, sidebarMin, sidebarMax)
+            String(format: "capsule x %.1f-%.1f (inset %.1f/%.1f), y %.1f-%.1f (height %.1f), "
+                   + "2 pt below the top x %.1f-%.1f, bar %@, sidebar x %.1f-%.1f",
+                   left, right, left - sidebarMin, sidebarMax - right, top, bottom, bottom - top,
+                   cornerLeft, cornerRight, bar ? "yes" : "no", sidebarMin, sidebarMax)
         }
     }
 
-    private func check(accent: String?) throws {
+    private func check(accent: String?, density: String = "comfortable") throws {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
         app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", accent ?? "",
+                                "-sidebarDensity", density,
                                 "-NSQuitAlwaysKeepsWindows", "NO",
                                 "-threadOpenStyle", "readingPane"]
         app.terminate()
@@ -65,20 +81,21 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
             .matching(identifier: "sidebar.inbox").firstMatch
         XCTAssertTrue(inbox.waitForExistence(timeout: 5))
         inbox.click()
-        let focused = try measure(inbox: inbox, window: main, "focused list")
+        let focused = try measure(inbox: inbox, window: main, bar: true, "focused list")
 
         let thread = main.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t3").firstMatch
         XCTAssertTrue(thread.waitForExistence(timeout: 5))
         thread.click()
-        let unfocused = try measure(inbox: inbox, window: main, "focus in the thread list")
+        let unfocused = try measure(inbox: inbox, window: main, bar: false,
+                                    "focus in the thread list")
 
         let about = app.menuItems["About DreaMail"]
         XCTAssertTrue(about.waitForExistence(timeout: 5))
         about.click()
         XCTAssertTrue(app.dialogs.firstMatch.waitForExistence(timeout: 5),
                       "the About panel should open")
-        let inactive = try measure(inbox: inbox, window: main, "inactive window")
+        let inactive = try measure(inbox: inbox, window: main, bar: false, "inactive window")
 
         for (name, m) in [("focused list", focused), ("focus in the thread list", unfocused),
                           ("inactive window", inactive)] {
@@ -87,29 +104,35 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(m.sidebarMax - m.right, Self.minimumInset,
                                         "\(name): gap to the trailing edge, \(m.description)")
         }
+        let fields: [(String, KeyPath<Measure, Double>)] = [
+            ("capsule start", \.left), ("capsule end", \.right),
+            ("capsule top", \.top), ("capsule bottom", \.bottom),
+            ("corner, left", \.cornerLeft), ("corner, right", \.cornerRight)]
         for (name, m) in [("focus in the thread list", unfocused), ("inactive window", inactive)] {
-            XCTAssertEqual(m.left, focused.left, accuracy: Self.tolerance,
-                           "\(name): capsule start moved, \(m.description) vs \(focused.description)")
-            XCTAssertEqual(m.right, focused.right, accuracy: Self.tolerance,
-                           "\(name): capsule end moved, \(m.description) vs \(focused.description)")
-            XCTAssertEqual(m.glyph, focused.glyph, accuracy: Self.tolerance,
-                           "\(name): glyph moved, \(m.description) vs \(focused.description)")
+            for (field, path) in fields {
+                XCTAssertEqual(m[keyPath: path], focused[keyPath: path], accuracy: Self.tolerance,
+                               "\(name): \(field) moved, \(m.description) vs \(focused.description)")
+            }
         }
     }
 
     // MARK: - Pixels
 
-    /// Captures until the Inbox row shows an accent run (the selection
-    /// redraws after a click), then measures it.
-    private func measure(inbox: XCUIElement, window: XCUIElement, _ context: String) throws -> Measure {
-        var last = "no capture"
-        let deadline = Date().addingTimeInterval(5)
+    /// Captures until the Inbox row shows an accent run and the focus bar is
+    /// there (or gone) as the state requires: the selection redraws after a
+    /// click, and a capture taken before would compare a state with itself.
+    private func measure(inbox: XCUIElement, window: XCUIElement, bar: Bool,
+                         _ context: String) throws -> Measure {
+        var last = "no accent pixels on the row's mid-line"
+        let deadline = Date().addingTimeInterval(8)
         repeat {
             if let m = try capture(inbox: inbox, window: window) {
-                print("SidebarSelectionGeometry: \(context): \(m.description)")
-                return m
+                if m.bar == bar {
+                    print("SidebarSelectionGeometry: \(context): \(m.description)")
+                    return m
+                }
+                last = "focus bar \(m.bar ? "still there" : "missing"): \(m.description)"
             }
-            last = "no accent pixels on the row's mid-line"
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         } while Date() < deadline
         XCTFail("\(context): \(last)")
@@ -131,29 +154,47 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         else { return nil }
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        let y = min(height - 1, max(0, Int(((inbox.frame.midY - frame.minY) * scale).rounded())))
-        let from = max(0, Int(((sidebar.minX - frame.minX) * scale).rounded()))
-        let to = min(width - 1, Int(((sidebar.maxX - frame.minX) * scale).rounded()))
-        guard from < to else { return nil }
-        func pixel(_ x: Int) -> (Int, Int, Int) {
+        func pixel(_ x: Int, _ y: Int) -> (Int, Int, Int) {
             let i = (y * width + x) * 4
             return (Int(data[i]), Int(data[i + 1]), Int(data[i + 2]))
         }
         // Accent: clearly saturated; the sidebar's background and the
         // white ink are not.
-        func isAccent(_ x: Int) -> Bool {
-            let p = pixel(x)
+        func isAccent(_ x: Int, _ y: Int) -> Bool {
+            let p = pixel(x, y)
             return max(p.0, p.1, p.2) - min(p.0, p.1, p.2) > 60
         }
-        guard let first = (from...to).first(where: isAccent),
-              let last = (from...to).last(where: isAccent) else { return nil }
-        // The glyph: the first near-white pixel inside the run.
-        let glyph = ((first + 2)..<max(first + 2, last - 2)).first { x in
-            let p = pixel(x)
+        func isWhite(_ x: Int, _ y: Int) -> Bool {
+            let p = pixel(x, y)
             return min(p.0, p.1, p.2) > 200
-        } ?? first
+        }
+        let midY = min(height - 1, max(0, Int(((inbox.frame.midY - frame.minY) * scale).rounded())))
+        let from = max(0, Int(((sidebar.minX - frame.minX) * scale).rounded()))
+        let to = min(width - 1, Int(((sidebar.maxX - frame.minX) * scale).rounded()))
+        guard from < to,
+              let first = (from...to).first(where: { isAccent($0, midY) }),
+              let last = (from...to).last(where: { isAccent($0, midY) })
+        else { return nil }
+
+        // Vertical edges, on a line through the capsule's middle.
+        let midX = (first + last) / 2
+        let rowFrom = max(0, midY - Int(60 * scale)), rowTo = min(height - 1, midY + Int(60 * scale))
+        guard let top = (rowFrom...rowTo).first(where: { isAccent(midX, $0) }),
+              let bottom = (rowFrom...rowTo).last(where: { isAccent(midX, $0) })
+        else { return nil }
+        // The corner: the run 2 pt below the top edge.
+        let cornerY = min(bottom, top + Int((2 * scale).rounded()))
+        guard let cornerFirst = (from...to).first(where: { isAccent($0, cornerY) }),
+              let cornerLast = (from...to).last(where: { isAccent($0, cornerY) })
+        else { return nil }
+        // The focus bar: near-white pixels 3-6 pt inside the left end.
+        let bar = (Int((3 * scale).rounded())...Int((6 * scale).rounded())).contains {
+            isWhite(first + $0, midY)
+        }
         return Measure(left: Double(first) / scale, right: Double(last + 1) / scale,
-                       glyph: Double(glyph) / scale,
+                       top: Double(top) / scale, bottom: Double(bottom + 1) / scale,
+                       cornerLeft: Double(cornerFirst) / scale,
+                       cornerRight: Double(cornerLast + 1) / scale, bar: bar,
                        sidebarMin: sidebar.minX - frame.minX, sidebarMax: sidebar.maxX - frame.minX)
     }
 }

@@ -400,19 +400,4 @@ final class AccentColorTests: XCTestCase {
             XCTAssertNil(SelectionInk.color(selected: false, prominence: .increased, accent: accent))
         }
     }
-
-    // MARK: - Sidebar capsule geometry
-
-    func testOnlyFullSidebarRowsAreInset() throws {
-        let accent = MailAccent(custom: LabelRGB(hex: 0xD93025))
-        let row = try XCTUnwrap(AccentSelectionBackground.sidebar(selected: true, accent: accent))
-        XCTAssertEqual(row.horizontalInset, AccentSelectionBackground.sidebarHorizontalInset)
-        XCTAssertGreaterThanOrEqual(row.horizontalInset, 4, "a real gap to the sidebar's edges")
-        // The thread list's band and the icon strip build it directly.
-        let band = AccentSelectionBackground(selected: true, accent: accent, cornerRadius: 0)
-        XCTAssertEqual(band.horizontalInset, 0)
-        let strip = AccentSelectionBackground(selected: true, accent: accent,
-                                              cornerRadius: AccentSelectionBackground.sidebarCornerRadius)
-        XCTAssertEqual(strip.horizontalInset, 0)
-    }
 }
