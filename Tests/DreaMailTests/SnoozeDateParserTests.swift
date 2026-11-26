@@ -2,10 +2,11 @@ import XCTest
 
 final class SnoozeDateParserTests: XCTestCase {
     /// Explicit English calendar: the tests must not depend on the Mac's
-    /// language. Time zone stays the machine's (fixtures are built with it).
+    /// language or time zone.
     private let cal: Calendar = {
         var c = Calendar(identifier: .gregorian)
         c.locale = Locale(identifier: "en_US")
+        c.timeZone = TimeZone(identifier: "UTC")!
         return c
     }()
     private var italian: Calendar {
@@ -293,6 +294,10 @@ final class SnoozeDateParserTests: XCTestCase {
 
     // MARK: - Italian locale: English names always work, local ones too
 
+    private func firstLabel(_ query: String, calendar: Calendar) -> String? {
+        SnoozeDateParser.suggestions(for: query, now: now, calendar: calendar).first?.label.lowercased()
+    }
+
     /// On an Italian Mac the English abbreviations must still match, and the
     /// date must be the same as with an English calendar.
     func testItalianLocaleStillAcceptsEnglishNames() throws {
@@ -310,46 +315,100 @@ final class SnoozeDateParserTests: XCTestCase {
         XCTAssertTrue(s.contains(where: { $0.hasPrefix("september") }), s.joined(separator: ", "))
     }
 
-    func testItalianLocaleAcceptsItalianNames() throws {
-        for (q, expected) in [("ven", [7, 10]), ("sab", [7, 11]), ("set", [9, 1])] {
+    /// Italian names match, but the suggestion is titled in English (the
+    /// interface is English).
+    func testItalianLocaleAcceptsItalianNamesTitledInEnglish() throws {
+        for (q, expected, title) in [("ven", [7, 10], "friday"), ("sab", [7, 11], "saturday"),
+                                     ("set", [9, 1], "september")] {
             let out = SnoozeDateParser.suggestions(for: q, now: now, calendar: italian)
             XCTAssertFalse(out.isEmpty, q)
             let c = try comps(out.first?.date)
             XCTAssertEqual([c.month, c.day], expected, q)
+            XCTAssertTrue(out.first?.label.lowercased().hasPrefix(title) ?? false, q)
         }
         // Italian names do nothing on an English calendar.
         XCTAssertTrue(labels("ven", calendar: cal).isEmpty)
         // Day-of-month form and a trailing hour work with Italian names too.
-        let c = try comps(SnoozeDateParser.suggestions(for: "set 12", now: now, calendar: italian).first?.date)
+        let set12 = SnoozeDateParser.suggestions(for: "set 12", now: now, calendar: italian).first
+        let c = try comps(set12?.date)
         XCTAssertEqual([c.month, c.day], [9, 12])
+        XCTAssertTrue(set12?.label.lowercased().hasPrefix("september 12") ?? false)
         let v = try comps(SnoozeDateParser.suggestions(for: "ven 15", now: now, calendar: italian).first?.date)
         XCTAssertEqual([v.day, v.hour], [10, 15])
+        // A numeric date has no language: same English title as before this change on English Macs.
+        XCTAssertTrue(firstLabel("8/12", calendar: italian)?.hasPrefix("august 12") ?? false)
     }
 
-    /// An input valid in both languages offers both, English first, and never
-    /// the same date twice.
-    func testItalianLocaleBothMatchesEnglishFirstNoDuplicates() throws {
-        // "m": English Monday, then Italian martedì and mercoledì.
+    /// Typed without the accent still matches.
+    func testItalianLocaleIgnoresAccents() throws {
+        let ven = try comps(SnoozeDateParser.suggestions(for: "venerdi", now: now, calendar: italian).first?.date)
+        XCTAssertEqual([ven.month, ven.day], [7, 10])
+        let ven15 = try comps(SnoozeDateParser.suggestions(for: "venerdi 15", now: now, calendar: italian).first?.date)
+        XCTAssertEqual([ven15.day, ven15.hour], [10, 15])
+        let lun = try comps(SnoozeDateParser.suggestions(for: "lunedi", now: now, calendar: italian).first?.date)
+        XCTAssertEqual([lun.month, lun.day], [7, 13])
+    }
+
+    /// An input valid in both languages: English first, one row per day.
+    func testItalianLocaleBothMatchesNoDuplicates() throws {
+        // "m": Monday (English), then Tuesday and Wednesday from martedì / mercoledì.
         let names = labels("m", calendar: italian)
         let joined = names.joined(separator: ", ")
         let monday = try XCTUnwrap(names.firstIndex(where: { $0.hasPrefix("monday") }), joined)
-        let martedi = try XCTUnwrap(names.firstIndex(where: { $0.hasPrefix("martedì") }), joined)
-        let mercoledi = try XCTUnwrap(names.firstIndex(where: { $0.hasPrefix("mercoledì") }), joined)
-        XCTAssertLessThan(monday, martedi, joined)
-        XCTAssertLessThan(martedi, mercoledi, joined)
-        // "mar": March and marzo are the same date (one suggestion, English);
-        // martedì is a different day and is offered as well.
+        let tuesday = try XCTUnwrap(names.firstIndex(where: { $0.hasPrefix("tuesday") }), joined)
+        let wednesday = try XCTUnwrap(names.firstIndex(where: { $0.hasPrefix("wednesday") }), joined)
+        XCTAssertLessThan(monday, tuesday, joined)
+        XCTAssertLessThan(tuesday, wednesday, joined)
+        // "mar": March and marzo are one row; martedì adds Tuesday.
         let out = SnoozeDateParser.suggestions(for: "mar", now: now, calendar: italian)
         let mar = out.map { $0.label.lowercased() }
-        XCTAssertEqual(mar.filter { $0.hasPrefix("march") || $0.hasPrefix("marzo") }.count, 1, mar.joined(separator: ", "))
-        XCTAssertTrue(mar.contains(where: { $0.hasPrefix("march") }), mar.joined(separator: ", "))
-        XCTAssertTrue(mar.contains(where: { $0.hasPrefix("martedì") }), mar.joined(separator: ", "))
+        XCTAssertEqual(mar.filter { $0.hasPrefix("march") }.count, 1, mar.joined(separator: ", "))
+        XCTAssertTrue(mar.contains(where: { $0.hasPrefix("tuesday") }), mar.joined(separator: ", "))
         XCTAssertEqual(out.count, Set(out.map(\.date)).count)
         XCTAssertEqual(out.count, Set(out.map(\.label)).count)
-        // "nov" is November and novembre: one suggestion, not two.
+        // "nov" is November and novembre: one suggestion.
         let nov = SnoozeDateParser.suggestions(for: "nov", now: now, calendar: italian)
         XCTAssertEqual(nov.count, 1)
         XCTAssertEqual(nov.first?.label.lowercased().hasPrefix("november"), true)
+    }
+
+    /// "mar" starts both martedì and marzo: "mar 5" is March 5 first, and
+    /// the weekday + hour reading follows. Not a hijack by the hour rule.
+    func testItalianMarFiveIsMarchFifthFirst() throws {
+        for (q, day) in [("mar 5", 5), ("mar 12", 12)] {
+            let out = SnoozeDateParser.suggestions(for: q, now: now, calendar: italian)
+            let c = try comps(out.first?.date)
+            XCTAssertEqual([c.year, c.month, c.day, c.hour], [2027, 3, day, 8], q)
+            XCTAssertTrue(out.first?.label.lowercased().hasPrefix("march \(day)") ?? false, q)
+            let tuesday = try XCTUnwrap(out.first(where: { $0.label.lowercased().hasPrefix("tuesday") }), q)
+            XCTAssertEqual(try comps(tuesday.date).hour, day)
+        }
+        // English calendar: unchanged.
+        let c = try comps(first("mar 5"))
+        XCTAssertEqual([c.month, c.day], [3, 5])
+        // A weekday that is not a month name still takes the hour, in both.
+        for calendar in [cal, italian] {
+            let out = SnoozeDateParser.suggestions(for: "fri 20", now: now, calendar: calendar)
+            let f = try comps(out.first?.date)
+            XCTAssertEqual([f.day, f.hour], [10, 20])
+        }
+    }
+
+    /// With a non-Gregorian calendar the English month numbers do not apply:
+    /// no English month suggestion, no crash, local month names still work.
+    func testNonGregorianCalendarUsesLocalMonthNamesOnly() throws {
+        var hebrew = Calendar(identifier: .hebrew)
+        hebrew.locale = Locale(identifier: "en_US")
+        hebrew.timeZone = TimeZone(identifier: "UTC")!
+        XCTAssertFalse(labels("sep 5", calendar: hebrew).contains(where: { $0.contains("september") }))
+        XCTAssertFalse(labels("september", calendar: hebrew).contains(where: { $0.contains("september") }))
+        var accepted = 0
+        for name in hebrew.monthSymbols where name.wholeMatch(of: /\p{L}{3,}/) != nil {
+            let out = labels("\(name.lowercased()) 5", calendar: hebrew)
+            XCTAssertTrue(out.contains(where: { $0.hasPrefix("\(name.lowercased()) 5") }), "\(name): \(out)")
+            accepted += 1
+        }
+        XCTAssertGreaterThanOrEqual(accepted, 10)
     }
 
     // MARK: - Day-part words
