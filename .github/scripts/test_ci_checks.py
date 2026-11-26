@@ -30,6 +30,7 @@ check_workflows = load("check-workflows")
 check_test_skips = load("check-test-skips")
 check_package_pins = load("check-package-pins")
 needs_build = load("needs-build")
+integrate_openpgp = load("integrate-openpgp")
 
 
 class TempFiles(unittest.TestCase):
@@ -407,6 +408,70 @@ class NeedsBuildTests(TempFiles):
                           for m in pattern.finditer(text)]
         self.assertGreater(scanned, 0)
         self.assertEqual(offenders, [], "a test reads a path that needs-build.py skips")
+
+
+class IntegrateOpenPGPTests(unittest.TestCase):
+    """The edits of integrate-openpgp.py, on the repository's own files."""
+
+    COMMIT = "a" * 40
+    CHECKSUM = "b" * 64
+
+    def setUp(self):
+        self.project = (REPO / "project.yml").read_text()
+        self.dependencies = (REPO / "docs" / "DEPENDENCIES.md").read_text()
+        self.changelog = (REPO / "CHANGELOG.md").read_text()
+
+    def new(self, **overrides):
+        values = {"version": "9.8.7", "commit": self.COMMIT, "checksum": self.CHECKSUM,
+                  "date": "1 January 2030", "pgp": "1.2.3", "licence": "MIT OR Apache-2.0",
+                  "crates": 150, "advisories": []}
+        return {**values, **overrides}
+
+    def old(self):
+        return {"version": integrate_openpgp.current_release(self.dependencies),
+                "commit": integrate_openpgp.current_pin(self.project), "checksum": "c" * 64}
+
+    def test_project_pin_and_comment(self):
+        edited = integrate_openpgp.edit_project(self.project, "9.8.7", self.COMMIT)
+        self.assertEqual(integrate_openpgp.current_pin(edited), self.COMMIT)
+        self.assertIn("Release v9.8.7, pinned", edited)
+        # GRDB's pin is untouched.
+        grdb = re.search(r"^  GRDB:\n    url: \S+\n    revision: (\S+)$", self.project, re.M).group(0)
+        self.assertIn(grdb, edited)
+
+    def test_dependencies_only_the_openpgp_section(self):
+        edited = integrate_openpgp.edit_dependencies(self.dependencies, self.old(), self.new())
+        start, end = integrate_openpgp.openpgp_section(self.dependencies)
+        self.assertEqual(edited[:start], self.dependencies[:start])
+        self.assertTrue(edited.endswith(self.dependencies[end:]))
+        section = integrate_openpgp.section(edited)
+        for text in ("| Release | `v9.8.7` |", f"`{self.COMMIT}`", f"`{self.CHECKSUM}`",
+                     "| Recorded | 1 January 2030 |", "(`pgp` =1.2.3, MIT OR Apache-2.0) and 150 crates",
+                     "from the `v9.8.7` GitHub release", "Recorded for `v9.8.7`"):
+            self.assertIn(text, section)
+        self.assertEqual(integrate_openpgp.current_release(edited), "9.8.7")
+        self.assertTrue(all(len(line) <= 76 for line in section.split("Recorded for `v9.8.7`")[1]
+                            .split("\n\n")[0].splitlines()))
+
+    def test_advisories_read_from_the_table(self):
+        self.assertEqual(integrate_openpgp.table_advisories(self.dependencies),
+                         ["RUSTSEC-2023-0071", "RUSTSEC-2026-0387"])
+
+    def test_changelog_entry_first_under_unreleased(self):
+        edited = integrate_openpgp.edit_changelog(self.changelog, "9.8.7", "1.2.3")
+        after = edited.split("## [Unreleased]\n\n", 1)[1]
+        self.assertTrue(after.startswith("- The OpenPGP library moves to v9.8.7"))
+
+    def test_missing_row_fails(self):
+        with self.assertRaises(integrate_openpgp.Failure):
+            integrate_openpgp.edit_dependencies(
+                self.dependencies.replace("| Recorded |", "| Noted |"), self.old(), self.new())
+
+    def test_package_fields(self):
+        manifest = 'let version = "1.2.3"\nlet checksum = "' + self.CHECKSUM + '"\n'
+        self.assertEqual(integrate_openpgp.package_fields(manifest), ("1.2.3", self.CHECKSUM))
+        with self.assertRaises(integrate_openpgp.Failure):
+            integrate_openpgp.package_fields("let version = v\n")
 
 
 if __name__ == "__main__":

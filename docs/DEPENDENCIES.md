@@ -51,6 +51,18 @@ versions are those of `v0.1.1`. Earlier pins: `v0.1.1` (decryption of GnuPG
 checksum `441e553914f89dc6565fddc1abd5bf643ec172d5115733914959400e3f78dd3b`;
 `v0.1.0` was commit `adad8a18d07c0ec10695e43bb700479d0d971dfa`.
 
+To move to a new release, run the **Integrate dreamail-openpgp** workflow
+(Actions, manual only; empty version: the newest release). It refuses to
+start unless CI is green on `main`, and
+`.github/scripts/integrate-openpgp.py` checks that `Package.swift` at the
+pinned commit, the release's `.sha256` asset and the downloaded zip agree,
+then updates `project.yml`, this table and `CHANGELOG.md`. The whole CI
+workflow, UI shards included, then runs on branch
+`deps/dreamail-openpgp-v<version>` with only that change. Green: the pull
+request is merged (unless the run's `merge` input is off). Red: it stays a
+draft with the failed run. A change in the accepted advisories always waits
+for a person, because DEC-051 must be updated with it.
+
 ## What enforces what
 
 1. **The revision pin fixes the manifest.** `revision:` names one commit, so

@@ -1,0 +1,159 @@
+name: Integrate dreamail-openpgp
+
+# Manual only: integrates a dreamail-openpgp release (the newest, or the
+# version given) and checks that it introduces no regression.
+#
+#   1. CI must be green on main's head, so that a failure on the branch can
+#      only come from the new pin.
+#   2. .github/scripts/integrate-openpgp.py picks the release, checks that
+#      Package.swift, the release's .sha256 asset and the downloaded zip
+#      agree, and edits project.yml, docs/DEPENDENCIES.md and CHANGELOG.md.
+#   3. Branch deps/dreamail-openpgp-v<version> is pushed and the whole CI
+#      workflow runs on it as a manual run: workflow hardening, package
+#      pins, the build with warnings as errors, the unit tests (the
+#      linked-library tests included), the test-skip check and both UI
+#      shards.
+#   4. CI green: the pull request is opened and squash-merged, then CI runs
+#      on main (a merge made with GITHUB_TOKEN starts no workflow). It stays
+#      open instead when `merge` is off or the accepted advisories changed
+#      (DEC-051 needs a person). CI red: a draft pull request with the
+#      failed run, and this job fails.
+#
+# Pull requests opened with GITHUB_TOKEN start no CI either, hence the
+# manual CI runs. Needs "Allow GitHub Actions to create and approve pull
+# requests" (Settings, Actions, General).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "dreamail-openpgp release, e.g. 0.2.1 (empty: the newest)"
+        required: false
+        default: ""
+      merge:
+        description: "Merge the pull request when CI passes"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integrate-openpgp
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    name: Integrate and check for regressions
+    runs-on: ubuntu-24.04
+    # CI with the UI shards takes about 25 minutes; twice with main's run.
+    timeout-minutes: 90
+    permissions:
+      contents: write       # push the branch, merge
+      pull-requests: write  # open and merge the pull request
+      actions: write        # start CI on the branch and on main
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BASE: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Check that CI is green on main
+        run: |
+          sha=$(git rev-parse HEAD)
+          conclusion=$(gh run list --workflow ci.yml --commit "$sha" --limit 20 \
+            --json status,conclusion \
+            --jq '[.[] | select(.status == "completed")][0].conclusion // empty')
+          if [ "$conclusion" != "success" ]; then
+            echo "CI on $BASE ($sha) is '${conclusion:-not run}': a failure on the branch could not be told from a regression. Fix $BASE first, or run CI on it." >&2
+            exit 1
+          fi
+          echo "CI is green on $BASE ($sha)."
+
+      - name: Prepare the integration
+        id: integrate
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then
+            python3 .github/scripts/integrate-openpgp.py "$VERSION"
+          else
+            python3 .github/scripts/integrate-openpgp.py
+          fi
+
+      - name: Push the branch and run CI on it
+        id: ci
+        if: steps.integrate.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.integrate.outputs.version }}
+        run: |
+          branch="deps/dreamail-openpgp-v$VERSION"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code "$remote" "refs/heads/$branch" > /dev/null; then
+            echo "Branch $branch already exists: a pull request for v$VERSION is open or was not cleaned up." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -am "Integrate dreamail-openpgp v$VERSION" \
+            -m "Made by the Integrate dreamail-openpgp workflow (.github/scripts/integrate-openpgp.py)."
+          git push -q "$remote" "HEAD:refs/heads/$branch"
+          sha=$(git rev-parse HEAD)
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+          start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run ci.yml --ref "$branch"
+          run=""
+          for _ in $(seq 1 36); do
+            sleep 5
+            run=$(gh run list --workflow ci.yml --event workflow_dispatch --commit "$sha" \
+              --limit 5 --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$start\")][0].databaseId // empty")
+            if [ -n "$run" ]; then
+              break
+            fi
+          done
+          if [ -z "$run" ]; then
+            echo "Could not find the CI run on $branch." >&2
+            exit 1
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "CI on $branch: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run"
+          if gh run watch "$run" --exit-status --interval 30 > /dev/null; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the pull request, merge if CI passed
+        if: steps.ci.outputs.branch != ''
+        env:
+          VERSION: ${{ steps.integrate.outputs.version }}
+          BRANCH: ${{ steps.ci.outputs.branch }}
+          RUN: ${{ steps.ci.outputs.run }}
+          PASSED: ${{ steps.ci.outputs.passed }}
+          REVIEW: ${{ steps.integrate.outputs.review }}
+          MERGE: ${{ inputs.merge }}
+        run: |
+          body=build/openpgp-integration.md
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN"
+          title="Integrate dreamail-openpgp v$VERSION"
+          if [ "$PASSED" != "true" ]; then
+            printf '\n**CI failed on this branch** (%s): the release introduces a regression, or the run failed for another reason. Not merged.\n' "$run_url" >> "$body"
+            gh pr create --base "$BASE" --head "$BRANCH" --draft --title "$title" --body-file "$body"
+            echo "CI failed on $BRANCH: draft pull request opened, nothing merged." | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit 1
+          fi
+          printf '\nCI passed on this branch: %s\n\nOpened by the Integrate dreamail-openpgp workflow (%s/%s/actions/runs/%s).\n' \
+            "$run_url" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$body"
+          gh pr create --base "$BASE" --head "$BRANCH" --title "$title" --body-file "$body"
+          if [ "$REVIEW" = "true" ] || [ "$MERGE" != "true" ]; then
+            echo "CI passed; pull request left open (review: $REVIEW, merge: $MERGE)." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh pr merge "$BRANCH" --squash --delete-branch
+          gh workflow run ci.yml --ref "$BASE"
+          echo "CI passed; v$VERSION merged into $BASE, and CI started there." | tee -a "$GITHUB_STEP_SUMMARY"
