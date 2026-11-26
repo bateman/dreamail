@@ -165,6 +165,17 @@ final class SidebarLabelMenuUITests: XCTestCase {
         choose.click()
         let red = element("labelColor.mac.#EB5757", in: app)
         XCTAssertTrue(red.waitForExistence(timeout: 5), "the organizer's palette opens")
+        // The sheet hugs the palette: no empty half, Done close to its edge.
+        let palette = element("labelColor.palette", in: app)
+        let sheet = app.sheets.firstMatch
+        let done = element("labelColor.done", in: app)
+        XCTAssertTrue(palette.exists && sheet.exists && done.exists, "palette, sheet and Done exist")
+        // The palette's frame excludes its own padding: add it back on both sides.
+        let paletteWidth = palette.frame.width + 2 * (palette.frame.minX - sheet.frame.minX)
+        XCTAssertEqual(sheet.frame.width, paletteWidth, accuracy: 2,
+                       "the sheet \(sheet.frame) is as wide as the palette \(palette.frame) with its padding")
+        XCTAssertLessThanOrEqual(done.frame.maxX, palette.frame.maxX + 16,
+                                 "Done \(done.frame) is not far beyond the palette \(palette.frame)")
         red.click()
         XCTAssertTrue(waitForAbsence(red), "picking a color closes the palette")
 
