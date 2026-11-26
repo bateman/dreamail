@@ -67,8 +67,9 @@ this table and `CHANGELOG.md`, and runs the whole CI again on branch
 pull request is merged, unless the run's `merge` input is off. Red: it stays
 a draft with the failed run. It always waits for a person when
 `Package.swift` changed beyond its version and checksum, when the library's
-build, check or release pipeline changed (`.github`, `scripts`,
-`rust/deny.toml`, the toolchain, `rust/.cargo`), or when the accepted advisories differ from this
+build, check or release pipeline was touched by any commit between the
+two pins (`.github`, `scripts`, `.cargo`, `rust/.cargo`, `rust/deny.toml`,
+the toolchain files), or when the accepted advisories differ from this
 table (DEC-051 must be updated with them).
 
 ## What enforces what

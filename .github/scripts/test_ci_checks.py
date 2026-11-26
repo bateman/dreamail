@@ -494,6 +494,11 @@ class IntegrateOpenPGPTests(unittest.TestCase):
             with self.assertRaisesRegex(integrate_openpgp.Failure, "pull request merged"):
                 integrate_openpgp.pinning_commit(repo, "2.0.0", "HEAD")
 
+    def test_pipeline_paths(self):
+        for path in (".github", "scripts", ".cargo", "rust/.cargo", "rust/deny.toml",
+                     "rust/rust-toolchain.toml", "rust/rust-toolchain"):
+            self.assertIn(path, integrate_openpgp.PIPELINE)
+
     def test_manifest_shape_ignores_only_version_and_checksum(self):
         a = 'let version = "1.0.0"\nlet checksum = "' + self.CHECKSUM + '"\nproducts\n'
         b = 'let version = "1.0.1"\nlet checksum = "' + "d" * 64 + '"\nproducts\n'

@@ -16,7 +16,7 @@ release (docs/DEPENDENCIES.md, "OpenPGP library").
   5. Saves the zip to build/openpgp/ for the workflow, which verifies its
      build provenance attestation (gh attestation verify) before pushing.
   6. Writes the pull request body to build/openpgp-integration.md and, under
-     GitHub Actions, the outputs (changed, version, commit, review).
+     GitHub Actions, the outputs (changed, version, commit, built, review).
 
 `review=true` means a change needs a person, and the workflow does not
 merge: Package.swift changed beyond its version and checksum, the library's
@@ -140,7 +140,8 @@ def deny_advisories(text: str) -> list[str]:
 
 # Upstream paths whose change waits for a person: what builds, checks and
 # signs the binary. The automated rPGP upgrades touch none of them.
-PIPELINE = [".github", "scripts", "rust/deny.toml", "rust/rust-toolchain.toml", "rust/.cargo"]
+PIPELINE = [".github", "scripts", ".cargo", "rust/.cargo", "rust/deny.toml",
+            "rust/rust-toolchain.toml", "rust/rust-toolchain"]
 
 
 def review_reasons(manifest: str, old_manifest: str, pipeline: list[str],
@@ -320,7 +321,10 @@ def main(argv: list[str]) -> int:
         _, checksum = package_fields(manifest)
         old_checksum = package_fields(old_manifest)[1]
         facts = library_facts(clone, commit)
-        pipeline = git("diff", "--name-only", pinned, commit, "--", *PIPELINE, cwd=clone).split()
+        # Every commit between the pins, not the net diff: a change made for
+        # the release build and reverted before the new pin still counts.
+        pipeline = sorted(set(git("log", "--format=", "--name-only", f"{pinned}..{commit}",
+                                  "--", *PIPELINE, cwd=clone).split()))
 
     base = f"{UPSTREAM}/releases/download/v{version}/{ASSET}"
     asset_sum = download(base + ".sha256").decode().split()[0]
