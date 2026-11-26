@@ -77,6 +77,47 @@ final class LabelSyncTests: XCTestCase {
     /// v69: a stored order that only repeats the names in code-point order is
     /// put back to unsorted, per sibling group; a hand-made order stays;
     /// running it again changes nothing.
+    /// Rows as the migrations really leave them: written before v10 (no
+    /// order, no color), system and category rows next to user ones, every
+    /// optional column NULL. Reading them as whole `LabelRow`s (as
+    /// `applyLabels` does since #100) must not throw, or every sync pass
+    /// would stop before fetching mail.
+    func testApplyLabelsReadsRowsWrittenBeforeLaterMigrations() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q, upTo: "v1")
+        try q.write { db in
+            try db.execute(sql: "INSERT INTO account (id, displayName) VALUES (?, 'P')",
+                           arguments: [account])
+            for (id, type) in [("INBOX", "system"), ("UNREAD", "system"),
+                               ("CATEGORY_UPDATES", "system"), ("Label_1", "user"),
+                               ("Label_2", "user")] {
+                try db.execute(sql: """
+                    INSERT INTO label (id, accountId, gmailLabelId, name, type)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, arguments: ["\(account):\(id)", account, id, id, type])
+            }
+        }
+        try AppDatabase.migrator.migrate(q)
+        let suite = "LabelSyncTests.\(UUID().uuidString)"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+
+        // Label_2 was deleted in Gmail.
+        try q.write { db in
+            try SyncEngine.applyLabels(db, accountId: account, labels: [
+                label("INBOX", "INBOX", type: "system"),
+                label("UNREAD", "UNREAD", type: "system"),
+                label("CATEGORY_UPDATES", "CATEGORY_UPDATES", type: "system"),
+                label("Label_1", "Label_1"),
+            ], defaults: d)
+        }
+        XCTAssertEqual(try names(q, account: account),
+                       ["INBOX", "UNREAD", "CATEGORY_UPDATES", "Label_1"])
+        let rows = try q.read { try LabelRow.fetchAll($0) }
+        XCTAssertEqual(rows.count, 4)
+        XCTAssertTrue(rows.allSatisfy { $0.sortOrder == LabelRow.unsorted })
+    }
+
     func testMigrationV69ResetsMachineOrderOnly() throws {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q, upTo: "v68")

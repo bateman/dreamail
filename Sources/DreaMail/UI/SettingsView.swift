@@ -410,9 +410,16 @@ struct AccountsSettings: View {
                                             .help("Google no longer accepts this account's saved sign-in (expired or revoked). Reauthorize to resume syncing.")
                                     }
                                 }
-                                if let last = store.lastSyncByAccount[account.id] {
-                                    Text("Last sync \(last, format: .relative(presentation: .named))")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                TimelineView(.periodic(from: .now, by: SyncHealth.refreshInterval)) { context in
+                                    if let text = SyncHealth.settingsText(
+                                        lastSuccess: store.lastSyncByAccount[account.id],
+                                        failed: store.syncHealth.failed(
+                                            account: account.id,
+                                            needsReauth: store.accountsNeedingReauth.contains(account.id)),
+                                        now: context.date) {
+                                        Text(text)
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                             Spacer()

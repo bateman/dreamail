@@ -90,6 +90,9 @@ final class MailStore {
     /// fail — republishing the sidebar, account rail, Accounts settings,
     /// and FilterBar on every tick forever.
     private(set) var lastSyncByAccount: [String: Date] = [:]
+    /// Which accounts' latest pass failed (`SyncHealth`); "last synced"
+    /// above only moves on a pass that completed.
+    var syncHealth = SyncHealth()
     /// From identities (primary + Gmail send-as) across all linked accounts.
     /// Used by compose's From picker; never confuse `email` with API mailbox.
     var sendIdentities: [SendIdentity] = [] { didSet { rebuildOwnDisplayNames() } }
