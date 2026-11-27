@@ -47,6 +47,15 @@ final class MoveToInboxTests: XCTestCase {
         try q.write { try OptimisticThreadWrite.updateChangedColumns($0, from: old, to: new) }
     }
 
+    /// What `MailStore.rederiveThreadFromMessages` writes on a refusal. Sync,
+    /// so async tests call it without `await`.
+    private func rederive(_ q: DatabaseQueue, _ id: String = "t1") throws {
+        try q.write { db in
+            try OptimisticThreadWrite.rederiveOrDelete(db, threadId: self.key(id),
+                                                       accountId: self.account)
+        }
+    }
+
     private func inboxIds(_ q: DatabaseQueue) throws -> [String] {
         try q.read { try ThreadListQuery.inbox().fetchAll($0).map(\.gmailThreadId) }
     }
@@ -150,10 +159,7 @@ final class MoveToInboxTests: XCTestCase {
         } catch {
             XCTAssertEqual(RemoteThreadSend.disposition(for: error), .revert)
         }
-        try q.write { db in
-            try OptimisticThreadWrite.rederiveOrDelete(db, threadId: self.key("t1"),
-                                                       accountId: self.account)
-        }
+        try rederive(q)
         XCTAssertFalse(try thread(q).inInbox)
         XCTAssertEqual(try inboxIds(q), [])
         XCTAssertFalse(RemoteThreadSend.refusalMessage(for: action.remote, error: refusal).isEmpty,
