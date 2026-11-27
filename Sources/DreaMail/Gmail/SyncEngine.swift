@@ -1527,23 +1527,12 @@ actor SyncEngine {
     /// applies to every message of the thread. Trash mirrors the local
     /// trash (`ThreadUndo.apply`). Pure — unit-tested.
     static func applyingLocalEdit(_ change: RemoteThreadChange, to message: Message) -> Message {
-        let add: [String]
-        let remove: [String]
-        switch change {
-        case .modify(let a, let r):
-            add = a
-            remove = r
-        case .trash:
-            add = ["TRASH"]
-            remove = ["INBOX"]
-        case .modifyMessages(let ids, let a, let r):
-            // Only the named messages change.
-            guard ids.contains(message.gmailId) else { return message }
-            add = a
-            remove = r
-        case .sequence(let steps):
-            return steps.reduce(message) { applyingLocalEdit($1, to: $0) }
-        }
+        let (add, remove): ([String], [String]) = {
+            switch change {
+            case .modify(let add, let remove): return (add, remove)
+            case .trash: return (["TRASH"], ["INBOX"])
+            }
+        }()
         var edited = message
         edited.labelIds = applyLabelDelta(labelIds: message.labelIds, add: add, remove: remove)
         if add.contains("UNREAD") || remove.contains("UNREAD") {

@@ -2932,8 +2932,6 @@ struct ComposeRequest: Identifiable {
                 /// merged list, so Load older cannot skip rows between the
                 /// true page end and an older starred candidate.
                 var nextCursor: ThreadListCursor?
-                /// Trash view rows shown from their trashed messages only.
-                var trashProjected: Set<String>
             }
             let reloadKind = search.isEmpty ? "view" : "search"
             let totalInterval = PerfMetrics.begin(.reloadTotal, meta: reloadKind)
@@ -2992,12 +2990,6 @@ struct ComposeRequest: Identifiable {
                     listPage = PriorityCandidates.merge(
                         page: page, candidates: candidates, inboundSort: inboundSort)
                 }
-                var projected = Set<String>()
-                if search.isEmpty, view == .trash {
-                    let shown = try TrashedMessages.projectTrashView(listPage, db: db)
-                    listPage = shown.rows
-                    projected = shown.projected
-                }
                 let vipHits = try PerfMetrics.measure(.reloadVIP, meta: "n=\(listPage.count)") {
                     try MailStore.computeVIPThreadIds(
                         threads: listPage, activeVIP: activeVIP, db: db)
@@ -3015,7 +3007,7 @@ struct ComposeRequest: Identifiable {
                 return ReloadPayload(threads: listPage, vipHits: vipHits,
                                      counts: counts, badge: badge,
                                      accountUnread: accountUnread, hasMore: hasMore,
-                                     nextCursor: nextCursor, trashProjected: projected)
+                                     nextCursor: nextCursor)
             }
             if let payload {
                 totalInterval.end(extraMeta: "n=\(payload.threads.count)")
@@ -3054,7 +3046,6 @@ struct ComposeRequest: Identifiable {
                 // poll that changed nothing would otherwise re-run the list's
                 // layout pass, the sidebar badges and the paging footer.
                 if list != self.threads { self.threads = list }
-                self.trashViewProjectedIds = payload.trashProjected
                 // Drop multi-select checks for rows that left the list.
                 if !self.checkedThreadIds.isEmpty {
                     let visible = Set(list.map(\.id))
@@ -3197,18 +3188,6 @@ struct ComposeRequest: Identifiable {
                 return
             }
             let page = split.page
-            // Trash view: the shown rows; the cursor stays on the stored ones.
-            let shown: (rows: [MailThread], projected: Set<String>)
-            if view == .trash,
-               let projected = try? await pool.read({ db in
-                   try TrashedMessages.projectTrashView(page, db: db)
-               }) {
-                shown = projected
-            } else {
-                shown = (page, [])
-            }
-            let shownRows = shown.rows
-            let shownProjected = shown.projected
             let vipHits = (try? await pool.read { db in
                 try MailStore.computeVIPThreadIds(threads: page, activeVIP: activeVIP, db: db)
             }) ?? []
@@ -3218,9 +3197,8 @@ struct ComposeRequest: Identifiable {
                       !Task.isCancelled else { return }
                 // Dedupe if a concurrent reload already included some rows.
                 let existing = Set(self.threads.map(\.id))
-                let fresh = shownRows.filter { !existing.contains($0.id) }
+                let fresh = page.filter { !existing.contains($0.id) }
                 self.threads.append(contentsOf: fresh)
-                self.trashViewProjectedIds.formUnion(shownProjected)
                 self.vipThreadIds.formUnion(vipHits)
                 self.listWindowLimit = max(self.listWindowLimit, self.threads.count)
                 // Cursor from this fetched page only — not self.threads, which
@@ -3453,10 +3431,7 @@ struct ComposeRequest: Identifiable {
         case .allMail:
             q = q.filter(Column("inTrash") == false)
         case .trash:
-            // Also conversations with only some messages trashed (Gmail
-            // lists them in both places); their rows come from the trashed
-            // messages (`TrashedMessages.projectTrashView`).
-            q = q.filter(sql: TrashedMessages.inTrashViewSQL())
+            q = q.filter(Column("inTrash") == true)
         case .account(let a):
             q = ThreadListQuery.accountInbox(a, now: now)
         case .label(let a, let labelId, _):
@@ -3541,7 +3516,7 @@ struct ComposeRequest: Identifiable {
                     args.append(contentsOf: starKeepIds)
                 }
             case "INBOX": parts.append("inInbox = 1")
-            case "TRASH": parts.append(TrashedMessages.inTrashViewSQL())
+            case "TRASH": parts.append("inTrash = 1")
             case "SENT": parts.append("inSent = 1")
             case "DRAFT": parts.append("inDrafts = 1")
             case "SPAM": parts.append("inSpam = 1")
@@ -3763,16 +3738,11 @@ struct ComposeRequest: Identifiable {
         let suppressed = suppressedDraftMessageIds
         let revision = contentRevisions.revision(of: threadId)
         let fontScale = Self.readingPaneFontScale()
-        // Opened from a Trash view row of an otherwise live conversation:
-        // its trashed messages only, never cached.
-        let trashView = opensTrashReader(threadId: threadId)
         let load = await threadDetailRepository.payload(
             threadId: threadId,
             suppressingDrafts: suppressed,
             revision: revision,
-            fontScale: fontScale,
-            trashView: trashView)
-        if trashView { return load }
+            fontScale: fontScale)
         payloadMirror.store(
             load.payload, for: threadId,
             revision: revision, current: contentRevisions.revision(of: threadId),
@@ -3808,21 +3778,8 @@ struct ComposeRequest: Identifiable {
     /// repository instead costs a MainActor → actor → MainActor round-trip
     /// whose return hop waits on the very SwiftUI work the delete just queued
     /// — measured at 176–209 ms, and identical for cache hits and misses.
-    /// Whether opening `threadId` shows only its trashed messages: a row
-    /// of the Trash list (no committed search) whose conversation is
-    /// otherwise live. Every other open (a search result, a notification,
-    /// a link, the palette) shows the conversation as it is live, unless
-    /// it is that same Trash row.
-    func opensTrashReader(threadId: String) -> Bool {
-        selectedView == .trash
-            && committedSearch.trimmingCharacters(in: .whitespaces).isEmpty
-            && trashViewProjectedIds.contains(threadId)
-    }
-
     func warmThreadDetail(threadId: String) -> ThreadDetailPayload? {
-        // The Trash reader never paints from the cache (`threadDetailPayload`).
-        guard !opensTrashReader(threadId: threadId) else { return nil }
-        return payloadMirror.payload(
+        payloadMirror.payload(
             for: threadId,
             revision: contentRevisions.revision(of: threadId),
             suppressing: suppressedDraftMessageIds)
@@ -4012,9 +3969,6 @@ struct ComposeRequest: Identifiable {
     @ObservationIgnored var activityObservers: [NSObjectProtocol] = []
     /// When a sync last began. Rate-limits the become-frontmost catch-up.
     @ObservationIgnored var lastSyncAttemptedAt: Date?
-    /// Trash view rows shown from their trashed messages only: their stored
-    /// row is a live conversation (`TrashedMessages.projectTrashView`).
-    @ObservationIgnored var trashViewProjectedIds: Set<String> = []
 
 
     /// In-flight `syncAll` only; tracked so termination can await pool access,

@@ -10,35 +10,12 @@ extension MailStore {
     /// Returns the post-action copy. An undo must use it as its base: the
     /// thread write persists only columns that differ from the base (see
     /// `ThreadUndo`).
-    /// A Trash view row of a conversation that is otherwise live
-    /// (`trashViewProjectedIds`): its row shows only the trashed messages,
-    /// so a thread-wide request would reach live messages the user cannot
-    /// see. Only "Move to" (`restoreTrashedMessages`) acts on it.
-    func isPartlyTrashedRow(_ threadId: String) -> Bool {
-        selectedView == .trash && trashViewProjectedIds.contains(threadId)
-    }
-
-    static let partlyTrashedNotice =
-        "Only some messages of this conversation are in the Trash: use Move to to restore them"
-
-    /// True (with a notice) when every target is such a row: the caller
-    /// does nothing, and offers no undo.
-    func refusesPartlyTrashed(_ targets: [MailThread]) -> Bool {
-        guard !targets.isEmpty, targets.allSatisfy({ isPartlyTrashedRow($0.id) }) else { return false }
-        showNotice(Self.partlyTrashedNotice)
-        return true
-    }
-
     @discardableResult
     func mutateThread(_ thread: MailThread,
                       autoAdvanceAction: String? = nil,
                       remote: RemoteThreadChange,
                       local: (inout MailThread) -> Void) -> MailThread {
         guard !isShuttingDown else { return thread }
-        // Never a thread-wide request, nor a write whose diff base is a
-        // projected row (it would store the trashed messages' labels over
-        // the live row). Covers every path, auto mark-read on open included.
-        guard !isPartlyTrashedRow(thread.id) else { return thread }
         var copy = thread
         local(&copy)
         copy.endGmailSnoozeIfInboxed()
@@ -373,9 +350,6 @@ extension MailStore {
                        remote: RemoteThreadChange,
                        local: (inout MailThread) -> Void) -> [MailThread] {
         guard !isShuttingDown, !targets.isEmpty else { return targets }
-        // Partly trashed Trash view rows are left out (see `mutateThread`).
-        let targets = targets.filter { !isPartlyTrashedRow($0.id) }
-        guard !targets.isEmpty else { return [] }
         if let action = autoAdvanceAction {
             let leaving = Set(targets.compactMap { thread -> String? in
                 var updated = thread
@@ -796,7 +770,6 @@ extension MailStore {
     }
 
     func archive(_ thread: MailThread) {
-        guard !refusesPartlyTrashed([thread]) else { return }
         let priorFocus = selectedThreadId
         // Archive always marks read: selection advance cancels the reading-pane
         // dwell timer, and Gmail's own archive treats the conversation as seen.
@@ -820,7 +793,6 @@ extension MailStore {
 
     /// Bulk archive for multi-select. Advances focus once past the removed block.
     func archiveChecked() {
-        guard !refusesPartlyTrashed(checkedThreadsInOrder) else { return }
         let targets = checkedThreadsInOrder
         guard !targets.isEmpty else { return }
         let focus = selectedThreadId
@@ -846,7 +818,6 @@ extension MailStore {
     /// `inSpam`). Matches blocklist's labelIds/denorm update so optimistic
     /// UI and the next sync agree.
     func markSpam(_ thread: MailThread) {
-        guard !refusesPartlyTrashed([thread]) else { return }
         let priorFocus = selectedThreadId
         let wasInInbox = thread.inInbox
         let acted = mutateThread(thread, autoAdvanceAction: "spam",
@@ -868,7 +839,6 @@ extension MailStore {
     /// Inverse of `markSpam`: remove SPAM, restore INBOX. Used from the
     /// overflow menu when the thread is already in Spam (and as spam-undo).
     func markNotSpam(_ thread: MailThread) {
-        guard !refusesPartlyTrashed([thread]) else { return }
         let priorFocus = selectedThreadId
         let wasInInbox = thread.inInbox
         let acted = mutateThread(thread, autoAdvanceAction: "not-spam",
@@ -913,54 +883,7 @@ extension MailStore {
         }
     }
 
-    /// Per thread, read before a trash: Gmail ids of its messages outside
-    /// the trash and of those already in it (`ThreadUndo.TrashState`).
-    func trashStates(ofThreads ids: [String]) -> [String: ThreadUndo.TrashState] {
-        (try? db.read { db -> [String: ThreadUndo.TrashState] in
-            var out: [String: ThreadUndo.TrashState] = [:]
-            for id in ids {
-                let messages = try Message.filter(Column("threadId") == id).fetchAll(db)
-                out[id] = ThreadUndo.TrashState(
-                    liveIds: TrashedMessages.liveIds(messages),
-                    trashedIds: messages.filter(TrashedMessages.isTrashed).map(\.gmailId))
-            }
-            return out
-        }) ?? [:]
-    }
-
-    /// "Move to" from the Trash view on a conversation that is otherwise
-    /// live: only its trashed messages leave the trash, as in Gmail; its
-    /// live messages are not touched (`messages.batchModify` on their ids).
-    func restoreTrashedMessages(_ targets: [MailThread], toLabel labelId: String) {
-        guard !isShuttingDown, !targets.isEmpty else { return }
-        let move = ConversationAction.moveTo(labelId: labelId, alsoRemove: ["TRASH"]).remote
-        let ids = Set(targets.map(\.id))
-        advanceForRemoval(ids, action: "move")
-        threads.removeAll { ids.contains($0.id) }
-        trashViewProjectedIds.subtract(ids)
-        guard !demoMode else { return }
-        let pool = db
-        Task {
-            for thread in targets {
-                let messages = (try? await pool.read { db in
-                    try Message.filter(Column("threadId") == thread.id).fetchAll(db)
-                }) ?? []
-                let trashed = TrashedMessages.trashedIds(messages)
-                guard !trashed.isEmpty else { continue }
-                await self.applyRemoteThreadChange(
-                    .modifyMessages(ids: trashed, add: move.addLabels, remove: move.removeLabels),
-                    client: self.client(for: thread.accountId), accountId: thread.accountId,
-                    gmailThreadId: thread.gmailThreadId)
-            }
-            var synced = Set<String>()
-            for thread in targets where synced.insert(thread.accountId).inserted {
-                await self.sync(accountId: thread.accountId)
-            }
-        }
-    }
-
     func trash(_ thread: MailThread) {
-        guard !refusesPartlyTrashed([thread]) else { return }
         // Gmail-style auto-advance: when the selected thread is trashed, land
         // on the next conversation down (or the one above if it was last)
         // instead of leaving nothing selected. Computed before the mutation
@@ -969,9 +892,6 @@ extension MailStore {
         // Keep labelIds + denorm flags coherent (same pattern as markSpam) so
         // search filters on inTrash and any labelIds-based UI agree.
         let wasInInbox = thread.inInbox
-        // What the trash reaches: an undo brings back only these, not the
-        // messages deleted earlier.
-        let stateBefore = trashStates(ofThreads: [thread.id])[thread.id]
         let acted = mutateThread(thread, autoAdvanceAction: "trash",
                                  remote: ThreadUndo.remote(.trash)) {
             ThreadUndo.apply(.trash, &$0)
@@ -983,8 +903,7 @@ extension MailStore {
             // on trash).
             self.pinReadStateKeep([thread.id])
             self.mutateThread(
-                acted, remote: ThreadUndo.undoTrashRemote(
-                    wasInInbox: wasInInbox, before: stateBefore)
+                acted, remote: ThreadUndo.undoRemote(.trash, wasInInbox: wasInInbox)
             ) {
                 ThreadUndo.restore(.trash, wasInInbox: wasInInbox, &$0)
             }
@@ -994,11 +913,9 @@ extension MailStore {
 
     /// Bulk trash for multi-select.
     func trashChecked() {
-        guard !refusesPartlyTrashed(checkedThreadsInOrder) else { return }
         let targets = checkedThreadsInOrder
         guard !targets.isEmpty else { return }
         let focus = selectedThreadId
-        let statesBefore = trashStates(ofThreads: targets.map(\.id))
         let acted = mutateThreads(targets, autoAdvanceAction: "trash",
                                   remote: ThreadUndo.remote(.trash), local: {
             ThreadUndo.apply(.trash, &$0)
@@ -1009,23 +926,12 @@ extension MailStore {
         offerUndo(n == 1 ? "Moved to Trash" : "Moved \(n) to Trash") { [weak self] in
             guard let self else { return }
             self.pinReadStateKeep(ids)
-            // One change per thread: each brings back its own messages.
-            for group in ThreadUndo.undoGroups(acted: acted, originals: targets) {
-                let wasInInbox = group.wasInInbox
-                for thread in group.threads {
-                    self.mutateThreads(
-                        [thread],
-                        remote: ThreadUndo.undoTrashRemote(
-                            wasInInbox: wasInInbox, before: statesBefore[thread.id]),
-                        local: { ThreadUndo.restore(.trash, wasInInbox: wasInInbox, &$0) })
-                }
-            }
+            self.undoThreads(.trash, acted: acted, originals: targets)
             self.restoreSelectionFocus(focus)
         }
     }
 
     func toggleStar(_ thread: MailThread) {
-        guard !refusesPartlyTrashed([thread]) else { return }
         let starring = !thread.isStarred
         // Pin before mutate so optimistic leave-list and reload both see the id.
         if !starring {
@@ -1045,7 +951,6 @@ extension MailStore {
 
     /// Bulk star: if any checked thread is unstarred, star all; else unstar all.
     func toggleStarChecked() {
-        guard !refusesPartlyTrashed(checkedThreadsInOrder) else { return }
         let targets = checkedThreadsInOrder
         guard !targets.isEmpty else { return }
         let starring = targets.contains { !$0.isStarred }
@@ -1204,7 +1109,6 @@ extension MailStore {
     /// which also means threads snoozed *in* Gmail arrive here as archived
     /// and reappear on sync when Gmail wakes them.
     func snooze(_ thread: MailThread, until date: Date?) {
-        guard !refusesPartlyTrashed([thread]) else { return }
         guard let date else {  // unsnooze: back to the inbox now
             // Only close the picker when it was opened for *this* thread —
             // fireDueSnoozes / Undo must not yank a picker for another row.
@@ -1252,7 +1156,6 @@ extension MailStore {
     /// `selectedThread`, so multi-select `h`/`b` silently snoozed only the
     /// last-focused row.
     func snoozeChecked(until date: Date) {
-        guard !refusesPartlyTrashed(checkedThreadsInOrder) else { return }
         // Tear the picker down *before* the optimistic mutation — same
         // reason as the single-thread path above. Also before the empty
         // guard: checked ids can outlive their rows (filtered out of the

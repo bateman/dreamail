@@ -514,7 +514,6 @@ actor StubThreadEditing: GmailThreadEditing {
     enum Call: Equatable {
         case modify(id: String, add: [String], remove: [String])
         case trash(id: String)
-        case modifyMessages(ids: [String], add: [String], remove: [String])
     }
     private(set) var calls: [Call] = []
     private let error: Error?
@@ -528,11 +527,6 @@ actor StubThreadEditing: GmailThreadEditing {
 
     func trashThread(id: String) async throws {
         calls.append(.trash(id: id))
-        if let error { throw error }
-    }
-
-    func modifyMessages(ids: [String], add: [String], remove: [String]) async throws {
-        calls.append(.modifyMessages(ids: ids, add: add, remove: remove))
         if let error { throw error }
     }
 }
