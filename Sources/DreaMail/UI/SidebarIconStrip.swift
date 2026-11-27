@@ -127,7 +127,7 @@ struct SidebarIconStrip: View {
         Button(action: action) {
             Image(systemName: glyph)
                 .mailIconStyle(selected: selected)
-                .frame(width: Metrics.stripItemWidth, height: Metrics.stripItemHeight)
+                .frame(width: Metrics.stripWidth, height: Metrics.stripItemHeight)
                 .background { selection(selected) }
                 .contentShape(Rectangle())
         }
@@ -143,11 +143,9 @@ struct SidebarIconStrip: View {
     /// in the full sidebar; before macOS 26, the system's unemphasized fill.
     @ViewBuilder private func selection(_ selected: Bool) -> some View {
         if accent.keepsSelectionColor {
-            AccentSelectionBackground(selected: selected, accent: accent,
-                                      cornerRadius: AccentSelectionBackground.sidebarCornerRadius)
+            AccentSelectionBackground(selected: selected, accent: accent)
         } else if selected {
-            RoundedRectangle(cornerRadius: AccentSelectionBackground.sidebarCornerRadius,
-                             style: .continuous)
+            Rectangle()
                 .fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
         }
     }

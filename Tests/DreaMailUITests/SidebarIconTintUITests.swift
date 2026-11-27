@@ -4,10 +4,10 @@ import XCTest
 /// The selected sidebar row draws its glyph and title in neutral colours,
 /// never the accent, in the main sidebar and the Settings sidebar, with the
 /// default and a red accent, in each selection state:
-/// - focused list: a solid accent capsule, with white glyph and title;
+/// - focused list: a solid accent band, with white glyph and title;
 /// - focus elsewhere in an active window (the state the owner reported) and
-///   inactive window: the same capsule and ink, as Gmail's current mailbox
-///   keeps its pill whatever has the focus (it was grey before).
+///   inactive window: the same band and ink, as Gmail's current mailbox
+///   keeps its band whatever has the focus (it was grey before).
 ///
 /// Reads the rendered pixels of the selected row: a capture of the app
 /// window, cropped to the strip from the window's leading edge to the row's
@@ -68,9 +68,9 @@ final class SidebarIconTintUITests: XCTestCase {
         let starred = main.descendants(matching: .any)
             .matching(identifier: "sidebar.starred").firstMatch
         XCTAssertTrue(starred.waitForExistence(timeout: 5))
-        try Self.assertMonochrome(row: starred, window: main, capsule: .grey,
+        try Self.assertMonochrome(row: starred, window: main, band: .grey,
                                   "main sidebar, unselected row")
-        try Self.assertMonochrome(row: inbox, window: main, capsule: .accent,
+        try Self.assertMonochrome(row: inbox, window: main, band: .accent,
                                   "main sidebar, focused")
 
         // Focus to the thread list, window still active.
@@ -78,7 +78,7 @@ final class SidebarIconTintUITests: XCTestCase {
             .matching(identifier: "threadRow.you@example.com:t3").firstMatch
         XCTAssertTrue(thread.waitForExistence(timeout: 5))
         thread.click()
-        try Self.assertMonochrome(row: inbox, window: main, capsule: .accent,
+        try Self.assertMonochrome(row: inbox, window: main, band: .accent,
                                   "main sidebar, focus in the thread list")
 
         // Settings: select Snippets with the sidebar focused, then move
@@ -91,14 +91,14 @@ final class SidebarIconTintUITests: XCTestCase {
             .matching(identifier: "settings.pane.snippets").firstMatch
         XCTAssertTrue(snippets.waitForExistence(timeout: 5))
         snippets.click()
-        try Self.assertMonochrome(row: snippets, window: settings, capsule: .accent,
+        try Self.assertMonochrome(row: snippets, window: settings, band: .accent,
                                   "Settings sidebar, focused")
         let searchField = settings.searchFields.firstMatch
         let textField = settings.textFields.firstMatch
         XCTAssertTrue(Self.waitUntil { searchField.exists || textField.exists },
                       "Snippets search field")
         (searchField.exists ? searchField : textField).click()
-        try Self.assertMonochrome(row: snippets, window: settings, capsule: .accent,
+        try Self.assertMonochrome(row: snippets, window: settings, band: .accent,
                                   "Settings sidebar, focus in the pane")
 
         // Inactive main window: close Settings (it covers the sidebar), then
@@ -115,13 +115,13 @@ final class SidebarIconTintUITests: XCTestCase {
         let strip = Self.strip(row: inbox, window: main)
         XCTAssertFalse(panel.frame.intersects(strip),
                        "About panel \(panel.frame) covers the Inbox row \(strip)")
-        try Self.assertMonochrome(row: inbox, window: main, capsule: .accent,
+        try Self.assertMonochrome(row: inbox, window: main, band: .accent,
                                   "main sidebar, inactive window")
     }
 
     // MARK: - Pixels
 
-    private enum Capsule {
+    private enum Band {
         /// Solid accent: the background is coloured.
         case accent
         /// Grey: no selection.
@@ -151,17 +151,17 @@ final class SidebarIconTintUITests: XCTestCase {
     }
 
     /// Captures the row's strip from the app window until its background is
-    /// the expected capsule (the selection redraws after a click), then
+    /// the expected band (the selection redraws after a click), then
     /// checks the glyph and title pixels.
     private static func assertMonochrome(row: XCUIElement, window: XCUIElement,
-                                         capsule: Capsule, _ context: String,
+                                         band: Band, _ context: String,
                                          file: StaticString = #filePath,
                                          line: UInt = #line) throws {
         var capture: (stats: PixelStats, crop: CGImage, scale: CGFloat)?
         let deadline = Date().addingTimeInterval(5)
         repeat {
             capture = try Self.capture(row: row, window: window, context, file: file, line: line)
-            if let capture, capsule.matches(capture.stats.background) { break }
+            if let capture, band.matches(capture.stats.background) { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         } while Date() < deadline
         let (stats, crop, scale) = try XCTUnwrap(capture, file: file, line: line)
@@ -174,8 +174,8 @@ final class SidebarIconTintUITests: XCTestCase {
         let detail = "\(context): \(stats.saturated) of \(stats.foreground) glyph/title pixels are coloured; "
             + stats.summary(scale: scale)
         print("SidebarIconTint: \(detail)")
-        XCTAssertTrue(capsule.matches(stats.background),
-                      "\(context): background should be \(capsule), \(detail)", file: file, line: line)
+        XCTAssertTrue(band.matches(stats.background),
+                      "\(context): background should be \(band), \(detail)", file: file, line: line)
         // A glyph and a title stand out from the background.
         XCTAssertGreaterThanOrEqual(stats.foreground, 40,
                                     "\(context): no glyph or title found in the strip",

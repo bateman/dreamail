@@ -1,35 +1,39 @@
 import AppKit
 import XCTest
 
-/// The sidebar's selected row has one shape in every state: the app paints
-/// it itself (a row background, `AccentSelectionBackground`) where AppKit
-/// would draw grey, and must match AppKit's own capsule, which it draws
-/// with the default accent and a focused list. Measured on the window's
-/// pixels, along the Inbox row's horizontal mid-line:
-/// 1. the accent run starts and ends at the same x in the three states
-///    (focused list, focus in the thread list, inactive window), ±1 pt;
-/// 2. a real gap (at least 4 pt) of sidebar background lies between each
-///    end of the run and the sidebar's edge, so the capsule never touches
-///    the thread list;
-/// 3. the capsule's top and bottom edges, and its left end 2 pt below the
-///    top (the corner), are the same in the three states too.
-/// Each capture waits for the focus bar to be there or gone, so a state
-/// that has not redrawn yet is never compared with itself. With the default accent (the first state is then AppKit's capsule, the
-/// others the painted one) and a custom one.
+/// The sidebar's selected row is one square band in every state: the app
+/// paints it itself (a row background, `AccentSelectionBackground`), also
+/// where AppKit would draw its own rounded capsule (default accent, focused
+/// list), which the band fully covers. Measured on the window's pixels:
+/// 1. the accent run on the Inbox row's mid-line spans from the sidebar's
+///    leading edge to its trailing edge (±0.5 pt) of the sidebar content area
+///    (the band layer's frame; the system's own 8 pt inset between the rail and
+///    that area stays background), in the three states
+/// 2. on a line 1 pt below the row's top edge the run has the same extent:
+///    the corners are square;
+/// 3. no pixel of a different blue sits beside the band, where a system
+///    band would show;
+/// 4. the icon's and the title's x positions are the same in the three states.
+/// With the default accent and a custom one, and in the Compact sidebar.
 final class SidebarSelectionGeometryUITests: XCTestCase {
 
-    private static let minimumInset = 4.0
-    private static let tolerance = 0.5
+    private static let tolerance = 1.0
+    /// Corners and heights: half a point, so a radius of 3 does not pass.
+    private static let fine = 0.5
+    /// `AccountRailMetrics.width`: the sidebar column starts where the rail ends.
+    private static let railWidth = 64.0
+    /// The sidebar column's own inset from the rail on macOS 26 (CI: 72 - 64).
+    private static let systemInset = 8.0
 
-    func testCapsuleGeometryIsStableWithTheDefaultAccent() throws {
+    func testBandGeometryIsStableWithTheDefaultAccent() throws {
         try check(accent: nil)
     }
 
-    func testCapsuleGeometryIsStableWithACustomAccent() throws {
+    func testBandGeometryIsStableWithACustomAccent() throws {
         try check(accent: "#d93025")
     }
 
-    func testCapsuleGeometryIsStableInTheCompactSidebar() throws {
+    func testBandGeometryIsStableInTheCompactSidebar() throws {
         try check(accent: nil, density: "compact")
     }
 
@@ -39,23 +43,35 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         /// Window-relative, in points: the accent run on the row's mid-line.
         let left: Double
         let right: Double
-        /// The accent run on a vertical line through the capsule's middle.
+        /// The run on a line 1 pt below the row's top edge.
+        let topLeft: Double
+        let topRight: Double
+        /// The run on the band's first pixel row, and its vertical extent.
+        let firstLeft: Double
+        let firstRight: Double
         let top: Double
         let bottom: Double
-        /// Left end of the run 2 pt below the top: the corner's size.
-        let cornerLeft: Double
-        let cornerRight: Double
-        /// A near-white pixel 3-6 pt inside the left end: the focus bar.
-        let bar: Bool
+        /// Near-white pixels in the band's first 12 pt: a bar.
+        let barPixels: Int
+        /// Pixels of a different blue inside the band, and where (x, pt).
+        let strayBlue: Int
+        let strayAt: String
+        /// Where the icon and the title start (first white-ink columns).
+        let iconX: Double
+        let titleX: Double
         let sidebarMin: Double
         let sidebarMax: Double
+        /// Where the thread list's scroll view begins (window-relative).
+        let threadListMin: Double
         /// Raw pixels on the mid-line every 4 pt, for reading a failure.
         let samples: String
         var description: String {
-            String(format: "capsule x %.1f-%.1f (inset %.1f/%.1f), y %.1f-%.1f (height %.1f), "
-                   + "2 pt below the top x %.1f-%.1f, bar %@, sidebar x %.1f-%.1f",
+            String(format: "band x %.1f-%.1f (gap %.1f/%.1f), y %.1f-%.1f (height %.1f), first row "
+                   + "x %.1f-%.1f, 1 pt below the top x %.1f-%.1f, bar pixels %d, stray blue %d [%@], "
+                   + "icon x %.1f, title x %.1f, column x %.1f-%.1f",
                    left, right, left - sidebarMin, sidebarMax - right, top, bottom, bottom - top,
-                   cornerLeft, cornerRight, bar ? "yes" : "no", sidebarMin, sidebarMax)
+                   firstLeft, firstRight, topLeft, topRight, barPixels, strayBlue, strayAt,
+                   iconX, titleX, sidebarMin, sidebarMax)
         }
     }
 
@@ -84,64 +100,111 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         XCTAssertTrue(inbox.waitForExistence(timeout: 5))
         inbox.click()
         print("SidebarSelectionGeometry: macOS \(ProcessInfo.processInfo.operatingSystemVersionString), "
-              + "window \(main.frame), outline \(main.outlines.firstMatch.frame), inbox \(inbox.frame)")
-        let focused = try measure(inbox: inbox, window: main, bar: true, "focused list")
+              + "window \(main.frame), outlines \(main.outlines.allElementsBoundByIndex.map(\.frame)), "
+              + "scroll views \(main.scrollViews.allElementsBoundByIndex.map(\.frame)), "
+              + "scroll bars \(main.scrollBars.allElementsBoundByIndex.map(\.frame)), inbox \(inbox.frame), "
+              + "band view \(main.descendants(matching: .any).matching(identifier: "sidebarSelectionBand").allElementsBoundByIndex.map(\.frame)), "
+              + "search field \(main.searchFields.allElementsBoundByIndex.map(\.frame)), "
+              + "labels header \(main.staticTexts.matching(identifier: "Labels").allElementsBoundByIndex.map(\.frame)), "
+              + "add label \(main.descendants(matching: .any).matching(identifier: "sidebar.labels.add").allElementsBoundByIndex.map(\.frame))")
+        let starred = main.descendants(matching: .any)
+            .matching(identifier: "sidebar.starred").firstMatch
+        XCTAssertTrue(starred.waitForExistence(timeout: 5))
+        // One row pitch: the band must fill it, with no gap between the areas
+        // of two adjacent rows.
+        let pitch = Double(starred.frame.minY - inbox.frame.minY)
+        let focused = try measure(inbox: inbox, window: main, "focused list")
 
         let thread = main.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t3").firstMatch
         XCTAssertTrue(thread.waitForExistence(timeout: 5))
         thread.click()
-        let unfocused = try measure(inbox: inbox, window: main, bar: false,
-                                    "focus in the thread list")
+        let unfocused = try measure(inbox: inbox, window: main, "focus in the thread list")
 
         let about = app.menuItems["About DreaMail"]
         XCTAssertTrue(about.waitForExistence(timeout: 5))
         about.click()
         XCTAssertTrue(app.dialogs.firstMatch.waitForExistence(timeout: 5),
                       "the About panel should open")
-        let inactive = try measure(inbox: inbox, window: main, bar: false, "inactive window")
+        let inactive = try measure(inbox: inbox, window: main, "inactive window")
 
         for (name, m) in [("focused list", focused), ("focus in the thread list", unfocused),
                           ("inactive window", inactive)] {
-            XCTAssertGreaterThanOrEqual(m.left - m.sidebarMin, Self.minimumInset,
-                                        "\(name): gap to the leading edge, \(m.description)")
-            XCTAssertGreaterThanOrEqual(m.sidebarMax - m.right, Self.minimumInset,
-                                        "\(name): gap to the trailing edge, \(m.description)")
-        }
-        let fields: [(String, KeyPath<Measure, Double>)] = [
-            ("capsule start", \.left), ("capsule end", \.right),
-            ("capsule top", \.top), ("capsule bottom", \.bottom),
-            ("corner, left", \.cornerLeft), ("corner, right", \.cornerRight)]
-        for (name, m) in [("focus in the thread list", unfocused), ("inactive window", inactive)] {
-            for (field, path) in fields {
-                XCTAssertEqual(m[keyPath: path], focused[keyPath: path], accuracy: Self.tolerance,
-                               "\(name): \(field) moved, \(m.description) vs \(focused.description)")
+            // The band spans the sidebar's content area (the band layer's
+            // frame, the list's scroll view). The 8 pt between the rail and
+            // that area are the sidebar column's own inset on macOS 26,
+            // outside the Sidebar view: they stay sidebar background.
+            XCTAssertEqual(m.left, m.sidebarMin, accuracy: Self.fine,
+                           "\(name): the band should start at the sidebar content's leading edge, \(m.description)")
+            XCTAssertEqual(m.right, m.sidebarMax, accuracy: Self.fine,
+                           "\(name): the band should reach the sidebar content's trailing edge, \(m.description)")
+            XCTAssertEqual(m.sidebarMin - Self.railWidth, Self.systemInset, accuracy: Self.tolerance,
+                           "\(name): the system's inset between the rail and the sidebar changed, \(m.description)")
+            XCTAssertEqual(m.sidebarMax, m.threadListMin, accuracy: Self.tolerance,
+                           "\(name): the band should end where the thread list begins, \(m.description)")
+            for (corner, x, want) in [("first row, left", m.firstLeft, m.left),
+                                      ("first row, right", m.firstRight, m.right),
+                                      ("1 pt below, left", m.topLeft, m.left),
+                                      ("1 pt below, right", m.topRight, m.right)] {
+                XCTAssertEqual(x, want, accuracy: Self.fine,
+                               "\(name): the top corner is not square (\(corner)), \(m.description)")
             }
+            XCTAssertEqual(m.bottom - m.top, pitch, accuracy: 1.0,
+                           "\(name): the band should fill the row's pitch \(pitch), \(m.description)")
+            XCTAssertEqual(m.barPixels, 0, "\(name): a bar shows at the band's leading edge, \(m.description)")
+            XCTAssertEqual(m.strayBlue, 0, "\(name): another blue shows in the band, \(m.description)")
+        }
+        for (name, m) in [("focus in the thread list", unfocused), ("inactive window", inactive)] {
+            XCTAssertEqual(m.top, focused.top, accuracy: Self.fine, "\(name): the band's top moved, \(m.description)")
+            XCTAssertEqual(m.bottom, focused.bottom, accuracy: Self.fine,
+                           "\(name): the band's bottom moved, \(m.description)")
+        }
+        // The row content stays where it was before the band reached the edges
+        // (CI, macOS 26.7.2: icon 100 / title 124 Compact, 102 / 128 Comfortable).
+        let baseline = density == "compact" ? (100.0, 124.0) : (102.0, 128.0)
+        for (name, m) in [("focused list", focused), ("focus in the thread list", unfocused),
+                          ("inactive window", inactive)] {
+            XCTAssertEqual(m.iconX, baseline.0, accuracy: Self.tolerance,
+                           "\(name): the icon moved from \(baseline.0), \(m.description)")
+            XCTAssertEqual(m.titleX, baseline.1, accuracy: Self.tolerance,
+                           "\(name): the title moved from \(baseline.1), \(m.description)")
+        }
+        for (name, m) in [("focus in the thread list", unfocused), ("inactive window", inactive)] {
+            XCTAssertEqual(m.iconX, focused.iconX, accuracy: Self.tolerance,
+                           "\(name): the icon moved, \(m.description) vs \(focused.description)")
+            XCTAssertEqual(m.titleX, focused.titleX, accuracy: Self.tolerance,
+                           "\(name): the title moved, \(m.description) vs \(focused.description)")
         }
     }
 
     // MARK: - Pixels
 
-    /// Captures until the Inbox row shows an accent run and the focus bar is
-    /// there (or gone) as the state requires: the selection redraws after a
-    /// click, and a capture taken before would compare a state with itself.
-    private func measure(inbox: XCUIElement, window: XCUIElement, bar: Bool,
+    /// Captures until the Inbox row shows an accent run: the selection
+    /// redraws after a click, and a capture taken before would compare a state
+    /// with itself. The run must also have reached its final extent, so the
+    /// capture is retried while the band does not span the sidebar.
+    private func measure(inbox: XCUIElement, window: XCUIElement,
                          _ context: String) throws -> Measure {
         var last = "no accent pixels on the row's mid-line"
+        var best: Measure?
         let deadline = Date().addingTimeInterval(8)
         repeat {
             if let m = try capture(inbox: inbox, window: window) {
-                if m.bar == bar {
-                    print("SidebarSelectionGeometry: \(context): \(m.description)")
-                    print("SidebarSelectionGeometry: \(context): mid-line \(m.samples)")
-                    return m
+                best = m
+                if abs(m.left - m.sidebarMin) <= Self.tolerance, abs(m.right - m.sidebarMax) <= Self.tolerance {
+                    break
                 }
-                last = "focus bar \(m.bar ? "still there" : "missing"): \(m.description)"
+                last = m.description
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         } while Date() < deadline
-        XCTFail("\(context): \(last)")
-        throw NSError(domain: "SidebarSelectionGeometry", code: 1)
+        guard let m = best else {
+            XCTFail("\(context): \(last)")
+            throw NSError(domain: "SidebarSelectionGeometry", code: 1)
+        }
+        print("SidebarSelectionGeometry: \(context): \(m.description)")
+        print("SidebarSelectionGeometry: \(context): mid-line \(m.samples)")
+        return m
     }
 
     private func capture(inbox: XCUIElement, window: XCUIElement) throws -> Measure? {
@@ -149,7 +212,25 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let image = window.screenshot().image
         let cg = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
         let scale = Double(cg.width) / Double(frame.width)
-        let sidebar = window.outlines.firstMatch.frame
+        // The sidebar's content area: the band layer's frame, equal to the
+        // list's scroll view. The system insets the sidebar column from the
+        // rail (8 pt on macOS 26), outside the Sidebar view, so the band
+        // cannot start at the rail: it starts here and ends where the thread
+        // list begins.
+        let sidebar = window.descendants(matching: .any)
+            .matching(identifier: "sidebarSelectionBand").firstMatch.frame
+        let trailing = sidebar.maxX
+        // The thread list's scroll view: the nearest one to the right of the
+        // sidebar. Each element is checked with `exists` first: with the About
+        // panel open the tree changes while it is enumerated.
+        var threadMinX = trailing
+        var found = false
+        for i in 0..<window.scrollViews.count {
+            let scroll = window.scrollViews.element(boundBy: i)
+            guard scroll.exists else { continue }
+            let x = scroll.frame.minX
+            if x > sidebar.minX + 100, !found || x < threadMinX { threadMinX = x; found = true }
+        }
         let width = cg.width, height = cg.height
         var data = [UInt8](repeating: 0, count: width * height * 4)
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -177,7 +258,7 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let from = max(0, Int(((sidebar.minX - frame.minX) * scale).rounded()))
         let to = min(width - 1, Int(((sidebar.maxX - frame.minX) * scale).rounded()))
         guard from < to else { return nil }
-        // The capsule's run on a line: from its first accent pixel to the
+        // The band's run on a line: from its first accent pixel to the
         // last one before a gap wider than the glyphs and the title leave
         // inside it. A thread-list row selected in the accent starts well
         // beyond the gap and is not part of it.
@@ -185,7 +266,7 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         func run(_ y: Int) -> (first: Int, last: Int)? {
             guard let first = (from...to).first(where: { isAccent($0, y) }) else { return nil }
             var last = first
-            for x in first...(width - 1) {
+            for x in first...to {
                 if isAccent(x, y) { last = x } else if x - last > maxGap { break }
             }
             return (first, last)
@@ -193,19 +274,58 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         guard let mid = run(midY) else { return nil }
         let first = mid.first, last = mid.last
 
-        // Vertical edges, on a line through the capsule's middle.
-        let midX = (first + last) / 2
+        // Vertical edges, on a line 3 pt inside the band's leading end (clear
+        // of the glyph and title).
+        let probeX = min(width - 1, first + Int((3 * scale).rounded()))
         let rowFrom = max(0, midY - Int(60 * scale)), rowTo = min(height - 1, midY + Int(60 * scale))
-        guard let top = (rowFrom...rowTo).first(where: { isAccent(midX, $0) }),
-              let bottom = (rowFrom...rowTo).last(where: { isAccent(midX, $0) })
+        guard let top = (rowFrom...rowTo).first(where: { isAccent(probeX, $0) }),
+              let bottom = (rowFrom...rowTo).last(where: { isAccent(probeX, $0) })
         else { return nil }
-        // The corner: the run 2 pt below the top edge.
-        let cornerY = min(bottom, top + Int((2 * scale).rounded()))
-        guard let corner = run(cornerY) else { return nil }
-        let cornerFirst = corner.first, cornerLast = corner.last
-        // The focus bar: near-white pixels 3-6 pt inside the left end.
-        let bar = (Int((3 * scale).rounded())...Int((6 * scale).rounded())).contains {
-            isWhite(first + $0, midY)
+        // The corners: the run on the first pixel row and 1 pt below it.
+        guard let firstRow = run(top),
+              let corner = run(min(bottom, top + Int(scale.rounded()))) else { return nil }
+        // A bar: near-white pixels in the band's first 12 pt (the icon starts
+        // 28 pt in).
+        var bar = 0
+        for y in (top + Int(2 * scale))..<max(top + Int(2 * scale), bottom - Int(2 * scale)) {
+            for x in first..<min(width, first + Int((12 * scale).rounded())) where isWhite(x, y) { bar += 1 }
+        }
+        // A different blue inside the band, left of the glyph and right of
+        // the count, 2 pt clear of its edges (antialiasing): where AppKit's own
+        // band would show.
+        let (br, bg, bb) = pixel(probeX, midY)
+        func differentBlue(_ x: Int, _ y: Int) -> Bool {
+            let p = pixel(x, y)
+            let d = (abs(p.0 - br) + abs(p.1 - bg) + abs(p.2 - bb)) / 3
+            return p.2 - p.0 > 60 && d > 40
+        }
+        let margin = Int((2 * scale).rounded())
+        let glyphX = Int(((inbox.frame.minX - frame.minX - 4) * scale).rounded())
+        let leftZone = (first + margin)..<max(first + margin, glyphX)
+        let rightZone = max(first, last - Int((10 * scale).rounded()))..<max(first, last - margin)
+        var stray = 0
+        var strayColumns = Set<Int>()
+        for y in (top + margin)..<max(top + margin, bottom - margin) {
+            for x in Array(leftZone) + Array(rightZone) where differentBlue(x, y) {
+                stray += 1
+                strayColumns.insert(x)
+            }
+        }
+        let strayAt = strayColumns.sorted().prefix(6)
+            .map { String(format: "%.1f", Double($0) / scale) }.joined(separator: ",")
+        // Where the icon and the title start: the first white-ink columns
+        // inside the band, the title after a gap wider than a letter space.
+        var inkColumns: [Int] = []
+        for x in (first + Int((4 * scale).rounded()))...max(first + 1, last) {
+            if ((top + Int(2 * scale))...max(top + Int(2 * scale), bottom - Int(2 * scale)))
+                .contains(where: { isWhite(x, $0) }) { inkColumns.append(x) }
+        }
+        let iconStart = inkColumns.first ?? first
+        var titleStart = iconStart
+        var previous = iconStart
+        for x in inkColumns where x > iconStart {
+            if x - previous > Int((4 * scale).rounded()) { titleStart = x; break }
+            previous = x
         }
         var samples: [String] = []
         let sampleFrom = max(0, Int((((sidebar.minX - frame.minX) - 16) * scale).rounded()))
@@ -214,11 +334,21 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
             let p = pixel(x, midY)
             samples.append(String(format: "%.0f:%02x%02x%02x", Double(x) / scale, p.0, p.1, p.2))
         }
-        return Measure(left: Double(first) / scale, right: Double(last + 1) / scale,
-                       top: Double(top) / scale, bottom: Double(bottom + 1) / scale,
-                       cornerLeft: Double(cornerFirst) / scale,
-                       cornerRight: Double(cornerLast + 1) / scale, bar: bar,
-                       sidebarMin: sidebar.minX - frame.minX, sidebarMax: sidebar.maxX - frame.minX,
+        // The thread list's own selected row (focused state: its accent,
+        // 0060d7 at x 312) continues the run past the sidebar's edge: every
+        // run ends there. In the other two states the pixel at the edge is
+        // the thread list's background, which shows where the band ends.
+        let edgePixel = Double(to)
+        return Measure(left: Double(first) / scale, right: min(Double(last + 1), edgePixel) / scale,
+                       topLeft: Double(corner.first) / scale,
+                       topRight: min(Double(corner.last + 1), edgePixel) / scale,
+                       firstLeft: Double(firstRow.first) / scale,
+                       firstRight: min(Double(firstRow.last + 1), edgePixel) / scale,
+                       top: Double(top) / scale, bottom: Double(bottom + 1) / scale, barPixels: bar,
+                       strayBlue: stray, strayAt: strayAt,
+                       iconX: Double(iconStart) / scale, titleX: Double(titleStart) / scale,
+                       sidebarMin: sidebar.minX - frame.minX, sidebarMax: trailing - frame.minX,
+                       threadListMin: threadMinX - frame.minX,
                        samples: samples.joined(separator: " "))
     }
 }
