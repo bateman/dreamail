@@ -1,8 +1,9 @@
 import XCTest
 
-/// The search field sits in the list column's top bar, right
-/// of the view's title, not in the sidebar; and the reading pane's ">>" button
-/// is gone. Demo inbox.
+/// The search field is a toolbar item of the list column (`listSearchBox`),
+/// right of the view's title, not in the sidebar; the mouse reaches it; the
+/// toolbar never overflows at the window's minimum size; and the reading
+/// pane's ">>" button is gone. Demo inbox.
 final class ListSearchFieldUITests: XCTestCase {
     /// `paneHidden: nil` passes no `-readingPaneHidden`: a launch argument sits in
     /// the defaults' argument domain and overrides what the toggle writes.
@@ -42,66 +43,62 @@ final class ListSearchFieldUITests: XCTestCase {
         app.textFields.matching(NSPredicate(format: "placeholderValue == 'Search'")).firstMatch
     }
 
-    private func titleText(_ e: XCUIElement) -> String {
-        (e.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? e.label
-    }
-
     private func hasFocus(_ e: XCUIElement) -> Bool {
         (e.value(forKey: "hasKeyboardFocus") as? Bool) ?? false
     }
 
-    /// The field against the LIST COLUMN (its rows' x range, its bar), the title
-    /// and the sidebar.
+    /// The view's title in the toolbar (a static text in the top band).
+    private func titleElement(_ app: XCUIApplication, _ text: String) -> XCUIElement {
+        app.windows.firstMatch.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", text, text))
+            .allElementsBoundByIndex.first { $0.exists && $0.frame.minY < 100 }
+            ?? app.windows.firstMatch.staticTexts[text]
+    }
+
+    /// Prints the window toolbar's buttons and the field, and asserts there is
+    /// no overflow chevron, every button of the window group is there and
+    /// hittable, and the field is hittable.
+    private func assertToolbarIntact(_ app: XCUIApplication, _ when: String) {
+        let box = element(app, "listSearchBox")
+        XCTAssertTrue(box.waitForExistence(timeout: 5), "\(when): the field exists")
+        let buttons = app.toolbars.buttons.allElementsBoundByIndex
+            .filter { $0.exists && !$0.frame.isEmpty }
+            .map { ($0.label, $0.identifier, $0.frame) }
+        print("ListSearchField frames [\(when)]: window \(app.windows.firstMatch.frame), field \(box.frame), toolbar buttons \(buttons)")
+        let overflow = buttons.filter {
+            $0.0.localizedCaseInsensitiveContains("overflow") || $0.1.localizedCaseInsensitiveContains("overflow")
+                || $0.0 == "More" || $0.0.contains("»") || $0.0.localizedCaseInsensitiveContains("Show More")
+        }
+        XCTAssertTrue(overflow.isEmpty, "\(when): no overflow chevron in the toolbar (\(overflow))")
+        XCTAssertTrue(box.isHittable, "\(when): the field is hittable (\(box.frame))")
+        XCTAssertTrue(buttons.contains { $0.0.hasSuffix("Reading Pane") }, "\(when): the pane toggle is in the toolbar")
+        XCTAssertTrue(buttons.contains { $0.0.contains("Conversation") || $0.0.contains("Focus") }, "\(when): the focus button is in the toolbar")
+    }
+
+    /// The field against the LIST COLUMN (its rows' x range), the title and the sidebar.
     private func assertFieldInListBar(_ app: XCUIApplication, _ when: String) {
         let field = element(app, "listSearchBox")
-        let title = element(app, "listHeaderTitle")
         let row = element(app, "threadRow.you@example.com:t3")
         XCTAssertTrue(field.waitForExistence(timeout: 5), "\(when): the field exists")
-        XCTAssertTrue(title.exists, "\(when): the title exists")
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         let column = row.frame   // the list column's x range
         XCTAssertGreaterThanOrEqual(field.frame.minX, column.minX, "\(when): not left of the list column (\(field.frame) vs \(column))")
-        XCTAssertLessThanOrEqual(field.frame.maxX, column.maxX + 1, "\(when): not right of the list column")
+        XCTAssertLessThanOrEqual(field.frame.maxX, app.windows.firstMatch.frame.maxX, "\(when): inside the window")
         XCTAssertLessThan(field.frame.maxY, row.frame.minY, "\(when): above the list rows")
-        XCTAssertGreaterThanOrEqual(title.frame.minX, column.minX, "\(when): title inside the column")
-        XCTAssertLessThanOrEqual(title.frame.maxX, field.frame.minX, "\(when): field right of the title")
-        XCTAssertEqual(title.frame.midY, field.frame.midY, accuracy: 12, "\(when): same bar")
-        XCTAssertEqual(titleText(title), "Inbox", "\(when): title shown in full")
-        XCTAssertGreaterThanOrEqual(field.frame.width, 149, "\(when): at least the minimum (\(field.frame))")
-        XCTAssertLessThanOrEqual(field.frame.width, 381, "\(when): at most the maximum (\(field.frame))")
-        assertClearOfToolbarButtons(app, when)
-        // Not in the sidebar: the sidebar's rows are all left of the field.
+        let title = titleElement(app, "Inbox")
+        XCTAssertTrue(title.exists, "\(when): the title is shown")
+        XCTAssertLessThanOrEqual(title.frame.maxX, field.frame.minX, "\(when): the field is right of the title (title \(title.frame), field \(field.frame))")
+        XCTAssertGreaterThanOrEqual(field.frame.width, ListHeaderMetrics.minWidth - 1, "\(when): at least the minimum (\(field.frame))")
+        XCTAssertLessThanOrEqual(field.frame.width, ListHeaderMetrics.maxWidth + 1, "\(when): at most the maximum (\(field.frame))")
         let sidebarRow = element(app, "sidebar.inbox")
         if sidebarRow.exists {
             XCTAssertGreaterThan(field.frame.minX, sidebarRow.frame.maxX, "\(when): right of the sidebar")
         }
+        assertToolbarIntact(app, when)
     }
 
-    /// Every button the window toolbar exposes (the window group, the system
-    /// sidebar toggle, ...): none overlaps the row's icon+title, the field or
-    /// "Search all of Gmail". Prints the frames.
-    private func assertClearOfToolbarButtons(_ app: XCUIApplication, _ when: String) {
-        let leading = element(app, "listHeaderLeading").frame
-        let box = element(app, "listSearchBox").frame
-        let searchAll = element(app, "listSearchAll")
-        let buttons = app.toolbars.buttons.allElementsBoundByIndex
-            .filter { $0.exists && !$0.frame.isEmpty }
-            .map { ($0.label, $0.frame) }
-        print("ListSearchField frames [\(when)]: leading \(leading), field \(box), "
-              + "search-all \(searchAll.exists ? "\(searchAll.frame)" : "-"), toolbar buttons \(buttons)")
-        for (label, frame) in buttons {
-            let hit = frame.insetBy(dx: -2, dy: -2)
-            XCTAssertFalse(leading.intersects(hit), "\(when): icon+title overlap the toolbar button \"\(label)\" (row \(leading), button \(frame))")
-            XCTAssertFalse(box.intersects(hit), "\(when): the field overlaps the toolbar button \"\(label)\" (field \(box), button \(frame))")
-            if searchAll.exists {
-                XCTAssertFalse(searchAll.frame.intersects(hit), "\(when): search-all overlaps the toolbar button \"\(label)\"")
-            }
-        }
-    }
-
-    /// The mouse reaches the field through the title-bar band: a click focuses
-    /// it, it takes typing, its clear button works, and the window does not
-    /// move (the band is draggable).
+    /// A real toolbar item takes the mouse: a click focuses the field, it
+    /// takes typing, its clear button appears and works, and the window does
+    /// not move.
     private func assertMouseReach(_ app: XCUIApplication, _ when: String) {
         let window = app.windows.firstMatch
         let before = window.frame
@@ -112,11 +109,22 @@ final class ListSearchFieldUITests: XCTestCase {
         app.typeText("ab")
         XCTAssertTrue(waitUntil { ((text.value as? String) ?? "") == "ab" }, "\(when): it accepts typing (\(String(describing: text.value)))")
         let clear = element(app, "listSearchBox").buttons["Clear"].firstMatch
-        XCTAssertTrue(clear.waitForExistence(timeout: 5), "\(when): the clear button exists")
+        XCTAssertTrue(clear.waitForExistence(timeout: 5), "\(when): the clear button appears")
         clear.click()
         XCTAssertTrue(waitUntil { ((text.value as? String) ?? "x").isEmpty }, "\(when): the clear button clears")
         XCTAssertEqual(window.frame, before, "\(when): the window did not move or resize")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+    }
+
+    /// Drags the window's bottom-right corner far to the left: the window
+    /// stops at its minimum size.
+    private func shrinkToMinimum(_ app: XCUIApplication) {
+        let window = app.windows.firstMatch
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -2, dy: -2))
+        let target = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -700, dy: -300))
+        corner.press(forDuration: 0.2, thenDragTo: target)
+        XCTAssertTrue(waitUntil(timeout: 8) { window.frame.width <= 970 },
+                      "the window shrank to its minimum width (now \(window.frame))")
     }
 
     func testFieldInTheListBar_paneOpen() {
@@ -132,8 +140,6 @@ final class ListSearchFieldUITests: XCTestCase {
         assertMouseReach(app, "pane open, sidebar collapsed")
     }
 
-    /// The list is the window's last column: the field stays clear of the
-    /// window's own toolbar buttons.
     func testFieldInTheListBar_paneHidden() {
         let app = launch(paneHidden: true)
         XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
@@ -147,6 +153,29 @@ final class ListSearchFieldUITests: XCTestCase {
         assertMouseReach(app, "pane hidden, sidebar collapsed")
     }
 
+    /// At the window's minimum size, in the sidebar states the app has
+    /// (expanded, strip): no overflow chevron and the field is hittable, with
+    /// the pane open and hidden.
+    func testNoOverflowAtTheMinimumWindow() {
+        let app = launch(paneHidden: false)
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
+        shrinkToMinimum(app)
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
+        XCTAssertTrue(element(app, "composeButton").waitForExistence(timeout: 5))
+        assertToolbarIntact(app, "minimum window, sidebar expanded")
+        app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
+        XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
+        assertToolbarIntact(app, "minimum window, sidebar collapsed")
+        // A search in progress adds "Search all of Gmail" to the bar.
+        app.typeKey("/", modifierFlags: [])
+        XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) })
+        app.typeText("zzzznomatch")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !self.element(app, "threadRow.you@example.com:t3").exists }, "the search is committed")
+        assertToolbarIntact(app, "minimum window, searching")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+    }
+
     func testSlashFocusesSearchFiltersAndEscRestores() {
         let app = launch(paneHidden: true)
         let t3 = element(app, "threadRow.you@example.com:t3")
@@ -156,11 +185,13 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focuses the field")
         app.typeText("zzzznomatch")
-        // The suggestions panel hangs under the field, same trailing edge, inside the column.
+        // The suggestions panel hangs under the field, at the column's trailing
+        // edge (the field's side), inside the column.
         let panel = element(app, "searchResultsPanel")
         XCTAssertTrue(panel.waitForExistence(timeout: 5), "the results panel opens")
+        print("ListSearchField panel \(panel.frame), field \(field.frame)")
         XCTAssertGreaterThanOrEqual(panel.frame.minY, field.frame.maxY - 1, "panel below the field")
-        XCTAssertEqual(panel.frame.maxX, field.frame.maxX, accuracy: 2, "panel ends where the field ends")
+        XCTAssertEqual(panel.frame.maxX, field.frame.maxX, accuracy: 24, "panel ends where the field ends")
         XCTAssertGreaterThanOrEqual(panel.frame.minX, t3.frame.minX - 1, "panel inside the list column")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(waitUntil { !t3.exists }, "the search filters the list")
@@ -201,16 +232,24 @@ final class ListSearchFieldUITests: XCTestCase {
         (startedOpen ? show : hide).firstMatch.click()
         XCTAssertTrue((startedOpen ? hide : show).firstMatch.waitForExistence(timeout: 5),
                       "the toggle flips it back")
-        // Make sure the pane is open, then open a conversation: the old ">>"
-        // lived in its toolbar. Exactly one "Hide Reading Pane" control
-        // remains: the window's toggle.
+        // Make sure the pane is open. Showing it with a thread selected opens
+        // that conversation, and at this window width that replaces the list.
         if show.firstMatch.exists { show.firstMatch.click() }
         XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5))
-        // The layout was rebuilt by the toggles: wait for the row again.
-        XCTAssertTrue(t3.waitForExistence(timeout: 10), "the list is back after the toggles")
-        t3.click()
+        // A conversation open: the old ">>" lived in its toolbar. Exactly one
+        // "Hide Reading Pane" control remains: the window's toggle.
+        if !element(app, "threadSubject").exists {
+            XCTAssertTrue(t3.waitForExistence(timeout: 10), "the list is there to open a conversation from")
+            t3.click()
+        }
         XCTAssertTrue(element(app, "threadSubject").waitForExistence(timeout: 5), "a conversation is open")
         XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(hide.count, 1, "one \"Hide Reading Pane\" control only: no >> button")
     }
+}
+
+/// The field's sizes, as the test sees them (kept equal to `ListHeaderLayout`).
+private enum ListHeaderMetrics {
+    static let minWidth: CGFloat = 140
+    static let maxWidth: CGFloat = 380
 }

@@ -267,7 +267,7 @@ struct ContentView: View {
             store.demoteInlineComposeIfPaneTooShort(paneHeight: frame.height)
         }
         .onPreferenceChange(ComposeHostFrameKey.self) { composeHostFrame = $0 }
-        // Search lives in the list column's top bar (ListHeaderBar).
+        // Search lives in the list column's top bar (ListSearchToolbar).
         // Typing only feeds the dropdown preview; the list follows
         // committedSearch. Clearing the field also clears an active search.
         .onChange(of: store.searchText) {
@@ -359,9 +359,8 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                // Which buttons: `ListHeaderLayout.windowButtons`, which the
-                // list column's top bar also reads to leave room for them.
-                if windowButtons.contains(.paneToggle) {
+                // Full-window style has no reading pane to toggle.
+                if !fullWindowThreads {
                     Button {
                         readingPaneHidden.toggle()
                     } label: {
@@ -390,7 +389,7 @@ struct ContentView: View {
                       ? "Exit full-app conversation (esc or ⌘↩)"
                       : "Open conversation full-app (⌘↩)")
                 // No button, so no ⌥⌘M, in a build without AI features.
-                if windowButtons.contains(.askAI) {
+                if AIFeatures.isEnabled {
                     Button {
                         store.showAskAI.toggle()
                     } label: {
@@ -699,7 +698,7 @@ struct ContentView: View {
                 Sidebar()
                     .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
             } detail: {
-                listColumnWithSearch(mode)
+                listColumnWithSearch
             }
         case .compactDetail:
             NavigationSplitView(columnVisibility: splitVisibility(whenHidden: .detailOnly)) {
@@ -713,7 +712,7 @@ struct ContentView: View {
                 Sidebar()
                     .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
             } content: {
-                listColumnWithSearch(mode)
+                listColumnWithSearch
                     .navigationSplitViewColumnWidth(min: 420, ideal: 560)
             } detail: {
                 detailPane(compact: false)
@@ -937,17 +936,8 @@ struct ContentView: View {
         }
     }
 
-    /// The window's toolbar buttons (see `ListHeaderLayout.windowButtons`).
-    private var windowButtons: [WindowToolbarButton] {
-        ListHeaderLayout.windowButtons(fullWindowThreads: fullWindowThreads,
-                                       askAIEnabled: AIFeatures.isEnabled)
-    }
-
-    /// `mode` is the layout `mailboxLayout` renders (not the `layoutMode`
-    /// state, which lags a frame and differs in centre peek).
-    private func listColumnWithSearch(_ mode: MailLayoutMode) -> some View {
-        listColumn.modifier(ListHeaderBar(mode: mode, windowButtons: windowButtons,
-                                          sidebarCollapsed: sidebarHidden))
+    private var listColumnWithSearch: some View {
+        listColumn.modifier(ListSearchToolbar())
     }
 
     @ViewBuilder
@@ -2213,7 +2203,7 @@ private struct SearchPanelContentHeightKey: PreferenceKey {
 }
 
 /// Command-K-style search results panel. Floats under the field in the list
-/// column's top bar (see `ListHeaderBar`), over the message list. Shows recent searches when the query is
+/// column's top bar (see `ListSearchToolbar`), over the message list. Shows recent searches when the query is
 /// empty; otherwise a "View all results" row plus Contacts and Threads.
 /// ↑/↓/Enter come in from the global key monitor via searchHighlight /
 /// searchActivateToken, so the flow is fully keyboard-driven after `/`.
