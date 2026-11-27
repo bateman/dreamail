@@ -429,29 +429,6 @@ struct ThreadListView: View {
         }
         .background(Color.mailContent)
         .navigationTitle(store.selectedView.title)
-        .toolbar {
-            // View glyph next to the title: the filled form, as on the
-            // selected sidebar row, in the same neutral tint. Shared glass is
-            // hidden so it stays a bare icon — no capsule, no scroll-edge
-            // flicker with the detail nav trio.
-            ToolbarItem(placement: .navigation) {
-                Image(systemName: store.selectedView.selectedIcon)
-                    .foregroundStyle(.mailIcon(selected: false))
-                    .accessibilityHidden(true)
-            }
-            .pmHideSharedBackground()
-            // While searching, let the user reach past the local cache to Gmail.
-            if !store.committedSearch.trimmingCharacters(in: .whitespaces).isEmpty {
-                ToolbarItem(placement: .automatic) {
-                    Button { store.searchAllGmail() } label: {
-                        Label(store.serverSearching ? "Searching…" : "Search all of Gmail",
-                              systemImage: "magnifyingglass.circle")
-                    }
-                    .disabled(store.serverSearching)
-                    .help("Pull matching messages from Gmail, beyond the local cache")
-                }
-            }
-        }
         .overlay {
             if groupedThreadCount == 0 {
                 emptyState

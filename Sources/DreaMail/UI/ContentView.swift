@@ -97,19 +97,12 @@ struct ContentView: View {
     /// the list column's top bar. With a conversation open in the compact
     /// layout the list is not on screen — go back to it first.
     private func revealSearch() {
-        let mode = MailLayout.mode(
-            width: MailLayout.modeWidth(host: composeHostFrame.width, askAIPanel: 0,
-                                        stripShown: sidebarStripOnScreen),
-            readingPaneHidden: readingPaneHidden,
-            hasSelection: store.openedThreadId != nil,
-            threadFocus: store.threadFocusMode,
-            fullWindowThreads: fullWindowThreads)
-        if mode == .compactDetail {
-            store.clearSelection()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { store.focusSearch() }
-        } else {
-            store.focusSearch()
-        }
+        // No list on screen in a full-window conversation: nothing to focus.
+        guard layoutMode != .threadFocus else { return }
+        // Compact layout with a conversation open: back to the list first;
+        // the field focuses when the list mounts (`searchFocusPending`).
+        if layoutMode == .compactDetail { store.clearSelection() }
+        store.focusSearch()
     }
 
     private var fullWindowThreads: Bool {
@@ -944,7 +937,7 @@ struct ContentView: View {
     }
 
     private var listColumnWithSearch: some View {
-        listColumn.modifier(ListSearchToolbar())
+        listColumn.modifier(ListHeaderBar(trailingReserve: layoutMode == .list ? ListSearchMetrics.windowButtonsReserve : 0))
     }
 
     @ViewBuilder
@@ -1469,7 +1462,7 @@ private extension ContentView {
             // `/` → arrows → Enter works without ever leaving the keyboard.
             // Intercepted here so the text field never sees them. Main window
             // only — Settings keeps its own arrows/Enter even while the
-            // sidebar field technically still holds main-window focus.
+            // search field technically still holds main-window focus.
             if store.searchActive, mods.isEmpty, event.window == NSApp.mainWindow {
                 switch event.keyCode {
                 case 125:  // down — panel clamps to its rows
@@ -2208,9 +2201,8 @@ private struct SearchPanelContentHeightKey: PreferenceKey {
     }
 }
 
-/// Wide command-K-style search results panel. Floats at the window level (see
-/// ContentView) so it can be much wider than the sidebar, spilling over the
-/// message list. Shows recent searches when the query is
+/// Command-K-style search results panel. Floats under the field in the list
+/// column's top bar (see `ListHeaderBar`), over the message list. Shows recent searches when the query is
 /// empty; otherwise a "View all results" row plus Contacts and Threads.
 /// ↑/↓/Enter come in from the global key monitor via searchHighlight /
 /// searchActivateToken, so the flow is fully keyboard-driven after `/`.

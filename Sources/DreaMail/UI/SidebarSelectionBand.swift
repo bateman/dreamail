@@ -110,7 +110,7 @@ struct SidebarSelectionBand: NSViewRepresentable {
             var band = NSRect(x: bounds.minX, y: rowRect.minY, width: bounds.width,
                               height: rowRect.height)
             // Only where the list shows: a row scrolled out of view leaves
-            // nothing behind the search field or the footer.
+            // nothing behind the header or the footer.
             if let clip = table.enclosingScrollView?.contentView {
                 let visible = convert(clip.bounds, from: clip)
                 band = band.intersection(NSRect(x: bounds.minX, y: visible.minY,

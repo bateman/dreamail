@@ -215,6 +215,8 @@ final class MailStore {
     /// Bumped by `/` (Gmail-style) to move keyboard focus into the sidebar
     /// search field. The list column's field watches this and drives its `@FocusState`.
     var searchFocusToken = 0
+    /// A focus request the field has not yet honoured (see `focusSearch`).
+    var searchFocusPending = false
     /// Bumped by View ▸ Reset Sidebar Order; the sidebar resets its order.
     var sidebarOrderResetToken = 0
     /// True while the search field is focused, so ContentView can float the
@@ -4184,7 +4186,14 @@ struct ComposeRequest: Identifiable {
     /// token instead of holding focus state directly so a repeated `/` (after
     /// the user clicked away) re-focuses.
     func focusSearch() {
+        // Pending until the field takes focus, so a request made while the
+        // list column is not mounted (compact layout) lands when it appears.
+        searchFocusPending = true
         searchFocusToken &+= 1
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            self?.searchFocusPending = false
+        }
     }
 
     // MARK: - Labels on threads
