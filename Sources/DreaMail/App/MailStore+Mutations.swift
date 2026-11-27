@@ -994,36 +994,95 @@ extension MailStore {
             for row in rows where self.isKnownAccount(row.accountId) {
                 LocalThreadEdits.shared.record(threadIds: [row.id], change: remotes[row.id] ?? .modify())
             }
-            let restores = loaded.map { (accountId: $0.row.accountId, threadId: $0.row.id,
-                                         ids: $0.trashedIds) }
-            let written = Task {
-                try await pool.write { db in
-                    for r in restores {
-                        try TrashedMessages.applyRestore(db, accountId: r.accountId, threadId: r.threadId,
-                                                         ids: r.ids, add: add, remove: remove)
-                    }
+            let restores = loaded.map {
+                MessageRestore(accountId: $0.row.accountId, threadId: $0.row.id, ids: $0.trashedIds,
+                               add: add, remove: remove)
+            }
+            self.commitMessageRestores(restores, remotes: remotes, rows: rows)
+        }
+    }
+
+    /// One restore of named messages, as `commitMessageRestores` stores it.
+    private struct MessageRestore: Sendable {
+        var accountId: String
+        var threadId: String
+        var ids: [String]
+        var add: [String]
+        var remove: [String]
+    }
+
+    /// The shared tail of a per-message restore: the message rows and the
+    /// thread rows derived from them, in one write
+    /// (`TrashedMessages.applyRestore`), then the requests on the chained
+    /// bulk tail. A refusal is undone on the same messages
+    /// (`rederiveThreadFromMessages(refused:)`).
+    private func commitMessageRestores(_ restores: [MessageRestore],
+                                       remotes: [String: RemoteThreadChange],
+                                       rows: [MailThread]) {
+        let pool = db
+        let rowIds = Set(rows.map(\.id))
+        let written = Task {
+            try await pool.write { db in
+                for r in restores {
+                    try TrashedMessages.applyRestore(db, accountId: r.accountId, threadId: r.threadId,
+                                                     ids: r.ids, add: r.add, remove: r.remove)
                 }
             }
-            let isDemo = self.demoMode
-            let predecessor = self.bulkRemoteTail
-            self.bulkRemoteTail = Task {
-                _ = await predecessor?.value
-                let result = await written.result
+        }
+        let isDemo = demoMode
+        let predecessor = bulkRemoteTail
+        bulkRemoteTail = Task {
+            _ = await predecessor?.value
+            let result = await written.result
+            await MainActor.run {
+                // Message rows changed: the reader cache and mirror
+                // must not open the live conversation without them.
+                if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
+                self.scheduleThreadMutationReconciliation()
+            }
+            if case .failure(let error) = result {
                 await MainActor.run {
-                    // Message rows changed: the reader cache and mirror
-                    // must not open the live conversation without them.
-                    if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
-                    self.scheduleThreadMutationReconciliation()
+                    self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
                 }
-                if case .failure(let error) = result {
-                    await MainActor.run {
-                        self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
-                    }
-                    return
-                }
-                guard !isDemo, !self.isShuttingDown else { return }
-                await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
+                return
             }
+            guard !isDemo, !self.isShuttingDown else { return }
+            await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
+        }
+    }
+
+    /// "Restore" and "Restore all" on the deleted messages shown inline in
+    /// a live conversation (Gmail web's "View message"): only the named
+    /// messages that are still trashed leave the trash, back to the Inbox
+    /// only when the conversation is there
+    /// (`DeletedMessagesInConversation.restoreChange`). The conversation's
+    /// row stays where it is; once written, the message is a live one.
+    func restoreDeletedMessages(gmailIds: [String], inThread threadId: String) {
+        guard !isShuttingDown, !gmailIds.isEmpty else { return }
+        let pool = db
+        Task { @MainActor [weak self] in
+            let loaded = (try? await pool.read { db -> TrashedMessages.RestoreTarget? in
+                guard let row = try MailThread.fetchOne(db, key: threadId), !row.inTrash else { return nil }
+                let trashed = Set(TrashedMessages.trashedIds(
+                    try Message.filter(Column("threadId") == threadId).fetchAll(db)))
+                let ids = gmailIds.filter { trashed.contains($0) }
+                return ids.isEmpty ? nil : TrashedMessages.RestoreTarget(row: row, trashedIds: ids)
+            })
+            guard let self, !self.isShuttingDown, let loaded else { return }
+            let row = loaded.row
+            // The row as the list shows it: an archive made a moment ago
+            // may not be in the stored row yet.
+            let inInbox = self.threads.first { $0.id == row.id }?.inInbox ?? row.inInbox
+            let change = DeletedMessagesInConversation.restoreChange(
+                gmailIds: loaded.trashedIds, conversationInInbox: inInbox)
+            guard case .modifyMessages(let ids, let add, let remove) = change else { return }
+            if self.isKnownAccount(row.accountId) {
+                LocalThreadEdits.shared.record(threadIds: [row.id], change: change)
+            }
+            self.commitMessageRestores(
+                [MessageRestore(accountId: row.accountId, threadId: row.id, ids: ids,
+                                add: add, remove: remove)],
+                remotes: [row.id: change], rows: [row])
         }
     }
 

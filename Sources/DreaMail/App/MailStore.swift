@@ -3811,6 +3811,26 @@ struct ComposeRequest: Identifiable {
         return load
     }
 
+    /// The deleted messages of a live conversation, for "View" in the
+    /// reading pane only. Read from the local rows each time (no request,
+    /// nothing marked read) and kept out of the repository cache and the
+    /// mirror, so no other reader of a payload (quoting, summary, export,
+    /// MCP) ever gets them. Empty for a row opened from the Trash view.
+    func deletedMessagesForReadingPane(threadId: String) async -> DeletedMessagesLoad {
+        guard !opensTrashReader(threadId: threadId) else { return .empty }
+        let pool = db
+        let fontScale = Self.readingPaneFontScale()
+        guard let loaded = try? await pool.read({ db in
+            try DeletedMessagesInConversation.load(db, threadId: threadId)
+        }) else { return .empty }
+        let messages = loaded.messages
+        let prep = await Task.detached(priority: .userInitiated) {
+            ThreadDetailRepository.buildBodyPrep(messages: messages, fontScale: fontScale)
+        }.value
+        return DeletedMessagesLoad(messages: messages, attachmentsByMessageId: loaded.attachments,
+                                   bodyPrepByMessageId: prep)
+    }
+
     /// Payloads the repository already produced, held on the main actor.
     ///
     /// Sized for the neighbourhood the user is navigating: current, prev,
