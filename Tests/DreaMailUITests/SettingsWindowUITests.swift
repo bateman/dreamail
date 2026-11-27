@@ -101,18 +101,15 @@ final class SettingsWindowUITests: XCTestCase {
     /// scroll back to the top.
     private func addViewHeight(_ app: XCUIApplication) -> CGFloat? {
         let sidebar = app.outlines.firstMatch
-        var tries = 0
-        while titleHeight("Add view", in: app) == nil, tries < 15 {
-            sidebar.scroll(byDeltaX: 0, deltaY: -300)
-            tries += 1
-        }
-        // The row can exist with an empty frame for a moment (the sidebar
-        // lays out again): read until it has one, for up to 5 s.
+        // Keep the height the loop read: a second read can find the row
+        // with an empty frame while the sidebar lays out again.
         var height = titleHeight("Add view", in: app)
-        let deadline = Date().addingTimeInterval(5)
-        while height == nil, Date() < deadline {
+        var tries = 0
+        while height == nil, tries < 15 {
+            sidebar.scroll(byDeltaX: 0, deltaY: -300)
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
             height = titleHeight("Add view", in: app)
+            tries += 1
         }
         tries = 0
         while !element("sidebar.inbox", in: app).isHittable, tries < 15 {
