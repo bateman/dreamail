@@ -800,6 +800,7 @@ extension MailStore {
         let id = UUID()
         triageUndo = UndoAction(id: id, label: label) { [weak self] in
             guard let self, self.triageUndo?.id == id else { return }
+            UITestBreadcrumbs.record("undo run: \(label)")
             self.triageUndo = nil
             self.undoTimer?.invalidate()
             self.undoTimer = nil
@@ -810,6 +811,7 @@ extension MailStore {
                                          repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.triageUndo?.id == id else { return }
+                UITestBreadcrumbs.record("undo toast expired: \(label)")
                 self.triageUndo = nil
                 self.undoTimer = nil
             }
@@ -1133,6 +1135,7 @@ extension MailStore {
                         wasInInbox: wasInInbox, before: states[thread.id]),
                     alwaysChained: true,
                     local: { ThreadUndo.restore(.trash, wasInInbox: wasInInbox, &$0) })
+                self.recordTrashUndo([thread.id])
                 self.restoreSelectionFocus(priorFocus)
             }
         }
@@ -1173,9 +1176,18 @@ extension MailStore {
                         remotes: remotes, alwaysChained: true,
                         local: { ThreadUndo.restore(.trash, wasInInbox: wasInInbox, &$0) })
                 }
+                self.recordTrashUndo(ids)
                 self.restoreSelectionFocus(focus)
             }
         }
+    }
+
+    /// UI tests only (inert otherwise): whether the undone rows are back
+    /// in the list right after the optimistic restore.
+    private func recordTrashUndo(_ ids: [String]) {
+        let listed = Set(threads.map(\.id))
+        UITestBreadcrumbs.record(
+            "trash undo applied: \(ids.filter(listed.contains).count) of \(ids.count) listed")
     }
 
     func toggleStar(_ thread: MailThread) {

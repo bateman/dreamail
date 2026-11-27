@@ -488,6 +488,7 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .help("Undo (\(store.keyBindings.displayKey(for: .undo)) or ⌘Z)")
+                        .accessibilityIdentifier("undoToast.undo")
                     }
                     .padding(.horizontal, 22).padding(.vertical, 13)
                     .background(.regularMaterial, in: Capsule())
@@ -1339,6 +1340,11 @@ private extension ContentView {
             // After Send, a lagging AppKit re-steal can leave an editable NSText
             // first responder with no compose claiming typing — allow ⌘Z to
             // cancel pending send in that window (same class as post-Send `e`).
+            if mods == .command, event.charactersIgnoringModifiers?.lowercased() == "z" {
+                UITestBreadcrumbs.record(
+                    "cmdZ undoAction=\(store.undoAction?.label ?? "nil") "
+                    + "firstResponder=\(event.window?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil")")
+            }
             if mods == .command,
                !event.modifierFlags.contains(.shift),
                event.charactersIgnoringModifiers?.lowercased() == "z",
