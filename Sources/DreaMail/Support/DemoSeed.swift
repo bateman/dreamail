@@ -343,9 +343,10 @@ enum DemoSeed {
                  listUnsubscribe: String? = nil,
                  listUnsubscribePost: String? = nil,
                  to: String? = nil, deliveredTo: String? = nil,
-                 html: String? = nil, sent: Bool = false) {
-            // The user's own reply is in Sent, not the Inbox.
-            var labels = (sent ? ["SENT"] : ["INBOX"]) + extraLabels
+                 html: String? = nil, sent: Bool = false, trashed: Bool = false) {
+            // The user's own reply is in Sent, not the Inbox; a deleted
+            // message is in the Trash only.
+            var labels = (trashed ? ["TRASH"] : sent ? ["SENT"] : ["INBOX"]) + extraLabels
             if starred { labels.append("STARRED") }
             if unread { labels.append("UNREAD") }
             out.append(Message(
@@ -457,6 +458,26 @@ enum DemoSeed {
             snippet: "Good catch, the normalization was wrong. I am rerunning the analysis now and will send the revised figures tonight.",
             body: "Good catch, the normalization was wrong.\n\nI am rerunning the analysis now and will send the revised figures tonight.\n\nPriya",
             hoursAgo: 6, unread: false, extraLabels: ["Label_research"])
+
+        // A live conversation with one deleted message between two live
+        // ones: the reading pane's "1 deleted message in this
+        // conversation" line (DEC-081). The oldest in the Inbox, so the
+        // rows above keep their places.
+        add("t11", from: "Sam Taylor <sam@example.com>",
+            subject: "Garden plot rota",
+            snippet: "Here is the watering rota for the next four weeks. Swap with anyone you like, just tell the group.",
+            body: "Hi all,\n\nHere is the watering rota for the next four weeks. Swap with anyone you like, just tell the group.\n\nSam",
+            hoursAgo: 72, unread: false)
+        add("t11", from: "Sam Taylor <sam@example.com>",
+            subject: "Re: Garden plot rota",
+            snippet: "Small change: the tap by the shed is off until Friday, please use the one by the gate.",
+            body: "Small change: the tap by the shed is off until Friday, please use the one by the gate.\n\nSam",
+            hoursAgo: 68, unread: false, trashed: true)
+        add("t11", from: "Sam Taylor <sam@example.com>",
+            subject: "Re: Garden plot rota",
+            snippet: "Thanks everyone, the rota is settled. See you at the plot on Saturday morning.",
+            body: "Thanks everyone, the rota is settled.\n\nSee you at the plot on Saturday morning.\n\nSam",
+            hoursAgo: 64, unread: false)
 
         return out
     }

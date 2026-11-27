@@ -135,6 +135,7 @@ extension MailStore {
         do {
             try await Self.perform(change, on: client, gmailThreadId: gmailThreadId)
             isOffline = false
+            endedSnoozes.succeeded(threadId: "\(accountId):\(gmailThreadId)", change: change)
         } catch {
             switch RemoteThreadSend.disposition(for: error) {
             case .queueOffline:
@@ -191,11 +192,16 @@ extension MailStore {
         // the refused or dropped edit over the messages again. Every revert
         // path (direct refusal, dropped queued edit) comes through here.
         LocalThreadEdits.shared.forget(threadId: threadId)
+        // A refused "Move to inbox" that ended a snooze gives the date back.
+        let snooze = endedSnoozes.refused(threadId: threadId, change: refused)
         let reverted = (try? await db.write { db -> Bool in
             let reverted = try refused.map {
                 try TrashedMessages.revertStoredRestores(db, accountId: accountId, change: $0)
             } ?? false
             try OptimisticThreadWrite.rederiveOrDelete(db, threadId: threadId, accountId: accountId)
+            if let snooze {
+                try InboxMove.restoreSnoozeAfterRefusal(db, threadId: threadId, until: snooze)
+            }
             return reverted
         }) ?? false
         if reverted { applyThreadContentChange(.threads([threadId])) }
@@ -250,6 +256,8 @@ extension MailStore {
                 try await Self.perform(change, on: gmail, gmailThreadId: row.gmailThreadId)
                 isOffline = false
                 shouldDelete = true
+                endedSnoozes.succeeded(threadId: "\(row.accountId):\(row.gmailThreadId)",
+                                       change: change)
             } catch {
                 switch ThreadOpReplay.replayDisposition(
                     error: error, accountIsKnown: isKnownAccount(row.accountId),
@@ -351,14 +359,16 @@ extension MailStore {
     /// accounts" badge also moves for an account the sidebar hides).
     private func dockBadgeDelta(from old: MailThread, to updated: MailThread) -> Int {
         DockBadge.delta(from: old, to: updated, badgeAccount: dockBadgeAccount,
-                        hideCategories: inboxBadgeHideCategories)
+                        hideCategories: inboxBadgeHideCategories,
+                        categoryRowsOff: categoryRowsOff)
     }
 
     /// Unread change for the thread's own account: the avatar badge counts
     /// by the Dock badge's rule, whatever scope the Dock badge has.
     private func accountUnreadDelta(from old: MailThread, to updated: MailThread) -> [String: Int] {
         [old.accountId: DockBadge.delta(from: old, to: updated, badgeAccount: old.accountId,
-                                        hideCategories: inboxBadgeHideCategories)]
+                                        hideCategories: inboxBadgeHideCategories,
+                                        categoryRowsOff: categoryRowsOff)]
     }
 
     private func applyOptimisticSidebarCountDelta(
@@ -367,8 +377,10 @@ extension MailStore {
         let now = Date()
         let hide = inboxBadgeHideCategories
         if let activeAccountId, old.accountId != activeAccountId { return }
-        let before = SidebarCounts.memberships(of: old, now: now, hideCategories: hide)
-        let after = SidebarCounts.memberships(of: updated, now: now, hideCategories: hide)
+        let before = SidebarCounts.memberships(of: old, now: now, hideCategories: hide,
+                                               categoryRowsOff: categoryRowsOff)
+        let after = SidebarCounts.memberships(of: updated, now: now, hideCategories: hide,
+                                              categoryRowsOff: categoryRowsOff)
         for key in before.subtracting(after) {
             unreadCounts[key] = max(0, (unreadCounts[key] ?? 0) - 1)
         }
@@ -754,7 +766,8 @@ extension MailStore {
             // Category-hide pin-through: unstarred hidden-category mail leaves
             // once the sticky keep is gone (leave-thread drop or never pinned).
             return StarStickiness.leavesDueToCategoryHide(
-                hide: chips.category.hide,
+                hide: CategoryRows.hide(chips.category.hide, account: t.accountId,
+                                        off: categoryRowsOff),
                 inPromotions: t.inPromotions,
                 inSocial: t.inSocial,
                 labelIds: t.labelIds,
@@ -994,36 +1007,95 @@ extension MailStore {
             for row in rows where self.isKnownAccount(row.accountId) {
                 LocalThreadEdits.shared.record(threadIds: [row.id], change: remotes[row.id] ?? .modify())
             }
-            let restores = loaded.map { (accountId: $0.row.accountId, threadId: $0.row.id,
-                                         ids: $0.trashedIds) }
-            let written = Task {
-                try await pool.write { db in
-                    for r in restores {
-                        try TrashedMessages.applyRestore(db, accountId: r.accountId, threadId: r.threadId,
-                                                         ids: r.ids, add: add, remove: remove)
-                    }
+            let restores = loaded.map {
+                MessageRestore(accountId: $0.row.accountId, threadId: $0.row.id, ids: $0.trashedIds,
+                               add: add, remove: remove)
+            }
+            self.commitMessageRestores(restores, remotes: remotes, rows: rows)
+        }
+    }
+
+    /// One restore of named messages, as `commitMessageRestores` stores it.
+    private struct MessageRestore: Sendable {
+        var accountId: String
+        var threadId: String
+        var ids: [String]
+        var add: [String]
+        var remove: [String]
+    }
+
+    /// The shared tail of a per-message restore: the message rows and the
+    /// thread rows derived from them, in one write
+    /// (`TrashedMessages.applyRestore`), then the requests on the chained
+    /// bulk tail. A refusal is undone on the same messages
+    /// (`rederiveThreadFromMessages(refused:)`).
+    private func commitMessageRestores(_ restores: [MessageRestore],
+                                       remotes: [String: RemoteThreadChange],
+                                       rows: [MailThread]) {
+        let pool = db
+        let rowIds = Set(rows.map(\.id))
+        let written = Task {
+            try await pool.write { db in
+                for r in restores {
+                    try TrashedMessages.applyRestore(db, accountId: r.accountId, threadId: r.threadId,
+                                                     ids: r.ids, add: r.add, remove: r.remove)
                 }
             }
-            let isDemo = self.demoMode
-            let predecessor = self.bulkRemoteTail
-            self.bulkRemoteTail = Task {
-                _ = await predecessor?.value
-                let result = await written.result
+        }
+        let isDemo = demoMode
+        let predecessor = bulkRemoteTail
+        bulkRemoteTail = Task {
+            _ = await predecessor?.value
+            let result = await written.result
+            await MainActor.run {
+                // Message rows changed: the reader cache and mirror
+                // must not open the live conversation without them.
+                if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
+                self.scheduleThreadMutationReconciliation()
+            }
+            if case .failure(let error) = result {
                 await MainActor.run {
-                    // Message rows changed: the reader cache and mirror
-                    // must not open the live conversation without them.
-                    if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
-                    self.scheduleThreadMutationReconciliation()
+                    self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
                 }
-                if case .failure(let error) = result {
-                    await MainActor.run {
-                        self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
-                    }
-                    return
-                }
-                guard !isDemo, !self.isShuttingDown else { return }
-                await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
+                return
             }
+            guard !isDemo, !self.isShuttingDown else { return }
+            await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
+        }
+    }
+
+    /// "Restore" and "Restore all" on the deleted messages shown inline in
+    /// a live conversation (Gmail web's "View message"): only the named
+    /// messages that are still trashed leave the trash, back to the Inbox
+    /// only when the conversation is there
+    /// (`DeletedMessagesInConversation.restoreChange`). The conversation's
+    /// row stays where it is; once written, the message is a live one.
+    func restoreDeletedMessages(gmailIds: [String], inThread threadId: String) {
+        guard !isShuttingDown, !gmailIds.isEmpty else { return }
+        let pool = db
+        Task { @MainActor [weak self] in
+            let loaded = (try? await pool.read { db -> TrashedMessages.RestoreTarget? in
+                guard let row = try MailThread.fetchOne(db, key: threadId), !row.inTrash else { return nil }
+                let trashed = Set(TrashedMessages.trashedIds(
+                    try Message.filter(Column("threadId") == threadId).fetchAll(db)))
+                let ids = gmailIds.filter { trashed.contains($0) }
+                return ids.isEmpty ? nil : TrashedMessages.RestoreTarget(row: row, trashedIds: ids)
+            })
+            guard let self, !self.isShuttingDown, let loaded else { return }
+            let row = loaded.row
+            // The row as the list shows it: an archive made a moment ago
+            // may not be in the stored row yet.
+            let inInbox = self.threads.first { $0.id == row.id }?.inInbox ?? row.inInbox
+            let change = DeletedMessagesInConversation.restoreChange(
+                gmailIds: loaded.trashedIds, conversationInInbox: inInbox)
+            guard case .modifyMessages(let ids, let add, let remove) = change else { return }
+            if self.isKnownAccount(row.accountId) {
+                LocalThreadEdits.shared.record(threadIds: [row.id], change: change)
+            }
+            self.commitMessageRestores(
+                [MessageRestore(accountId: row.accountId, threadId: row.id, ids: ids,
+                                add: add, remove: remove)],
+                remotes: [row.id: change], rows: [row])
         }
     }
 
@@ -1186,6 +1258,7 @@ extension MailStore {
                 vipThreadIds: vipThreadIds,
                 vipAlwaysPins: vipAlwaysPins,
                 hiddenCategories: effectiveCategoryHide,
+                categoryRowsOff: categoryRowsOff,
                 newerThan: PrioritySplit.cutoff(days: priorityWindowDays)
             ) {
                 return

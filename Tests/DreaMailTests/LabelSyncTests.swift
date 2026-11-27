@@ -169,9 +169,11 @@ final class LabelSyncTests: XCTestCase {
                         lastSyncAt: nil, senderName: "").save(db)
             for (name, type, order) in [("Zeta", "user", 0), ("alpha", "user", 2), ("p", "user", 1),
                                         ("p/b", "user", 3), ("p/a", "user", 4), ("INBOX", "system", 7)] {
-                try LabelRow(id: "\(account):\(name)", accountId: account, gmailLabelId: name,
-                             name: name, type: type, color: nil, sortOrder: order,
-                             listVisibility: nil).save(db)
+                // Raw SQL: `LabelRow` now has columns added after v69 (v71).
+                try db.execute(sql: """
+                    INSERT INTO label (id, accountId, gmailLabelId, name, type, sortOrder)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, arguments: ["\(account):\(name)", account, name, name, type, order])
             }
         }
         try AppDatabase.migrator.migrate(q)

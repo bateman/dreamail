@@ -33,12 +33,19 @@ enum BuiltinMailbox: String, CaseIterable {
 /// into one store call; everything that decides WHICH rows exist and what
 /// they are called lives here.
 enum PaletteCommands {
+    /// One glyph per action, shared with the row menu and the toolbar.
+    /// "Snooze Until…" keeps `calendar.badge.clock`: it picks a date, unlike
+    /// the one-step "Snooze Until Tomorrow".
+    private typealias G = ThreadRowMenuItem
+
     /// The flags of one thread that change a row's title or presence.
     struct ThreadState: Equatable {
         var isStarred = false
         var isUnread = false
         var isMuted = false
         var isImportant = false
+        /// `InboxMove.offered`: not in the Inbox, Trash or Spam.
+        var offersMoveToInbox = false
     }
 
     struct SavedViewRef: Equatable {
@@ -58,6 +65,8 @@ enum PaletteCommands {
         /// Ask AI and AI sorting are listed only in a build with the AI
         /// features on.
         var aiFeatures = AIFeatures.isEnabled
+        /// Promotions and Social are offered while an account in scope shows them.
+        var categoryViews = true
     }
 
     enum Action: Equatable {
@@ -99,6 +108,7 @@ enum PaletteCommands {
         list.append(Entry(id: "newview", title: "Add View…", icon: "plus", action: .addView))
         list += threadActions(ctx)
         for mailbox in BuiltinMailbox.allCases {
+            if !ctx.categoryViews, mailbox == .promotions || mailbox == .social { continue }
             list.append(Entry(id: "view.\(mailbox.title)", title: "Go to \(mailbox.title)",
                               icon: "tray", action: .goTo(mailbox)))
         }
@@ -128,24 +138,34 @@ enum PaletteCommands {
             ? ctx.checked.contains { $0.isUnread }
             : (ctx.focused?.isUnread ?? false)
 
+        // Gmail: Move to Inbox in place of Archive when no target is in the
+        // Inbox (the store's `targetsOfferMoveToInbox`).
+        let movingToInbox = bulk
+            ? !ctx.checked.isEmpty && ctx.checked.allSatisfy(\.offersMoveToInbox)
+            : (ctx.focused?.offersMoveToInbox ?? false)
         var list: [Entry] = [
-            Entry(id: "act.archive", title: bulk ? "Archive \(noun)" : "Archive Conversation",
-                  icon: "archivebox", shortcut: .archive, action: .perform(.archive)),
+            movingToInbox
+                ? Entry(id: "act.moveToInbox",
+                        title: bulk ? "Move \(noun) to inbox" : InboxMove.title,
+                        icon: G.moveToInbox.symbol, shortcut: .moveToInbox,
+                        action: .perform(.moveToInbox))
+                : Entry(id: "act.archive", title: bulk ? "Archive \(noun)" : "Archive Conversation",
+                        icon: G.archive.symbol, shortcut: .archive, action: .perform(.archive)),
             Entry(id: "act.trash", title: bulk ? "Trash \(noun)" : "Trash Conversation",
-                  icon: "trash", shortcut: .trash, action: .perform(.trash)),
+                  icon: G.delete.symbol, shortcut: .trash, action: .perform(.trash)),
             Entry(id: "act.star",
                   title: bulk ? "\(starring ? "Star" : "Unstar") \(noun)"
                               : (starring ? "Star Conversation" : "Unstar Conversation"),
-                  icon: starring ? "star" : "star.slash",
+                  icon: (starring ? G.star : G.unstar).symbol,
                   shortcut: .toggleStar, action: .perform(.toggleStar)),
             Entry(id: "act.read",
                   title: bulk ? "Mark \(noun) \(markingRead ? "Read" : "Unread")"
                               : (markingRead ? "Mark Read" : "Mark Unread"),
-                  icon: markingRead ? "envelope.open" : "envelope",
+                  icon: (markingRead ? G.markRead : G.markUnread).symbol,
                   shortcut: .toggleRead, action: .perform(.toggleRead)),
             Entry(id: "act.snooze",
                   title: bulk ? "Snooze \(noun) Until Tomorrow" : "Snooze Until Tomorrow",
-                  icon: "clock", action: .snoozeTomorrow),
+                  icon: G.snooze.symbol, action: .snoozeTomorrow),
             Entry(id: "act.snoozeCustom",
                   title: bulk ? "Snooze \(noun) Until…" : "Snooze Until…",
                   icon: "calendar.badge.clock", shortcut: .snooze, action: .perform(.snooze)),
@@ -154,17 +174,17 @@ enum PaletteCommands {
         // focused one even while others are checked.
         if ctx.focused != nil {
             list += [
-                Entry(id: "act.reply", title: "Reply", icon: "arrowshape.turn.up.left",
+                Entry(id: "act.reply", title: "Reply", icon: G.reply.symbol,
                       shortcut: .reply, action: .perform(.reply)),
-                Entry(id: "act.replyAll", title: "Reply All", icon: "arrowshape.turn.up.left.2",
+                Entry(id: "act.replyAll", title: "Reply All", icon: G.replyAll.symbol,
                       shortcut: .replyAll, action: .perform(.replyAll)),
-                Entry(id: "act.forward", title: "Forward", icon: "arrowshape.turn.up.right",
+                Entry(id: "act.forward", title: "Forward", icon: G.forward.symbol,
                       shortcut: .forward, action: .perform(.forward)),
             ]
         }
         list.append(Entry(id: "act.label",
                           title: bulk ? "Label \(noun)…" : "Label Conversation…",
-                          icon: "tag", shortcut: .label, action: .perform(.label)))
+                          icon: G.labelAs.symbol, shortcut: .label, action: .perform(.label)))
         // Same rules as the store (`ConversationAction.muteToggle`): unmute
         // only when every target is muted.
         let unmuting = bulk
@@ -172,11 +192,11 @@ enum PaletteCommands {
             : (ctx.focused?.isMuted ?? false)
         list += [
             Entry(id: "act.move", title: bulk ? "Move \(noun) To…" : "Move Conversation To…",
-                  icon: "folder", shortcut: .moveTo, action: .perform(.moveTo)),
+                  icon: G.moveTo.symbol, shortcut: .moveTo, action: .perform(.moveTo)),
             Entry(id: "act.mute",
                   title: bulk ? "\(unmuting ? "Unmute" : "Mute") \(noun)"
                               : (unmuting ? "Unmute Conversation" : "Mute Conversation"),
-                  icon: unmuting ? "bell" : "bell.slash",
+                  icon: (unmuting ? G.unmute : G.mute).symbol,
                   shortcut: .mute, action: .perform(.mute)),
             Entry(id: "act.important",
                   title: bulk ? "Mark \(noun) as Important" : "Mark as Important",
@@ -188,7 +208,7 @@ enum PaletteCommands {
         ]
         if ctx.focused != nil {
             list.append(Entry(id: "act.copyLink", title: "Copy Gmail Link to Conversation",
-                              icon: "link", action: .copyLink))
+                              icon: G.copyLink.symbol, action: .copyLink))
         }
         return list
     }

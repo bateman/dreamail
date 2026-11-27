@@ -51,6 +51,11 @@ struct GLabel: Decodable {
     /// Whether Gmail shows the label's chip on conversations in the message
     /// list: `show` or `hide`. Mirrored into `LabelRow.messageListVisibility`.
     var messageListVisibility: String? = nil
+    /// The preset name Gmail may send next to `color`, e.g.
+    /// `LABEL_COLOR_PRESET_DARK_GREEN`. Not in the REST reference; kept as
+    /// the raw string, so any value decodes. Mirrored into
+    /// `LabelRow.gmailColorPreset`.
+    var colorPreset: String? = nil
 }
 
 struct GLabelList: Decodable { let labels: [GLabel]? }

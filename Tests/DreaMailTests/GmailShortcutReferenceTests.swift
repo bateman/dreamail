@@ -44,6 +44,7 @@ final class GmailShortcutReferenceTests: XCTestCase {
         .expandAll: ";",       // Expand entire conversation
         .collapseAll: ":",     // Collapse entire conversation
         .toggleRead: nil,      // Gmail: Shift+I / Shift+U instead
+        .moveToInbox: nil,     // Gmail has no key: "Move to" (v) → Inbox
     ]
 
     func testEveryRegistryDefaultMatchesGmail() {

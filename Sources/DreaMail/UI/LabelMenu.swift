@@ -21,7 +21,7 @@ struct LabelMenuItems: View {
                 // Both kinds go, on the label and its sublabels: no color is
                 // what is seen.
                 Button("Remove color") { store.setGmailLabelColor(row, to: nil) }
-                    .disabled(!family.contains { $0.gmailBackgroundColor != nil || $0.color != nil })
+                    .disabled(!family.contains { $0.hasGmailColor || $0.color != nil })
                     .accessibilityIdentifier("labelMenu.color.remove")
                 Button("Remove color only on this Mac") { store.setLabelColor(row, hex: nil) }
                     .disabled(!family.contains { $0.color != nil })

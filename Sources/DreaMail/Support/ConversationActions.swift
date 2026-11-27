@@ -24,6 +24,7 @@ enum ConversationAction: Equatable {
     /// `alsoRemove`: what the move leaves besides INBOX (`MoveSource`).
     case moveTo(labelId: String, alsoRemove: [String] = [])
 
+    static let inboxLabel = "INBOX"
     static let mutedLabel = "MUTED"
     static let importantLabel = "IMPORTANT"
 
@@ -34,7 +35,10 @@ enum ConversationAction: Equatable {
         case .markImportant: return ([Self.importantLabel], [])
         case .markNotImportant: return ([], [Self.importantLabel])
         case .moveTo(let labelId, let alsoRemove):
-            return ([labelId], ["INBOX"] + alsoRemove.filter { $0 != labelId && $0 != "INBOX" })
+            // Moving to the Inbox itself (Gmail's "Move to Inbox") adds INBOX
+            // and leaves only what the place it leaves asks for.
+            return ([labelId], (["INBOX"] + alsoRemove.filter { $0 != "INBOX" })
+                .filter { $0 != labelId })
         }
     }
 
@@ -47,6 +51,11 @@ enum ConversationAction: Equatable {
     /// The local side: labels and the denormalized flags together.
     func apply(_ t: inout MailThread) {
         Self.applyLabels(remote, &t)
+        // Back in the Inbox means awake: a conversation snoozed here takes
+        // the unsnooze path (date cleared, Gmail's snooze ended).
+        if labelEdit.add.contains(Self.inboxLabel), t.snoozeUntil != nil {
+            ThreadUndo.unsnooze(&t)
+        }
     }
 
     /// Gmail side of the undo for one thread, from its pre-action snapshot.
@@ -62,8 +71,14 @@ enum ConversationAction: Equatable {
     }
 
     /// Local undo; `t` is the post-action copy (the diff base of the write).
+    /// A move to the Inbox also gives back the snooze it ended: the date
+    /// (local only, Gmail has none) and Gmail's own snooze mark.
     func restore(original: MailThread, _ t: inout MailThread) {
         Self.applyLabels(undoRemote(original: original), &t)
+        if labelEdit.add.contains(Self.inboxLabel), !original.inInbox {
+            t.snoozeUntil = original.snoozeUntil
+            t.gmailSnoozed = original.gmailSnoozed
+        }
     }
 
     /// Bulk undo: one group per distinct undo change, because one bulk
