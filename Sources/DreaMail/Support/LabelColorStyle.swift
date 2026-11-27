@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// An opaque sRGB color, components in 0…1.
@@ -260,28 +261,23 @@ struct LabelPillStyle: Equatable, Sendable {
                               border: borderColor(on: behind))
     }
 
-    /// A tag in the sidebar must read as colored, never as the outline that
-    /// means "no color". Below this fill-to-surface difference (CIE76) the
-    /// fill is moved away from the surface (see `visibleTagFill`); 25, the dots' value.
+    /// In dark appearance a sidebar tag must read as colored, never as the
+    /// outline that means "no color". Below this fill-to-sidebar difference
+    /// (CIE76, the dots' value) the fill is moved away from the sidebar (see
+    /// `SidebarTagStyle`). Light appearance is not touched.
     static let minimumTagDifference = minimumDotEdgeDifference
 
-    /// The fill of the sidebar tag for a label with a color: its own
-    /// background when that is at least `minimumTagDifference` from the
-    /// content surface, else mixed toward white (dark appearance) or black
-    /// (light) in 1% steps, only as far as needed to reach it. The hue is
-    /// kept as far as the mix allows; nothing gets an outline.
-    static func visibleTagFill(_ fill: LabelRGB, appearance: Appearance) -> LabelRGB {
-        let surface = surfaceColor(.content, appearance)
-        let target: LabelRGB = appearance == .dark ? .white : .black
-        var candidate = fill
-        for step in 0...100 {
-            let t = Double(step) / 100
-            candidate = LabelRGB(r: fill.r + (target.r - fill.r) * t,
-                                 g: fill.g + (target.g - fill.g) * t,
-                                 b: fill.b + (target.b - fill.b) * t)
-            if candidate.difference(from: surface) >= minimumTagDifference { return candidate }
+    /// The sidebar background (`NSColor.mailSidebar`) as the tag sees it.
+    static func sidebarSurface(_ appearance: Appearance) -> LabelRGB {
+        var out = appearance == .dark ? LabelRGB(hex: 0x232323) : LabelRGB(hex: 0xF7F7F5)
+        let name: NSAppearance.Name = appearance == .dark ? .darkAqua : .aqua
+        NSAppearance(named: name)?.performAsCurrentDrawingAppearance {
+            if let c = NSColor.mailSidebar.usingColorSpace(.sRGB) {
+                out = LabelRGB(r: Double(c.redComponent), g: Double(c.greenComponent),
+                               b: Double(c.blueComponent))
+            }
         }
-        return candidate
+        return out
     }
 
     /// Mid grey where it reaches 3:1 against every surface color (white,
@@ -295,5 +291,38 @@ struct LabelPillStyle: Equatable, Sendable {
         let grey = LabelRGB(hex: 0x808080)
         if worst(grey) >= 3 { return grey }
         return worst(.white) >= worst(.black) ? .white : .black
+    }
+}
+
+/// How the sidebar's label tag is drawn, in one pure rule the view and the
+/// tests share.
+///
+/// - No color: the outline only (`border`), as Gmail draws it.
+/// - Light appearance: exactly the label's fill, with an outline where
+///   `LabelPillStyle` asks for one (a pale pastel keeps its true color).
+/// - Dark appearance: the label's fill, mixed toward white in 1% steps only
+///   as far as needed to be `minimumTagDifference` (25) from the sidebar
+///   background, no outline; a fill already that far is unchanged.
+struct SidebarTagStyle: Equatable, Sendable {
+    /// Fill of the tag; nil for the outline-only "no color" tag.
+    let fill: LabelRGB?
+    /// Outline drawn over the fill, or (without a fill) alone.
+    let outline: LabelRGB?
+
+    static func resolve(_ colors: LabelColors, appearance: LabelPillStyle.Appearance) -> SidebarTagStyle {
+        let style = LabelPillStyle.resolve(colors, appearance: appearance, shape: .dot)
+        guard colors.isColored else { return SidebarTagStyle(fill: nil, outline: style.border) }
+        guard appearance == .dark else {
+            return SidebarTagStyle(fill: style.fill, outline: style.needsBorder ? style.border : nil)
+        }
+        let surface = LabelPillStyle.sidebarSurface(.dark)
+        var candidate = style.fill
+        for step in 0...100 where candidate.difference(from: surface) < LabelPillStyle.minimumTagDifference {
+            let t = Double(step) / 100
+            candidate = LabelRGB(r: style.fill.r + (1 - style.fill.r) * t,
+                                 g: style.fill.g + (1 - style.fill.g) * t,
+                                 b: style.fill.b + (1 - style.fill.b) * t)
+        }
+        return SidebarTagStyle(fill: candidate, outline: nil)
     }
 }

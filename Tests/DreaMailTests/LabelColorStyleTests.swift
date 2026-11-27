@@ -439,8 +439,11 @@ final class LabelColorStyleTests: XCTestCase {
         }
     }
 
-    /// The sidebar tag keeps a very dark or very light color and gives it an
-    /// outline where it would vanish on the surface (dark grey on dark).
+    /// The dot rule (`resolve`, `.dot`) keeps a very dark or very light color
+    /// and asks for an outline where it would vanish on the surface (dark
+    /// grey on dark). The sidebar tag draws it through `SidebarTagStyle`:
+    /// in dark appearance the fill is lightened instead of outlined, in light
+    /// it keeps this fill and outline.
     func testDarkAndLightColorsKeepTheFillAndGetAnOutline() {
         let darkGrey = LabelPillStyle.resolve(LabelColors(background: "#434343", text: "#ffffff"),
                                               appearance: .dark, shape: .dot)

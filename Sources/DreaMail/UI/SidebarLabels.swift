@@ -158,10 +158,10 @@ extension SidebarLabelRow {
 }
 
 /// Gmail's label glyph: a tag filled with the label's color (the Mac-only
-/// color first, DEC-023). A colored label is always a visible fill, in both
-/// appearances (`LabelPillStyle.visibleTagFill` moves a fill that would
-/// vanish into the sidebar, a dark grey in dark mode); only a label with no
-/// color is an outline.
+/// color first, DEC-023). The drawing is `SidebarTagStyle`: in dark
+/// appearance a colored label is always a visible fill (a dark grey is
+/// lightened), in light the true fill with its outline where needed; only a
+/// label with no color is an outline.
 struct SidebarLabelTag: View {
     let colors: LabelColors
     @Environment(\.colorScheme) private var colorScheme
@@ -169,16 +169,20 @@ struct SidebarLabelTag: View {
 
     var body: some View {
         let metrics = MailIconMetrics(rowSize: rowSize)
-        let appearance = LabelPillStyle.Appearance(colorScheme)
-        let style = LabelPillStyle.resolve(colors, appearance: appearance, shape: .dot)
+        let tag = SidebarTagStyle.resolve(colors, appearance: .init(colorScheme))
         Group {
-            if colors.isColored {
+            if let fill = tag.fill {
                 Image(systemName: "tag.fill")
-                    .foregroundStyle(Color(LabelPillStyle.visibleTagFill(style.fill, appearance: appearance)))
-            } else {
+                    .foregroundStyle(Color(fill))
+                    .overlay {
+                        if let outline = tag.outline {
+                            Image(systemName: "tag").foregroundStyle(Color(outline))
+                        }
+                    }
+            } else if let outline = tag.outline {
                 // No color: the outline only, as Gmail draws it, so any
                 // fill means the label has a color (a dark grey included).
-                Image(systemName: "tag").foregroundStyle(Color(style.border))
+                Image(systemName: "tag").foregroundStyle(Color(outline))
             }
         }
         .font(metrics.font)

@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 
 /// The sidebar tag of a label with a Gmail color is always a visible fill
 /// (never the outline that means "no color"), and the color sheet's
@@ -6,52 +7,77 @@ import XCTest
 final class LabelSidebarTagTests: XCTestCase {
     private let palette = LabelColorStyleTests.gmailPalette
 
-    /// Every documented background, in both appearances: the tag's fill is
-    /// at least `minimumTagDifference` (CIE76) from the sidebar's content
-    /// color, keeps its own value when it already is, and is moved only
-    /// toward white (dark) or black (light) otherwise.
-    func testEveryDocumentedColorIsAVisibleFillInBothAppearances() {
-        var moved: [LabelPillStyle.Appearance: [String]] = [.light: [], .dark: []]
-        for appearance in LabelPillStyle.Appearance.allCases {
-            let surface = LabelPillStyle.surfaceColor(.content, appearance)
-            for hex in palette {
-                let own = LabelRGB(hexString: hex)!
-                let fill = LabelPillStyle.visibleTagFill(own, appearance: appearance)
-                XCTAssertGreaterThanOrEqual(fill.difference(from: surface),
-                                            LabelPillStyle.minimumTagDifference,
-                                            "\(hex) \(appearance)")
-                if own.difference(from: surface) >= LabelPillStyle.minimumTagDifference {
-                    XCTAssertEqual(fill, own, "\(hex) \(appearance): already visible, unchanged")
-                } else {
-                    moved[appearance, default: []].append(hex)
-                    // Moved away from the surface only.
-                    if appearance == .dark {
-                        XCTAssertGreaterThan(fill.luminance, own.luminance, hex)
-                    } else {
-                        XCTAssertLessThan(fill.luminance, own.luminance, hex)
-                    }
-                }
-            }
-        }
-        // The dark greys, in dark appearance, are what the owner saw as
-        // "no color": black and the two dark greys sit within 25 of #191919.
-        for hex in ["#000000", "#434343", "#464646"] {
-            XCTAssertTrue(moved[.dark]!.contains(hex), "\(hex) is lightened in dark appearance")
-        }
-        for hex in ["#ffffff", "#f3f3f3", "#efefef", "#e7e7e7"] {
-            XCTAssertTrue(moved[.light]!.contains(hex), "\(hex) is darkened in light appearance")
+    private func tag(_ hex: String?, _ appearance: LabelPillStyle.Appearance) -> SidebarTagStyle {
+        SidebarTagStyle.resolve(LabelColors(background: hex, text: nil), appearance: appearance)
+    }
+
+    /// The tag is measured against the sidebar's own background, the same
+    /// constant the sidebar is painted with.
+    func testSidebarSurfaceIsTheSidebarColor() throws {
+        for (appearance, name) in [(LabelPillStyle.Appearance.light, NSAppearance.Name.aqua),
+                                   (.dark, .darkAqua)] {
+            let c = try XCTUnwrap(AppearanceColorSupport.resolve(.mailSidebar, in: name))
+            XCTAssertEqual(LabelPillStyle.sidebarSurface(appearance).r, Double(c.redComponent), accuracy: 0.002)
+            XCTAssertEqual(LabelPillStyle.sidebarSurface(appearance).b, Double(c.blueComponent), accuracy: 0.002)
         }
     }
 
-    /// The old rule drew these as a dark fill plus an outline on the dark
-    /// sidebar (`needsBorder`); the tag now has a clearly lighter fill.
-    func testDarkGreyInDarkAppearanceIsNoLongerOutlineLike() {
-        let style = LabelPillStyle.resolve(LabelColors(background: "#434343", text: "#ffffff"),
-                                           appearance: .dark, shape: .dot)
-        XCTAssertTrue(style.needsBorder, "the dot rule alone would outline it")
-        let tag = LabelPillStyle.visibleTagFill(style.fill, appearance: .dark)
-        XCTAssertNotEqual(tag, style.fill)
-        XCTAssertGreaterThanOrEqual(tag.difference(from: LabelPillStyle.surfaceColor(.content, .dark)), 25)
+    /// Dark appearance, every documented background: the fill is at least
+    /// `minimumTagDifference` (CIE76) from the sidebar background, no
+    /// outline, unchanged when it already is, otherwise only lightened.
+    func testEveryDocumentedColorIsAVisibleFillInDarkAppearance() throws {
+        let surface = LabelPillStyle.sidebarSurface(.dark)
+        var moved: [String] = []
+        for hex in palette {
+            let own = LabelRGB(hexString: hex)!
+            let style = tag(hex, .dark)
+            let fill = try XCTUnwrap(style.fill)
+            XCTAssertNil(style.outline, hex)
+            XCTAssertGreaterThanOrEqual(fill.difference(from: surface),
+                                        LabelPillStyle.minimumTagDifference, hex)
+            if own.difference(from: surface) >= LabelPillStyle.minimumTagDifference {
+                XCTAssertEqual(fill, own, "\(hex): already visible, unchanged")
+            } else {
+                moved.append(hex)
+                XCTAssertGreaterThan(fill.luminance, own.luminance, hex)
+            }
+        }
+        // The dark greys are what the owner saw as "no color".
+        for hex in ["#000000", "#434343", "#464646"] {
+            XCTAssertTrue(moved.contains(hex), "\(hex) is lightened in dark appearance")
+        }
+    }
+
+    /// Light appearance is drawn as before: the true fill, with the dot
+    /// rule's outline where it asks for one.
+    func testLightAppearanceKeepsTheTrueFill() {
+        for hex in palette {
+            let colors = LabelColors(background: hex, text: nil)
+            let old = LabelPillStyle.resolve(colors, appearance: .light, shape: .dot)
+            let style = SidebarTagStyle.resolve(colors, appearance: .light)
+            XCTAssertEqual(style.fill, LabelRGB(hexString: hex), hex)
+            XCTAssertEqual(style.outline != nil, old.needsBorder, hex)
+            if old.needsBorder { XCTAssertEqual(style.outline, old.border, hex) }
+        }
+    }
+
+    /// Dark grey, a pastel and no color, in both appearances.
+    func testDarkGreyPastelAndNoColor() {
+        let darkGrey = tag("#434343", .dark)
+        XCTAssertNotEqual(darkGrey.fill, LabelRGB(hexString: "#434343"))
+        XCTAssertNil(darkGrey.outline)
+        XCTAssertEqual(tag("#434343", .light).fill, LabelRGB(hexString: "#434343"))
+        let pastel = tag("#fef1d1", .light)
+        XCTAssertEqual(pastel.fill, LabelRGB(hexString: "#fef1d1"))
+        XCTAssertNotNil(pastel.outline, "a pastel keeps its thin outline, as before")
+        XCTAssertEqual(tag("#fef1d1", .dark).fill, LabelRGB(hexString: "#fef1d1"))
+        for appearance in LabelPillStyle.Appearance.allCases {
+            for none in [nil, "", "oops"] {
+                let style = tag(none, appearance)
+                XCTAssertNil(style.fill)
+                XCTAssertNotNil(style.outline, "no color is the outline only")
+            }
+        }
     }
 
     // MARK: - "Current:" line
