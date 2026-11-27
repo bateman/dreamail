@@ -70,9 +70,12 @@ enum ThreadRefresh {
 
     /// Initial reading-pane scroll id: newest sent when multi-message; nil for
     /// a single card (default top). Draft-only multi falls back to last row.
+    /// With starred messages, the newest starred one (Gmail): the card the
+    /// conversation opens on (`ThreadMessageRoles.openTargetId`).
     static func initialScrolledMessageId(in messages: [Message]) -> String? {
         guard messages.count > 1 else { return nil }
-        return ForwardComposer.newestSentMessage(in: messages)?.id
+        return MessageActions.starredOpenTarget(in: messages)?.id
+            ?? ForwardComposer.newestSentMessage(in: messages)?.id
             ?? messages.last?.id
     }
 
@@ -113,8 +116,11 @@ struct ThreadMessageRoles: Equatable {
     /// Everything else (sent mail + discarded DRAFT+TRASH rows), in display
     /// order — these render as `MessageCard`.
     let nonDraftIds: [String]
-    /// Newest message without a DRAFT label — the default expanded card.
+    /// Newest message without a DRAFT label.
     let lastNonDraftId: String?
+    /// The card a conversation opens expanded on: its newest starred
+    /// message, as in Gmail, else `lastNonDraftId`.
+    let openTargetId: String?
     private let liveDraftIdSet: Set<String>
 
     init(messages: [Message]) {
@@ -131,6 +137,7 @@ struct ThreadMessageRoles: Equatable {
         nonDraftIds = nonDraft
         liveDraftIdSet = Set(live)
         lastNonDraftId = ForwardComposer.newestSentMessage(in: messages)?.id
+        openTargetId = MessageActions.starredOpenTarget(in: messages)?.id ?? lastNonDraftId
     }
 
     func isLiveDraft(_ id: String) -> Bool {

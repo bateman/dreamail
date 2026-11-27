@@ -980,50 +980,78 @@ extension MailStore {
                 try TrashedMessages.restoreTargets(db, threadIds: ids)
             }) ?? []
             guard let self, !self.isShuttingDown, !loaded.isEmpty else { return }
-            let add = move.addLabels
-            let remove = move.removeLabels
-            var remotes: [String: RemoteThreadChange] = [:]
-            for target in loaded {
-                remotes[target.row.id] = .modifyMessages(ids: target.trashedIds, add: add, remove: remove)
-            }
-            let rows = loaded.map(\.row)
-            let rowIds = Set(rows.map(\.id))
+            let rowIds = Set(loaded.map(\.row.id))
             self.advanceForRemoval(rowIds, action: "move")
             self.threads.removeAll { rowIds.contains($0.id) }
             self.trashViewProjectedIds.subtract(rowIds)
-            for row in rows where self.isKnownAccount(row.accountId) {
-                LocalThreadEdits.shared.record(threadIds: [row.id], change: remotes[row.id] ?? .modify())
-            }
-            let restores = loaded.map { (accountId: $0.row.accountId, threadId: $0.row.id,
-                                         ids: $0.trashedIds) }
-            let written = Task {
-                try await pool.write { db in
-                    for r in restores {
-                        try TrashedMessages.applyRestore(db, accountId: r.accountId, threadId: r.threadId,
-                                                         ids: r.ids, add: add, remove: remove)
+            self.editMessageLabels(loaded.map { (row: $0.row, ids: $0.trashedIds) },
+                                   add: move.addLabels, remove: move.removeLabels,
+                                   foldThreadFlags: false)
+        }
+    }
+
+    /// Labels added or removed on exactly these messages of each
+    /// conversation (`messages.batchModify`, labels only: never a delete).
+    /// Shared by the Trash view's restore and the actions on one message of
+    /// an open conversation (`MailStore+MessageActions`). Local state first,
+    /// in one transaction: the message rows and the thread row derived from
+    /// them, so the list, the open conversation and a relaunch offline all
+    /// agree before Gmail answers. The request then goes out on the chained
+    /// bulk tail, with the offline queue, the folding and the revert of
+    /// every thread edit (`applyRemoteThreadChange`).
+    /// - `foldThreadFlags`: write the thread row's pending thread-level
+    ///   edits to its messages first (`TrashedMessages.applyMessageEdit`).
+    func editMessageLabels(_ edits: [(row: MailThread, ids: [String])],
+                           add: [String], remove: [String], foldThreadFlags: Bool) {
+        let edits = edits.filter { !$0.ids.isEmpty }
+        guard !isShuttingDown, !edits.isEmpty, !(add.isEmpty && remove.isEmpty) else { return }
+        var remotes: [String: RemoteThreadChange] = [:]
+        for edit in edits {
+            remotes[edit.row.id] = .modifyMessages(ids: edit.ids, add: add, remove: remove)
+        }
+        let rows = edits.map(\.row)
+        let rowIds = Set(rows.map(\.id))
+        for row in rows where isKnownAccount(row.accountId) {
+            LocalThreadEdits.shared.record(threadIds: [row.id], change: remotes[row.id] ?? .modify())
+        }
+        let pool = db
+        // After the thread edits already on their way to the database: the
+        // derive below must start from them.
+        let persisted = threadMutationPersistenceTask
+        let written = Task {
+            _ = await persisted?.value
+            try await pool.write { db in
+                for edit in edits {
+                    if foldThreadFlags {
+                        try TrashedMessages.applyMessageEdit(db, thread: edit.row, ids: edit.ids,
+                                                             add: add, remove: remove)
+                    } else {
+                        try TrashedMessages.applyRestore(db, accountId: edit.row.accountId,
+                                                         threadId: edit.row.id,
+                                                         ids: edit.ids, add: add, remove: remove)
                     }
                 }
             }
-            let isDemo = self.demoMode
-            let predecessor = self.bulkRemoteTail
-            self.bulkRemoteTail = Task {
-                _ = await predecessor?.value
-                let result = await written.result
+        }
+        let isDemo = demoMode
+        let predecessor = bulkRemoteTail
+        bulkRemoteTail = Task {
+            _ = await predecessor?.value
+            let result = await written.result
+            await MainActor.run {
+                // Message rows changed: the reader cache and mirror
+                // must not open the live conversation without them.
+                if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
+                self.scheduleThreadMutationReconciliation()
+            }
+            if case .failure(let error) = result {
                 await MainActor.run {
-                    // Message rows changed: the reader cache and mirror
-                    // must not open the live conversation without them.
-                    if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
-                    self.scheduleThreadMutationReconciliation()
+                    self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
                 }
-                if case .failure(let error) = result {
-                    await MainActor.run {
-                        self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
-                    }
-                    return
-                }
-                guard !isDemo, !self.isShuttingDown else { return }
-                await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
+                return
             }
+            guard !isDemo, !self.isShuttingDown else { return }
+            await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
         }
     }
 

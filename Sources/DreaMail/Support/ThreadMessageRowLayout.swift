@@ -47,6 +47,22 @@ struct ThreadMessageRowMetrics {
     func textColumnWidth(rowWidth: CGFloat) -> CGFloat {
         max(0, rowWidth - textColumnLeading - trailingInset)
     }
+
+    /// An open message's controls after the date (Gmail on the web): star,
+    /// reply, reply all and "More", each this wide (their height is the
+    /// symbol's, so the name line keeps its height).
+    var headerControlSize: CGFloat { 18 * s }
+    var headerControlSpacing: CGFloat { 10 * s }
+    /// The name line's gap between the date and the controls (not scaled,
+    /// like the name line's other gaps).
+    static let nameLineSpacing: CGFloat = 8
+
+    /// Width the controls take from the name line, `count` of them.
+    func headerControlsWidth(count: Int) -> CGFloat {
+        guard count > 0 else { return 0 }
+        return CGFloat(count) * headerControlSize
+            + CGFloat(count - 1) * headerControlSpacing + Self.nameLineSpacing
+    }
 }
 
 /// How much of the date the name line shows. The date shares the line with
