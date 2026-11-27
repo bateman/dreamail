@@ -252,6 +252,10 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **Fixed: two rows highlighted in the sidebar.** After some changes of
+  view (for example from a row under "More", or with a keyboard jump), the
+  sidebar could show the highlight on two rows, the new view and the one
+  left behind. Only the row of the view on screen is highlighted now.
 - **The selection bar shows icons.** With several conversations ticked,
   the bar above the list now has icon buttons for Archive, Trash, Star and
   Read/Unread, as in Gmail, instead of text. Each has a tooltip with its
