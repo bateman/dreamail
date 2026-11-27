@@ -54,13 +54,6 @@ final class LabelSidebarTagTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(tag.difference(from: LabelPillStyle.surfaceColor(.content, .dark)), 25)
     }
 
-    func testShortHexIsAColor() {
-        XCTAssertEqual(LabelRGB.normalizedHex("#ABC"), "#aabbcc")
-        XCTAssertEqual(LabelRGB(hexString: "fff"), .white)
-        XCTAssertTrue(LabelColors(background: "#000", text: nil).isColored)
-        XCTAssertNil(LabelRGB.normalizedHex("#abcd"))
-    }
-
     // MARK: - "Current:" line
 
     private let grid = GmailLabelPalette.swatches.map(\.background)

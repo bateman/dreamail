@@ -24,7 +24,6 @@ struct LabelRGB: Equatable, Hashable, Sendable {
             return nil
         }
         if hex.hasPrefix("#") { hex.removeFirst() }
-        hex = Self.expandedShortHex(hex)
         guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }),
               let value = UInt32(hex, radix: 16) else { return nil }
         self.init(hex: value)
@@ -36,16 +35,8 @@ struct LabelRGB: Equatable, Hashable, Sendable {
     static func normalizedHex(_ string: String?) -> String? {
         guard var hex = string?.trimmingCharacters(in: .whitespaces) else { return nil }
         if hex.hasPrefix("#") { hex.removeFirst() }
-        hex = expandedShortHex(hex)
         guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
         return "#" + hex.lowercased()
-    }
-
-    /// `abc` → `aabbcc`; anything else unchanged. Gmail sends six digits,
-    /// but a three-digit value must not read as "no color".
-    private static func expandedShortHex(_ hex: String) -> String {
-        guard hex.count == 3, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return hex }
-        return hex.map { "\($0)\($0)" }.joined()
     }
 
     static let black = LabelRGB(hex: 0x000000)
