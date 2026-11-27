@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.42
+Versione: 0.43
 Ultimo aggiornamento: 27 novembre 2026
 Stato: documento in evoluzione
 
@@ -99,6 +99,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-085 | **Inbox unificata disattivabile** | Richiesta del proprietario: un'impostazione globale (Settings → Appearance, attiva per impostazione predefinita) toglie la vista "All accounts" e ogni via per raggiungerla; l'app mostra allora il primo account. Gmail non ha una posta unificata: è una regola propria dell'app. Le viste salvate di tutti gli account restano nascoste finché l'opzione è spenta, senza essere modificate né cancellate (scelta del proprietario); badge, numero sul Dock e notifiche non dipendono dall'opzione. PR #114. |
 | DEC-086 | **Messaggi cancellati visibili a richiesta nella conversazione viva** | Come Gmail web: una conversazione con messaggi nel Cestino e altri no mostra la riga "N deleted messages in this conversation" con "View"; solo dopo il clic i messaggi cancellati compaiono sul posto, segnati "In Trash", con "Restore" e "Restore all". Precisa DEC-019 e DEC-081: "cancellato vuol dire sparito" resta vero per riga dell'elenco, ricerca, conteggi, citazioni, riassunto e MCP; la riga dice solo quanti sono. Più severo di Gmail: un messaggio cancellato aperto non carica immagini remote senza un clic e non avvia il controllo OpenPGP. PR #107. |
 | DEC-087 | **Etichette disegnate con il preset di colore di Gmail** | Gmail può dare a un'etichetta un "preset" di colore (`colorPreset`, 21 valori) che REST v1 non documenta: l'app lo legge se arriva, lo conserva così com'è e lo mostra nel foglio del colore. Il preset decide il disegno solo quando il colore di Gmail manca o è la coppia neutra `#eeeeee`/`#222222`; un colore vero di Gmail e un colore scelto solo su questo Mac vengono prima. L'app non scrive mai il preset: per toglierlo serve Gmail web, e una rimozione che lo lascia è un errore dichiarato, non un successo. Una nuova sottoetichetta eredita il colore con cui la madre è disegnata (precisa DEC-071), mai quello scelto solo su questo Mac. Il nome del preset è mostrato solo se ben formato, altrimenti "unknown preset". Prosegue DEC-083. PR #118. |
+| DEC-088 | **"Move to inbox" e menu del clic destro come Gmail** | Come Gmail web: una conversazione che non è in Inbox mostra "Move to inbox" dove quelle in Inbox mostrano "Archive" (non nel Cestino, non nello Spam, non una bozza sola: lì restano le azioni proprie). Il pulsante conserva le etichette; "Move to… → Inbox" da dentro un'etichetta la toglie, e da una conversazione cestinata toglie anche TRASH. Scelta dell'app, non verificata su Gmail: riportare in Inbox toglie anche il silenziamento. Nessun tasto predefinito (Gmail non ne ha). Il menu del clic destro sulla riga segue ordine, gruppi, parole e icone di Gmail, con le voci proprie dell'app in coda; "Delete" è la parola di Gmail solo in questo menu, altrove resta "Trash" finché il proprietario non decide. Il clic destro su una di più righe spuntate agisce sull'insieme spuntato. Fuori per scelta: "Add to Tasks" (deciso dal proprietario), "Forward as attachment" e "Open in new window" (mancano i mattoni nell'app). Un'azione ha una sola icona in tutta l'app. PR #116. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -520,6 +521,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-27 | **0.40** | Aggiunta DEC-085 (inbox unificata disattivabile). |
 | 2026-11-27 | **0.41** | Aggiunta DEC-086 (messaggi cancellati visibili a richiesta nella conversazione viva), che precisa DEC-019 e DEC-081. |
 | 2026-11-27 | **0.42** | Aggiunta DEC-087 (etichette disegnate con il preset di colore di Gmail), che prosegue DEC-083 e precisa DEC-071. |
+| 2026-11-27 | **0.43** | Aggiunta DEC-088 ("Move to inbox" e menu del clic destro come Gmail). |
 
 ---
 

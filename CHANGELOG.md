@@ -251,6 +251,24 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **Move to inbox.** A conversation that is not in the Inbox (archived,
+  or reached from a label, All Mail or a search) can be moved back, as in
+  Gmail: "Move to inbox" takes the place of Archive in the conversation
+  toolbar, on the row (hover button, swipe, right-click menu), in the
+  Message menu and in the command palette. "Move to…" lists Inbox first,
+  and typing "inbox" in "Label as…" offers the move instead of creating a
+  label with that name. The move ends a snooze, unmutes the conversation
+  and can be undone. There is no default key, as in Gmail; one can be set
+  in Settings.
+- **The right-click menu on a conversation follows Gmail's.** Same order,
+  groups and wording, with an icon on every item: Reply, Reply all,
+  Forward; Move to inbox or Archive, Delete, Mark as unread or read,
+  Snooze; Move to…, Label as…, Mute or Unmute; Find emails from the
+  sender. The app's own items (Star, Remind me, VIPs, Copy Gmail link)
+  come after. Right-clicking one of several ticked conversations acts on
+  all of them. Not included: Forward as attachment, Add to Tasks, Open in
+  new window. "Find emails from" is not offered when the sender's address
+  contains `_`, `%` or `*`.
 - **The label colour sheet also shows Gmail's colour preset.** Some labels
   that have a colour in Gmail on the web arrive from Gmail with no colour,
   or with a neutral grey, and were drawn uncoloured. The app now also reads
