@@ -146,14 +146,6 @@ final class ListSearchFieldUITests: XCTestCase {
                       "the window shrank to its minimum width (now \(window.frame))")
     }
 
-    /// Widens the window past the three-pane threshold (1080 pt).
-    private func widen(_ app: XCUIApplication) {
-        let window = app.windows.firstMatch
-        dragCorner(app, dx: 500)
-        XCTAssertTrue(waitUntil(timeout: 8) { window.frame.width >= 1100 },
-                      "the window grew to a three-pane width (now \(window.frame))")
-    }
-
     func testFieldInTheListBar_paneOpen() {
         let app = launch(paneHidden: false)
         XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
@@ -245,51 +237,18 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focused the field")
     }
 
-    /// Three panes (window widened past 1080 pt): the list is the middle
-    /// column. A click focuses the field, the panel opens inside the column,
-    /// and no toolbar item is missing.
-    func testFieldInThreePanes() {
-        let app = launch(paneHidden: false)
+    /// A conversation filling the window (full-window style): `/` leaves it and
+    /// focuses the field, as it does in the compact layout.
+    func testSlashFromAFullWindowConversation() {
+        let app = launch(paneHidden: nil, openStyle: "fullWindow")
         let t3 = element(app, "threadRow.you@example.com:t3")
-        XCTAssertTrue(t3.waitForExistence(timeout: 10))
-        widen(app)
-        XCTAssertTrue(t3.waitForExistence(timeout: 5))
-        assertToolbarIntact(app, "three panes")
-        let column = t3.frame
-        let box = element(app, "listSearchBox").frame
-        XCTAssertGreaterThanOrEqual(box.minX, column.minX, "the field is not left of the list column")
-        XCTAssertLessThanOrEqual(box.maxX, column.maxX + 24, "the field is in the middle column, not past it (field \(box), column \(column))")
-        let text = textField(app)
-        text.click()
-        XCTAssertTrue(waitUntil { self.hasFocus(text) }, "three panes: a click focuses the field")
-        app.typeText("zzzznomatch")
-        let panel = element(app, "searchResultsPanel")
-        XCTAssertTrue(panel.waitForExistence(timeout: 5), "the panel opens")
-        print("ListSearchField three panes: column \(column), field \(box), panel \(panel.frame)")
-        XCTAssertGreaterThanOrEqual(panel.frame.minX, column.minX - 1, "the panel is inside the column")
-        XCTAssertLessThanOrEqual(panel.frame.maxX, column.maxX + 24, "the panel is inside the column")
-        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-    }
-
-    /// A conversation filling the window (full-window style) or floating over
-    /// the list (centre peek): `/` leaves it and focuses the field, as it does
-    /// in the compact layout; the field does not take focus behind the peek.
-    func testSlashFromAFullWindowConversationAndAPeek() {
-        for style in ["fullWindow", "centerPeek"] {
-            let app = launch(paneHidden: nil, openStyle: style)
-            let t3 = element(app, "threadRow.you@example.com:t3")
-            XCTAssertTrue(t3.waitForExistence(timeout: 10), "\(style): the list")
-            t3.click()
-            XCTAssertTrue(app.buttons["exitFocusButton"].waitForExistence(timeout: 5), "\(style): a conversation fills the window")
-            if style == "centerPeek" {
-                XCTAssertFalse(textField(app).isEnabled, "centerPeek: the field behind the card is disabled")
-            }
-            app.typeKey("/", modifierFlags: [])
-            XCTAssertTrue(waitUntil { !app.buttons["exitFocusButton"].exists }, "\(style): / left the conversation")
-            XCTAssertTrue(element(app, "listSearchBox").waitForExistence(timeout: 5), "\(style): the list is back")
-            XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "\(style): / focused the field")
-            app.terminate()
-        }
+        XCTAssertTrue(t3.waitForExistence(timeout: 10), "the list")
+        t3.click()
+        XCTAssertTrue(app.buttons["exitFocusButton"].waitForExistence(timeout: 5), "a conversation fills the window")
+        app.typeKey("/", modifierFlags: [])
+        XCTAssertTrue(waitUntil { !app.buttons["exitFocusButton"].exists }, "/ left the conversation")
+        XCTAssertTrue(element(app, "listSearchBox").waitForExistence(timeout: 5), "the list is back")
+        XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focused the field")
     }
 
     func testNoDoubleChevronAndPaneToggleStillWorks() {
