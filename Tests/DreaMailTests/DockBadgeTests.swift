@@ -81,7 +81,8 @@ final class DockBadgeTests: XCTestCase {
 
     // MARK: - What counts
 
-    /// Gmail's Inbox unread: one per conversation, primary tab only.
+    /// Gmail's Inbox unread (no category tabs): one per conversation the
+    /// Inbox lists, whatever its category.
     func testOnlyUnreadPrimaryInboxConversationsCount() throws {
         let now = Date()
         let q = try makeDB()
@@ -99,15 +100,15 @@ final class DockBadgeTests: XCTestCase {
                 $0.snoozeUntil = now.addingTimeInterval(3600)
             }
         }
-        XCTAssertEqual(try badge(q, now: now), 2)
-        XCTAssertEqual(try badge(q, now: now, hide: ["CATEGORY_UPDATES"]), 1,
+        XCTAssertEqual(try badge(q, now: now), 4)
+        XCTAssertEqual(try badge(q, now: now, hide: ["CATEGORY_UPDATES"]), 3,
                        "Updates hidden from the inbox leave the badge too")
         // The in-memory rule says the same for each row.
         let rows = try q.read { try MailThread.fetchAll($0) }
         let counted = rows.filter {
             DockBadge.counts($0, badgeAccount: nil, now: now)
         }.map(\.gmailThreadId).sorted()
-        XCTAssertEqual(counted, ["counted", "updates"])
+        XCTAssertEqual(counted, ["counted", "promo", "social", "updates"])
     }
 
     // MARK: - Local actions
@@ -349,7 +350,7 @@ final class DockBadgeTests: XCTestCase {
         XCTAssertEqual(counts.values.reduce(0, +), try badge(q))
     }
 
-    /// Same exclusions as the Dock badge: promotions and hidden categories.
+    /// Same exclusions as the Dock badge: hidden categories only.
     func testPerAccountCountsUseTheDockBadgeRule() throws {
         let q = try makeDB()
         try q.write { db in
@@ -358,9 +359,10 @@ final class DockBadgeTests: XCTestCase {
             try self.insert(db, "a3", account: self.a) { $0.inPromotions = true }
         }
         let hide: Set<String> = ["CATEGORY_UPDATES"]
-        XCTAssertEqual(try perAccount(q, hide: hide), [a: 1])
+        XCTAssertEqual(try perAccount(q, hide: hide), [a: 2])
         XCTAssertEqual(try perAccount(q, hide: hide)[a], try badge(q, hide: hide))
-        XCTAssertEqual(try perAccount(q), [a: 2])
+        XCTAssertEqual(try perAccount(q), [a: 3])
+        XCTAssertEqual(try perAccount(q, hide: ["CATEGORY_PROMOTIONS"]), [a: 2])
     }
 
     /// Gmail-snoozed unread mail is out of the avatar badge exactly as it is

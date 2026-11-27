@@ -129,7 +129,8 @@ final class ConversationActionsTests: XCTestCase {
             try XCTUnwrap(NewMailNotifications.Candidate.fetchOne(
                 db, sql: """
                     SELECT id, fromEmail, allFromEmails, lastInboundDate, isUnread, inInbox,
-                           inTrash, inSpam, inPromotions, inSocial, snoozeUntil, gmailSnoozed
+                           inTrash, inSpam, inPromotions, inSocial, snoozeUntil, gmailSnoozed,
+                           isStarred, labelIds
                     FROM thread WHERE id = ?
                     """, arguments: [self.key("t1")]))
         }
