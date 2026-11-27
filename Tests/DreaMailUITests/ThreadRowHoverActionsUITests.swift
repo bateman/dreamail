@@ -117,14 +117,3 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
                        "the reading pane did not change")
     }
 }
-
-private enum UITestWait {
-    static func until(_ timeout: TimeInterval = 10, _ condition: () -> Bool) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-        return condition()
-    }
-}

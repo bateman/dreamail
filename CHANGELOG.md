@@ -220,9 +220,10 @@ minor versions may still change behavior.
   With the sidebar reduced to the icon strip, the band at the top of the
   window was grey above the account bar and the strip and white above the
   message list, and the seam ran behind the sidebar button. In light
-  appearance, with the sidebar reduced, the band is now white like the
-  list, so the window buttons sit on white and the account bar starts below
-  the band. Dark appearance and the open sidebar are unchanged.
+  appearance, with the sidebar reduced, the whole top bar now has the grey
+  of the account bar, from the window buttons to the right edge, as dark
+  appearance looks; it stays grey when a conversation fills the window.
+  Dark appearance and the open sidebar are unchanged.
 
 - **The unified inbox can be switched off.** Settings → Appearance →
   "Show unified inbox (All accounts)", on by default. Off, the "All
@@ -251,6 +252,12 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **The selection bar shows icons.** With several conversations ticked,
+  the bar above the list now has icon buttons for Archive, Trash, Star and
+  Read/Unread, as in Gmail, instead of text. Each has a tooltip with its
+  name and shortcut. The Star and Read icons show what the click will do
+  for the ticked conversations, and a button that would do nothing is
+  greyed out. The Trash icon is no longer red.
 - **Promotions and Social can be turned off per account.** Settings →
   Accounts has a new switch for each account, "Show Promotions and
   Social", on by default. Off, that account has no Promotions and Social

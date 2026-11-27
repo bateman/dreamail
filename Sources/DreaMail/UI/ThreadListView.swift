@@ -463,26 +463,54 @@ struct ThreadListView: View {
         // Undo toast and notice toast (both bottom-leading) live in ContentView.
     }
 
+    /// The key bound to the action's command, if any: no shortcut, no hint.
+    private func shortcut(for action: SelectionBarAction) -> String? {
+        switch action {
+        case .archive: return store.keyBindings.key(for: .archive)
+        case .trash: return store.keyBindings.key(for: .trash)
+        case .star: return store.keyBindings.key(for: .toggleStar)
+        case .toggleRead: return store.keyBindings.key(for: .toggleRead)
+        }
+    }
+
+    private func perform(_ action: SelectionBarAction) {
+        switch action {
+        case .archive: store.archiveChecked()
+        case .trash: store.trashChecked()
+        case .star: store.toggleStarChecked()
+        case .toggleRead: store.toggleReadChecked()
+        }
+    }
+
     /// Compact bulk-action strip when one or more checkboxes are on.
     private var multiSelectBar: some View {
         HStack(spacing: 10) {
             Text("\(store.checkedThreadIds.count) selected")
                 .font(.system(size: 12 * fontScale, weight: .semibold))
                 .monospacedDigit()
+                .fixedSize()
+                .accessibilityIdentifier("selectionBar.count")
             Text("esc to clear")
                 .font(.system(size: 11 * fontScale))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .accessibilityIdentifier("selectionBar.hint")
             Spacer(minLength: 8)
-            Button("Archive") { store.archiveChecked() }
-                .buttonStyle(.borderless)
-                .help("Archive selected (\(store.keyBindings.displayKey(for: .archive)))")
-            Button("Trash", role: .destructive) { store.trashChecked() }
-                .buttonStyle(.borderless)
-                .help("Trash selected (\(store.keyBindings.displayKey(for: .trash)))")
-            Button("Star") { store.toggleStarChecked() }
-                .buttonStyle(.borderless)
-            Button("Read/Unread") { store.toggleReadChecked() }
-                .buttonStyle(.borderless)
+            let state = SelectionBarState(actionable: store.actionableCheckedThreads)
+            HStack(spacing: SelectionBarLayout.spacing) {
+                ForEach(SelectionBarAction.allCases, id: \.self) { action in
+                    let flag = state.flag(for: action)
+                    SelectionBarIconButton(
+                        action: action,
+                        symbol: action.symbol(flag: flag),
+                        title: action.title(flag: flag),
+                        tooltip: action.tooltip(flag: flag, shortcut: shortcut(for: action)),
+                        side: SelectionBarLayout.side(fontScale: fontScale),
+                        fontScale: fontScale
+                    ) { perform(action) }
+                    .disabled(!state.isEnabled(action))
+                }
+            }
             Button {
                 store.clearCheckedThreads()
             } label: {
@@ -492,10 +520,41 @@ struct ThreadListView: View {
             .buttonStyle(.plain)
             .help("Clear selection (Esc)")
             .accessibilityLabel("Clear selection")
+            .accessibilityIdentifier("selectionBar.close")
         }
         .font(.system(size: 12 * fontScale))
         .padding(.horizontal, 12).padding(.vertical, 6)
         .background(.accentFill.opacity(0.08))
+    }
+}
+
+/// One icon of the bulk bar: the row hover actions' glyph size in a fixed
+/// square target, with a faint hover wash.
+private struct SelectionBarIconButton: View {
+    let action: SelectionBarAction
+    let symbol: String
+    let title: String
+    let tooltip: String
+    let side: Double
+    let fontScale: Double
+    let onTap: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: symbol)
+                .font(.system(size: ThreadRowActionLayout.iconSize * fontScale))
+                .foregroundStyle(.secondary)
+                .frame(width: side, height: side)
+                .background(hovering ? Color.primary.opacity(0.08) : .clear,
+                            in: RoundedRectangle(cornerRadius: PMRadius.sm))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressScaleButtonStyle())
+        .onHover { hovering = $0 }
+        .help(tooltip)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier("selectionBar.\(action.rawValue)")
     }
 }
 
@@ -1977,6 +2036,7 @@ struct ThreadRow: View, Equatable {
             .buttonStyle(.plain)
             .opacity(showCheckbox ? 1 : 0)
             .help(isChecked ? "Deselect (x)" : "Select (x). Shift-click for a range.")
+            .accessibilityIdentifier("rowCheck")
 
             // Gmail's place for the star: first, before the sender.
             Button(action: onStar) {

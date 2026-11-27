@@ -67,3 +67,95 @@ final class ThreadRowActionsTests: XCTestCase {
                        "a hard slot width clips long dates")
     }
 }
+
+final class SelectionBarActionTests: XCTestCase {
+    func testActionsKeepTheOldOrderAndIds() {
+        XCTAssertEqual(SelectionBarAction.allCases.map(\.rawValue),
+                       ["archive", "trash", "star", "toggleRead"])
+    }
+
+    func testGlyphsAreTheOnesTheRowsAndToolbarAlreadyUse() {
+        XCTAssertEqual(SelectionBarAction.archive.symbol(flag: false), "archivebox")
+        XCTAssertEqual(SelectionBarAction.trash.symbol(flag: false), "trash")
+        XCTAssertEqual(SelectionBarAction.star.symbol(flag: true), "star")
+        XCTAssertEqual(SelectionBarAction.star.symbol(flag: false), "star.fill")
+        XCTAssertEqual(SelectionBarAction.toggleRead.symbol(flag: true), "envelope.open")
+        XCTAssertEqual(SelectionBarAction.toggleRead.symbol(flag: false), "envelope.badge")
+    }
+
+    func testLabelsFollowWhatTheClickDoes() {
+        XCTAssertEqual(SelectionBarAction.archive.title(flag: true), "Archive")
+        XCTAssertEqual(SelectionBarAction.trash.title(flag: false), "Trash")
+        XCTAssertEqual(SelectionBarAction.star.title(flag: true), "Star")
+        XCTAssertEqual(SelectionBarAction.star.title(flag: false), "Unstar")
+        XCTAssertEqual(SelectionBarAction.toggleRead.title(flag: true), "Mark as read")
+        XCTAssertEqual(SelectionBarAction.toggleRead.title(flag: false), "Mark as unread")
+    }
+}
+
+final class SelectionBarTooltipTests: XCTestCase {
+    func testTooltipKeepsTheShortcutWhenThereIsOne() {
+        XCTAssertEqual(SelectionBarAction.archive.tooltip(flag: false, shortcut: "e"), "Archive selected (e)")
+        XCTAssertEqual(SelectionBarAction.trash.tooltip(flag: false, shortcut: "#"), "Trash selected (#)")
+        XCTAssertEqual(SelectionBarAction.star.tooltip(flag: true, shortcut: "s"), "Star selected (s)")
+        XCTAssertEqual(SelectionBarAction.toggleRead.tooltip(flag: true, shortcut: nil), "Mark as read")
+    }
+}
+
+final class SelectionBarStateTests: XCTestCase {
+    private func thread(_ id: String, unread: Bool = false, starred: Bool = false,
+                        trash: Bool = false) -> MailThread {
+        MailThread(
+            id: "a@x.com:\(id)", accountId: "a@x.com", gmailThreadId: id,
+            subject: "S", snippet: "sn", fromDisplay: "F",
+            lastDate: Date(), isUnread: unread, isStarred: starred,
+            inInbox: !trash, inTrash: trash,
+            labelIds: "INBOX", snoozeUntil: nil, participants: "F",
+            messageCount: 1, hasAttachment: false, reminderAt: nil)
+    }
+
+    func testMixedSelectionActsOnTheUnstarredAndTheUnread() {
+        let s = SelectionBarState(actionable: [thread("a", unread: true, starred: true),
+                                               thread("b", unread: false, starred: false)])
+        XCTAssertTrue(s.starring, "one unstarred row: the click stars")
+        XCTAssertTrue(s.anyUnread, "one unread row: the click marks read")
+        XCTAssertEqual(SelectionBarAction.star.title(flag: s.flag(for: .star)), "Star")
+        XCTAssertEqual(SelectionBarAction.toggleRead.symbol(flag: s.flag(for: .toggleRead)), "envelope.open")
+    }
+
+    func testUniformSelectionFlipsTheActions() {
+        let s = SelectionBarState(actionable: [thread("a", starred: true), thread("b", starred: true)])
+        XCTAssertFalse(s.starring)
+        XCTAssertFalse(s.anyUnread)
+        XCTAssertEqual(SelectionBarAction.star.title(flag: s.flag(for: .star)), "Unstar")
+        XCTAssertEqual(SelectionBarAction.toggleRead.title(flag: s.flag(for: .toggleRead)), "Mark as unread")
+    }
+
+    func testEverythingIsEnabledForLiveRows() {
+        let s = SelectionBarState(actionable: [thread("a")])
+        for action in SelectionBarAction.allCases { XCTAssertTrue(s.isEnabled(action)) }
+    }
+
+    func testNothingActionableDisablesEveryButton() {
+        let s = SelectionBarState(actionable: [])
+        for action in SelectionBarAction.allCases {
+            XCTAssertFalse(s.isEnabled(action), "\(action) does nothing but show a notice")
+        }
+        XCTAssertEqual(SelectionBarAction.star.title(flag: s.flag(for: .star)), "Star")
+    }
+
+    func testTrashIsDisabledWhenEveryRowIsAlreadyInTheTrash() {
+        let s = SelectionBarState(actionable: [thread("a", trash: true), thread("b", trash: true)])
+        XCTAssertFalse(s.isEnabled(.trash), "trashChecked skips rows already in the Trash")
+        XCTAssertTrue(s.isEnabled(.archive))
+        XCTAssertTrue(s.isEnabled(.star))
+        XCTAssertTrue(SelectionBarState(actionable: [thread("a", trash: true), thread("b")]).isEnabled(.trash))
+    }
+
+    func testTargetsAreAtLeast24PointsAndSquareAtEveryScale() {
+        for scale in [0.8, 1.0, 1.25, 1.5, 2.0] {
+            XCTAssertGreaterThanOrEqual(SelectionBarLayout.side(fontScale: scale), 24)
+        }
+        XCTAssertGreaterThan(SelectionBarLayout.spacing, ThreadRowActionLayout.spacing)
+    }
+}
