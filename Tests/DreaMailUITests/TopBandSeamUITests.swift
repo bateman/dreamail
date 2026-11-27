@@ -58,7 +58,7 @@ final class TopBandSeamUITests: XCTestCase {
         let t = found.frame
         let desc = "\(context): toggle \(t), window \(frame)"
         print("TopBandSeam: \(desc)")
-        XCTAssertGreaterThanOrEqual(t.minX - frame.minX, AccountRailMetrics.windowButtonsExtent, desc)
+        XCTAssertGreaterThanOrEqual(t.minX - frame.minX, 80, "right of the window buttons: \(desc)")
         XCTAssertLessThan(t.midY - frame.minY, 60, "in the title-bar row: \(desc)")
 
         let cg = try XCTUnwrap(window.screenshot().image.cgImage(forProposedRect: nil, context: nil, hints: nil))
