@@ -6,8 +6,9 @@ import XCTest
 /// where AppKit would draw its own rounded capsule (default accent, focused
 /// list), which the band fully covers. Measured on the window's pixels:
 /// 1. the accent run on the Inbox row's mid-line spans from the sidebar's
-///    leading edge to its trailing edge (±1 pt), in the three states
-///    (focused list, focus in the thread list, inactive window);
+///    leading edge to its trailing edge (±0.5 pt) of the sidebar content area
+///    (the band layer's frame; the system's own 8 pt inset between the rail and
+///    that area stays background), in the three states
 /// 2. on a line 1 pt below the row's top edge the run has the same extent:
 ///    the corners are square;
 /// 3. no pixel of a different blue sits beside the band, where a system
@@ -21,6 +22,8 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
     private static let fine = 0.5
     /// `AccountRailMetrics.width`: the sidebar column starts where the rail ends.
     private static let railWidth = 64.0
+    /// The sidebar column's own inset from the rail on macOS 26 (CI: 72 - 64).
+    private static let systemInset = 8.0
 
     func testBandGeometryIsStableWithTheDefaultAccent() throws {
         try check(accent: nil)
@@ -58,6 +61,8 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let titleX: Double
         let sidebarMin: Double
         let sidebarMax: Double
+        /// Where the thread list's scroll view begins (window-relative).
+        let threadListMin: Double
         /// Raw pixels on the mid-line every 4 pt, for reading a failure.
         let samples: String
         var description: String {
@@ -125,10 +130,18 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
 
         for (name, m) in [("focused list", focused), ("focus in the thread list", unfocused),
                           ("inactive window", inactive)] {
-            XCTAssertEqual(m.left, m.sidebarMin, accuracy: Self.tolerance,
-                           "\(name): the band should start at the sidebar's leading edge, \(m.description)")
-            XCTAssertEqual(m.right, m.sidebarMax, accuracy: Self.tolerance,
-                           "\(name): the band should reach the sidebar's trailing edge, \(m.description)")
+            // The band spans the sidebar's content area (the band layer's
+            // frame, the list's scroll view). The 8 pt between the rail and
+            // that area are the sidebar column's own inset on macOS 26,
+            // outside the Sidebar view: they stay sidebar background.
+            XCTAssertEqual(m.left, m.sidebarMin, accuracy: Self.fine,
+                           "\(name): the band should start at the sidebar content's leading edge, \(m.description)")
+            XCTAssertEqual(m.right, m.sidebarMax, accuracy: Self.fine,
+                           "\(name): the band should reach the sidebar content's trailing edge, \(m.description)")
+            XCTAssertEqual(m.sidebarMin - Self.railWidth, Self.systemInset, accuracy: Self.tolerance,
+                           "\(name): the system's inset between the rail and the sidebar changed, \(m.description)")
+            XCTAssertEqual(m.sidebarMax, m.threadListMin, accuracy: Self.tolerance,
+                           "\(name): the band should end where the thread list begins, \(m.description)")
             for (corner, x, want) in [("first row, left", m.firstLeft, m.left),
                                       ("first row, right", m.firstRight, m.right),
                                       ("1 pt below, left", m.topLeft, m.left),
@@ -199,13 +212,16 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let image = window.screenshot().image
         let cg = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
         let scale = Double(cg.width) / Double(frame.width)
-        // The visible column: from the rail's trailing edge to the table's
-        // (the thread list starts there). Not the table's own leading edge:
-        // the system leaves a margin before it.
-        let table = window.outlines.firstMatch.frame
-        let sidebar = CGRect(x: frame.minX + Self.railWidth, y: table.minY,
-                             width: table.maxX - frame.minX - Self.railWidth, height: table.height)
+        // The sidebar's content area: the band layer's frame, equal to the
+        // list's scroll view. The system insets the sidebar column from the
+        // rail (8 pt on macOS 26), outside the Sidebar view, so the band
+        // cannot start at the rail: it starts here and ends where the thread
+        // list begins.
+        let sidebar = window.descendants(matching: .any)
+            .matching(identifier: "sidebarSelectionBand").firstMatch.frame
         let trailing = sidebar.maxX
+        let threadMinX = window.scrollViews.allElementsBoundByIndex
+            .map { $0.frame.minX }.filter { $0 > sidebar.minX + 100 }.min() ?? trailing
         let width = cg.width, height = cg.height
         var data = [UInt8](repeating: 0, count: width * height * 4)
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -309,17 +325,21 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
             let p = pixel(x, midY)
             samples.append(String(format: "%.0f:%02x%02x%02x", Double(x) / scale, p.0, p.1, p.2))
         }
-        // The thread list's own selection can continue the run past the
-        // column's edge: the band ends there.
+        // The thread list's own selected row (focused state: its accent,
+        // 0060d7 at x 312) continues the run past the sidebar's edge: every
+        // run ends there. In the other two states the pixel at the edge is
+        // the thread list's background, which shows where the band ends.
         let edgePixel = Double(to)
         return Measure(left: Double(first) / scale, right: min(Double(last + 1), edgePixel) / scale,
                        topLeft: Double(corner.first) / scale,
-                       topRight: Double(corner.last + 1) / scale,
-                       firstLeft: Double(firstRow.first) / scale, firstRight: Double(firstRow.last + 1) / scale,
+                       topRight: min(Double(corner.last + 1), edgePixel) / scale,
+                       firstLeft: Double(firstRow.first) / scale,
+                       firstRight: min(Double(firstRow.last + 1), edgePixel) / scale,
                        top: Double(top) / scale, bottom: Double(bottom + 1) / scale, barPixels: bar,
                        strayBlue: stray, strayAt: strayAt,
                        iconX: Double(iconStart) / scale, titleX: Double(titleStart) / scale,
                        sidebarMin: sidebar.minX - frame.minX, sidebarMax: trailing - frame.minX,
+                       threadListMin: threadMinX - frame.minX,
                        samples: samples.joined(separator: " "))
     }
 }

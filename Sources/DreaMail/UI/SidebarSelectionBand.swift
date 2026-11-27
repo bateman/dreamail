@@ -1,17 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// The selected sidebar row's band for the part of the column the list
-/// cannot paint: a row background stops at the list's own inset (the system
-/// leaves a margin between the rail and the table, and the table's row
-/// frame is narrower than the column), so a band drawn only there never
-/// reaches the column's edges. This view sits behind the list, on the
-/// column's own width, and fills the selected row's height in the same
-/// colour as `AccentSelectionBackground`, which still covers AppKit's
-/// capsule inside the row. The row comes from the list's own table
-/// (`selectedRow`, the mirror of `List(selection:)`), so the selection has
-/// one source. Nothing is drawn where the app does not keep the selection
-/// colour (before macOS 26).
+/// The selected sidebar row's band for the part of the sidebar the list
+/// cannot paint: a row background stops at the list's own inset, so a band
+/// drawn only there leaves the margins unpainted. This view sits behind the
+/// list, on the sidebar content's own width (x 72-312 on macOS 26: the system
+/// insets the sidebar column 8 pt from the rail, outside the Sidebar view, so
+/// that strip stays sidebar background), and fills the selected row's height
+/// in the same colour as `AccentSelectionBackground`, which still covers
+/// AppKit's capsule inside the row. The row comes from the list's own table
+/// (`selectedRow`, the mirror of `List(selection:)`), so the selection has one
+/// source. Nothing is drawn where the app does not keep the selection colour
+/// (before macOS 26).
 struct SidebarSelectionBand: NSViewRepresentable {
     let accent: MailAccent
 
@@ -33,8 +33,8 @@ struct SidebarSelectionBand: NSViewRepresentable {
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-        // Reported to the UI tests (the geometry test prints the view's frame
-        // to tell how wide the layer is).
+        // Reported to the UI tests: the view's frame is the sidebar content
+        // area the geometry test measures the band against.
         override func isAccessibilityElement() -> Bool { true }
         override func accessibilityIdentifier() -> String { "sidebarSelectionBand" }
         override func accessibilityRole() -> NSAccessibility.Role? { .group }
