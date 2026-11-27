@@ -24,6 +24,7 @@ struct LabelRGB: Equatable, Hashable, Sendable {
             return nil
         }
         if hex.hasPrefix("#") { hex.removeFirst() }
+        hex = Self.expandedShortHex(hex)
         guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }),
               let value = UInt32(hex, radix: 16) else { return nil }
         self.init(hex: value)
@@ -35,8 +36,16 @@ struct LabelRGB: Equatable, Hashable, Sendable {
     static func normalizedHex(_ string: String?) -> String? {
         guard var hex = string?.trimmingCharacters(in: .whitespaces) else { return nil }
         if hex.hasPrefix("#") { hex.removeFirst() }
+        hex = expandedShortHex(hex)
         guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
         return "#" + hex.lowercased()
+    }
+
+    /// `abc` → `aabbcc`; anything else unchanged. Gmail sends six digits,
+    /// but a three-digit value must not read as "no color".
+    private static func expandedShortHex(_ hex: String) -> String {
+        guard hex.count == 3, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return hex }
+        return hex.map { "\($0)\($0)" }.joined()
     }
 
     static let black = LabelRGB(hex: 0x000000)
@@ -258,6 +267,30 @@ struct LabelPillStyle: Equatable, Sendable {
         }
         return LabelPillStyle(fill: fill, text: text, needsBorder: needsBorder,
                               border: borderColor(on: behind))
+    }
+
+    /// A tag in the sidebar must read as colored, never as the outline that
+    /// means "no color". Below this fill-to-surface difference (CIE76) the
+    /// fill is moved away from the surface (see `visibleTagFill`); 25, the dots' value.
+    static let minimumTagDifference = minimumDotEdgeDifference
+
+    /// The fill of the sidebar tag for a label with a color: its own
+    /// background when that is at least `minimumTagDifference` from the
+    /// content surface, else mixed toward white (dark appearance) or black
+    /// (light) in 1% steps, only as far as needed to reach it. The hue is
+    /// kept as far as the mix allows; nothing gets an outline.
+    static func visibleTagFill(_ fill: LabelRGB, appearance: Appearance) -> LabelRGB {
+        let surface = surfaceColor(.content, appearance)
+        let target: LabelRGB = appearance == .dark ? .white : .black
+        var candidate = fill
+        for step in 0...100 {
+            let t = Double(step) / 100
+            candidate = LabelRGB(r: fill.r + (target.r - fill.r) * t,
+                                 g: fill.g + (target.g - fill.g) * t,
+                                 b: fill.b + (target.b - fill.b) * t)
+            if candidate.difference(from: surface) >= minimumTagDifference { return candidate }
+        }
+        return candidate
     }
 
     /// Mid grey where it reaches 3:1 against every surface color (white,

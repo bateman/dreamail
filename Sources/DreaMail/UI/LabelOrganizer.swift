@@ -176,6 +176,10 @@ struct LabelColorPalette: View {
             }
             .buttonStyle(.plain)
             .disabled(saving || label.gmailBackgroundColor == nil)
+            CurrentColorLine(text: LabelCurrentColor.gmail(label),
+                             colors: LabelColors(background: label.gmailBackgroundColor,
+                                                 text: label.gmailTextColor),
+                             identifier: "labelColor.current.gmail")
             if saving {
                 Text("Saving to Gmail…").font(.system(size: 11)).foregroundStyle(.secondary)
             } else if LabelRGB.normalizedHex(label.color) != nil {
@@ -212,6 +216,9 @@ struct LabelColorPalette: View {
                                             ? .isSelected : [])
                 }
             }
+            CurrentColorLine(text: LabelCurrentColor.local(label, palette: Color.labelPalette.map { $0.hex }),
+                             colors: LabelColors(background: label.color, text: nil),
+                             identifier: "labelColor.current.mac")
             Button {
                 store.setLabelColor(label, hex: nil)
                 onPick()
@@ -225,5 +232,23 @@ struct LabelColorPalette: View {
         }
         .padding(12)
         .frame(width: 244)
+    }
+}
+
+/// "Current: <swatch> #rrggbb": the stored color as text (and a swatch when
+/// there is one), readable by VoiceOver and UI tests.
+private struct CurrentColorLine: View {
+    let text: String
+    let colors: LabelColors
+    let identifier: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if colors.isColored { LabelDot(colors: colors, size: 12) }
+            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+        .accessibilityIdentifier(identifier)
     }
 }

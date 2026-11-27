@@ -59,3 +59,32 @@ enum GmailLabelPalette {
         return GmailLabelColor(background: hex, text: text)!
     }
 }
+
+/// The "Current:" line of the label color sheet: what is stored for the
+/// label, so a color outside the 64 swatches (Gmail's palette has 102
+/// backgrounds, and any text color) is still visible.
+enum LabelCurrentColor {
+    /// "Current: none", or "Current: #rrggbb" with ", text #rrggbb" when
+    /// there is a text color, and " (not in this palette)" when the
+    /// background is not one of `palette`.
+    static func text(background: String?, text: String? = nil, palette: [String]) -> String {
+        guard let raw = background else { return "Current: none" }
+        guard let hex = LabelRGB.normalizedHex(raw) else { return "Current: unreadable value" }
+        var line = "Current: " + hex
+        if let fg = LabelRGB.normalizedHex(text) { line += ", text " + fg }
+        let known = Set(palette.compactMap { LabelRGB.normalizedHex($0) })
+        if !known.contains(hex) { line += " (not in this palette)" }
+        return line
+    }
+
+    /// The color on Gmail, against the 64 swatches the sheet offers.
+    static func gmail(_ row: LabelRow) -> String {
+        text(background: row.gmailBackgroundColor, text: row.gmailTextColor,
+             palette: GmailLabelPalette.swatches.map(\.background))
+    }
+
+    /// The color only on this Mac, against the sheet's own swatches.
+    static func local(_ row: LabelRow, palette: [String]) -> String {
+        text(background: row.color, palette: palette)
+    }
+}

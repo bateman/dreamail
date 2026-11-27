@@ -158,8 +158,10 @@ extension SidebarLabelRow {
 }
 
 /// Gmail's label glyph: a tag filled with the label's color (the Mac-only
-/// color first, DEC-023), outlined only when the fill would vanish into the
-/// sidebar (the dots' rule, DEC-029).
+/// color first, DEC-023). A colored label is always a visible fill, in both
+/// appearances (`LabelPillStyle.visibleTagFill` moves a fill that would
+/// vanish into the sidebar, a dark grey in dark mode); only a label with no
+/// color is an outline.
 struct SidebarLabelTag: View {
     let colors: LabelColors
     @Environment(\.colorScheme) private var colorScheme
@@ -167,16 +169,12 @@ struct SidebarLabelTag: View {
 
     var body: some View {
         let metrics = MailIconMetrics(rowSize: rowSize)
-        let style = LabelPillStyle.resolve(colors, appearance: .init(colorScheme), shape: .dot)
+        let appearance = LabelPillStyle.Appearance(colorScheme)
+        let style = LabelPillStyle.resolve(colors, appearance: appearance, shape: .dot)
         Group {
             if colors.isColored {
                 Image(systemName: "tag.fill")
-                    .foregroundStyle(Color(style.fill))
-                    .overlay {
-                        if style.needsBorder {
-                            Image(systemName: "tag").foregroundStyle(Color(style.border))
-                        }
-                    }
+                    .foregroundStyle(Color(LabelPillStyle.visibleTagFill(style.fill, appearance: appearance)))
             } else {
                 // No color: the outline only, as Gmail draws it, so any
                 // fill means the label has a color (a dark grey included).
