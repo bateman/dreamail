@@ -59,7 +59,7 @@ final class ThreadDenormTests: XCTestCase {
             try SidebarCounts.fetch(db: $0, activeAccount: nil, badgeAccount: nil,
                                     now: now)
         }
-        XCTAssertEqual(counts["inbox"], 1, "only awake primary unread")
+        XCTAssertEqual(counts["inbox"], 1, "only awake inbox unread")
         XCTAssertEqual(badge, 1)
         XCTAssertEqual(counts["promotions"], 0, "snoozed promo leaves promo badge")
         XCTAssertEqual(counts["snoozed"], 2)
@@ -302,7 +302,8 @@ final class ThreadDenormTests: XCTestCase {
                         lastSyncAt: nil, senderName: "").insert(db)
             try Account(id: "b@x.com", displayName: "B", historyId: nil,
                         lastSyncAt: nil, senderName: "").insert(db)
-            // Primary account: 2 inbox unread (one promo should NOT count as inbox)
+            // Primary account: 4 inbox unread. Promo and social count too:
+            // the Inbox lists every INBOX conversation by default.
             try self.insertThread(db, id: "t1", account: "a@x.com", unread: true, inbox: true)
             try self.insertThread(db, id: "t2", account: "a@x.com", unread: true, inbox: true)
             try self.insertThread(db, id: "t3", account: "a@x.com", unread: true, inbox: true,
@@ -320,18 +321,18 @@ final class ThreadDenormTests: XCTestCase {
         let (all, badgeAll) = try q.read {
             try SidebarCounts.fetch(db: $0, activeAccount: nil, badgeAccount: nil)
         }
-        XCTAssertEqual(all["inbox"], 3)          // t1,t2,t7
+        XCTAssertEqual(all["inbox"], 5)          // t1,t2,t3,t4,t7
         XCTAssertEqual(all["promotions"], 1)     // t3
         XCTAssertEqual(all["social"], 1)         // t4
         XCTAssertEqual(all["starred"], 1)        // t5
         XCTAssertEqual(all["drafts"], 1)         // t6
-        XCTAssertEqual(badgeAll, 3)
+        XCTAssertEqual(badgeAll, 5)
 
         let (scoped, badgeScoped) = try q.read {
             try SidebarCounts.fetch(db: $0, activeAccount: "a@x.com",
                                     badgeAccount: "b@x.com")
         }
-        XCTAssertEqual(scoped["inbox"], 2)       // a only
+        XCTAssertEqual(scoped["inbox"], 4)       // a only
         XCTAssertEqual(badgeScoped, 1)           // b only
     }
 
@@ -365,12 +366,12 @@ final class ThreadDenormTests: XCTestCase {
         }
         XCTAssertEqual(counts["promotions"], 1, "only in-inbox non-spam promotions")
         XCTAssertEqual(counts["social"], 1, "only in-inbox non-spam social")
-        XCTAssertEqual(counts["inbox"], 0, "category mail stays out of primary inbox badge")
+        XCTAssertEqual(counts["inbox"], 2,
+                       "in-inbox promo and social count in the Inbox badge (listed by default)")
     }
 
-    /// When the inbox filter hides Updates/Forums, the primary badge must
-    /// match the list (exclude those categories) — not still count them as
-    /// primary just because they aren't promo/social.
+    /// When the inbox filter hides a category, the Inbox badge must match
+    /// the list (exclude it); without a hide every category counts.
     func testPrimaryBadgeRespectsUpdatesForumsHide() throws {
         let q = try makeDB()
         try q.write { db in
@@ -387,7 +388,8 @@ final class ThreadDenormTests: XCTestCase {
             try self.insertThread(db, id: "both", account: "a@x.com",
                                   unread: true, inbox: true,
                                   labelIds: "INBOX CATEGORY_UPDATES CATEGORY_FORUMS")
-            // Promo still routes to its own tab even when also in hide set.
+            // Promo counts in Inbox unless Promotions is hidden; its own
+            // row counts it either way.
             try self.insertThread(db, id: "promo", account: "a@x.com",
                                   unread: true, inbox: true, promotions: true)
         }
@@ -395,9 +397,9 @@ final class ThreadDenormTests: XCTestCase {
         let noHide = try q.read {
             try SidebarCounts.fetch(db: $0, activeAccount: nil, badgeAccount: nil)
         }
-        XCTAssertEqual(noHide.counts["inbox"], 4,
-                       "primary + updates + forums + both without hide")
-        XCTAssertEqual(noHide.badge, 4)
+        XCTAssertEqual(noHide.counts["inbox"], 5,
+                       "primary + updates + forums + both + promo without hide")
+        XCTAssertEqual(noHide.badge, 5)
         XCTAssertEqual(noHide.counts["promotions"], 1)
 
         let hideUpdates = try q.read {
@@ -405,9 +407,9 @@ final class ThreadDenormTests: XCTestCase {
                 db: $0, activeAccount: nil, badgeAccount: nil,
                 hideCategories: ["CATEGORY_UPDATES"])
         }
-        XCTAssertEqual(hideUpdates.counts["inbox"], 2,
-                       "primary + forums remain; updates and both drop")
-        XCTAssertEqual(hideUpdates.badge, 2)
+        XCTAssertEqual(hideUpdates.counts["inbox"], 3,
+                       "primary + forums + promo remain; updates and both drop")
+        XCTAssertEqual(hideUpdates.badge, 3)
 
         let hideAll = try q.read {
             try SidebarCounts.fetch(
@@ -418,7 +420,7 @@ final class ThreadDenormTests: XCTestCase {
                 ])
         }
         XCTAssertEqual(hideAll.counts["inbox"], 1,
-                       "only true-primary mail; promo still on its tab")
+                       "only uncategorized mail; promo still on its own row")
         XCTAssertEqual(hideAll.badge, 1)
         XCTAssertEqual(hideAll.counts["promotions"], 1)
     }
@@ -436,22 +438,22 @@ final class ThreadDenormTests: XCTestCase {
         XCTAssertEqual(
             SidebarCounts.memberships(of: updates, now: now),
             ["inbox"],
-            "updates count as primary when not hidden")
+            "updates count in the Inbox badge when not hidden")
         XCTAssertEqual(
             SidebarCounts.memberships(
                 of: updates, now: now,
                 hideCategories: ["CATEGORY_UPDATES"]),
             [],
-            "hidden updates leave the primary badge")
+            "hidden updates leave the Inbox badge")
 
-        // Starred updates still leave the primary badge when hidden (same as
-        // promo tab-split: list pin does not inflate the inbox counter).
+        // A star pins hidden Updates through into the Inbox list
+        // (CategoryHide), so the Inbox badge counts it too.
         updates.isStarred = true
         XCTAssertEqual(
             SidebarCounts.memberships(
                 of: updates, now: now,
                 hideCategories: ["CATEGORY_UPDATES"]),
-            ["starred"])
+            ["starred", "inbox"])
     }
 
     // MARK: - VIP any-message matching

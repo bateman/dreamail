@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the whole CI workflow (a manual run: build, unit tests and both UI
+# Runs the whole CI workflow (a manual run: build, unit tests and all the UI
 # shards) on REF, whose head is SHA, waits for it, and prints the run id on
 # stdout. With --reuse, a manual run that already passed on SHA counts and
 # nothing is started. Used by the Integrate dreamail-openpgp workflow for
