@@ -190,6 +190,7 @@ struct ThreadListView: View {
         // Hidden-category set feeds Priority hoist suppression — recompute
         // even when threads identity is unchanged (star pin-through).
         var effectiveCategoryHide: Set<String>
+        var categoryRowsOff: Set<String>
         // labelSections orders its sections by the accounts list.
         var accounts: [Account]
     }
@@ -209,6 +210,7 @@ struct ThreadListView: View {
             labelsByAccount: store.labelsByAccount,
             suppressedDraftThreadIds: store.suppressedDraftThreadIds,
             effectiveCategoryHide: store.effectiveCategoryHide,
+            categoryRowsOff: store.categoryRowsOff,
             accounts: store.accounts)
     }
 
@@ -236,6 +238,7 @@ struct ThreadListView: View {
                 vipThreadIds: store.vipThreadIds,
                 vipAlwaysPins: vipAlwaysPins,
                 hiddenCategories: store.effectiveCategoryHide,
+                categoryRowsOff: store.categoryRowsOff,
                 newerThan: PrioritySplit.cutoff(days: priorityWindowDays),
                 maxCount: PrioritySplit.cap(priorityMaxCount))
             var out: [(String, [MailThread])] = []
@@ -1178,6 +1181,17 @@ struct FilterBar: View {
 
     /// The full ordered filter list. `primary` ones show before "More filters".
     private var filterOptions: [FilterOption] {
+        allFilterOptions.filter { option in
+            // Promotions and Social are not offered while closed (`CategoryRows`).
+            switch option.kind {
+            case .showCategory(let cat), .hideCategory(let cat):
+                return !CategoryRows.offered([cat], shown: store.categoryRowsShown).isEmpty
+            default: return true
+            }
+        }
+    }
+
+    private var allFilterOptions: [FilterOption] {
         [
             .init(icon: "person.crop.circle", title: "From", primary: true, kind: .field(.from)),
             .init(icon: "paperclip", title: "Has attachments", primary: true,
@@ -2237,7 +2251,8 @@ struct CategoriesPopover: View {
                 GridItem(.flexible(), spacing: 6),
                 GridItem(.flexible(), spacing: 6),
             ], spacing: 6) {
-                ForEach(Self.categoryOrder, id: \.self) { cat in
+                ForEach(CategoryRows.offered(Self.categoryOrder, shown: store.categoryRowsShown),
+                        id: \.self) { cat in
                     categoryPill(cat)
                 }
             }

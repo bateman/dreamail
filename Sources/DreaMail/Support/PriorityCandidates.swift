@@ -33,6 +33,7 @@ enum PriorityCandidates {
         _ base: QueryInterfaceRequest<MailThread>,
         mode: PrioritySplit.Mode,
         hiddenCategories: Set<String> = [],
+        categoryRowsOff: Set<String> = [],
         newerThan: Date? = nil,
         maxCount: Int = 0,
         inboundSort: Bool = true
@@ -44,7 +45,8 @@ enum PriorityCandidates {
         case .starred:
             q = base.filter(Column("isStarred") == true)
         case .starredImportant:
-            q = applyStarredImportantFilter(base, hiddenCategories: hiddenCategories)
+            q = applyStarredImportantFilter(
+                base, hiddenCategories: hiddenCategories, categoryRowsOff: categoryRowsOff)
         }
         if let newerThan {
             q = q.filter(Column("lastDate") >= newerThan)
@@ -113,16 +115,20 @@ enum PriorityCandidates {
     /// separated tokens), not a bare substring (avoids `UNIMPORTANT`).
     private static func applyStarredImportantFilter(
         _ query: QueryInterfaceRequest<MailThread>,
-        hiddenCategories: Set<String>
+        hiddenCategories: Set<String>,
+        categoryRowsOff: Set<String>
     ) -> QueryInterfaceRequest<MailThread> {
+        // An account that has Promotions and Social off is never "in" them.
+        let exempt = categoryRowsOff.isEmpty
+            ? "" : " OR accountId IN (\(CategoryRows.sqlList(categoryRowsOff)))"
         let importantSQL = "(' ' || labelIds || ' ') LIKE '% IMPORTANT %'"
         var notHidden: [String] = []
         for cat in hiddenCategories {
             switch cat {
             case "CATEGORY_PROMOTIONS":
-                notHidden.append("inPromotions = 0")
+                notHidden.append("(inPromotions = 0\(exempt))")
             case "CATEGORY_SOCIAL":
-                notHidden.append("inSocial = 0")
+                notHidden.append("(inSocial = 0\(exempt))")
             default:
                 // Constant category ids (CATEGORY_UPDATES / FORUMS) — same as CategoryHide.
                 notHidden.append("labelIds NOT LIKE '%\(cat)%'")

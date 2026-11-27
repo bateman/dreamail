@@ -359,14 +359,16 @@ extension MailStore {
     /// accounts" badge also moves for an account the sidebar hides).
     private func dockBadgeDelta(from old: MailThread, to updated: MailThread) -> Int {
         DockBadge.delta(from: old, to: updated, badgeAccount: dockBadgeAccount,
-                        hideCategories: inboxBadgeHideCategories)
+                        hideCategories: inboxBadgeHideCategories,
+                        categoryRowsOff: categoryRowsOff)
     }
 
     /// Unread change for the thread's own account: the avatar badge counts
     /// by the Dock badge's rule, whatever scope the Dock badge has.
     private func accountUnreadDelta(from old: MailThread, to updated: MailThread) -> [String: Int] {
         [old.accountId: DockBadge.delta(from: old, to: updated, badgeAccount: old.accountId,
-                                        hideCategories: inboxBadgeHideCategories)]
+                                        hideCategories: inboxBadgeHideCategories,
+                                        categoryRowsOff: categoryRowsOff)]
     }
 
     private func applyOptimisticSidebarCountDelta(
@@ -375,8 +377,10 @@ extension MailStore {
         let now = Date()
         let hide = inboxBadgeHideCategories
         if let activeAccountId, old.accountId != activeAccountId { return }
-        let before = SidebarCounts.memberships(of: old, now: now, hideCategories: hide)
-        let after = SidebarCounts.memberships(of: updated, now: now, hideCategories: hide)
+        let before = SidebarCounts.memberships(of: old, now: now, hideCategories: hide,
+                                               categoryRowsOff: categoryRowsOff)
+        let after = SidebarCounts.memberships(of: updated, now: now, hideCategories: hide,
+                                              categoryRowsOff: categoryRowsOff)
         for key in before.subtracting(after) {
             unreadCounts[key] = max(0, (unreadCounts[key] ?? 0) - 1)
         }
@@ -762,7 +766,8 @@ extension MailStore {
             // Category-hide pin-through: unstarred hidden-category mail leaves
             // once the sticky keep is gone (leave-thread drop or never pinned).
             return StarStickiness.leavesDueToCategoryHide(
-                hide: chips.category.hide,
+                hide: CategoryRows.hide(chips.category.hide, account: t.accountId,
+                                        off: categoryRowsOff),
                 inPromotions: t.inPromotions,
                 inSocial: t.inSocial,
                 labelIds: t.labelIds,
@@ -1253,6 +1258,7 @@ extension MailStore {
                 vipThreadIds: vipThreadIds,
                 vipAlwaysPins: vipAlwaysPins,
                 hiddenCategories: effectiveCategoryHide,
+                categoryRowsOff: categoryRowsOff,
                 newerThan: PrioritySplit.cutoff(days: priorityWindowDays)
             ) {
                 return

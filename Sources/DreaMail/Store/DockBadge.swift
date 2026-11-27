@@ -81,11 +81,13 @@ enum DockBadge {
         _ thread: MailThread,
         badgeAccount: String?,
         now: Date = Date(),
-        hideCategories: Set<String> = []
+        hideCategories: Set<String> = [],
+        categoryRowsOff: Set<String> = []
     ) -> Bool {
         if let badgeAccount, thread.accountId != badgeAccount { return false }
         return SidebarCounts.memberships(
-            of: thread, now: now, hideCategories: hideCategories
+            of: thread, now: now, hideCategories: hideCategories,
+            categoryRowsOff: categoryRowsOff
         ).contains("inbox")
     }
 
@@ -97,12 +99,13 @@ enum DockBadge {
         to new: MailThread,
         badgeAccount: String?,
         now: Date = Date(),
-        hideCategories: Set<String> = []
+        hideCategories: Set<String> = [],
+        categoryRowsOff: Set<String> = []
     ) -> Int {
         let before = counts(old, badgeAccount: badgeAccount, now: now,
-                            hideCategories: hideCategories)
+                            hideCategories: hideCategories, categoryRowsOff: categoryRowsOff)
         let after = counts(new, badgeAccount: badgeAccount, now: now,
-                           hideCategories: hideCategories)
+                           hideCategories: hideCategories, categoryRowsOff: categoryRowsOff)
         return (after ? 1 : 0) - (before ? 1 : 0)
     }
 

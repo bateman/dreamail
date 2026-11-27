@@ -87,6 +87,27 @@ final class SidebarCountsIndexTests: XCTestCase {
         }
     }
 
+    /// The per-account exemption (accounts with "Show Promotions and Social"
+    /// off, one with a quote in its id) keeps the same plans.
+    func testCountsWithExemptAccountsAreIndexed() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        let exempt: Set<String> = ["b@example.com", "o'brien@example.com"]
+        try q.read { db in
+            for hide in Self.hides {
+                let predicate = SidebarCounts.inboxUnreadSQL(
+                    hideSQL: SidebarCounts.inboxHideSQL(hide: hide, exempt: exempt))
+                try self.assertInboxKeyIndex(db, sql: """
+                    SELECT COUNT(*) FROM thread WHERE (\(predicate))
+                    """, arguments: [Date()], hide: hide)
+                try self.assertInboxKeyIndex(db, sql: """
+                    SELECT accountId, COUNT(*) AS n FROM thread
+                    WHERE (\(predicate)) GROUP BY accountId
+                    """, arguments: [Date()], hide: hide)
+            }
+        }
+    }
+
     private static let hides: [Set<String>] = [
         [],
         ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"],
