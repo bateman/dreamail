@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 
 /// The actions on one message of an open conversation, as Gmail on the web
 /// offers them in the message's header: time, star, reply, reply all and a
@@ -180,5 +181,84 @@ enum ConversationOpenTarget: Equatable {
         let newerUnread = candidates.indices.first { $0 > starIndex && candidates[$0].isUnread }
         return Target(expanded: expanded.map { candidates[$0].id },
                       scroll: candidates[newerUnread ?? starIndex].id)
+    }
+}
+
+/// What an action on one message does, decided from what is stored when it
+/// runs. Pure over a database read — tested.
+enum MessageActionPlan {
+    /// Labels on exactly these Gmail message ids.
+    struct Edit: Equatable, Sendable {
+        var ids: [String]
+        var add: [String] = []
+        var remove: [String] = []
+    }
+
+    /// The message's stored row and its conversation.
+    struct State: Sendable {
+        var row: MailThread
+        var message: Message
+        /// Gmail ids outside the Trash, drafts left out.
+        var liveIds: [String]
+        var hasLiveDraft: Bool
+
+        /// Nil when the message or its conversation is no longer stored.
+        static func load(_ db: Database, message: Message) throws -> State? {
+            guard let row = try MailThread.fetchOne(db, key: message.threadId),
+                  let stored = try Message.fetchOne(db, key: message.id) else { return nil }
+            let messages = try Row.fetchAll(db, sql: """
+                SELECT gmailId, labelIds FROM message WHERE threadId = ?
+                """, arguments: [message.threadId])
+            var live: [String] = []
+            var liveDraft = false
+            for m in messages {
+                let labels: String = m["labelIds"]
+                let trashed = SyncEngine.labelIdsContain(labels, "TRASH")
+                if SyncEngine.labelIdsContain(labels, "DRAFT") {
+                    liveDraft = liveDraft || !trashed
+                } else if !trashed {
+                    live.append(m["gmailId"])
+                }
+            }
+            return State(row: row, message: stored, liveIds: live, hasLiveDraft: liveDraft)
+        }
+
+        var isTrashed: Bool { TrashedMessages.isTrashed(message) }
+        var isDraft: Bool { TrashedMessages.isDraft(message) }
+    }
+
+    static func toggleStar(_ state: State) -> Edit? {
+        guard !state.isDraft else { return nil }
+        let id = state.message.gmailId
+        return MessageActions.isStarred(state.message)
+            ? Edit(ids: [id], remove: ["STARRED"])
+            : Edit(ids: [id], add: ["STARRED"])
+    }
+
+    enum Delete: Equatable {
+        /// Nothing to do (a draft, or already in the Trash).
+        case none
+        /// Its last live message, no live draft left: the conversation's
+        /// own Trash action.
+        case conversation
+        case message(Edit, undo: Edit)
+    }
+
+    static func delete(_ state: State) -> Delete {
+        guard !state.isDraft, !state.isTrashed else { return .none }
+        let id = state.message.gmailId
+        if state.liveIds == [id], !state.hasLiveDraft { return .conversation }
+        // Gmail drops INBOX from a trashed message; the undo puts it back
+        // only where the message had it in a conversation in the Inbox.
+        let wasInInbox = state.row.inInbox
+            && SyncEngine.labelIdsContain(state.message.labelIds, "INBOX")
+        return .message(Edit(ids: [id], add: ["TRASH"]),
+                        undo: Edit(ids: [id], add: wasInInbox ? ["INBOX"] : [], remove: ["TRASH"]))
+    }
+
+    /// Conversation-wide actions (spam) only from a message outside the
+    /// Trash: from the Trash view the live messages are not on screen.
+    static func allowsConversationAction(_ state: State) -> Bool {
+        !state.isTrashed
     }
 }
