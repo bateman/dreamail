@@ -262,30 +262,29 @@ ui-test-ci:
 # takes focus, and injects keyboard/mouse events into the live desktop, so a
 # local run hijacks the machine for its duration. GitHub Actions runs unit
 # tests + build on every pull_request and push to main. The UI suite takes
-# about twelve minutes of tests (two parallel CI jobs of about six minutes
-# plus a build each), so it runs only for a release: `make release` starts it
+# about 25 minutes of tests (three parallel CI jobs of about eight minutes
+# plus a build of about four each), so it runs only for a release: `make release` starts it
 # on GitHub and waits (`make ui-test-ci`), and it runs again when the release
 # is published. Locally the gate is `make test`. To run the UI suite here
 # anyway (and surrender the desktop while it runs):
 # UI_TEST_LOCAL=1 make ui-test
 #
-# CI runs the suite in two halves, as two parallel jobs: UI_SHARD=1 runs the
-# classes in UI_SHARD_1 (the slow ones, about half the time), UI_SHARD=2
-# every other class, so a new or renamed class lands in the second half and
-# never falls out of both. No UI_SHARD: the whole suite.
-UI_SHARD_1 = ThreadListSectionSpacingUITests ThreadMessageRowsUITests \
-	AccentColorUITests SidebarIconTintUITests DreaMailSmokeTests \
-	ThreadRowHoverActionsUITests SingleMessageReadingPaneUITests \
-	SignatureMenuUITests ComposeTabFocusUITests
-UI_SHARD_FLAGS = $(if $(filter 1,$(UI_SHARD)),$(UI_SHARD_1:%=-only-testing:DreaMailUITests/%)) \
-	$(if $(filter 2,$(UI_SHARD)),$(UI_SHARD_1:%=-skip-testing:DreaMailUITests/%))
+# CI runs the suite in parallel shards, one job each: UI_SHARD=K of
+# UI_SHARDS=N (the workflow's matrix sets both). .github/scripts/ui-shards.py
+# splits the test classes by measured duration (.github/ui-test-durations.txt);
+# a new class gets a shard with no list to edit, and the last shard runs
+# every class the others do not, so none falls out of all of them.
+# `python3 .github/scripts/ui-shards.py show 3` prints the split.
+# No UI_SHARD: the whole suite.
+UI_SHARDS ?= 3
+UI_SHARD_FLAGS = $$(if [ -n "$(UI_SHARD)" ]; then python3 .github/scripts/ui-shards.py flags "$(UI_SHARD)" "$(UI_SHARDS)"; fi)
 ui-test: gen
 	@if [ "$$CI" != "true" ] && [ "$(UI_TEST_LOCAL)" != "1" ]; then \
 		echo "ui-test is CI-only: XCUITest takes over the desktop while it runs."; \
 		echo "Run it on GitHub with: make ui-test-ci. To run locally anyway: UI_TEST_LOCAL=1 make ui-test"; \
 		exit 1; \
 	fi
-	@case "$(UI_SHARD)" in ""|1|2) ;; *) echo "UI_SHARD must be 1, 2 or unset, not '$(UI_SHARD)'"; exit 1;; esac
+	@if [ -n "$(UI_SHARD)" ]; then python3 .github/scripts/ui-shards.py flags "$(UI_SHARD)" "$(UI_SHARDS)" >/dev/null; fi
 	# XCUITest cannot attach deterministically when another Debug build with the
 	# same bundle id is already open (for example from a different worktree).
 	-pkill -f "DreaMail Debug" 2>/dev/null || true
