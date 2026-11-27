@@ -423,6 +423,17 @@ enum RemoteThreadChange: Codable, Equatable, Sendable {
         switch (self, next) {
         case (_, .trash):
             return .trash
+        case (.trash, .sequence(let steps)):
+            // A trash not sent yet, then its undo (`ThreadUndo.undoTrashRemote`:
+            // un-trash, then re-trash what was trashed before): the trash
+            // folds into the un-trash, so it is never sent.
+            guard let first = steps.first, case .modify(_, let remove) = first,
+                  remove.contains("TRASH") else { return Self.ordered([self, next]) }
+            return Self.ordered([RemoteThreadChange.trash.merged(with: first)] + steps.dropFirst())
+        case (.trash, .modifyMessages(let ids, let add, let remove)) where remove.contains("TRASH"):
+            // Restoring messages of a thread whose trash was never sent:
+            // only the restore goes out.
+            return .modifyMessages(ids: ids, add: add, remove: remove)
         case (.sequence(let steps), _):
             // Fold into the last step when it can; otherwise append.
             guard let last = steps.last else { return next }
