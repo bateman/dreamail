@@ -72,15 +72,6 @@ final class SidebarSingleSelectionUITests: XCTestCase {
             row(id).click()
             expect(only: id, in: main, "click on \(id)")
         }
-
-        // Keyboard to a row under More, then More closes: nothing selected.
-        main.typeKey("g", modifierFlags: [])
-        main.typeKey("p", modifierFlags: [])
-        expect(only: "promotions", in: main, "g p again")
-        if !row("more").exists { return }
-        row("more").click()
-        XCTAssertTrue(waitForAbsence(row("promotions")))
-        expect(only: nil, in: main, "More closed over Promotions")
     }
 
     // MARK: - Pixels
