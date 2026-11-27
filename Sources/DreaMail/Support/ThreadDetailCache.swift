@@ -893,6 +893,8 @@ actor ThreadDetailRepository {
         // Deleted messages of a live conversation stay out of it (Gmail).
         let threadInTrash = try Bool.fetchOne(
             db, sql: "SELECT inTrash FROM thread WHERE id = ?", arguments: [threadId]) ?? false
+        let threadUnread = try Bool.fetchOne(
+            db, sql: "SELECT isUnread FROM thread WHERE id = ?", arguments: [threadId]) ?? true
         // Only their count and date: the line in the pane, not the messages.
         let deletedSummary = trashView
             ? nil : DeletedMessagesInConversation.summary(messages, threadInTrash: threadInTrash)
@@ -900,15 +902,13 @@ actor ThreadDetailRepository {
             ? TrashedMessages.inTrashView(messages, threadInTrash: threadInTrash)
             : TrashedMessages.shown(messages, threadInTrash: threadInTrash)
 
-        // First frame expands the newest sent message. Live draft cards also
-        // need their previews immediately, so hydrate exactly those bodies.
+        // First frame expands the newest sent message (and, in a starred
+        // conversation, the cards it opens on: `ThreadRefresh.hydratedOnOpen`).
+        // Live draft cards also need their previews immediately, so hydrate
+        // exactly those bodies.
         var hydrateIds = Set(
             messages.filter { Self.isLiveDraft($0.labelIds) }.map(\.id))
-        if let newestSent = messages.last(where: {
-            !Self.hasDraftLabel($0.labelIds)
-        }) {
-            hydrateIds.insert(newestSent.id)
-        }
+        hydrateIds.formUnion(ThreadRefresh.hydratedOnOpen(messages, threadUnread: threadUnread))
         if !hydrateIds.isEmpty {
             let bodies = try MessageBody
                 .filter(hydrateIds.contains(Column("messageId")))
@@ -1007,10 +1007,6 @@ actor ThreadDetailRepository {
             copy.bodyPrepByMessageId[message.id] = prep
         }
         return copy
-    }
-
-    private nonisolated static func hasDraftLabel(_ labelIds: String) -> Bool {
-        labelIds.split(whereSeparator: \.isWhitespace).contains { $0 == "DRAFT" }
     }
 
     private nonisolated static func isLiveDraft(_ labelIds: String) -> Bool {

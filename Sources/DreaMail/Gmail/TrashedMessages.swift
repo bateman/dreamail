@@ -129,25 +129,78 @@ enum TrashedMessages {
         try SyncEngine.deriveThreads(db, for: [threadId], accountId: accountId)
     }
 
-    /// The restores `change` had stored on the message rows
-    /// (`applyRestore`): its `modifyMessages` steps that take TRASH off.
-    /// An undo's re-trash step adds TRASH and only ever reached the thread
-    /// row, so it is not one. Pure — tested.
-    static func storedRestores(in change: RemoteThreadChange)
-        -> [(ids: [String], add: [String], remove: [String])] {
-        switch change {
-        case .modifyMessages(let ids, let add, let remove) where remove.contains("TRASH"):
-            return [(ids: ids, add: add, remove: remove)]
-        case .sequence(let steps):
-            return steps.flatMap(storedRestores(in:))
-        default:
-            return []
+    /// An action on some messages of a conversation (star, delete, mark
+    /// unread from the message's header), as stored locally before Gmail
+    /// answers. The thread row can hold a thread-level edit its message
+    /// rows do not have yet (read on open, archive, star from the list);
+    /// Gmail applies such an edit to every message of the thread, so it is
+    /// first written to the shown messages, then `applyRestore` relabels
+    /// `ids` and derives the row again. Without this, starring a message
+    /// right after opening an unread conversation showed it unread again.
+    /// The thread row is read again here, inside the write: a reply a sync
+    /// stored since `thread` was read must not be marked read. `thread`
+    /// stands in only when the row is gone. Call inside one write.
+    /// shortcut: the pending thread edits are written to the message rows
+    /// as Gmail will apply them, but a later refusal of that thread edit
+    /// (offline archive, then a star here, then Gmail refuses the archive)
+    /// reverts only what its own change names; the message rows keep the
+    /// folded archive until the next sync of their labels.
+    static func applyMessageEdit(_ db: Database, thread captured: MailThread,
+                                 ids: [String], add: [String], remove: [String]) throws {
+        let thread = try MailThread.fetchOne(db, key: captured.id) ?? captured
+        let messages = try Message.filter(Column("threadId") == thread.id).fetchAll(db)
+        let visible = Self.shown(messages, threadInTrash: thread.inTrash)
+        for (label, flag) in [("UNREAD", thread.isUnread), ("STARRED", thread.isStarred),
+                              ("INBOX", thread.inInbox)] {
+            let holders = visible.filter { SyncEngine.labelIdsContain($0.labelIds, label) }
+            if !flag, !holders.isEmpty {
+                try relabel(db, accountId: thread.accountId, ids: holders.map(\.gmailId),
+                            add: [], remove: [label])
+            } else if flag, holders.isEmpty {
+                try relabel(db, accountId: thread.accountId, ids: visible.map(\.gmailId),
+                            add: [label], remove: [])
+            }
         }
+        try applyRestore(db, accountId: thread.accountId, threadId: thread.id,
+                         ids: ids, add: add, remove: remove)
     }
 
-    /// Gmail refused `change`, or its queued copy was dropped: the restores
-    /// it had stored locally are undone on exactly their messages (TRASH
-    /// back, the restore's labels off), so the re-derive that follows lists
+    /// The per-message edits `change` had stored on the message rows
+    /// (`applyRestore`): a Trash restore, or an action on one message of an
+    /// open conversation (star, delete, mark unread, and their undo). These
+    /// are its `modifyMessages` steps, except the re-trash step of a trash
+    /// undo (`ThreadUndo.undoTrashRemote`): it adds TRASH right after the
+    /// thread-level un-trash and only ever reached the thread row.
+    /// shortcut: a message delete queued offline right after the undo of a
+    /// conversation trash has the same shape, so a refusal of that delete
+    /// leaves the message trashed locally until the next sync of its labels.
+    /// Pure — tested.
+    static func storedRestores(in change: RemoteThreadChange)
+        -> [(ids: [String], add: [String], remove: [String])] {
+        let steps: [RemoteThreadChange]
+        if case .sequence(let inner) = change { steps = inner } else { steps = [change] }
+        var out: [(ids: [String], add: [String], remove: [String])] = []
+        for (index, step) in steps.enumerated() {
+            switch step {
+            case .modifyMessages(let ids, let add, let remove):
+                if add.contains("TRASH"), index > 0,
+                   case .modify(_, let before) = steps[index - 1], before.contains("TRASH") {
+                    continue
+                }
+                out.append((ids: ids, add: add, remove: remove))
+            case .sequence:
+                out += storedRestores(in: step)
+            default:
+                continue
+            }
+        }
+        return out
+    }
+
+    /// Gmail refused `change`, or its queued copy was dropped: the edits
+    /// it had stored locally (`storedRestores`) are undone on exactly their
+    /// messages. For a restore: TRASH back, the restore's labels off, so the
+    /// re-derive that follows lists
     /// the conversation in the Trash again instead of showing the messages
     /// live while Gmail keeps them in its trash. A label the message
     /// already had before the restore is taken off too; the message is in
@@ -157,7 +210,8 @@ enum TrashedMessages {
     static func revertStoredRestores(_ db: Database, accountId: String,
                                      change: RemoteThreadChange) throws -> Bool {
         let restores = storedRestores(in: change)
-        for r in restores {
+        // Newest first: each step is undone on the state the next one left.
+        for r in restores.reversed() {
             try relabel(db, accountId: accountId, ids: r.ids, add: r.remove, remove: r.add)
         }
         return !restores.isEmpty

@@ -1829,6 +1829,9 @@ struct ComposeRequest: Identifiable {
     /// action's bounded calls finish before the next bulk action's start.
     @ObservationIgnored
     var bulkRemoteTail: Task<Void, Never>?
+    /// Serial tail for the actions on one message (`MailStore+MessageActions`).
+    @ObservationIgnored
+    var messageActionTail: Task<Void, Never>?
     /// Snooze dates a "Move to inbox" ended, by thread id, until Gmail
     /// takes the move: a refusal re-derives the row from its messages, and
     /// the date (local only) is put back (`InboxMove.restoreSnoozeAfterRefusal`).

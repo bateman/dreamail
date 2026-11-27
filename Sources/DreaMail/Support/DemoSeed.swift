@@ -342,7 +342,7 @@ enum DemoSeed {
                  attachment: Bool = false, extraLabels: [String] = [],
                  listUnsubscribe: String? = nil,
                  listUnsubscribePost: String? = nil,
-                 to: String? = nil, deliveredTo: String? = nil,
+                 to: String? = nil, cc: String = "", deliveredTo: String? = nil,
                  html: String? = nil, sent: Bool = false, trashed: Bool = false) {
             // The user's own reply is in Sent, not the Inbox; a deleted
             // message is in the Trash only.
@@ -356,7 +356,7 @@ enum DemoSeed {
                 threadId: "\(account):\(t)",
                 fromHeader: from,
                 toHeader: to ?? "Alex Rivera <\(account)>",
-                ccHeader: "",
+                ccHeader: cc,
                 subject: subject,
                 date: date(hoursAgo),
                 snippet: snippet,
@@ -414,7 +414,9 @@ enum DemoSeed {
             subject: "Intro: you <> Sarah at Northwind",
             snippet: "Alex, meet Sarah — she's leading platform at Northwind and has been thinking hard about exactly the problem you're solving.",
             body: "Alex, meet Sarah — she's leading platform at Northwind.\n\nSarah, Alex has been building a native mail client worth a look.\n\nI'll get out of the way!\n\nMarcus",
-            hoursAgo: 26, unread: true, starred: true)
+            hoursAgo: 26, unread: true, starred: true,
+            // Copied to Sarah: the open message offers Reply all.
+            cc: "Sarah Chen <sarah@northwind.example>")
 
         add("t8", from: "Hacker Newsletter <hn@hackernewsletter.com>",
             subject: "Hacker Newsletter #742",
