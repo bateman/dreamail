@@ -183,3 +183,25 @@ enum LabelCurrentColor {
         text(background: row.color, palette: palette)
     }
 }
+
+extension LabelRow {
+    /// The row for a label this app has just created on Gmail.
+    static func created(_ l: GLabel, accountId: String) -> LabelRow {
+        LabelRow(id: "\(accountId):\(l.id)", accountId: accountId,
+                 gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
+                 color: nil,
+                 gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
+                 gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor),
+                 listVisibility: l.labelListVisibility,
+                 messageListVisibility: l.messageListVisibility,
+                 gmailColorPreset: l.colorPreset)
+    }
+
+    /// The Gmail color a new sublabel starts with: the parent's as drawn
+    /// (pair or preset, DEC-071), as one the API accepts, or nil. Every
+    /// preset pair is in Gmail's palette.
+    var inheritableGmailColor: GmailLabelColor? {
+        let drawn = drawnGmailColors
+        return GmailLabelColor(background: drawn.background, text: drawn.text)
+    }
+}

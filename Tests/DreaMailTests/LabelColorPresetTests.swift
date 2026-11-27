@@ -285,12 +285,12 @@ final class LabelColorPresetTests: XCTestCase {
     /// A sublabel starts with the color its parent is drawn with (DEC-071):
     /// the preset's pair when the stored one is neutral.
     func testSublabelTakesTheParentsDrawnColor() {
-        XCTAssertEqual(MailStore.gmailColor(of: row(fallback, preset: "LABEL_COLOR_PRESET_DARK_GREEN")),
+        XCTAssertEqual(row(fallback, preset: "LABEL_COLOR_PRESET_DARK_GREEN").inheritableGmailColor,
                        GmailLabelColor(background: "#076239", text: "#ffffff"))
-        XCTAssertEqual(MailStore.gmailColor(of: row(preset: "LABEL_COLOR_PRESET_YELLOW")),
+        XCTAssertEqual(row(preset: "LABEL_COLOR_PRESET_YELLOW").inheritableGmailColor,
                        GmailLabelColor(background: "#fad165", text: "#000000"))
-        XCTAssertNil(MailStore.gmailColor(of: row(fallback)), "the neutral pair is not in the palette")
-        XCTAssertEqual(MailStore.gmailColor(of: row(LabelColors(background: "#4a86e8", text: "#ffffff"))),
+        XCTAssertNil(row(fallback).inheritableGmailColor, "the neutral pair is not in the palette")
+        XCTAssertEqual(row(LabelColors(background: "#4a86e8", text: "#ffffff")).inheritableGmailColor,
                        GmailLabelColor(background: "#4a86e8", text: "#ffffff"))
     }
 
