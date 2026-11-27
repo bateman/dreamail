@@ -122,18 +122,20 @@ final class MessageHeaderActionsUITests: XCTestCase {
                        "the starred demo message shows its star")
 
         // Reply answers the sender only; Reply all keeps the demo Cc.
-        let ccChip = NSPredicate(format: "label CONTAINS[c] 'sarah' OR value CONTAINS[c] 'sarah'")
+        // A recipient chip is a button named after the recipient; the
+        // quoted original below can name the Cc in plain text.
+        let ccChip = NSPredicate(format: "label CONTAINS[c] 'sarah'")
         element(app, "messageHeaderReply").click()
         var compose = openedCompose(app)
         XCTAssertFalse(compose.descendants(matching: .any).matching(identifier: "addressField.Cc")
             .firstMatch.exists, "Reply has no Cc")
-        XCTAssertFalse(compose.staticTexts.matching(ccChip).firstMatch.exists, "Reply leaves the Cc out")
+        XCTAssertFalse(compose.buttons.matching(ccChip).firstMatch.exists, "Reply leaves the Cc out")
         closeCompose(app)
         element(app, "messageHeaderReplyAll").click()
         compose = openedCompose(app)
         XCTAssertTrue(compose.descendants(matching: .any).matching(identifier: "addressField.Cc")
             .firstMatch.waitForExistence(timeout: 5), "Reply all opens with a Cc")
-        XCTAssertTrue(compose.staticTexts.matching(ccChip).firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(compose.buttons.matching(ccChip).firstMatch.waitForExistence(timeout: 5),
                       "Reply all keeps the demo Cc recipient")
         closeCompose(app)
     }
