@@ -49,9 +49,9 @@ enum LabelPickerKeyRules {
 
 /// The picker's Inbox row and its "Create" row, as Gmail's pickers have
 /// them. Pure; `MailStore.labelPickerLabels` / `labelPickerCreateName` use it.
-/// - "Move to" lists Inbox first as a destination for a conversation that
-///   can move there (`InboxMove.movable`: not in the Inbox, not spam, not a
-///   lone draft; a trashed one leaves the Trash).
+/// - "Move to" lists Inbox first as a destination when any conversation it
+///   covers can move there (`InboxMove.movable`: not in the Inbox, not spam,
+///   not a lone draft; a trashed one leaves the Trash).
 /// - "Label as" never lists Inbox on its own: typing a name that matches it
 ///   offers "Move to inbox", after the matching labels, when the
 ///   conversation offers it (`InboxMove.offered`).
@@ -63,10 +63,16 @@ enum LabelPickerInboxRow {
     /// shows it as `InboxMove.title`.
     static let name = "Inbox"
 
-    static func placement(moveMode: Bool, thread: MailThread, query: String) -> Placement? {
+    /// `moveTargets`: in "Move to", every conversation the move covers; the
+    /// row is listed when any of them can move to the Inbox (only those
+    /// move, `InboxMove.Plan`). "Label as" looks at `thread` alone.
+    static func placement(moveMode: Bool, thread: MailThread, moveTargets: [MailThread] = [],
+                          query: String) -> Placement? {
         let q = query.trimmingCharacters(in: .whitespaces)
         if moveMode {
-            guard InboxMove.movable(thread), q.isEmpty || LabelSearch.matches(name, query: q)
+            let targets = moveTargets.isEmpty ? [thread] : moveTargets
+            guard targets.contains(where: InboxMove.movable),
+                  q.isEmpty || LabelSearch.matches(name, query: q)
             else { return nil }
             return .first
         }

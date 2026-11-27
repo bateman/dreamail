@@ -129,6 +129,36 @@ enum InboxMove {
         }
     }
 
+    /// The snooze dates moves to the Inbox ended, by thread id, until Gmail
+    /// takes or refuses that move. Only a move to the Inbox (a change that
+    /// adds INBOX) settles an entry: an unrelated edit on the thread, sent
+    /// meanwhile, neither clears it nor restores it.
+    struct EndedSnoozes: Equatable {
+        private(set) var dates: [String: Date] = [:]
+
+        /// A move is written: every target's entry is set to the snooze it
+        /// ends, or cleared when it ends none (an older entry is stale).
+        mutating func begin(_ plan: Plan) {
+            for t in plan.targets { dates[t.id] = plan.endedSnoozes[t.id] }
+        }
+
+        /// Gmail took `change`, sent now or replayed from the offline queue.
+        mutating func succeeded(threadId: String, change: RemoteThreadChange) {
+            if InboxMove.refusalRestoresSnooze(change) { dates[threadId] = nil }
+        }
+
+        /// Gmail refused `change`: the date to put back, if it was the move.
+        mutating func refused(threadId: String, change: RemoteThreadChange?) -> Date? {
+            guard InboxMove.refusalRestoresSnooze(change) else { return nil }
+            return dates.removeValue(forKey: threadId)
+        }
+
+        /// The move was undone locally: the snooze is back already.
+        mutating func undone(_ ids: [String]) {
+            for id in ids { dates[id] = nil }
+        }
+    }
+
     /// After Gmail refused a move to the Inbox that ended a snooze: the row
     /// was re-derived from its messages (still without INBOX), and the date,
     /// which lives only here, is put back. Not when the row is in the Inbox
@@ -177,14 +207,21 @@ enum ReservedLabelNames {
 /// two should become one once both are merged.
 enum SenderSearch {
     /// The address when it is one plain address: one `@` with text on both
-    /// sides, no whitespace, quotes, parentheses, angle brackets, braces,
-    /// brackets, commas, semicolons, backslashes or control characters.
+    /// sides; no whitespace, quotes, parentheses, angle brackets, braces,
+    /// brackets, commas, semicolons, colons, backslashes, search wildcards
+    /// (`%` `_` `*`), control, bidi or invisible characters; not starting
+    /// with a combining mark.
     static func strictAddress(_ raw: String) -> String? {
+        // `%`, `_` and `*` are wildcards to the local search (a LIKE without
+        // ESCAPE): `%@%` would list every sender's mail.
         let forbidden = CharacterSet.whitespacesAndNewlines
             .union(.controlCharacters)
-            .union(CharacterSet(charactersIn: "\"'()<>{}[],;:\\"))
+            .union(CharacterSet(charactersIn: "\"'()<>{}[],;:\\%_*"))
             .union(bidiControls)
-        guard raw.unicodeScalars.allSatisfy({ !forbidden.contains($0) }) else { return nil }
+            .union(invisibleFillers)
+        guard raw.unicodeScalars.allSatisfy({ !forbidden.contains($0) }),
+              let first = raw.unicodeScalars.first,
+              !CharacterSet.nonBaseCharacters.contains(first) else { return nil }
         let parts = raw.split(separator: "@", omittingEmptySubsequences: false)
         guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty,
               !parts[1].hasPrefix("."), !parts[1].hasSuffix(".") else { return nil }
@@ -194,24 +231,35 @@ enum SenderSearch {
     /// The search the item commits: the address quoted.
     static func query(_ address: String) -> String { "from:\"\(address)\"" }
 
-    /// The display name in the title: control and bidi characters removed,
-    /// whitespace collapsed, capped; the address when nothing is left.
-    static func displayName(_ name: String, address: String, maxLength: Int = 40) -> String {
-        // Line breaks and tabs read as spaces; other controls and the bidi
-        // characters go.
+    /// The display name in the title: control, bidi and invisible filler
+    /// characters removed, whitespace collapsed, capped both in characters
+    /// and in Unicode scalars (stacked combining marks make one character of
+    /// thousands of scalars); the address when nothing visible is left.
+    static func displayName(_ name: String, address: String, maxLength: Int = 40,
+                            maxScalars: Int = 120) -> String {
+        // Line breaks and tabs read as spaces; other controls, the bidi
+        // characters and invisible fillers go.
         var scalars = String.UnicodeScalarView()
         for scalar in name.unicodeScalars {
+            if scalars.count >= maxScalars { break }
             if CharacterSet.whitespacesAndNewlines.contains(scalar) {
                 scalars.append(" ")
             } else if !CharacterSet.controlCharacters.contains(scalar),
-                      !bidiControls.contains(scalar) {
+                      !bidiControls.contains(scalar), !invisibleFillers.contains(scalar) {
                 scalars.append(scalar)
             }
         }
         let cleaned = String(scalars).split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let shown = cleaned.isEmpty ? address : cleaned
+        let visible = cleaned.unicodeScalars.contains {
+            !CharacterSet.nonBaseCharacters.contains($0) && !CharacterSet.whitespaces.contains($0)
+        }
+        let shown = visible ? cleaned : address
         return shown.count > maxLength ? String(shown.prefix(maxLength - 1)) + "…" : shown
     }
+
+    /// Letters that render as nothing (Hangul fillers, the Braille blank,
+    /// the Mongolian vowel separator, the combining grapheme joiner).
+    static let invisibleFillers = CharacterSet(charactersIn: "\u{115F}\u{1160}\u{3164}\u{FFA0}\u{2800}\u{180E}\u{034F}")
 
     /// Unicode bidirectional controls (embeddings, overrides, isolates,
     /// marks) and the other format characters that reorder or hide text.

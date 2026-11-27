@@ -1713,7 +1713,7 @@ struct ComposeRequest: Identifiable {
     /// takes the move: a refusal re-derives the row from its messages, and
     /// the date (local only) is put back (`InboxMove.restoreSnoozeAfterRefusal`).
     @ObservationIgnored
-    var endedSnoozes: [String: Date] = [:]
+    var endedSnoozes = InboxMove.EndedSnoozes()
     /// Rapid triage reconciles once after the user pauses instead of launching
     /// a full list/count query for every key press.
     @ObservationIgnored
@@ -4215,8 +4215,11 @@ struct ComposeRequest: Identifiable {
     func labelPickerLabels(for thread: MailThread) -> [LabelRow] {
         let labels = userLabels(forAccount: thread.accountId)
             .filter { LabelSearch.matches($0.name, query: labelPicker.query) }
+        let moveMode = labelPicker.mode == .move
+        let moveTargets = moveMode
+            ? labelPicker.moveTargetIds.compactMap { id in threads.first { $0.id == id } } : []
         switch LabelPickerInboxRow.placement(
-            moveMode: labelPicker.mode == .move, thread: thread, query: labelPicker.query) {
+            moveMode: moveMode, thread: thread, moveTargets: moveTargets, query: labelPicker.query) {
         case .first: return [Self.inboxPickerRow(thread.accountId)] + labels
         case .last: return labels + [Self.inboxPickerRow(thread.accountId)]
         case nil: return labels

@@ -137,6 +137,21 @@ enum ThreadRowMenu {
         }
     }
 
+    /// The menu's targets: one row, or the checked set when the row is one
+    /// of several checked ones. `checked`: the checked rows still in the
+    /// list, in list order. View and state both read this one answer.
+    static func targets(row: MailThread, checked: [MailThread]) -> [MailThread] {
+        checked.count > 1 && checked.contains(where: { $0.id == row.id }) ? checked : [row]
+    }
+
+    /// The conversations an action picked from the menu acts on: the ids the
+    /// menu was built for, still in the list. Never another conversation:
+    /// a list reload that dropped them leaves nothing to act on.
+    static func liveTargets(ids: [String], in threads: [MailThread]) -> [MailThread] {
+        let byId = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return ids.compactMap { byId[$0] }
+    }
+
     static func groups(_ s: State) -> [[ThreadRowMenuItem]] {
         var out: [[ThreadRowMenuItem]] = []
         if !s.bulk && !s.draftOnly { out.append([.reply, .replyAll, .forward]) }

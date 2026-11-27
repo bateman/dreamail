@@ -117,6 +117,22 @@ final class ThreadRowMenuTests: XCTestCase {
         XCTAssertEqual(one.senderIsVIP, false)
     }
 
+    /// The menu's targets: the checked set only for one of its rows; the
+    /// actions act on the ids the menu was built for, never on another
+    /// conversation once a reload dropped them.
+    func testTargetsAndLiveTargets() throws {
+        let rows = try threads([("a", "Label_7"), ("b", "Label_7"), ("c", "INBOX")])
+        let a = rows[0], b = rows[1], c = rows[2]
+        XCTAssertEqual(ThreadRowMenu.targets(row: a, checked: [a, b]).map(\.id), [a.id, b.id])
+        XCTAssertEqual(ThreadRowMenu.targets(row: c, checked: [a, b]).map(\.id), [c.id],
+                       "an unchecked row acts on itself")
+        XCTAssertEqual(ThreadRowMenu.targets(row: a, checked: [a]).map(\.id), [a.id])
+        XCTAssertEqual(ThreadRowMenu.targets(row: a, checked: []).map(\.id), [a.id])
+        XCTAssertEqual(ThreadRowMenu.liveTargets(ids: [b.id, a.id], in: rows).map(\.id), [b.id, a.id])
+        XCTAssertEqual(ThreadRowMenu.liveTargets(ids: [a.id, b.id], in: [c]).map(\.id), [],
+                       "pruned by a reload: nothing, not the focused row")
+    }
+
     /// Trash copies of a live conversation and conversations in the Trash
     /// keep their guards. Reply, Reply all and Forward are disabled on a
     /// Trash copy too: they would answer a live message the row does not

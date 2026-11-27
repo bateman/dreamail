@@ -301,6 +301,48 @@ final class MoveToInboxTests: XCTestCase {
         XCTAssertFalse(InboxMove.refusalRestoresSnooze(nil))
     }
 
+    /// The ended-snooze entries: set for every target of a move, settled
+    /// only by that move's own success (direct or replayed) or refusal, or
+    /// by its undo.
+    func testEndedSnoozeLifecycle() throws {
+        let q = try makeDB([("t1", ["Label_7"]), ("t2", ["Label_7"])])
+        let first = wholeSecondsFromNow(3_600)
+        try setSnooze(q, first)
+        let id1 = key("t1"), id2 = key("t2")
+        var ended = InboxMove.EndedSnoozes()
+        let move = try plan(q, ["t1", "t2"])
+        ended.begin(move)
+        XCTAssertEqual(ended.dates, [id1: first], "only the snoozed target")
+
+        // An unrelated edit on the thread settles nothing.
+        ended.succeeded(threadId: id1, change: .modify(add: ["STARRED"]))
+        XCTAssertEqual(ended.refused(threadId: id1, change: .modify(add: ["STARRED"])), nil)
+        XCTAssertEqual(ended.dates, [id1: first])
+
+        // The move replayed from the offline queue succeeds: settled.
+        ended.succeeded(threadId: id1, change: move.remotes[id1]!)
+        XCTAssertEqual(ended.dates, [:])
+        XCTAssertNil(ended.refused(threadId: id1, change: move.remotes[id1]!),
+                     "a later refusal finds no stale date")
+
+        // A later move replaces an older entry, and clears one it ends none of.
+        ended.begin(move)
+        let second = wholeSecondsFromNow(7_200)
+        try setSnooze(q, second)
+        ended.begin(try plan(q, ["t1"]))
+        XCTAssertEqual(ended.refused(threadId: id1, change: move.remotes[id1]!), second)
+        ended.begin(move)
+        try setSnooze(q, nil)
+        ended.begin(try plan(q, ["t1"]))
+        XCTAssertEqual(ended.dates, [:])
+
+        // Undo settles too.
+        try setSnooze(q, first)
+        ended.begin(try plan(q, ["t1"]))
+        ended.undone([id1, id2])
+        XCTAssertEqual(ended.dates, [:])
+    }
+
     // MARK: - Trash, spam, mute, drafts, label views
 
     /// "Move to… → Inbox" on a trashed conversation reached by a search,
@@ -495,6 +537,21 @@ final class MoveToInboxTests: XCTestCase {
         XCTAssertNil(try p("archived", "work"), "filtered out by the query")
     }
 
+    /// Over several conversations the row is there when any of them can
+    /// move, whatever their order; only those move.
+    func testMovePickerListsInboxWhenAnyTargetCanMove() throws {
+        let q = try makeDB([("inbox", ["INBOX"]), ("archived", ["Label_7"])])
+        let inbox = try thread(q, "inbox"), archived = try thread(q, "archived")
+        for targets in [[inbox, archived], [archived, inbox]] {
+            XCTAssertEqual(LabelPickerInboxRow.placement(moveMode: true, thread: targets[0],
+                                                         moveTargets: targets, query: ""), .first)
+        }
+        XCTAssertNil(LabelPickerInboxRow.placement(moveMode: true, thread: inbox,
+                                                   moveTargets: [inbox], query: ""))
+        let p = InboxMove.Plan([inbox, archived], fromPicker: true)
+        XCTAssertEqual(p.targets.map(\.gmailThreadId), ["archived"])
+    }
+
     func testLabelAsPickerOffersMoveToInboxOnlyWhenTyped() throws {
         let q = try makeDB([("archived", ["Label_7"]), ("trash", ["TRASH"]), ("inbox", ["INBOX"]),
                             ("spam", ["SPAM"])])
@@ -557,6 +614,9 @@ final class MoveToInboxTests: XCTestCase {
             "alex@example.com.", "alex@.example.com",
             "alex@example.com\n", "alex@exa\u{0007}mple.com",
             "alex@example.com\u{202E}moc", "<alex@example.com>", "a,b@example.com",
+            "%@%", "a%@example.com", "a_b@example.com", "*@example.com",  // search wildcards
+            "\u{0301}alex@example.com",                                   // leading combining mark
+            "al\u{3164}ex@example.com",                                   // invisible filler
             "",
         ]
         for raw in crafted {
@@ -573,6 +633,15 @@ final class MoveToInboxTests: XCTestCase {
         XCTAssertEqual(SenderSearch.displayName("Alex\n\tSample", address: "a@example.com"),
                        "Alex Sample", "controls removed, whitespace collapsed")
         XCTAssertEqual(SenderSearch.displayName("\u{200F} ", address: "a@example.com"), "a@example.com")
+        // Stacked combining marks: one character of thousands of scalars.
+        let zalgo = "A" + String(repeating: "\u{0301}", count: 5_000) + "lex"
+        let capped = SenderSearch.displayName(zalgo, address: "a@example.com")
+        XCTAssertLessThanOrEqual(capped.unicodeScalars.count, 121)
+        // Invisible letters only: the address.
+        XCTAssertEqual(SenderSearch.displayName("\u{3164}\u{115F}", address: "a@example.com"),
+                       "a@example.com")
+        XCTAssertEqual(SenderSearch.displayName("\u{0301}\u{0302}", address: "a@example.com"),
+                       "a@example.com", "marks alone show nothing")
         let long = String(repeating: "x", count: 100)
         let shown = SenderSearch.displayName(long, address: "a@example.com")
         XCTAssertEqual(shown.count, 40)

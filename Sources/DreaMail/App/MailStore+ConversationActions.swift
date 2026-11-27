@@ -18,7 +18,16 @@ extension MailStore {
     /// `m`: mute (unmute when every target is already muted). `thread`: the
     /// conversation toolbar's own thread instead of the key's targets.
     func toggleMuteTargets(_ thread: MailThread? = nil) {
-        let all = thread.map { [$0] } ?? actionTargets
+        toggleMute(thread.map { [$0] } ?? actionTargets, bulk: thread == nil && !checkedThreadIds.isEmpty)
+    }
+
+    /// The row menu over a checked set: the ids the menu was built for
+    /// (`ThreadRowMenu.liveTargets`), never the focused row as a fallback.
+    func toggleMuteTargets(ids: [String]) {
+        toggleMute(ThreadRowMenu.liveTargets(ids: ids, in: threads), bulk: true)
+    }
+
+    private func toggleMute(_ all: [MailThread], bulk: Bool) {
         guard !refusesPartlyTrashed(all) else { return }
         let targets = all.filter { !isPartlyTrashedRow($0) }
         guard !targets.isEmpty else { return }
@@ -26,7 +35,7 @@ extension MailStore {
         let n = targets.count
         let noun = n == 1 ? "Conversation" : "\(n) conversations"
         run(ConversationActionRun(action, targets: targets),
-            bulk: thread == nil && !checkedThreadIds.isEmpty,
+            bulk: bulk,
             autoAdvance: action == .mute ? "mute" : nil,
             undoLabel: action == .mute ? "\(noun) muted" : "\(noun) unmuted")
     }
@@ -69,6 +78,14 @@ extension MailStore {
                      undoLabel: InboxMove.undoLabel(count:))
     }
 
+    /// The row menu over a checked set (see `toggleMuteTargets(ids:)`).
+    func moveToInboxTargets(ids: [String]) {
+        let all = ThreadRowMenu.liveTargets(ids: ids, in: threads)
+        guard !refusesPartlyTrashed(all) else { return }
+        runInboxMove(InboxMove.Plan(all, isPartlyTrashed: isPartlyTrashedRow),
+                     bulk: true, undoLabel: InboxMove.undoLabel(count:))
+    }
+
     /// Writes an Inbox move: one bulk mutation with each conversation's own
     /// Gmail change, the snoozes it ends kept for a refusal, and one undo.
     private func runInboxMove(_ plan: InboxMove.Plan, bulk: Bool,
@@ -78,13 +95,13 @@ extension MailStore {
         let acted = mutateThreads(plan.targets, autoAdvanceAction: "move-to-inbox",
                                   remote: .modify(), remotes: plan.remotes,
                                   local: { plan.apply(&$0) })
-        endedSnoozes.merge(plan.endedSnoozes) { _, new in new }
+        endedSnoozes.begin(plan)
         if bulk { clearCheckedThreads() }
         let ids = plan.targets.map(\.id)
         offerUndo(undoLabel(plan.targets.count)) { [weak self] in
             guard let self else { return }
             self.pinReadStateKeep(ids)
-            for id in ids { self.endedSnoozes[id] = nil }
+            self.endedSnoozes.undone(ids)
             self.mutateThreads(acted, remote: .modify(), remotes: plan.undoRemotes,
                                local: { plan.restore(&$0) })
             self.restoreSelectionFocus(focus)
@@ -106,6 +123,13 @@ extension MailStore {
             focused: selectedThreadId)
         guard !ids.isEmpty else { return }
         openLabelPicker(mode: .move, moveTargetIds: ids)
+    }
+
+    /// The row menu over a checked set (see `toggleMuteTargets(ids:)`).
+    func openMovePicker(ids: [String]) {
+        let live = ThreadRowMenu.liveTargets(ids: ids, in: threads).map(\.id)
+        guard !live.isEmpty else { return }
+        openLabelPicker(mode: .move, moveTargetIds: live)
     }
 
     /// The conversation the picker acts on and lists labels for: the first

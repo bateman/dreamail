@@ -135,7 +135,7 @@ extension MailStore {
         do {
             try await Self.perform(change, on: client, gmailThreadId: gmailThreadId)
             isOffline = false
-            endedSnoozes["\(accountId):\(gmailThreadId)"] = nil
+            endedSnoozes.succeeded(threadId: "\(accountId):\(gmailThreadId)", change: change)
         } catch {
             switch RemoteThreadSend.disposition(for: error) {
             case .queueOffline:
@@ -193,8 +193,7 @@ extension MailStore {
         // path (direct refusal, dropped queued edit) comes through here.
         LocalThreadEdits.shared.forget(threadId: threadId)
         // A refused "Move to inbox" that ended a snooze gives the date back.
-        let snooze = InboxMove.refusalRestoresSnooze(refused)
-            ? endedSnoozes.removeValue(forKey: threadId) : nil
+        let snooze = endedSnoozes.refused(threadId: threadId, change: refused)
         let reverted = (try? await db.write { db -> Bool in
             let reverted = try refused.map {
                 try TrashedMessages.revertStoredRestores(db, accountId: accountId, change: $0)
@@ -257,6 +256,8 @@ extension MailStore {
                 try await Self.perform(change, on: gmail, gmailThreadId: row.gmailThreadId)
                 isOffline = false
                 shouldDelete = true
+                endedSnoozes.succeeded(threadId: "\(row.accountId):\(row.gmailThreadId)",
+                                       change: change)
             } catch {
                 switch ThreadOpReplay.replayDisposition(
                     error: error, accountIsKnown: isKnownAccount(row.accountId),

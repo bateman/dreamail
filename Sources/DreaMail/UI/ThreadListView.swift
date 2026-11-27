@@ -580,6 +580,8 @@ private struct ThreadListSections: View, Equatable {
 
     var body: some View {
         let multiSelectActive = !store.checkedThreadIds.isEmpty
+        // The row menus' checked set, built once per body pass, not per row.
+        let checkedForMenu = store.checkedThreadIds.count > 1 ? store.checkedThreadsInOrder : []
         ForEach(grouped, id: \.0) { title, threads in
             Section {
                 if !isCollapsed(title) {
@@ -634,7 +636,7 @@ private struct ThreadListSections: View, Equatable {
                                 Label("Trash", systemImage: "trash")
                             }
                         }
-                        .contextMenu { threadMenu(thread) }
+                        .contextMenu { threadMenu(thread, checked: checkedForMenu) }
                 }
                 }
             } header: {
@@ -724,11 +726,16 @@ private struct ThreadListSections: View, Equatable {
     }
 
     @ViewBuilder
-    private func threadMenu(_ thread: MailThread) -> some View {
+    private func threadMenu(_ thread: MailThread, checked: [MailThread]) -> some View {
+        // One row, or the checked set it belongs to (`ThreadRowMenu.targets`):
+        // the view and the menu state read the same answer.
+        let targets = ThreadRowMenu.targets(row: thread, checked: checked)
+        let bulk = targets.count > 1
         // `inDrafts` (live DRAFT only) — not labels.contains("DRAFT"), which
         // is the historical union and stays true after discarded DRAFT+TRASH
         // (Fund Expense / Anna). Edit/Delete would no-op on those threads.
-        if thread.inDrafts {
+        // Single-row items: not over a checked set.
+        if thread.inDrafts && !bulk {
             Button { store.editDraft(inThread: thread) } label: {
                 Label("Edit Draft", systemImage: "square.and.pencil")
             }
@@ -748,8 +755,6 @@ private struct ThreadListSections: View, Equatable {
         // builder runs for every visible row on each body pass, so it must
         // not query the database per row (the checked set is read only for
         // a checked row of a multi-selection).
-        let bulk = store.checkedThreadIds.count > 1 && store.checkedThreadIds.contains(thread.id)
-        let targets = bulk ? store.checkedThreadsInOrder : [thread]
         let address = SenderSearch.strictAddress(thread.fromEmail)
         let vipAction = thread.fromEmail.contains("@")
             ? ParticipantMenuVIP.action(email: thread.fromEmail, vipEmails: store.vipEmails,
@@ -766,24 +771,28 @@ private struct ThreadListSections: View, Equatable {
                 return false
             })
         let groups = ThreadRowMenu.groups(state)
+        // Once per menu, not per item.
+        let sender = SenderSearch.displayName(thread.fromDisplay, address: address ?? "")
+        let ids = bulk ? targets.map(\.id) : []
         ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
             if index > 0 { Divider() }
             ForEach(group, id: \.self) { item in
-                threadMenuItem(item, thread: thread, bulk: bulk, address: address,
-                               vipAction: vipAction)
+                threadMenuItem(item, thread: thread, bulkIds: ids, sender: sender,
+                               address: address, vipAction: vipAction)
                     .disabled(ThreadRowMenu.isDisabled(item, state))
                     .accessibilityIdentifier("rowMenu.\(item.rawValue)")
             }
         }
     }
 
-    /// One item of the row menu. `bulk`: act on the checked set through the
-    /// keys' own bulk paths.
+    /// One item of the row menu. `bulkIds`: the checked set the menu was
+    /// built for (empty: this row); Mute, Move to inbox and Move to act on
+    /// exactly those ids, the others through the keys' own bulk paths.
     @ViewBuilder
-    private func threadMenuItem(_ item: ThreadRowMenuItem, thread: MailThread, bulk: Bool,
-                                address: String?,
+    private func threadMenuItem(_ item: ThreadRowMenuItem, thread: MailThread, bulkIds: [String],
+                                sender: String, address: String?,
                                 vipAction: ParticipantMenuVIP.Action?) -> some View {
-        let sender = SenderSearch.displayName(thread.fromDisplay, address: address ?? "")
+        let bulk = !bulkIds.isEmpty
         let label = Label(item.title(sender: sender), systemImage: item.symbol)
         switch item {
         case .reply, .replyAll, .forward:
@@ -794,7 +803,9 @@ private struct ThreadListSections: View, Equatable {
                                         forward: item == .forward))
             } label: { label }
         case .moveToInbox:
-            Button { store.moveToInboxTargets(bulk ? nil : thread) } label: { label }
+            Button {
+                if bulk { store.moveToInboxTargets(ids: bulkIds) } else { store.moveToInboxTargets(thread) }
+            } label: { label }
         case .archive:
             Button { if bulk { store.archiveChecked() } else { store.archive(thread) } } label: { label }
         case .delete:
@@ -825,11 +836,15 @@ private struct ThreadListSections: View, Equatable {
                 }
             } label: { label }
         case .moveTo:
-            Button { store.openMovePicker(thread: bulk ? nil : thread) } label: { label }
+            Button {
+                if bulk { store.openMovePicker(ids: bulkIds) } else { store.openMovePicker(thread: thread) }
+            } label: { label }
         case .labelAs:
             Button { store.openLabelPicker(for: thread) } label: { label }
         case .mute, .unmute:
-            Button { store.toggleMuteTargets(bulk ? nil : thread) } label: { label }
+            Button {
+                if bulk { store.toggleMuteTargets(ids: bulkIds) } else { store.toggleMuteTargets(thread) }
+            } label: { label }
         case .findFromSender:
             if let address {
                 Button { store.commitSearch(SenderSearch.query(address)) } label: { label }
