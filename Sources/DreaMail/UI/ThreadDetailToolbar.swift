@@ -50,7 +50,6 @@ final class ThreadToolbarModel {
 /// content updates.
 struct ThreadDetailToolbar: ViewModifier {
     @Environment(MailStore.self) private var store
-    @AppStorage("readingPaneHidden") private var readingPaneHidden = false
     let thread: MailThread
     let compactMode: Bool
     var focusMode: Bool = false
@@ -95,6 +94,9 @@ struct ThreadDetailToolbar: ViewModifier {
                 if #available(macOS 26.0, *) {
                     ToolbarSpacer(.fixed, placement: .principal)
                 }
+                // Nothing here in the three-pane reading pane: the window's
+                // pane toggle (⌥⌘0) shows and hides it.
+                if splitMode || focusMode || compactMode {
                 ToolbarItem(placement: .principal) {
                     if splitMode {
                         Button(action: onBack) {
@@ -122,21 +124,10 @@ struct ThreadDetailToolbar: ViewModifier {
                         .accessibilityIdentifier("compactBackButton")
                         .focusable(false)
                         .focusEffectDisabled()
-                    } else {
-                        Button {
-                            // Keep the selection so the list stays where you are.
-                            readingPaneHidden = true
-                        } label: {
-                            Label("Hide Reading Pane", systemImage: "chevron.right.2")
-                        }
-                        // Collapses the reading pane so the list fills the window;
-                        // selection stays put — click a thread (or press Enter) to reopen.
-                        .help("Hide reading pane (esc)")
-                        .focusable(false)
-                        .focusEffectDisabled()
                     }
                 }
                 .pmHideSharedBackground()
+                }
                 // Prev/next drive the list selection, which split's conversation
                 // column is decoupled from — hide them there.
                 if !splitMode {

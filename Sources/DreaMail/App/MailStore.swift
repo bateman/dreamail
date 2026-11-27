@@ -212,9 +212,11 @@ final class MailStore {
     /// The query the thread list is actually filtered by. Set when a search
     /// is committed (Enter / View all results / picking a suggestion).
     var committedSearch: String = ""
-    /// Bumped by `/` (Gmail-style) to move keyboard focus into the sidebar
-    /// search field. The sidebar watches this and drives its `@FocusState`.
+    /// Bumped by `/` (Gmail-style) to move keyboard focus into the search
+    /// field. The list column's toolbar field watches this and drives its `@FocusState`.
     var searchFocusToken = 0
+    /// A focus request the field has not yet honoured (see `focusSearch`).
+    var searchFocusPending = false
     /// Bumped by View ▸ Reset Sidebar Order; the sidebar resets its order.
     var sidebarOrderResetToken = 0
     /// True while the search field is focused, so ContentView can float the
@@ -4358,11 +4360,29 @@ struct ComposeRequest: Identifiable {
         }
     }
 
-    /// Gmail's `/`: move keyboard focus into the sidebar search field. Bumps a
+    /// Gmail's `/`: move keyboard focus into the search field. Bumps a
     /// token instead of holding focus state directly so a repeated `/` (after
     /// the user clicked away) re-focuses.
     func focusSearch() {
+        // Pending until the field takes focus, so a request made while the
+        // list column is not mounted (compact layout) lands when it appears.
+        searchFocusPending = true
         searchFocusToken &+= 1
+        let token = searchFocusToken
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            // Only this request's timer: a newer request has its own.
+            guard let self, self.searchFocusToken == token else { return }
+            self.searchFocusPending = false
+        }
+    }
+
+    /// Whether a pending `focusSearch` should still land when the field
+    /// mounts: not once a sheet, the compose window or another text field has
+    /// taken the keyboard.
+    var searchFocusStillWanted: Bool {
+        composeRequest == nil && !showCommandPalette && !showLabelPicker
+            && !TextFocus.isEditing(NSApp.keyWindow?.firstResponder)
     }
 
     // MARK: - Labels on threads
