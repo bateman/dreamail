@@ -1474,7 +1474,11 @@ struct ComposeRequest: Identifiable {
     func enterSplitCompose() {
         guard let req = composeRequest, req.replyTo != nil,
               let threadId = req.boundThreadId else { return }
-        if let loaded = threads.first(where: { $0.id == threadId }) {
+        // The Trash view's copy of a live conversation (`projectTrashView`)
+        // is not the stored row: the snapshot outlives the Trash list, so
+        // it is read from the database instead (as `openingLive` does).
+        if !trashViewProjectedIds.contains(threadId),
+           let loaded = threads.first(where: { $0.id == threadId }) {
             splitThreadSnapshot = loaded
             applySplitPresentation(requestId: req.id)
             return

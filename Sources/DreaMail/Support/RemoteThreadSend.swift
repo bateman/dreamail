@@ -7,6 +7,9 @@ protocol GmailThreadEditing: Sendable {
     func trashThread(id: String) async throws
     /// `messages.batchModify` on exactly `ids`: labels only, never a delete.
     func modifyMessages(ids: [String], add: [String], remove: [String]) async throws
+    /// `messages/{id}/modify` on one message; Gmail answers 404 for an id
+    /// it no longer has.
+    func modifyMessage(id: String, add: [String], remove: [String]) async throws
 }
 
 extension GmailClient: GmailThreadEditing {}
@@ -27,12 +30,13 @@ enum RemoteThreadSend {
                 try await client.modifyMessages(ids: ids, add: add, remove: remove)
             } catch let error where isRejectedId(error) {
                 // One id Gmail no longer has can fail the whole batch: the
-                // others still need the change. One by one, skipping the
-                // ones that are gone (404).
-                guard ids.count > 1 else { return }
+                // others still need the change. One by one, skipping only
+                // the ones that are gone (404); any other refusal (a 400
+                // for a label deleted elsewhere, say) reaches the caller,
+                // also for a batch of one.
                 for id in ids {
                     do {
-                        try await client.modifyMessages(ids: [id], add: add, remove: remove)
+                        try await client.modifyMessage(id: id, add: add, remove: remove)
                     } catch let error where isNotFound(error) {
                         continue
                     }

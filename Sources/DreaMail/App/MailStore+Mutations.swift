@@ -148,7 +148,7 @@ extension MailStore {
             case .revert:
                 lastError = RemoteThreadSend.refusalMessage(for: change, error: error)
                 await rederiveThreadFromMessages(
-                    accountId: accountId, gmailThreadId: gmailThreadId)
+                    accountId: accountId, gmailThreadId: gmailThreadId, refused: change)
                 await sync(accountId: accountId)
             }
         }
@@ -180,13 +180,21 @@ extension MailStore {
         }) ?? 0
     }
 
-    private func rederiveThreadFromMessages(accountId: String, gmailThreadId: String) async {
+    /// `refused`: the change Gmail refused or that was dropped from the
+    /// queue. Optimistic edits leave message rows alone, except a Trash
+    /// restore (`TrashedMessages.applyRestore`): that one is undone on its
+    /// messages first, in the same write.
+    private func rederiveThreadFromMessages(accountId: String, gmailThreadId: String,
+                                            refused: RemoteThreadChange? = nil) async {
         let threadId = "\(accountId):\(gmailThreadId)"
         // Back to Gmail's last known state: a running backfill must not lay
         // the refused or dropped edit over the messages again. Every revert
         // path (direct refusal, dropped queued edit) comes through here.
         LocalThreadEdits.shared.forget(threadId: threadId)
         _ = try? await db.write { db in
+            if let refused {
+                try TrashedMessages.revertStoredRestores(db, accountId: accountId, change: refused)
+            }
             try OptimisticThreadWrite.rederiveOrDelete(db, threadId: threadId, accountId: accountId)
         }
         scheduleThreadMutationReconciliation()
@@ -283,7 +291,8 @@ extension MailStore {
                 // not revert the thread under that edit.
                 if deleted, shouldRederive {
                     await rederiveThreadFromMessages(
-                        accountId: row.accountId, gmailThreadId: row.gmailThreadId)
+                        accountId: row.accountId, gmailThreadId: row.gmailThreadId,
+                        refused: change)
                 }
             }
         }

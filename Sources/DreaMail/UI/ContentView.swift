@@ -798,7 +798,11 @@ struct ContentView: View {
                             // Fresh view state per conversation, as in the
                             // main detail path: a "load images for this
                             // conversation" opt-in must never carry over.
-                            .id(thread.id)
+                            // The Trash view's trashed-only reader is its
+                            // own identity there too: leaving the Trash
+                            // remounts the live conversation.
+                            .id(store.opensTrashReader(threadId: thread.id)
+                                ? "\(thread.id)#trash" : thread.id)
                             .modifier(ThreadDetailToolbar(
                                 thread: thread,
                                 compactMode: false,

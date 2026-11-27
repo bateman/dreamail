@@ -121,6 +121,46 @@ enum TrashedMessages {
     /// row is derived again from its messages. Call inside one write.
     static func applyRestore(_ db: Database, accountId: String, threadId: String,
                              ids: [String], add: [String], remove: [String]) throws {
+        try relabel(db, accountId: accountId, ids: ids, add: add, remove: remove)
+        try SyncEngine.deriveThreads(db, for: [threadId], accountId: accountId)
+    }
+
+    /// The restores `change` had stored on the message rows
+    /// (`applyRestore`): its `modifyMessages` steps that take TRASH off.
+    /// An undo's re-trash step adds TRASH and only ever reached the thread
+    /// row, so it is not one. Pure — tested.
+    static func storedRestores(in change: RemoteThreadChange)
+        -> [(ids: [String], add: [String], remove: [String])] {
+        switch change {
+        case .modifyMessages(let ids, let add, let remove) where remove.contains("TRASH"):
+            return [(ids: ids, add: add, remove: remove)]
+        case .sequence(let steps):
+            return steps.flatMap(storedRestores(in:))
+        default:
+            return []
+        }
+    }
+
+    /// Gmail refused `change`, or its queued copy was dropped: the restores
+    /// it had stored locally are undone on exactly their messages (TRASH
+    /// back, the restore's labels off), so the re-derive that follows lists
+    /// the conversation in the Trash again instead of showing the messages
+    /// live while Gmail keeps them in its trash. A label the message
+    /// already had before the restore is taken off too; the message is in
+    /// the trash, where that label shows nowhere. Call inside the write
+    /// that re-derives the thread. Returns whether a row changed.
+    @discardableResult
+    static func revertStoredRestores(_ db: Database, accountId: String,
+                                     change: RemoteThreadChange) throws -> Bool {
+        let restores = storedRestores(in: change)
+        for r in restores {
+            try relabel(db, accountId: accountId, ids: r.ids, add: r.remove, remove: r.add)
+        }
+        return !restores.isEmpty
+    }
+
+    private static func relabel(_ db: Database, accountId: String, ids: [String],
+                                add: [String], remove: [String]) throws {
         for id in ids {
             let key = "\(accountId):\(id)"
             guard let message = try Message.fetchOne(db, key: key) else { continue }
@@ -128,7 +168,6 @@ enum TrashedMessages {
             try db.execute(sql: "UPDATE message SET labelIds = ?, isUnread = ? WHERE id = ?",
                            arguments: [labels, SyncEngine.labelIdsContain(labels, "UNREAD"), key])
         }
-        try SyncEngine.deriveThreads(db, for: [threadId], accountId: accountId)
     }
 
     /// The stored rows of `threadIds` that still have trashed messages.

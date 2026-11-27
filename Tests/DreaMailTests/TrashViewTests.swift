@@ -310,28 +310,81 @@ actor FailingOnceThreadEditing: GmailThreadEditing {
     func modifyMessages(ids: [String], add: [String], remove: [String]) async throws {
         try record(.modifyMessages(ids: ids, add: add, remove: remove))
     }
+
+    func modifyMessage(id: String, add: [String], remove: [String]) async throws {
+        try record(.modifyMessage(id: id, add: add, remove: remove))
+    }
 }
 
 /// L3 and L4: undo after a restore, and a batch Gmail refuses for one id.
 final class TrashUndoEdgeTests: XCTestCase {
 
     /// One earlier-trashed id Gmail no longer has fails the whole batch:
-    /// the others are re-trashed one by one, the missing one skipped.
+    /// the others are re-trashed one by one (`messages/{id}/modify`), the
+    /// missing one skipped.
     func testARefusedBatchIsRetriedPerIdSkippingMissingOnes() async throws {
         let client = ScriptedThreadEditing { call in
-            if case .modifyMessages(let ids, _, _) = call {
-                if ids.count > 1 { throw GmailError.http(400, "invalid id") }
-                if ids == ["gone"] { throw GmailError.http(404, "not found") }
-            }
+            if case .modifyMessages = call { throw GmailError.http(400, "invalid id") }
+            if case .modifyMessage("gone", _, _) = call { throw GmailError.http(404, "not found") }
         }
         let change = RemoteThreadChange.modifyMessages(ids: ["a", "gone", "b"],
                                                        add: ["TRASH"], remove: [])
         try await RemoteThreadSend.send(change, via: client, gmailThreadId: "t1")
         let calls = await client.calls
         XCTAssertEqual(calls, [.modifyMessages(ids: ["a", "gone", "b"], add: ["TRASH"], remove: []),
-                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: []),
-                               .modifyMessages(ids: ["gone"], add: ["TRASH"], remove: []),
-                               .modifyMessages(ids: ["b"], add: ["TRASH"], remove: [])])
+                               .modifyMessage(id: "a", add: ["TRASH"], remove: []),
+                               .modifyMessage(id: "gone", add: ["TRASH"], remove: []),
+                               .modifyMessage(id: "b", add: ["TRASH"], remove: [])])
+    }
+
+    /// N2: a 400 that is not about a missing id (a label deleted
+    /// elsewhere) is an error on several ids...
+    func testA400ForOneOfSeveralIdsReachesTheCaller() async throws {
+        let client = ScriptedThreadEditing { call in
+            if case .modifyMessages = call { throw GmailError.http(400, "Invalid label") }
+            if case .modifyMessage("b", _, _) = call { throw GmailError.http(400, "Invalid label") }
+        }
+        do {
+            try await RemoteThreadSend.send(.modifyMessages(ids: ["a", "b"], add: ["Label_9"]),
+                                            via: client, gmailThreadId: "t1")
+            XCTFail("the 400 reaches the caller")
+        } catch {
+            XCTAssertEqual(RemoteThreadSend.disposition(for: error), .revert)
+        }
+    }
+
+    /// ...and on one id: never swallowed as a success.
+    func testA400OnASingleIdReachesTheCaller() async throws {
+        let client = ScriptedThreadEditing { _ in throw GmailError.http(400, "Invalid label") }
+        do {
+            try await RemoteThreadSend.send(.modifyMessages(ids: ["a"], add: ["Label_9"]),
+                                            via: client, gmailThreadId: "t1")
+            XCTFail("the 400 reaches the caller")
+        } catch {
+            XCTAssertEqual(RemoteThreadSend.disposition(for: error), .revert)
+        }
+        let calls = await client.calls
+        XCTAssertEqual(calls, [.modifyMessages(ids: ["a"], add: ["Label_9"], remove: []),
+                               .modifyMessage(id: "a", add: ["Label_9"], remove: [])])
+    }
+
+    /// A single id Gmail no longer has (404): nothing left to change.
+    func testA404OnASingleIdIsDone() async throws {
+        let client = ScriptedThreadEditing { _ in throw GmailError.http(404, "not found") }
+        try await RemoteThreadSend.send(.modifyMessages(ids: ["gone"], add: ["TRASH"]),
+                                        via: client, gmailThreadId: "t1")
+        let calls = await client.calls
+        XCTAssertEqual(calls, [.modifyMessages(ids: ["gone"], add: ["TRASH"], remove: []),
+                               .modifyMessage(id: "gone", add: ["TRASH"], remove: [])])
+    }
+
+    /// Several ids all gone: done, without an error.
+    func testA404OnEveryIdIsDone() async throws {
+        let client = ScriptedThreadEditing { _ in throw GmailError.http(404, "not found") }
+        try await RemoteThreadSend.send(.modifyMessages(ids: ["x", "y"], add: ["TRASH"]),
+                                        via: client, gmailThreadId: "t1")
+        let calls = await client.calls
+        XCTAssertEqual(calls.count, 3)
     }
 
     /// An error that is not about the ids (quota, server) is not split up:
@@ -372,6 +425,10 @@ actor ScriptedThreadEditing: GmailThreadEditing {
 
     func modifyMessages(ids: [String], add: [String], remove: [String]) async throws {
         try record(.modifyMessages(ids: ids, add: add, remove: remove))
+    }
+
+    func modifyMessage(id: String, add: [String], remove: [String]) async throws {
+        try record(.modifyMessage(id: id, add: add, remove: remove))
     }
 }
 
@@ -426,6 +483,64 @@ final class TrashRestoreLocalTests: XCTestCase {
             XCTAssertEqual(Set(state.liveIds), ["p1", "p2"])
             XCTAssertEqual(state.trashedIds, [])
         }
+    }
+
+    /// N1: Gmail refuses the restore (or its queued copy is dropped): the
+    /// revert puts the message rows back in the trash in the same write as
+    /// the re-derive (`MailStore.rederiveThreadFromMessages`), so the
+    /// conversation is listed in the Trash again and the message is not
+    /// shown live while Gmail keeps it in its trash.
+    func testARefusedRestorePutsTheMessagesBackInTheTrash() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        let threadId = "\(account):t1"
+        try q.write { db in
+            try Account(id: self.account, displayName: "P", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
+            for m in [msg("p1", minutesAgo: 60, labels: "TRASH"),
+                      msg("p2", minutesAgo: 5, labels: "INBOX")] { try m.insert(db) }
+            try SyncEngine.deriveThreads(db, for: [threadId], accountId: self.account)
+        }
+        let move = ConversationAction.moveTo(labelId: "Label_1", alsoRemove: ["TRASH"]).remote
+        let refused = RemoteThreadChange.modifyMessages(ids: ["p1"], add: move.addLabels,
+                                                        remove: move.removeLabels)
+        try q.write { db in
+            try TrashedMessages.applyRestore(db, accountId: self.account, threadId: threadId,
+                                             ids: ["p1"], add: move.addLabels, remove: move.removeLabels)
+        }
+        try q.write { db in
+            XCTAssertTrue(try TrashedMessages.revertStoredRestores(db, accountId: self.account,
+                                                                   change: refused))
+            try OptimisticThreadWrite.rederiveOrDelete(db, threadId: threadId, accountId: self.account)
+        }
+        try q.read { db in
+            XCTAssertEqual(try MailThread.filter(sql: TrashedMessages.inTrashViewSQL()).fetchCount(db), 1,
+                           "listed in the Trash again")
+            let live = try ThreadDetailRepository.fetchPayload(threadId: threadId, db: db)
+            XCTAssertEqual(live.messages.map(\.gmailId), ["p2"], "the message is not shown live")
+            let p1 = try XCTUnwrap(try Message.fetchOne(db, key: "\(self.account):p1"))
+            XCTAssertTrue(SyncEngine.labelIdsContain(p1.labelIds, "TRASH"))
+            XCTAssertFalse(SyncEngine.labelIdsContain(p1.labelIds, "Label_1"))
+            let thread = try XCTUnwrap(try MailThread.fetchOne(db, key: threadId))
+            XCTAssertFalse(thread.labels.contains("Label_1"))
+            XCTAssertEqual(thread.messageCount, 1)
+        }
+    }
+
+    /// Only a restore was stored on message rows: a refused undo of a
+    /// trash (its re-trash step adds TRASH) and plain thread edits leave
+    /// them alone; a restore inside a queued sequence is found.
+    func testOnlyStoredRestoresAreReverted() {
+        let undo = ThreadUndo.undoTrashRemote(
+            wasInInbox: true, before: .init(liveIds: ["b"], trashedIds: ["a"]))
+        XCTAssertTrue(TrashedMessages.storedRestores(in: undo).isEmpty)
+        XCTAssertTrue(TrashedMessages.storedRestores(in: .trash).isEmpty)
+        XCTAssertTrue(TrashedMessages.storedRestores(in: .modify(add: ["INBOX"], remove: ["TRASH"])).isEmpty)
+        let restore = RemoteThreadChange.modifyMessages(ids: ["p1"], add: ["INBOX"], remove: ["TRASH"])
+        let queued = restore.merged(with: .modify(add: ["STARRED"]))
+        let found = TrashedMessages.storedRestores(in: queued)
+        XCTAssertEqual(found.map(\.ids), [["p1"]])
+        XCTAssertEqual(found.map(\.add), [["INBOX"]])
     }
 }
 
