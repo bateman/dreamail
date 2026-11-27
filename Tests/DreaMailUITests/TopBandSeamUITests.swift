@@ -75,10 +75,15 @@ final class TopBandSeamUITests: XCTestCase {
             let right = rgb(collapsed, [128, 132, 136, 140, 144, 148, 152])
             XCTAssertEqual(right.count, 7)
             let reference = try XCTUnwrap(rgb(expanded, [84, 88, 92, 96, 100]).first)
+            // The top edge carries a faint window-material gradient (CI: E4...E9),
+            // so compare to the rail colour with a margin that still rejects
+            // the content's white (FFFFFF).
+            let rail = [0xE4, 0xE5, 0xE8]
             let beyond = wide.filter { $0.x >= 84 }
             XCTAssertGreaterThan(beyond.count, 50)
             for (x, c) in beyond {
-                XCTAssertTrue(same(c, reference), "top edge at x=\(x): \(c) differs from the rail band \(reference)")
+                XCTAssertTrue(zip(c, rail).allSatisfy { abs($0 - $1) <= 10 },
+                              "top edge at x=\(x): \(c) is not the rail colour \(rail)")
             }
             for c in left + right {
                 XCTAssertTrue(same(c, reference), "background \(c) differs from the rail band \(reference); \(desc)")
