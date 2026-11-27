@@ -31,13 +31,17 @@ final class MessageHeaderActionsUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
+    /// Read from one snapshot of the app: reading element by element fails
+    /// when a row leaves the pane between two reads (a delete in progress).
     private func frames(_ identifier: String, in app: XCUIApplication) -> [CGRect] {
-        app.descendants(matching: .any)
-            .matching(identifier: identifier)
-            .allElementsBoundByIndex
-            .map(\.frame)
-            .filter { !$0.isEmpty }
-            .sorted { $0.minY < $1.minY }
+        guard let root = try? app.snapshot() else { return [] }
+        var out: [CGRect] = []
+        func walk(_ node: XCUIElementSnapshot) {
+            if node.identifier == identifier, !node.frame.isEmpty { out.append(node.frame) }
+            node.children.forEach(walk)
+        }
+        walk(root)
+        return out.sorted { $0.minY < $1.minY }
     }
 
     private func waitUntil(_ timeout: TimeInterval = 10, _ condition: () -> Bool) -> Bool {
