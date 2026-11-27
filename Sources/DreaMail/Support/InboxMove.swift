@@ -197,9 +197,18 @@ enum SenderSearch {
     /// The display name in the title: control and bidi characters removed,
     /// whitespace collapsed, capped; the address when nothing is left.
     static func displayName(_ name: String, address: String, maxLength: Int = 40) -> String {
-        let removed = CharacterSet.controlCharacters.union(bidiControls)
-        let cleaned = String(String.UnicodeScalarView(name.unicodeScalars.filter { !removed.contains($0) }))
-            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        // Line breaks and tabs read as spaces; other controls and the bidi
+        // characters go.
+        var scalars = String.UnicodeScalarView()
+        for scalar in name.unicodeScalars {
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                scalars.append(" ")
+            } else if !CharacterSet.controlCharacters.contains(scalar),
+                      !bidiControls.contains(scalar) {
+                scalars.append(scalar)
+            }
+        }
+        let cleaned = String(scalars).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let shown = cleaned.isEmpty ? address : cleaned
         return shown.count > maxLength ? String(shown.prefix(maxLength - 1)) + "…" : shown
     }

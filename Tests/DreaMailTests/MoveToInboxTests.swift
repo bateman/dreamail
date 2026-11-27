@@ -92,6 +92,12 @@ final class MoveToInboxTests: XCTestCase {
                               account: account, isPartlyTrashed: { partly.contains($0.gmailThreadId) })
     }
 
+    /// The database keeps dates to the millisecond: whole seconds compare
+    /// equal after a round trip.
+    private func wholeSecondsFromNow(_ seconds: TimeInterval) -> Date {
+        Date(timeIntervalSince1970: (Date().timeIntervalSince1970 + seconds).rounded(.down))
+    }
+
     private func setSnooze(_ q: DatabaseQueue, _ until: Date?, _ id: String = "t1") throws {
         let before = try thread(q, id)
         var after = before
@@ -213,7 +219,7 @@ final class MoveToInboxTests: XCTestCase {
     /// result and the same Gmail change as `ThreadUndo.unsnooze`).
     func testSnoozedConversationIsUnsnoozed() throws {
         let q = try makeDB([("t1", ["Label_7"])])
-        let until = Date().addingTimeInterval(86_400)
+        let until = wholeSecondsFromNow(86_400)
         try setSnooze(q, until)
         let snoozed = try thread(q)
         XCTAssertTrue(InboxMove.offered(for: snoozed))
@@ -234,7 +240,7 @@ final class MoveToInboxTests: XCTestCase {
     /// same date, in the Snoozed list and out of the Inbox.
     func testUndoGivesTheSnoozeBack() throws {
         let q = try makeDB([("t1", ["Label_7"])])
-        let until = Date().addingTimeInterval(86_400)
+        let until = wholeSecondsFromNow(86_400)
         try setSnooze(q, until)
         let before = try thread(q)
         let p = try plan(q)
@@ -256,7 +262,7 @@ final class MoveToInboxTests: XCTestCase {
     /// re-derived from its messages, then the date (local only) goes back.
     func testRefusalGivesTheSnoozeBack() throws {
         let q = try makeDB([("t1", ["Label_7"])])
-        let until = Date().addingTimeInterval(86_400)
+        let until = wholeSecondsFromNow(86_400)
         try setSnooze(q, until)
         let before = try thread(q)
         let p = try plan(q)
@@ -280,8 +286,8 @@ final class MoveToInboxTests: XCTestCase {
     /// Gmail has in the Inbox, nor for a refusal that is not a move there.
     func testRefusalRestoreLeavesNewerStateAlone() throws {
         let q = try makeDB([("t1", ["Label_7"]), ("t2", ["INBOX"])])
-        let old = Date().addingTimeInterval(3_600)
-        let newer = Date().addingTimeInterval(86_400)
+        let old = wholeSecondsFromNow(3_600)
+        let newer = wholeSecondsFromNow(86_400)
         try setSnooze(q, newer)
         XCTAssertFalse(try q.write {
             try InboxMove.restoreSnoozeAfterRefusal($0, threadId: self.key("t1"), until: old)
