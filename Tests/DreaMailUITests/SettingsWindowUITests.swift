@@ -14,7 +14,15 @@ final class SettingsWindowUITests: XCTestCase {
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
-                                "-threadOpenStyle", "readingPane"] + extra
+                                "-threadOpenStyle", "readingPane",
+                                // Pinned, not left to what an earlier test of the
+                                // job stored: where "Add view" sits depends on
+                                // "More" and the open parent labels. (Not the
+                                // density: a launch argument would beat the
+                                // choice the test makes in Settings.)
+                                "-sidebar.more.expanded", "NO",
+                                "-sidebar.labels.expanded.\(account)", "()",
+                                "-sidebar.labels.more.\(account)", "NO"] + extra
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
@@ -97,20 +105,31 @@ final class SettingsWindowUITests: XCTestCase {
             .min()
     }
 
-    /// "Add view" sits below the fold: scroll to it, read its text height,
-    /// scroll back to the top.
+    /// "Add view" is the last row of the sidebar: scroll to the end (the
+    /// scroll clamps there, it cannot overshoot, and the row is then fully in
+    /// view whatever the window's height), read its text height once it holds
+    /// still, scroll back to the top.
+    ///
+    /// Not "scroll only while there is no frame": a row at the viewport's edge
+    /// reports a frame and, 0.2 s later, none (CI run 45999668426: no scroll,
+    /// then nil), so a first non-nil read proves nothing.
     private func addViewHeight(_ app: XCUIApplication) -> CGFloat? {
         let sidebar = app.outlines.firstMatch
-        var tries = 0
-        while titleHeight("Add view", in: app) == nil, tries < 15 {
-            sidebar.scroll(byDeltaX: 0, deltaY: -300)
-            tries += 1
+        for _ in 0..<4 { sidebar.scroll(byDeltaX: 0, deltaY: -300) }
+        // The same height on three reads in a row.
+        var last: CGFloat?, same = 0, reads = 0
+        let started = Date()
+        _ = waitUntil(timeout: 10) {
+            reads += 1
+            let now = self.titleHeight("Add view", in: app)
+            same = (now != nil && now == last) ? same + 1 : 0
+            last = now
+            return same >= 2
         }
-        // The row can come into view after the last read: wait until its
-        // title has a frame, which is what is read below.
-        _ = waitUntil { self.titleHeight("Add view", in: app) != nil }
-        let height = titleHeight("Add view", in: app)
-        tries = 0
+        print("SidebarDensity: Add view read \(reads) times in "
+              + "\(String(format: "%.2f", Date().timeIntervalSince(started))) s")
+        let height = same >= 2 ? last : nil
+        var tries = 0
         while !element("sidebar.inbox", in: app).isHittable, tries < 15 {
             sidebar.scroll(byDeltaX: 0, deltaY: 300)
             tries += 1
@@ -130,12 +149,14 @@ final class SettingsWindowUITests: XCTestCase {
         // row and "Add view" keeps its height. (Icons and tags are not
         // exposed as elements: only a Mac shows them.)
         let titles = ["Inbox", "Work", "Research", "Add view"]
+        // The baselines first: reading "Add view" scrolls the sidebar down and
+        // back, and the rows must not be measured while they settle again.
+        let systemBase = pitch(app, systemUpper, systemLower)
+        let labelBase = pitch(app, labelUpper, labelLower)
         var before = titles.dropLast().map { titleHeight($0, in: app) }
         before.append(addViewHeight(app))
         print("SidebarDensity: title heights before \(before)")
         XCTAssertFalse(before.contains { $0 == nil }, "every title is exposed: \(before)")
-        let systemBase = pitch(app, systemUpper, systemLower)
-        let labelBase = pitch(app, labelUpper, labelLower)
 
         pickSidebarDensity(app, "Compact")
         XCTAssertTrue(waitUntil { systemBase - self.pitch(app, systemUpper, systemLower) >= 4 },
@@ -145,6 +166,7 @@ final class SettingsWindowUITests: XCTestCase {
         var after = titles.dropLast().map { titleHeight($0, in: app) }
         after.append(addViewHeight(app))
         print("SidebarDensity: title heights compact \(after)")
+        XCTAssertFalse(after.contains { $0 == nil }, "every title is exposed in Compact: \(after)")
         for (title, (was, now)) in zip(titles, zip(before, after)) {
             guard let was, let now else { continue }
             XCTAssertEqual(now, was, accuracy: 1, "\(title): the text is \(now) pt high in Compact, \(was) before")
