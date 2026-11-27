@@ -163,14 +163,24 @@ struct ThreadDetailToolbar: ViewModifier {
                     ToolbarSpacer(.fixed, placement: .principal)
                 }
                 ToolbarItemGroup {
-                    Button { store.archive(thread) } label: {
-                        Label("Archive", systemImage: "archivebox")
+                    // Gmail: Archive for Inbox mail, Move to Inbox otherwise.
+                    if InboxMove.offered(for: thread) {
+                        Button { store.moveToInboxTargets(thread) } label: {
+                            Label(InboxMove.title, systemImage: ThreadRowMenuItem.moveToInbox.symbol)
+                        }
+                        .help(store.keyBindings.key(for: .moveToInbox).map {
+                            "\(InboxMove.title) (\($0))" } ?? InboxMove.title)
+                        .accessibilityIdentifier("toolbar.moveToInbox")
+                    } else {
+                        Button { store.archive(thread) } label: {
+                            Label("Archive", systemImage: ThreadRowMenuItem.archive.symbol)
+                        }
+                        .help("Archive (\(store.keyBindings.displayKey(for: .archive)))")
+                        .disabled(store.isPartlyTrashedRow(thread))
                     }
-                    .help("Archive (\(store.keyBindings.displayKey(for: .archive)))")
-                    .disabled(store.isPartlyTrashedRow(thread))
                     Button { store.toggleStar(thread) } label: {
                         Label(thread.isStarred ? "Unstar" : "Star",
-                              systemImage: thread.isStarred ? "star.fill" : "star")
+                              systemImage: (thread.isStarred ? ThreadRowMenuItem.unstar : .star).symbol)
                             .foregroundStyle(thread.isStarred ? .yellow : .primary)
                     }
                     .help(thread.isStarred
@@ -178,11 +188,11 @@ struct ThreadDetailToolbar: ViewModifier {
                           : "Star (\(store.keyBindings.displayKey(for: .toggleStar)))")
                     .disabled(store.isPartlyTrashedRow(thread))
                     Button { store.openLabelPicker() } label: {
-                        Label("Label", systemImage: "tag")
+                        Label("Label", systemImage: ThreadRowMenuItem.labelAs.symbol)
                     }
                     .help("Labels (\(store.keyBindings.displayKey(for: .label)))")
                     Button(role: .destructive) { store.trash(thread) } label: {
-                        Label("Trash", systemImage: "trash")
+                        Label("Trash", systemImage: ThreadRowMenuItem.delete.symbol)
                     }
                     .help("Move to Trash (\(store.keyBindings.displayKey(for: .trash)))")
                     .disabled(thread.inTrash || store.isPartlyTrashedRow(thread))
@@ -193,7 +203,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         let loaded = loadedMessages != nil
                         let last = ForwardComposer.newestSentMessage(in: messages) ?? layoutLast
                         Button { onReply(last) } label: {
-                            Label("Reply", systemImage: "arrowshape.turn.up.left")
+                            Label("Reply", systemImage: ThreadRowMenuItem.reply.symbol)
                         }
                         .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
                         .disabled(!loaded)
@@ -208,7 +218,7 @@ struct ThreadDetailToolbar: ViewModifier {
                             Button {
                                 store.openCompose(.init(replyTo: last, replyAll: true))
                             } label: {
-                                Label("Reply all", systemImage: "arrowshape.turn.up.left.2")
+                                Label("Reply all", systemImage: ThreadRowMenuItem.replyAll.symbol)
                             }
                             .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
                             .disabled(!loaded)
@@ -216,7 +226,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Button {
                             store.openCompose(.init(replyTo: last, forward: true))
                         } label: {
-                            Label("Forward", systemImage: "arrowshape.turn.up.right")
+                            Label("Forward", systemImage: ThreadRowMenuItem.forward.symbol)
                         }
                         .help("Forward newest message (\(store.keyBindings.displayKey(for: .forward))) · starts a new conversation")
                         .disabled(!loaded)
@@ -250,7 +260,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Button {
                             store.copyThreadLink(thread)
                         } label: {
-                            Label("Copy Gmail link", systemImage: "link")
+                            Label("Copy Gmail link", systemImage: ThreadRowMenuItem.copyLink.symbol)
                         }
                         .help("Copy Gmail link (⌘L)")
                         Divider()
@@ -258,21 +268,21 @@ struct ThreadDetailToolbar: ViewModifier {
                             store.setRead(thread, read: thread.isUnread)
                         } label: {
                             Label(thread.isUnread ? "Mark as read" : "Mark as unread",
-                                  systemImage: thread.isUnread
-                                    ? "envelope.open" : "envelope.badge")
+                                  systemImage: (thread.isUnread
+                                    ? ThreadRowMenuItem.markRead : .markUnread).symbol)
                         }
                         .disabled(store.isPartlyTrashedRow(thread))
                         Button {
                             store.mailboxOverlay = .snoozeThread(thread)
                         } label: {
-                            Label("Snooze", systemImage: "clock")
+                            Label("Snooze", systemImage: ThreadRowMenuItem.snooze.symbol)
                         }
                         .disabled(store.isPartlyTrashedRow(thread))
                         Button {
                             store.toggleMuteTargets(thread)
                         } label: {
                             Label(thread.isMuted ? "Unmute" : "Mute",
-                                  systemImage: thread.isMuted ? "bell" : "bell.slash")
+                                  systemImage: (thread.isMuted ? ThreadRowMenuItem.unmute : .mute).symbol)
                         }
                         .help("\(thread.isMuted ? "Unmute" : "Mute") (\(store.keyBindings.displayKey(for: .mute)))")
                         .disabled(store.isPartlyTrashedRow(thread))
@@ -289,7 +299,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Button {
                             store.openMovePicker(thread: thread)
                         } label: {
-                            Label("Move to…", systemImage: "folder")
+                            Label("Move to…", systemImage: ThreadRowMenuItem.moveTo.symbol)
                         }
                         .help("Move to (\(store.keyBindings.displayKey(for: .moveTo)))")
                         Divider()

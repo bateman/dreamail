@@ -28,6 +28,9 @@ enum ShortcutCommand: String, CaseIterable, Codable {
     case markImportant, markNotImportant
     /// Gmail's "Move to" (`v`): add a label and leave the inbox.
     case moveTo
+    /// Gmail's "Move to Inbox" for a conversation not in the Inbox. Gmail
+    /// has no key for it (support.google.com/mail/answer/6594): no default.
+    case moveToInbox
     /// Next / previous message inside the open conversation (Gmail `n` / `p`).
     case nextMessage, previousMessage
     /// Open / close every message of the open conversation (Gmail `;` / `:`).
@@ -38,7 +41,7 @@ extension ShortcutCommand {
     /// Toggles and pickers: a held key runs them once, not on every repeat.
     var ignoresAutoRepeat: Bool {
         switch self {
-        case .mute, .moveTo, .markImportant, .markNotImportant: return true
+        case .mute, .moveTo, .moveToInbox, .markImportant, .markNotImportant: return true
         default: return false
         }
     }
@@ -123,6 +126,7 @@ final class KeyBindings: ObservableObject {
         .init(command: .forward, title: "Forward", category: .actions, defaultKey: "f"),
         .init(command: .label, title: "Label…", category: .actions, defaultKey: "l"),
         .init(command: .moveTo, title: "Move to…", category: .actions, defaultKey: "v"),
+        .init(command: .moveToInbox, title: InboxMove.title, category: .actions, defaultKey: nil),
         .init(command: .mute, title: "Mute / Unmute", category: .actions, defaultKey: "m"),
         // Gmail lists `+` and `=`: `=` is an alias (see `aliases`).
         .init(command: .markImportant, title: "Mark as important", category: .actions, defaultKey: "+"),

@@ -459,9 +459,17 @@ final class MailStore {
         labelPicker.navigated = false
         labelPicker.changed = false
         labelPicker.mode = mode
-        labelPicker.moveTargetIds = mode == .move ? moveTargetIds : []
+        // Label mode: empty for the focused conversation, or the one
+        // conversation a row's context menu opened it for.
+        labelPicker.moveTargetIds = moveTargetIds
         labelPicker.session = UUID()
         mailboxOverlay = .labels
+    }
+
+    /// "Label as…" from a list row's context menu: the picker for that row,
+    /// focused or not.
+    func openLabelPicker(for thread: MailThread) {
+        openLabelPicker(mode: .label, moveTargetIds: [thread.id])
     }
     var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
 
@@ -1752,6 +1760,11 @@ struct ComposeRequest: Identifiable {
     /// action's bounded calls finish before the next bulk action's start.
     @ObservationIgnored
     var bulkRemoteTail: Task<Void, Never>?
+    /// Snooze dates a "Move to inbox" ended, by thread id, until Gmail
+    /// takes the move: a refusal re-derives the row from its messages, and
+    /// the date (local only) is put back (`InboxMove.restoreSnoozeAfterRefusal`).
+    @ObservationIgnored
+    var endedSnoozes = InboxMove.EndedSnoozes()
     /// Rapid triage reconciles once after the user pauses instead of launching
     /// a full list/count query for every key press.
     @ObservationIgnored
@@ -4255,6 +4268,7 @@ struct ComposeRequest: Identifiable {
         case .markImportant: setImportantTargets(true)
         case .markNotImportant: setImportantTargets(false)
         case .moveTo: openMovePicker()
+        case .moveToInbox: moveToInboxTargets()
         case .open, .backToList, .archiveNext, .archivePrevious,
              .nextMessage, .previousMessage, .expandAll, .collapseAll:
             viewCommandHandler?(command)
@@ -4280,18 +4294,33 @@ struct ComposeRequest: Identifiable {
     /// which label is highlighted. Matching is per whitespace token, using
     /// locale-aware case/diacritic-insensitive comparison.
     func labelPickerLabels(for thread: MailThread) -> [LabelRow] {
-        userLabels(forAccount: thread.accountId)
+        let labels = userLabels(forAccount: thread.accountId)
             .filter { LabelSearch.matches($0.name, query: labelPicker.query) }
+        let moveMode = labelPicker.mode == .move
+        let moveTargets = moveMode
+            ? labelPicker.moveTargetIds.compactMap { id in threads.first { $0.id == id } } : []
+        switch LabelPickerInboxRow.placement(
+            moveMode: moveMode, thread: thread, moveTargets: moveTargets, query: labelPicker.query) {
+        case .first: return [Self.inboxPickerRow(thread.accountId)] + labels
+        case .last: return labels + [Self.inboxPickerRow(thread.accountId)]
+        case nil: return labels
+        }
+    }
+
+    /// The picker's Inbox row (`LabelPickerInboxRow`): not a stored label.
+    static func inboxPickerRow(_ accountId: String) -> LabelRow {
+        LabelRow(id: "\(accountId):\(ConversationAction.inboxLabel)", accountId: accountId,
+                 gmailLabelId: ConversationAction.inboxLabel,
+                 name: LabelPickerInboxRow.name, type: "system", color: nil)
     }
 
     /// The "Create <query>" row's label name: the trimmed query, when it
-    /// wouldn't duplicate an existing label on the thread's account.
+    /// wouldn't duplicate an existing label on the thread's account and is
+    /// not a name Gmail reserves (`LabelPickerInboxRow.createName`).
     func labelPickerCreateName(for thread: MailThread) -> String? {
-        let name = labelPicker.query.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return nil }
-        let exists = userLabels(forAccount: thread.accountId)
-            .contains { $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
-        return exists ? nil : name
+        LabelPickerInboxRow.createName(
+            query: labelPicker.query,
+            existing: userLabels(forAccount: thread.accountId).map(\.name))
     }
 
     /// Creates the label on the thread's account, then applies it. The new
