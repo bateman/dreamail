@@ -707,9 +707,14 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// label sync (v66). nil reads as `show`. A hidden label's chip is left
     /// off the rows of the message list, as in Gmail.
     var messageListVisibility: String? = nil
-    /// Gmail's `colorPreset` (e.g. `LABEL_COLOR_PRESET_DARK_GREEN`), raw,
-    /// refreshed on every label sync (v71); nil when Gmail sends none.
+    /// Gmail's `colorPreset` (e.g. `LABEL_COLOR_PRESET_DARK_GREEN`), raw
+    /// (v71); nil when Gmail sends none. Kept from a full read while the
+    /// list sends nothing that contradicts it (`SyncEngine.applyLabels`).
     var gmailColorPreset: String? = nil
+    /// Whether the stored preset (or its absence) comes from a full read
+    /// (`labels.get`), not from the list alone (v71). Shown by the color
+    /// sheet's "Current:" line.
+    var gmailColorReadInFull: Bool = false
 
     /// Clears the stored order of an account's user labels (`sortOrder` back
     /// to unsorted), so the sidebar and the organizer follow Gmail's order.
@@ -733,9 +738,20 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         if let color, LabelRGB.normalizedHex(color) != nil {
             return LabelColors(background: color, text: nil)
         }
-        let gmail = LabelColors(background: gmailBackgroundColor, text: gmailTextColor)
-        return GmailLabelColorPreset.drawnColors(gmail, preset: gmailColorPreset)
+        return drawnGmailColors
     }
+
+    /// Gmail's color as drawn: the stored pair, or the preset's pair when
+    /// the stored one is absent or neutral (`GmailLabelColorPreset`).
+    var drawnGmailColors: LabelColors {
+        GmailLabelColorPreset.drawnColors(LabelColors(background: gmailBackgroundColor,
+                                                      text: gmailTextColor),
+                                          preset: gmailColorPreset)
+    }
+
+    /// Whether the label is drawn with a color from Gmail (pair or preset):
+    /// what enables "Remove color" and "No color on Gmail".
+    var hasGmailColor: Bool { drawnGmailColors.isColored }
 }
 
 // MARK: - Database
@@ -3026,7 +3042,10 @@ final class AppDatabase: @unchecked Sendable {
         }
         // v71: Gmail's label color preset, next to the two colors.
         m.registerMigration("v71") { db in
-            try db.alter(table: "label") { t in t.add(column: "gmailColorPreset", .text) }
+            try db.alter(table: "label") { t in
+                t.add(column: "gmailColorPreset", .text)
+                t.add(column: "gmailColorReadInFull", .boolean).notNull().defaults(to: false)
+            }
         }
         return m
     }

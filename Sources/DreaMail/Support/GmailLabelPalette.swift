@@ -94,6 +94,34 @@ enum GmailLabelColorPreset {
     /// it draws in another color. Not one of the documented values.
     static let neutralFallback = LabelColors(background: "#eeeeee", text: "#222222")
 
+    /// Whether `colors` is exactly the neutral pair (case and `#` aside).
+    static func isNeutralFallback(_ colors: LabelColors) -> Bool {
+        LabelRGB.normalizedHex(colors.background) == neutralFallback.background
+            && LabelRGB.normalizedHex(colors.text) == neutralFallback.text
+    }
+
+    /// Whether a listed user label is read again in full (`labels.get`):
+    /// it came without a background, or with the neutral pair and no
+    /// preset (the full read may carry the preset the list leaves out).
+    static func wantsFullRead(_ label: GLabel) -> Bool {
+        let listed = GmailLabelColorEdit.colors(of: label)
+        if listed.background == nil { return true }
+        return isNeutralFallback(listed) && shortName(label.colorPreset) == nil
+    }
+
+    /// The name the color sheet shows: the preset without `prefix`, when it
+    /// is 1-40 of A-Z, 0-9 and `_`; nil otherwise (the raw value stays
+    /// stored). Gmail's string is not trusted for display: no length cap,
+    /// newlines or bidi controls reach the sheet.
+    static func displayName(_ raw: String?) -> String? {
+        guard let name = shortName(raw) else { return nil }
+        let scalars = name.unicodeScalars
+        guard (1...40).contains(scalars.count),
+              scalars.allSatisfy({ (65...90).contains($0.value) || (48...57).contains($0.value)
+                                   || $0.value == 95 }) else { return nil }
+        return name
+    }
+
     /// The preset as shown: the name without `prefix`, or the raw value
     /// when it does not start with it. nil for nil or empty.
     static func shortName(_ raw: String?) -> String? {
@@ -107,9 +135,7 @@ enum GmailLabelColorPreset {
     static func drawnColors(_ gmail: LabelColors, preset: String?) -> LabelColors {
         guard let name = shortName(preset), let mapped = colors[name] else { return gmail }
         let bg = LabelRGB.normalizedHex(gmail.background)
-        let isFallback = bg == neutralFallback.background
-            && LabelRGB.normalizedHex(gmail.text) == neutralFallback.text
-        return bg == nil || isFallback ? mapped.colors : gmail
+        return bg == nil || isNeutralFallback(gmail) ? mapped.colors : gmail
     }
 }
 
@@ -132,17 +158,23 @@ enum LabelCurrentColor {
         return line
     }
 
-    /// ", preset NAME" for any preset Gmail sent (as sent, without
-    /// `LABEL_COLOR_PRESET_`), ", no preset" when it sent none.
-    static func presetPart(_ raw: String?) -> String {
-        GmailLabelColorPreset.shortName(raw).map { ", preset " + $0 } ?? ", no preset"
+    /// ", preset NAME" for a preset Gmail sent (without
+    /// `LABEL_COLOR_PRESET_`), ", unknown preset" for one whose name is not
+    /// plain A-Z/0-9/_ (`GmailLabelColorPreset.displayName`), and when it
+    /// sent none, which reads were asked: ", no preset (list and get)" after
+    /// a full read (`labels.get`), ", no preset (list only)" otherwise.
+    static func presetPart(_ raw: String?, readInFull: Bool) -> String {
+        if GmailLabelColorPreset.shortName(raw) != nil {
+            return GmailLabelColorPreset.displayName(raw).map { ", preset " + $0 } ?? ", unknown preset"
+        }
+        return readInFull ? ", no preset (list and get)" : ", no preset (list only)"
     }
 
     /// The color on Gmail, against the 64 swatches the sheet offers, and
     /// whether Gmail sent a preset.
     static func gmail(_ row: LabelRow) -> String {
         text(background: row.gmailBackgroundColor, text: row.gmailTextColor,
-             presetPart: presetPart(row.gmailColorPreset),
+             presetPart: presetPart(row.gmailColorPreset, readInFull: row.gmailColorReadInFull),
              palette: GmailLabelPalette.swatches.map(\.background))
     }
 

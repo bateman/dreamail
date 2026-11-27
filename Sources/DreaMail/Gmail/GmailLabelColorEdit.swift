@@ -95,6 +95,9 @@ enum GmailLabelColorEdit {
         case unknownLabel
         /// Gmail answered but kept a different color.
         case notApplied
+        /// The color was removed, but Gmail's answer still carries a preset
+        /// that colors the label.
+        case presetKept
 
         var errorDescription: String? {
             switch self {
@@ -102,6 +105,8 @@ enum GmailLabelColorEdit {
             case .inFlight: return "That label's color is still being saved to Gmail."
             case .unknownLabel: return "That label is no longer in Gmail."
             case .notApplied: return "Gmail didn't apply the color change."
+            case .presetKept:
+                return "Gmail kept a color preset on this label. Remove its color in Gmail on the web."
             }
         }
     }
@@ -163,22 +168,27 @@ enum GmailLabelColorEdit {
         // would stay "in flight" and its held colors would override every
         // sync until the app quits.
         let claimed = ClaimFlag()
-        let claim: (String, LabelColors)
+        let claim: (String, LabelColors, String?)
         do {
-            claim = try await db.write { db -> (String, LabelColors) in
+            claim = try await db.write { db -> (String, LabelColors, String?) in
                 guard let row = try LabelRow.fetchOne(db, key: id) else { throw Failure.unknownLabel }
                 guard row.type == "user" else { throw Failure.systemLabel }
                 guard pending.begin(id, colors: wanted) else { throw Failure.inFlight }
                 claimed.set()
                 try store(db, wanted, id: id)
+                // A removal clears the preset too, or it would keep drawing
+                // the label; Gmail's answer then says what stays.
+                if target == nil { try storePreset(db, nil, id: id) }
                 return (row.gmailLabelId, LabelColors(background: row.gmailBackgroundColor,
-                                                      text: row.gmailTextColor))
+                                                      text: row.gmailTextColor),
+                        row.gmailColorPreset)
             }
         } catch {
             if claimed.isSet { pending.cancel(id) }
             throw error
         }
-        let (gmailLabelId, before) = claim
+        let (gmailLabelId, before, presetBefore) = claim
+        let wantedPreset = target == nil ? nil : presetBefore
         await didStore()
         let answer: GLabel
         do {
@@ -187,10 +197,8 @@ enum GmailLabelColorEdit {
             pending.cancel(id)
             // Only over our own write: a sync may have stored newer colors.
             try? await db.write { db in
-                try db.execute(sql: """
-                    UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ?
-                    WHERE id = ? AND gmailBackgroundColor IS ? AND gmailTextColor IS ?
-                    """, arguments: [before.background, before.text, id, wanted.background, wanted.text])
+                try restore(db, id: id, before: before, presetBefore: presetBefore,
+                            wanted: wanted, wantedPreset: wantedPreset)
             }
             throw error
         }
@@ -201,6 +209,26 @@ enum GmailLabelColorEdit {
         }
         pending.confirm(id, colors: confirmed, now: now())
         if confirmed != wanted { throw Failure.notApplied }
+        if stillColored(removing: target == nil, confirmed, preset: answer.colorPreset) {
+            throw Failure.presetKept
+        }
+    }
+
+    /// A removal Gmail answered with no color but a preset that still
+    /// colors the label (`GmailLabelColorPreset.drawnColors`).
+    static func stillColored(removing: Bool, _ confirmed: LabelColors, preset: String?) -> Bool {
+        removing && GmailLabelColorPreset.drawnColors(confirmed, preset: preset).isColored
+    }
+
+    /// Puts back the colors and preset an edit replaced, only over the
+    /// edit's own values: a sync may have stored newer ones.
+    static func restore(_ db: Database, id: String, before: LabelColors, presetBefore: String?,
+                        wanted: LabelColors, wantedPreset: String?) throws {
+        try db.execute(sql: """
+            UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ?, gmailColorPreset = ?
+            WHERE id = ? AND gmailBackgroundColor IS ? AND gmailTextColor IS ? AND gmailColorPreset IS ?
+            """, arguments: [before.background, before.text, presetBefore, id,
+                             wanted.background, wanted.text, wantedPreset])
     }
 
     /// The preset Gmail's answer carries (nil when it carries none), so a

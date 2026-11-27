@@ -587,11 +587,13 @@ extension GmailLabelColorEdit {
                     }
                     begun.add(id)
                     try store(db, wanted, id: id)
+                    if target == nil { try storePreset(db, nil, id: id) }
                     let clearsLocal = clearingLocalColor.contains(id) && row.color != nil
                     if clearsLocal { try setLocalColor(db, hex: nil, labelRowIds: [id]) }
                     claimed.append(Claim(id: id, gmailLabelId: row.gmailLabelId,
                                          before: LabelColors(background: row.gmailBackgroundColor,
                                                              text: row.gmailTextColor),
+                                         presetBefore: row.gmailColorPreset,
                                          localBefore: clearsLocal ? row.color : nil))
                 }
                 return (claimed, refused)
@@ -621,11 +623,9 @@ extension GmailLabelColorEdit {
                         try GmailLabelColorEdit.storePreset(db, got[claim.id]?.colorPreset, id: claim.id)
                     } else {
                         // Only over our own writes: a sync may have stored newer colors.
-                        try db.execute(sql: """
-                            UPDATE label SET gmailBackgroundColor = ?, gmailTextColor = ?
-                            WHERE id = ? AND gmailBackgroundColor IS ? AND gmailTextColor IS ?
-                            """, arguments: [claim.before.background, claim.before.text, claim.id,
-                                             wanted.background, wanted.text])
+                        try restore(db, id: claim.id, before: claim.before,
+                                    presetBefore: claim.presetBefore, wanted: wanted,
+                                    wantedPreset: target == nil ? nil : claim.presetBefore)
                         if let local = claim.localBefore {
                             try db.execute(sql: "UPDATE label SET color = ? WHERE id = ? AND color IS NULL",
                                            arguments: [local, claim.id])
@@ -639,7 +639,12 @@ extension GmailLabelColorEdit {
             for (i, claim) in claims.enumerated() {
                 if let colors = confirmed[i] {
                     pending.confirm(claim.id, colors: colors, now: stamp)
-                    if colors != wanted { errors.append((claim.id, Failure.notApplied)) }
+                    if colors != wanted {
+                        errors.append((claim.id, Failure.notApplied))
+                    } else if stillColored(removing: target == nil, colors,
+                                           preset: got[claim.id]?.colorPreset) {
+                        errors.append((claim.id, Failure.presetKept))
+                    }
                 } else {
                     pending.cancel(claim.id)
                     errors.append((claim.id, failures[i] ?? Failure.notApplied))
@@ -670,6 +675,8 @@ extension GmailLabelColorEdit {
         let id: String
         let gmailLabelId: String
         let before: LabelColors
+        /// The preset before the edit, put back if it fails.
+        let presetBefore: String?
         /// The Mac-only color this edit cleared, put back if it fails.
         let localBefore: String?
     }

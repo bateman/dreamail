@@ -327,22 +327,27 @@ actor SyncEngine {
         // leave it uncolored until the next change. Costs one `labels.get`
         // per uncolored user label, per launch and then per interval.
         let now = Date()
+        // The same for one listed with the neutral #eeeeee / #222222 pair and
+        // no preset: the full read may carry the preset the list leaves out.
         let due = Set(listed.filter {
-            $0.type == "user" && $0.color?.backgroundColor == nil
+            $0.type == "user" && GmailLabelColorPreset.wantsFullRead($0)
                 && now.timeIntervalSince(colorCheckedAt[$0.id] ?? .distantPast) >= Self.colorRecheck
         }.map(\.id))
         var completed = listed
+        var readInFull: Set<String> = []
         if !due.isEmpty {
             let client = self.client
             let result = try await Self.completingColors(listed, ids: due) { id in
                 try await client.label(id)
             }
             completed = result.labels
+            readInFull = result.checked
             for id in result.checked { colorCheckedAt[id] = now }
         }
         let labels = completed
+        let fullReads = readInFull
         try await db.write { [accountId] db in
-            try Self.applyLabels(db, accountId: accountId, labels: labels)
+            try Self.applyLabels(db, accountId: accountId, labels: labels, readInFull: fullReads)
         }
     }
 
@@ -394,19 +399,39 @@ actor SyncEngine {
     /// Exercised directly by the test suite.
     ///
     /// A Gmail color the app has just written (`PendingLabelColorEdits`)
-    /// is kept over an older answer, so it does not bounce back.
+    /// is kept over an older answer, so it does not bounce back; so is the
+    /// preset stored with it.
+    ///
+    /// The preset (`gmailColorPreset`, `gmailColorReadInFull`): a label in
+    /// `readInFull` (read with `labels.get` this pass) takes the full
+    /// read's. Any other keeps the stored one while the list sends neither
+    /// a preset nor a color other than the neutral pair; otherwise it takes
+    /// the list's.
     static func applyLabels(_ db: Database, accountId: String, labels: [GLabel],
+                            readInFull: Set<String> = [],
                             pendingColors: PendingLabelColorEdits = .shared,
                             defaults: UserDefaults = .standard,
                             now: Date = Date()) throws {
         for l in labels {
             let id = "\(accountId):\(l.id)"
             let fetched = GmailLabelColorEdit.colors(of: l)
-            let gmailColors = pendingColors.held(id, fetched: fetched, now: now) ?? fetched
+            let held = pendingColors.held(id, fetched: fetched, now: now)
+            let gmailColors = held ?? fetched
             // A local color pick and order are local customizations — a
             // resync must never wipe them. Gmail's own colors are mirrored
             // as they are now, so a color changed in Gmail shows here too.
             let existing = try LabelRow.fetchOne(db, key: id)
+            let preset: String?
+            let presetReadInFull: Bool
+            let listSaysNothing = GmailLabelColorPreset.shortName(l.colorPreset) == nil
+                && (fetched.background == nil || GmailLabelColorPreset.isNeutralFallback(fetched))
+            if let existing, held != nil || (!readInFull.contains(l.id) && listSaysNothing) {
+                preset = existing.gmailColorPreset
+                presetReadInFull = existing.gmailColorReadInFull
+            } else {
+                preset = l.colorPreset
+                presetReadInFull = readInFull.contains(l.id)
+            }
             let row = LabelRow(id: id, accountId: accountId,
                                gmailLabelId: l.id, name: l.name, type: l.type ?? "user",
                                color: existing?.color,
@@ -415,7 +440,8 @@ actor SyncEngine {
                                gmailTextColor: gmailColors.text,
                                listVisibility: l.labelListVisibility,
                                messageListVisibility: l.messageListVisibility,
-                               gmailColorPreset: l.colorPreset)
+                               gmailColorPreset: preset,
+                               gmailColorReadInFull: presetReadInFull)
             // Runs every pass, and labels almost never change between
             // passes — write only rows that differ from the stored one.
             if row != existing { try row.save(db) }

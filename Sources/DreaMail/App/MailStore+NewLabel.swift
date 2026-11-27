@@ -9,7 +9,8 @@ extension LabelRow {
                  gmailBackgroundColor: LabelRGB.normalizedHex(l.color?.backgroundColor),
                  gmailTextColor: LabelRGB.normalizedHex(l.color?.textColor),
                  listVisibility: l.labelListVisibility,
-                 messageListVisibility: l.messageListVisibility)
+                 messageListVisibility: l.messageListVisibility,
+                 gmailColorPreset: l.colorPreset)
     }
 }
 
@@ -59,8 +60,10 @@ extension MailStore {
         return nil
     }
 
-    /// A label's Gmail color as one the API accepts, or nil.
+    /// A label's Gmail color as drawn (pair or preset, DEC-071), as one
+    /// the API accepts, or nil. Every preset pair is in Gmail's palette.
     nonisolated static func gmailColor(of row: LabelRow) -> GmailLabelColor? {
-        GmailLabelColor(background: row.gmailBackgroundColor, text: row.gmailTextColor)
+        let drawn = row.drawnGmailColors
+        return GmailLabelColor(background: drawn.background, text: drawn.text)
     }
 }
