@@ -63,8 +63,11 @@ final class LabelOrganizerOrderUITests: XCTestCase {
         XCTAssertFalse(names.contains(""), "the rows' names are readable: \(names)")
         let rows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "labelOrganizer.name."))
-            .allElementsBoundByIndex.filter { !name($0).contains("/") }
+            // Only rows on screen: the sheet is shorter than the list, and a
+            // row below its edge is "not hittable" (CI, November 2026).
+            .allElementsBoundByIndex.filter { !name($0).contains("/") && $0.isHittable }
             .sorted { $0.frame.minY < $1.frame.minY }
+        XCTAssertGreaterThan(rows.count, 2, "some top-level rows are on screen")
         let first = rows[0]
         let last = rows[rows.count - 1]
         first.press(forDuration: 0.5, thenDragTo: last)
