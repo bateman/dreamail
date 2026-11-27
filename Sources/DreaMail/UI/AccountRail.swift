@@ -51,8 +51,7 @@ struct AccountRail: View {
         .frame(width: Self.width)
         .frame(maxHeight: .infinity)
         // Behind the title bar too, so it joins the top band
-        // (`AccountRailTopBand`) with no seam, except collapsed in light,
-        // where the band is the content colour.
+        // (`AccountRailTopBand`) with no seam.
         .background(AccountRailPalette.background.ignoresSafeArea())
         // A drop outside an account avatar still clears the dragged id.
         .onDrop(of: [.text], isTargeted: nil) { _ in
@@ -200,9 +199,10 @@ struct AccountRail: View {
     }
 }
 
-/// The top of the upside-down "L": a band in the rail's colour (collapsed, in light: the content's), as tall as the
+/// The top of the upside-down "L": a band in the rail's colour, as tall as the
 /// title-bar row, from the window's left edge across the window buttons to the
-/// sidebar's right edge. An overlay of the window's content, so it also covers
+/// sidebar's right edge (collapsed, in light: to the window's right edge, see
+/// `AccountRailMetrics.bandSpansWindow`). An overlay of the window's content, so it also covers
 /// the top of the sidebar; toolbar items (the sidebar toggle) stay above it.
 struct AccountRailTopBand: View {
     @Environment(MailStore.self) private var store
@@ -218,13 +218,17 @@ struct AccountRailTopBand: View {
         let width = AccountRailMetrics.bandWidth(
             sidebarTrailing: store.sidebarTrailingEdge, sidebarVisible: sidebarVisible,
             stripVisible: stripVisible)
+        let spansWindow = AccountRailMetrics.bandSpansWindow(
+            sidebarVisible: sidebarVisible, stripVisible: stripVisible, isLight: colorScheme == .light)
         GeometryReader { proxy in
             let top = proxy.safeAreaInsets.top
-            // Collapsed, light: the content colour, right of the band's edge,
-            // so the sidebar toggle (which the edge runs through) sits on one
-            // colour. Dark keeps the rail colour, nearly the content's.
-            (stripVisible && !sidebarVisible && colorScheme == .light ? Color.mailContent : AccountRailPalette.background)
-                .frame(width: width, height: top)
+            // Always the rail colour. Collapsed, in light, the content's top
+            // bar is white against the rail's grey, which cut the sidebar
+            // toggle in half; there the band spans the whole window instead,
+            // so no seam crosses the toggle, the view icon or the title. Dark
+            // keeps its short band: the content colour is nearly the rail's.
+            AccountRailPalette.background
+                .frame(width: spansWindow ? proxy.size.width : width, height: top)
                 .offset(y: -top)
                 // Only the UI test looks the band up, by frame.
                 .accessibilityElement(children: .ignore)

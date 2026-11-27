@@ -5,8 +5,8 @@ import AppKit
 /// background only, along the title-bar row, so it does not depend on where
 /// the system toggle is (it sits just right of the window buttons, around
 /// x = 95...130, and the old seam ran through it at x = 104).
-/// Light, collapsed: the background left of the old seam equals the one right
-/// of it. Dark, collapsed: unchanged, the same colour as the expanded band.
+/// Light, collapsed: the band is the rail's colour along the whole row, as the
+/// expanded band is. Dark, collapsed: unchanged, the same colour as the expanded band.
 /// Expanded: the row is only logged.
 final class TopBandSeamUITests: XCTestCase {
     func testLight() throws { try run(dark: false) }
@@ -64,12 +64,13 @@ final class TopBandSeamUITests: XCTestCase {
                 XCTAssertTrue(same(a, b), "dark band \(a) differs from the expanded band \(b); \(desc)")
             }
         } else {
-            // One colour across the old seam: left of it equals right of it.
+            // Rail colour on both sides of the old seam at x=104 (the toggle),
+            // the same as the expanded band.
             let right = rgb(collapsed, [128, 132, 136, 140, 144, 148, 152])
             XCTAssertEqual(right.count, 7)
-            let first = right[0]
+            let reference = try XCTUnwrap(rgb(expanded, [84, 88, 92, 96, 100]).first)
             for c in left + right {
-                XCTAssertTrue(same(c, first), "background \(c) differs from \(first) across the old seam at x=104; \(desc)")
+                XCTAssertTrue(same(c, reference), "background \(c) differs from the rail band \(reference); \(desc)")
             }
         }
     }

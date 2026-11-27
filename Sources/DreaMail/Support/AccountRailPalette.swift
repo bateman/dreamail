@@ -61,6 +61,14 @@ enum AccountRailMetrics {
         guard sidebarVisible else { return stripVisible ? stripBandWidth : bandMinimumWidth }
         return max(bandMinimumWidth, sidebarTrailing)
     }
+    /// Whether the top band spans the whole window width (rail colour all
+    /// along the title-bar row). Only collapsed to the icon strip, in light:
+    /// the content's white would otherwise meet the rail's grey in the middle
+    /// of the sidebar toggle. Dark's content colour is nearly the rail's, so
+    /// its band keeps `bandWidth`; expanded and fully hidden are unchanged.
+    static func bandSpansWindow(sidebarVisible: Bool, stripVisible: Bool, isLight: Bool) -> Bool {
+        stripVisible && !sidebarVisible && isLight
+    }
     /// Settings → Appearance: show the "+" (add account) entry. App-wide.
     static let showAddAccountKey = "showAddAccountInRail"
     static let showAddAccountDefault = true
