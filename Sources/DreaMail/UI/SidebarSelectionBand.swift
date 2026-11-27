@@ -12,22 +12,36 @@ import SwiftUI
 /// (`selectedRow`, the mirror of `List(selection:)`), so the selection has one
 /// source. Nothing is drawn where the app does not keep the selection colour
 /// (before macOS 26).
+///
+/// The row is the one that carries `selectedID`, the accessibility identifier
+/// of the view on screen (`MailStore.selectedView`), the same source as the
+/// row's own background. The table's `selectedRow` is not read: it lags behind
+/// the store when a view changes without a click on its row (keys, `goTo`,
+/// "More" opening or closing), and a band at that row beside the one of the
+/// row background showed two selected rows. No row with that identifier (the
+/// view sits under a closed "More", DEC-075) means no band.
 struct SidebarSelectionBand: NSViewRepresentable {
     let accent: MailAccent
+    let selectedID: String
 
     func makeNSView(context: Context) -> BandView {
         let view = BandView()
         view.accent = accent
+        view.selectedID = selectedID
         return view
     }
 
     func updateNSView(_ view: BandView, context: Context) {
         view.accent = accent
+        view.selectedID = selectedID
         view.refresh()
+        // Rows appear a layout pass after the update that lists them.
+        DispatchQueue.main.async { [weak view] in view?.needsDisplay = true }
     }
 
     final class BandView: NSView {
         var accent = MailAccent.default
+        var selectedID = ""
         private weak var table: NSTableView?
         private var observers: [NSObjectProtocol] = []
 
@@ -102,10 +116,31 @@ struct SidebarSelectionBand: NSViewRepresentable {
             watch(NSOutlineView.itemDidCollapseNotification, table)
         }
 
+        /// The visible row whose content carries `selectedID`.
+        private func rowOfSelectedView(in table: NSTableView) -> Int? {
+            let visible = table.rows(in: table.visibleRect)
+            guard visible.length > 0 else { return nil }
+            for row in visible.location..<NSMaxRange(visible) {
+                guard let rowView = table.rowView(atRow: row, makeIfNecessary: false) else { continue }
+                if Self.carries(selectedID, rowView, depth: 0) { return row }
+            }
+            return nil
+        }
+
+        private static func carries(_ id: String, _ element: Any, depth: Int) -> Bool {
+            guard depth < 12 else { return false }
+            if let node = element as? NSAccessibilityProtocol, node.accessibilityIdentifier?() == id {
+                return true
+            }
+            var children: [Any] = []
+            if let view = element as? NSView { children += view.subviews }
+            if let node = element as? NSAccessibilityProtocol { children += node.accessibilityChildren?() ?? [] }
+            return children.contains { carries(id, $0, depth: depth + 1) }
+        }
+
         override func draw(_ dirtyRect: NSRect) {
             guard accent.keepsSelectionColor, let table, table.window != nil else { return }
-            let row = table.selectedRow
-            guard row >= 0, row < table.numberOfRows else { return }
+            guard let row = rowOfSelectedView(in: table) else { return }
             let rowRect = convert(table.rect(ofRow: row), from: table)
             var band = NSRect(x: bounds.minX, y: rowRect.minY, width: bounds.width,
                               height: rowRect.height)
