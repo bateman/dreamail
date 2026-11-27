@@ -276,7 +276,8 @@ ui-test-ci:
 UI_SHARD_1 = ThreadListSectionSpacingUITests ThreadMessageRowsUITests \
 	AccentColorUITests SidebarIconTintUITests DreaMailSmokeTests \
 	ThreadRowHoverActionsUITests SingleMessageReadingPaneUITests \
-	SignatureMenuUITests ComposeTabFocusUITests
+	SignatureMenuUITests ComposeTabFocusUITests \
+	DeletedMessagesInConversationUITests
 UI_SHARD_FLAGS = $(if $(filter 1,$(UI_SHARD)),$(UI_SHARD_1:%=-only-testing:DreaMailUITests/%)) \
 	$(if $(filter 2,$(UI_SHARD)),$(UI_SHARD_1:%=-skip-testing:DreaMailUITests/%))
 ui-test: gen
