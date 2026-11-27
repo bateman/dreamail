@@ -172,8 +172,17 @@ minor versions may still change behavior.
   its messages are; new mail brings it back with the new message only: the
   messages you deleted stay out of the conversation, of search and of the
   counts. Conversations hidden this way come back at the first sync after
-  updating. Known limit: the deleted messages of such a conversation cannot
-  yet be seen or restored from DreaMail (they can in Gmail's Trash).
+  updating.
+
+- **The Trash shows deleted messages of conversations that are still
+  alive.** As in Gmail, the Trash (and `in:trash`) also lists a conversation
+  when only some of its messages are deleted; opened from there it shows
+  just those messages. "Move to" from the Trash restores only them and
+  leaves the rest of the conversation alone; the other commands are off
+  for such a row. Undo after moving a conversation to the Trash brings back
+  what that action deleted, never the messages you had deleted before. If
+  Gmail refuses a restore, the message goes back to the Trash here too and
+  an error says so.
 
 - **A message that could not be downloaded is tried again.** When the
   download of a single message failed during a sync, the sync moved on and
