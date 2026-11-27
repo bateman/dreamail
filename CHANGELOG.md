@@ -216,6 +216,23 @@ minor versions may still change behavior.
   the label is read again in full, since the list is not guaranteed to
   carry colours.
 
+- **Fixed: mail in Gmail's Promotions and Social categories was missing
+  from the Inbox.** The Inbox hid those two categories by default, so new
+  mail that Gmail shows in the Inbox could be found only under "Social",
+  "Promotions" or All Mail, and it was left out of the Inbox unread count,
+  the Dock badge, the account badges and new-mail notifications. The Inbox
+  now lists every conversation that has the Inbox label, whatever its
+  category, and counts and notifies the same conversations. Nothing was
+  ever archived or changed on Gmail. A category filter you turn on
+  yourself (the Labels / Filter chips) still hides that category, except
+  starred conversations; turning it off again does not notify old mail as
+  new. If you had stored an Inbox filter hiding Promotions or Social, it is
+  cleared once when you update (it cannot be told from the old default):
+  set it again if you want it. Saved views keep the filters they were
+  saved with, so a view saved from the Inbox with an earlier version still
+  hides the two categories until you save it again. Expect more
+  notifications: promotional mail in the Inbox now notifies too.
+
 - **The label colour sheet says what is stored.** "⋮" → Label color →
   Choose color now shows a line "Current: #rrggbb" (with the text colour,
   and "not in this palette" when the colour is not one of the swatches

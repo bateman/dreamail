@@ -101,16 +101,15 @@ final class SettingsWindowUITests: XCTestCase {
     /// scroll back to the top.
     private func addViewHeight(_ app: XCUIApplication) -> CGFloat? {
         let sidebar = app.outlines.firstMatch
-        // Keep the height the loop read: a second read can find the row
-        // with an empty frame while the sidebar lays out again.
-        var height = titleHeight("Add view", in: app)
         var tries = 0
-        while height == nil, tries < 15 {
+        while titleHeight("Add view", in: app) == nil, tries < 15 {
             sidebar.scroll(byDeltaX: 0, deltaY: -300)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-            height = titleHeight("Add view", in: app)
             tries += 1
         }
+        // The row can come into view after the last read: wait until its
+        // title has a frame, which is what is read below.
+        _ = waitUntil { self.titleHeight("Add view", in: app) != nil }
+        let height = titleHeight("Add view", in: app)
         tries = 0
         while !element("sidebar.inbox", in: app).isHittable, tries < 15 {
             sidebar.scroll(byDeltaX: 0, deltaY: 300)

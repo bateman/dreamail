@@ -161,10 +161,11 @@ jobs:
           key: dd-${{ runner.os }}-${{ steps.cache-key.outputs.xcode }}-${{ hashFiles('project.yml') }}-${{ github.sha }}
 
   ui-test:
-    # Two halves of the suite in parallel, each on its own runner (the
-    # Makefile's UI_SHARD has the split). `make release` and
-    # `make ui-test-ci` wait for the whole run, so they need both.
-    name: UI smoke tests (${{ matrix.shard }} of 2)
+    # The suite in parallel shards, each on its own runner. The matrix is
+    # the only place that sets how many: .github/scripts/ui-shards.py splits
+    # the test classes by measured duration. `make release` and
+    # `make ui-test-ci` wait for the whole run, so they need every shard.
+    name: UI smoke tests (${{ matrix.shard }} of ${{ strategy.job-total }})
     # Not on every push or pull request. Runs when a release is published
     # and on a manual run; `make release` starts a manual run on main and
     # waits for it before it publishes, and `make ui-test-ci` starts one on
@@ -172,13 +173,15 @@ jobs:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     strategy:
-      # One half failing must not cancel the other: both results count.
+      # One shard failing must not cancel the others: every result counts.
       fail-fast: false
       matrix:
-        shard: [1, 2]
-    # About eleven minutes each with the build (November 2026: the whole
-    # suite in one job took 22).
-    timeout-minutes: 30
+        shard: [1, 2, 3]
+    # About twelve minutes each: a build of about four, then about eight of
+    # tests (November 2026: two shards reached 20 minutes). The limit is
+    # headroom for slow runners; a shard regularly over twelve minutes
+    # wants another shard, not a higher limit.
+    timeout-minutes: 25
     # Separate job so a UI hang or desktop hijack cannot hide unit-test results.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -192,9 +195,18 @@ jobs:
       - name: Run UI smoke test
         env:
           UI_SHARD: ${{ matrix.shard }}
+          UI_SHARDS: ${{ strategy.job-total }}
         run: |
           set -o pipefail
           make ui-test 2>&1 | tee "$RUNNER_TEMP/ui-tests.log"
+
+      # A class assigned to this shard that ran no test (for example a
+      # class whose name -only-testing does not match) would pass silently.
+      - name: Check that every class of this shard ran
+        env:
+          UI_SHARD: ${{ matrix.shard }}
+          UI_SHARDS: ${{ strategy.job-total }}
+        run: python3 .github/scripts/ui-shards.py check "$RUNNER_TEMP/ui-tests.log" "$UI_SHARD" "$UI_SHARDS"
 
       - name: Check that no UI test skipped unexpectedly
         run: python3 .github/scripts/check-test-skips.py "$RUNNER_TEMP/ui-tests.log"

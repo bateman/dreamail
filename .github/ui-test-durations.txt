@@ -1,0 +1,34 @@
+# Measured duration of each UI test class, in seconds, for the CI shard split
+# (read by .github/scripts/ui-shards.py). One `Class seconds` per line.
+# A class missing here counts as 60 s and still runs: a new class needs no
+# entry. Update the numbers when the shards drift apart, from a manual run's
+# logs ("Test Case ... passed (N seconds)", summed per class).
+#
+# Slowest of three macos-26 runs on 2026-11-27 (45937364434, 45959955435 on
+# main; 45968097999 on a pull request branch).
+AccentColorUITests 97
+AccountLabelColorUITests 41
+AccountRailUITests 44
+AccountUnreadBadgeUITests 10
+ComposeTabFocusUITests 62
+ConversationKeysUITests 27
+DreaMailSmokeTests 46
+GoToMailboxUITests 32
+LabelOrganizerOrderUITests 61
+LabelPickerUITests 69
+OpenPGPSettingsUITests 8
+SettingsWindowUITests 103
+SidebarIconStripUITests 34
+SidebarIconTintUITests 55
+SidebarLabelMenuUITests 223
+SidebarLabelTreeUITests 96
+SidebarNavUITests 18
+SidebarSelectionGeometryUITests 74
+SidebarSheetEscapeUITests 27
+SignatureMenuUITests 104
+SingleMessageReadingPaneUITests 22
+SplitComposeUITests 21
+ThreadListSectionSpacingUITests 132
+ThreadMessageRowsUITests 82
+ThreadRowHoverActionsUITests 37
+WindowFrameRestoreUITests 15
