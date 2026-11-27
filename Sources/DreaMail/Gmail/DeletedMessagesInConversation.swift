@@ -11,6 +11,9 @@ struct DeletedMessagesSummary: Equatable, Sendable {
     var count: Int
     /// Date of the oldest deleted message: where the line sits.
     var firstDate: Date
+    /// Their message ids (no content): a different set with the same count
+    /// still reads the shown messages again.
+    var messageIds: [String] = []
 }
 
 /// The deleted messages "View" shows, read apart from the payload.
@@ -43,7 +46,7 @@ enum DeletedMessagesInConversation {
     static func summary(_ messages: [Message], threadInTrash: Bool) -> DeletedMessagesSummary? {
         let gone = deleted(messages, threadInTrash: threadInTrash)
         guard let first = gone.map(\.date).min() else { return nil }
-        return DeletedMessagesSummary(count: gone.count, firstDate: first)
+        return DeletedMessagesSummary(count: gone.count, firstDate: first, messageIds: gone.map(\.id))
     }
 
     /// The line's text (and accessibility label). No mail content.

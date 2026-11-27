@@ -2308,6 +2308,9 @@ struct MessageCard: View {
         // OpenPGP: blocked until the message is checked, and for anything
         // encrypted (EFAIL), whatever the policy or an opt-in says.
         if store.openPGP.blocksRemoteContent(message, candidate: pgpCandidate) { return false }
+        // A deleted message loads nothing by itself: only its own
+        // "Load images" click (never the policy or the conversation's).
+        if inTrash, !loadRemoteImages { return false }
         return RemoteImagePolicy.autoLoads(
             message: message,
             threadInSpam: threadInSpam,
@@ -2496,7 +2499,9 @@ struct MessageCard: View {
     /// May carry OpenPGP: scanned once per message by `PGPCenter`, never in
     /// `init`. Always false with the build switch off.
     private var pgpCandidate: Bool {
-        PGPFeatures.isEnabled && store.openPGP.isCandidate(message, attachments: attachments)
+        // A deleted message is not checked: the check fetches the raw
+        // message from Gmail and keeps its plaintext in memory.
+        !inTrash && PGPFeatures.isEnabled && store.openPGP.isCandidate(message, attachments: attachments)
     }
 
     /// The engine's verdict on this message, once checked (`PGPCenter`).

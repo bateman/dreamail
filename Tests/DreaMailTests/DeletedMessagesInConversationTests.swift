@@ -47,6 +47,11 @@ final class DeletedMessagesInConversationTests: XCTestCase {
         let summary = try XCTUnwrap(DeletedMessagesInConversation.summary(conversation, threadInTrash: false))
         XCTAssertEqual(summary.count, 1)
         XCTAssertEqual(summary.firstDate, conversation[1].date)
+        XCTAssertEqual(summary.messageIds, ["\(account):b"])
+        var other = conversation
+        other[1].id = "\(account):b2"
+        XCTAssertNotEqual(DeletedMessagesInConversation.summary(other, threadInTrash: false), summary,
+                          "another deleted message with the same count and date is a change")
 
         let two = conversation + [msg("d", hour: 0.5, labels: "TRASH"),
                                   msg("e", hour: 4, labels: "DRAFT TRASH")]
