@@ -311,6 +311,13 @@ final class MessageHeaderActionsUITests: XCTestCase {
         XCTAssertTrue(restore.waitForExistence(timeout: 5), "the open deleted message offers Restore")
         XCTAssertLessThanOrEqual(frames("messageHeaderMore", in: app).count, moreBefore,
                                  "the deleted message adds no header controls")
+        // The open deleted card can end below the pane: scroll down to it.
+        let pane = readingPane(app)
+        for attempt in 0..<10 where !restore.isHittable && pane.exists {
+            pane.scroll(byDeltaX: 0, deltaY: attempt < 5 ? -150 : 300)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        XCTAssertTrue(restore.isHittable, "Restore is reachable")
         restore.click()
         XCTAssertTrue(waitUntil { !self.element(app, "thread.deletedMessages").exists }, "the line goes")
         let restored = settled("messageRowFrame", in: app) {
