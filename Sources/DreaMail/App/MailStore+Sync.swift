@@ -542,10 +542,6 @@ extension MailStore {
         guard let error else {
             // Only a change republishes: this runs on every pass.
             if syncHealth.failedAccounts.contains(id) { syncHealth.recordSuccess(account: id) }
-            // The message rows now hold Gmail's state, restores included.
-            restoredSinceSync = restoredSinceSync.filter {
-                NewMailNotifications.accountId(ofThread: $0.key) != id
-            }
             return
         }
         // Reauth and partial fetches surface too (neither is transient).

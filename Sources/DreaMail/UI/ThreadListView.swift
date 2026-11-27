@@ -726,7 +726,7 @@ private struct ThreadListSections: View, Equatable {
         }
         // A Trash row of an otherwise live conversation takes no
         // thread-wide action (`MailStore.isPartlyTrashedRow`).
-        let partlyTrashed = store.isPartlyTrashedRow(thread.id)
+        let partlyTrashed = store.isPartlyTrashedRow(thread)
         Button("Archive") { store.archive(thread) }
             .disabled(partlyTrashed)
         Button(thread.isStarred ? "Unstar" : "Star") { store.toggleStar(thread) }

@@ -2638,16 +2638,14 @@ struct ComposeRequest: Identifiable {
     func openThread(_ thread: MailThread) {
         var thread = thread
         // A link, a search result or Ask AI opens the conversation as it
-        // is live: a Trash copy of it in the list gives way to the stored
-        // row, and the pane loads the live reader.
+        // is live (`OpenFromSearch.openingLive`).
         if trashViewProjectedIds.contains(thread.id) {
-            trashViewProjectedIds.remove(thread.id)
             if let stored = try? db.read({ try MailThread.fetchOne($0, key: thread.id) }) {
                 thread = stored
             }
-            if let index = threads.firstIndex(where: { $0.id == thread.id }) {
-                threads[index] = thread
-            }
+            let next = OpenFromSearch.openingLive(thread, in: threads, projected: trashViewProjectedIds)
+            threads = next.list
+            trashViewProjectedIds = next.projected
         }
         threads = OpenFromSearch.ensuringVisible(opening: thread, in: threads)
         selectThread(thread.id, intent: .explicitOpen)
@@ -3049,21 +3047,15 @@ struct ComposeRequest: Identifiable {
                     completedGeneration: generation,
                     currentSelectedId: self.selectedThreadId
                 ) {
-                case .apply(let threadId)
-                    where self.trashViewProjectedIds.contains(threadId)
-                        && !payload.trashProjected.contains(threadId):
-                    // A Trash copy of a live conversation is never pinned
-                    // into another list: the reloaded list decides.
-                    self.preserveOpenThreadId = nil
-                    self.preserveOpenThreadGeneration = nil
-                    list = payload.threads
                 case .apply(let threadId):
                     self.preserveOpenThreadId = nil
                     self.preserveOpenThreadGeneration = nil
                     list = OpenFromSearch.mergingPinned(
                         selectedId: threadId,
                         previous: self.threads,
-                        reloaded: payload.threads)
+                        reloaded: payload.threads,
+                        projectedBefore: self.trashViewProjectedIds,
+                        projectedAfter: payload.trashProjected)
                 case .clear:
                     self.preserveOpenThreadId = nil
                     self.preserveOpenThreadGeneration = nil
@@ -3567,7 +3559,9 @@ struct ComposeRequest: Identifiable {
                     args.append(contentsOf: starKeepIds)
                 }
             case "INBOX": parts.append("inInbox = 1")
-            case "TRASH": parts.append(TrashedMessages.inTrashViewSQL())
+            // A label filter, not the Trash view: no projected rows here,
+            // so only conversations entirely in the trash.
+            case "TRASH": parts.append("inTrash = 1")
             case "SENT": parts.append("inSent = 1")
             case "DRAFT": parts.append("inDrafts = 1")
             case "SPAM": parts.append("inSpam = 1")
@@ -4043,10 +4037,7 @@ struct ComposeRequest: Identifiable {
     /// leaves this set, so the reader mode, the summary and every action
     /// gate always describe what is on screen. Assign only on a change.
     var trashViewProjectedIds: Set<String> = []
-    /// Per thread, Gmail ids restored from the Trash and not yet seen by a
-    /// sync (their stored rows still say TRASH): an undo of a later trash
-    /// must not re-trash them. Cleared per account by a completed pass.
-    @ObservationIgnored var restoredSinceSync: [String: Set<String>] = [:]
+
 
 
     /// In-flight `syncAll` only; tracked so termination can await pool access,

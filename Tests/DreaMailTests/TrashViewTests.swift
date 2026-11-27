@@ -314,17 +314,6 @@ actor FailingOnceThreadEditing: GmailThreadEditing {
 
 /// L3 and L4: undo after a restore, and a batch Gmail refuses for one id.
 final class TrashUndoEdgeTests: XCTestCase {
-    /// A message restored from the Trash but not yet seen by a sync still
-    /// reads TRASH in its row: a later trash and undo must not re-trash it.
-    func testUndoAfterARestoreDoesNotReTrashTheRestoredMessage() {
-        let stored = ThreadUndo.TrashState(liveIds: ["b"], trashedIds: ["m1", "m2"])
-        let state = stored.restoring(["m1"])
-        XCTAssertEqual(state, .init(liveIds: ["b", "m1"], trashedIds: ["m2"]))
-        XCTAssertEqual(ThreadUndo.undoTrashRemote(wasInInbox: false, before: state),
-                       .sequence([.modify(add: [], remove: ["TRASH"]),
-                                  .modifyMessages(ids: ["m2"], add: ["TRASH"], remove: [])]))
-        XCTAssertEqual(stored.restoring([]), stored)
-    }
 
     /// One earlier-trashed id Gmail no longer has fails the whole batch:
     /// the others are re-trashed one by one, the missing one skipped.
@@ -386,3 +375,160 @@ actor ScriptedThreadEditing: GmailThreadEditing {
     }
 }
 
+
+/// Item 2: a restore is stored locally before Gmail answers.
+final class TrashRestoreLocalTests: XCTestCase {
+    private let account = "you@example.com"
+
+    private func msg(_ id: String, minutesAgo: Double, labels: String) -> Message {
+        Message(id: "\(account):\(id)", accountId: account, gmailId: id,
+                threadId: "\(account):t1", fromHeader: "Ann <ann@example.com>", toHeader: account,
+                ccHeader: "", bccHeader: "", subject: "Plans",
+                date: Date(timeIntervalSinceNow: -minutesAgo * 60),
+                snippet: "snippet-\(id)", bodyText: "", bodyHTML: nil,
+                messageIdHeader: "<\(id)@example.com>", referencesHeader: "",
+                labelIds: labels, isUnread: false, hasAttachment: false)
+    }
+
+    func testARestoreLeavesTheTrashListAndShowsInTheLiveConversation() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        let messages = [msg("p1", minutesAgo: 60, labels: "TRASH"),
+                        msg("p2", minutesAgo: 5, labels: "INBOX")]
+        try q.write { db in
+            try Account(id: self.account, displayName: "P", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
+            for m in messages { try m.insert(db) }
+            try SyncEngine.deriveThreads(db, for: ["\(self.account):t1"], accountId: self.account)
+        }
+        func inTrashList() throws -> Bool {
+            try q.read { db in
+                try MailThread.filter(sql: TrashedMessages.inTrashViewSQL()).fetchCount(db) > 0
+            }
+        }
+        XCTAssertTrue(try inTrashList())
+
+        let move = ConversationAction.moveTo(labelId: "Label_1", alsoRemove: ["TRASH"]).remote
+        try q.write { db in
+            try TrashedMessages.applyRestore(db, accountId: self.account, threadId: "\(self.account):t1",
+                                             ids: ["p1"], add: move.addLabels, remove: move.removeLabels)
+        }
+        XCTAssertFalse(try inTrashList(), "the reload after a restore does not bring the row back")
+        try q.read { db in
+            let live = try ThreadDetailRepository.fetchPayload(threadId: "\(self.account):t1", db: db)
+            XCTAssertEqual(live.messages.map(\.gmailId), ["p1", "p2"])
+            let thread = try XCTUnwrap(try MailThread.fetchOne(db, key: "\(self.account):t1"))
+            XCTAssertTrue(thread.labels.contains("Label_1"))
+            XCTAssertEqual(thread.messageCount, 2)
+            // An undo built now does not re-trash the restored message.
+            let states = try TrashedMessages.trashStates(db, threadIds: ["\(self.account):t1"])
+            let state = try XCTUnwrap(states["\(self.account):t1"])
+            XCTAssertEqual(Set(state.liveIds), ["p1", "p2"])
+            XCTAssertEqual(state.trashedIds, [])
+        }
+    }
+}
+
+/// Item 7: the offline queue as stored (`PendingThreadOp.enqueue`).
+final class TrashQueueTests: XCTestCase {
+    private let account = "you@example.com"
+
+    private func makeDB() throws -> DatabaseQueue {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        try q.write { db in
+            try Account(id: self.account, displayName: "P", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
+        }
+        return q
+    }
+
+    private func queued(_ q: DatabaseQueue) throws -> RemoteThreadChange? {
+        try q.read { db in try PendingThreadOp.fetchOne(db)?.change }
+    }
+
+    private func enqueue(_ q: DatabaseQueue, _ change: RemoteThreadChange) throws {
+        try q.write { db in
+            try PendingThreadOp.enqueue(db, accountId: self.account, gmailThreadId: "t1", change: change)
+        }
+    }
+
+    private let undo = ThreadUndo.undoTrashRemote(
+        wasInInbox: true, before: .init(liveIds: ["b"], trashedIds: ["a"]))
+
+    func testTrashThenUndoWithEarlierDeletionsQueuesTheUndoOnly() throws {
+        let q = try makeDB()
+        try enqueue(q, .trash)
+        try enqueue(q, undo)
+        XCTAssertEqual(try queued(q), undo, "no trash; the earlier deletion goes back")
+    }
+
+    func testUndoThenTrashThenUndo() throws {
+        let q = try makeDB()
+        try enqueue(q, undo)
+        try enqueue(q, .trash)
+        XCTAssertEqual(try queued(q), .trash, "a later trash wins")
+        try enqueue(q, undo)
+        XCTAssertEqual(try queued(q), undo)
+    }
+
+    func testTrashThenUndoWithoutEarlierDeletionsIsOneModify() throws {
+        let q = try makeDB()
+        try enqueue(q, .trash)
+        try enqueue(q, ThreadUndo.undoTrashRemote(
+            wasInInbox: true, before: .init(liveIds: ["b"], trashedIds: [])))
+        XCTAssertEqual(try queued(q), .modify(add: ["INBOX"], remove: ["TRASH"]),
+                       "as on main: one thread-level modify, never the trash")
+    }
+}
+
+/// Item 3: which reader the pane shows, and what a reload or an open keeps.
+final class TrashReaderModeTests: XCTestCase {
+    private func row(_ id: String, inTrash: Bool) -> MailThread {
+        var t = MailThread(
+            id: id, accountId: "you@example.com", gmailThreadId: id,
+            subject: "s", snippet: "sn", fromDisplay: "F",
+            lastDate: Date(), isUnread: false, isStarred: false,
+            inInbox: !inTrash, inTrash: inTrash,
+            labelIds: inTrash ? "TRASH" : "INBOX", snoozeUntil: nil, participants: "F",
+            messageCount: 1, hasAttachment: false, reminderAt: nil)
+        t.inTrash = inTrash
+        return t
+    }
+
+    func testTheTrashReaderFollowsTheProjectedSet() {
+        XCTAssertTrue(OpenFromSearch.showsTrashReader(openedId: "x", projected: ["x"]))
+        XCTAssertFalse(OpenFromSearch.showsTrashReader(openedId: "x", projected: []))
+        XCTAssertFalse(OpenFromSearch.showsTrashReader(openedId: nil, projected: ["x"]))
+    }
+
+    /// A link, a dropdown pick or Ask AI on a conversation whose Trash copy
+    /// is listed: the copy gives way to the stored row, and the reader is live.
+    func testOpeningALiveHitReplacesTheTrashCopy() {
+        let copy = row("x", inTrash: true)
+        let stored = row("x", inTrash: false)
+        let next = OpenFromSearch.openingLive(stored, in: [row("y", inTrash: true), copy],
+                                              projected: ["x", "y"])
+        XCTAssertEqual(next.projected, ["y"])
+        XCTAssertEqual(next.list.map(\.inTrash), [true, false])
+        XCTAssertFalse(OpenFromSearch.showsTrashReader(openedId: "x", projected: next.projected))
+        // Not a Trash copy: nothing changes.
+        let other = OpenFromSearch.openingLive(row("z", inTrash: false), in: [copy], projected: ["x"])
+        XCTAssertEqual(other.projected, ["x"])
+    }
+
+    /// A search committed while the Trash copy is open: the reload does not
+    /// pin the copy into the results; the pane then remounts live.
+    func testAReloadNeverPinsATrashCopyIntoAnotherList() {
+        let copy = row("x", inTrash: true)
+        let merged = OpenFromSearch.mergingPinned(
+            selectedId: "x", previous: [copy], reloaded: [row("y", inTrash: false)],
+            projectedBefore: ["x"], projectedAfter: [])
+        XCTAssertEqual(merged.map(\.id), ["y"])
+        // A pinned row that is not a Trash copy is kept, as before.
+        let kept = OpenFromSearch.mergingPinned(
+            selectedId: "z", previous: [row("z", inTrash: false)], reloaded: [row("y", inTrash: false)],
+            projectedBefore: ["x"], projectedAfter: [])
+        XCTAssertEqual(kept.map(\.id), ["z", "y"])
+    }
+}

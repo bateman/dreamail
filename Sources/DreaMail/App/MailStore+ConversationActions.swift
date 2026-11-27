@@ -18,7 +18,9 @@ extension MailStore {
     /// `m`: mute (unmute when every target is already muted). `thread`: the
     /// conversation toolbar's own thread instead of the key's targets.
     func toggleMuteTargets(_ thread: MailThread? = nil) {
-        let targets = thread.map { [$0] } ?? actionTargets
+        let all = thread.map { [$0] } ?? actionTargets
+        guard !refusesPartlyTrashed(all) else { return }
+        let targets = all.filter { !isPartlyTrashedRow($0) }
         guard !targets.isEmpty else { return }
         let action = ConversationAction.muteToggle(for: targets)
         let n = targets.count
@@ -33,8 +35,9 @@ extension MailStore {
 
     /// `+` / `=` and `-`, with an undo toast as in Gmail.
     func setImportantTargets(_ important: Bool, thread: MailThread? = nil) {
-        let targets = (thread.map { [$0] } ?? actionTargets)
-            .filter { $0.isImportant != important }
+        let all = thread.map { [$0] } ?? actionTargets
+        guard !refusesPartlyTrashed(all) else { return }
+        let targets = all.filter { $0.isImportant != important && !isPartlyTrashedRow($0) }
         guard !targets.isEmpty else { return }
         if !important {
             // Under Priority "starred + important" the rows can leave the
@@ -86,7 +89,7 @@ extension MailStore {
         // only its trashed messages; the rest of it is not touched.
         do {
             let partial = all.filter {
-                isPartlyTrashedRow($0.id) && $0.accountId == accountId
+                isPartlyTrashedRow($0) && $0.accountId == accountId
             }
             if !partial.isEmpty {
                 restoreTrashedMessages(partial, toLabel: labelId)
@@ -163,7 +166,7 @@ extension MailStore {
                      autoAdvance: String?, undoLabel: String?) {
         // A Trash row of an otherwise live conversation takes no thread-wide
         // action: say so, and offer no undo for what was not done.
-        let targets = plan.targets.filter { !isPartlyTrashedRow($0.id) }
+        let targets = plan.targets.filter { !isPartlyTrashedRow($0) }
         guard !targets.isEmpty else {
             if !plan.targets.isEmpty { showNotice(Self.partlyTrashedNotice) }
             return

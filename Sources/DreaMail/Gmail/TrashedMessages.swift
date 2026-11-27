@@ -80,18 +80,32 @@ enum TrashedMessages {
     /// one query for every thread (in chunks), drafts left out.
     static func trashStates(_ db: Database, threadIds: [String]) throws
         -> [String: ThreadUndo.TrashState] {
-        var byThread: [String: [Message]] = [:]
+        // Only the three columns needed, not whole message rows.
+        var byThread: [String: [(gmailId: String, labelIds: String)]] = [:]
         for start in stride(from: 0, to: threadIds.count, by: 500) {
             let chunk = Array(threadIds[start..<min(start + 500, threadIds.count)])
-            for message in try Message.filter(chunk.contains(Column("threadId"))).fetchAll(db) {
-                byThread[message.threadId, default: []].append(message)
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT threadId, gmailId, labelIds FROM message
+                WHERE threadId IN (\(chunk.map { _ in "?" }.joined(separator: ",")))
+                ORDER BY rowid
+                """, arguments: StatementArguments(chunk))
+            for row in rows {
+                byThread[row["threadId"], default: []].append((row["gmailId"], row["labelIds"]))
             }
         }
         var out: [String: ThreadUndo.TrashState] = [:]
         for id in threadIds {
-            let messages = byThread[id] ?? []
-            out[id] = ThreadUndo.TrashState(liveIds: liveIds(messages),
-                                            trashedIds: trashedIds(messages))
+            var live: [String] = []
+            var trashed: [String] = []
+            for m in byThread[id] ?? [] {
+                guard !SyncEngine.labelIdsContain(m.labelIds, "DRAFT") else { continue }
+                if SyncEngine.labelIdsContain(m.labelIds, "TRASH") {
+                    trashed.append(m.gmailId)
+                } else {
+                    live.append(m.gmailId)
+                }
+            }
+            out[id] = ThreadUndo.TrashState(liveIds: live, trashedIds: trashed)
         }
         return out
     }
@@ -100,6 +114,21 @@ enum TrashedMessages {
     struct RestoreTarget: Sendable {
         var row: MailThread
         var trashedIds: [String]
+    }
+
+    /// A restore from the Trash, as stored locally before Gmail answers:
+    /// the named messages take the label change (TRASH off), and the thread
+    /// row is derived again from its messages. Call inside one write.
+    static func applyRestore(_ db: Database, accountId: String, threadId: String,
+                             ids: [String], add: [String], remove: [String]) throws {
+        for id in ids {
+            let key = "\(accountId):\(id)"
+            guard let message = try Message.fetchOne(db, key: key) else { continue }
+            let labels = SyncEngine.applyLabelDelta(labelIds: message.labelIds, add: add, remove: remove)
+            try db.execute(sql: "UPDATE message SET labelIds = ?, isUnread = ? WHERE id = ?",
+                           arguments: [labels, SyncEngine.labelIdsContain(labels, "UNREAD"), key])
+        }
+        try SyncEngine.deriveThreads(db, for: [threadId], accountId: accountId)
     }
 
     /// The stored rows of `threadIds` that still have trashed messages.

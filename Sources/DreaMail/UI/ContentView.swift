@@ -963,7 +963,8 @@ struct ContentView: View {
             inlineReserve: inlineComposeReserveHeight,
             // Read here because DetailPaneHost is deliberately store-free.
             // Non-mutating, so evaluating it in `body` has no side effects.
-            trashReader: store.openedThreadId.map { store.opensTrashReader(threadId: $0) } ?? false,
+            trashReader: OpenFromSearch.showsTrashReader(
+                openedId: store.openedThreadId, projected: store.trashViewProjectedIds),
             initialPayload: store.openedThreadId.flatMap {
                 store.warmThreadDetail(threadId: $0)
             },

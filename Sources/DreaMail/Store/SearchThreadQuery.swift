@@ -144,7 +144,9 @@ enum SearchThreadQuery {
                     args.append(contentsOf: starKeepIds)
                 }
             case "INBOX": parts.append("inInbox = 1")
-            case "TRASH": parts.append(TrashedMessages.inTrashViewSQL())
+            // A label filter, not the Trash view: no projected rows here,
+            // so only conversations entirely in the trash.
+            case "TRASH": parts.append("inTrash = 1")
             case "SENT": parts.append("inSent = 1")
             case "DRAFT": parts.append("inDrafts = 1")
             case "SPAM": parts.append("inSpam = 1")

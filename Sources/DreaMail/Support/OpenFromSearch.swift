@@ -29,13 +29,40 @@ enum OpenFromSearch {
     static func mergingPinned(
         selectedId: String?,
         previous: [MailThread],
-        reloaded: [MailThread]
+        reloaded: [MailThread],
+        projectedBefore: Set<String> = [],
+        projectedAfter: Set<String> = []
     ) -> [MailThread] {
         guard let selectedId,
               !reloaded.contains(where: { $0.id == selectedId }),
-              let pin = previous.first(where: { $0.id == selectedId })
+              let pin = previous.first(where: { $0.id == selectedId }),
+              // A Trash copy of a live conversation is never carried into a
+              // list that does not show it that way.
+              !(projectedBefore.contains(selectedId) && !projectedAfter.contains(selectedId))
         else { return reloaded }
         return [pin] + reloaded
+    }
+
+    /// Opening a conversation from a link, a search pick or Ask AI shows it
+    /// as it is live: a Trash copy of it in the list gives way to `stored`
+    /// (its stored row), and it leaves the projected set, so the pane loads
+    /// the live reader. Pure — tested.
+    static func openingLive(_ stored: MailThread, in list: [MailThread],
+                            projected: Set<String>) -> (list: [MailThread], projected: Set<String>) {
+        guard projected.contains(stored.id) else { return (list, projected) }
+        var nextList = list
+        if let index = nextList.firstIndex(where: { $0.id == stored.id }) {
+            nextList[index] = stored
+        }
+        var nextProjected = projected
+        nextProjected.remove(stored.id)
+        return (nextList, nextProjected)
+    }
+
+    /// Whether the reading pane shows the open thread from its trashed
+    /// messages only; part of the pane's identity, so a change remounts it.
+    static func showsTrashReader(openedId: String?, projected: Set<String>) -> Bool {
+        openedId.map(projected.contains) ?? false
     }
 
     /// Decide whether a completed reload may consume an `openThread` pin.
