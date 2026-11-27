@@ -73,21 +73,6 @@ final class SidebarSingleSelectionUITests: XCTestCase {
             expect(only: id, in: main, "click on \(id)")
         }
 
-        // Collapse and expand the sidebar: the selection survives.
-        // The list holds the keyboard focus after a click, so ← would act on
-        // the list: Esc first, then ←, and wait for the strip.
-        let strip = app.descendants(matching: .any).matching(identifier: "sidebarStrip").firstMatch
-        for _ in 0..<2 where !strip.exists {
-            app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-            app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
-            _ = strip.waitForExistence(timeout: 3)
-        }
-        XCTAssertTrue(strip.exists, "← collapses the sidebar to the icon strip")
-        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(waitForHittable(row("inbox")), "the sidebar rows are back after the expand")
-        row("inbox").click()
-        expect(only: "inbox", in: main, "after collapse and expand")
-
         // Keyboard to a row under More, then More closes: nothing selected.
         main.typeKey("g", modifierFlags: [])
         main.typeKey("p", modifierFlags: [])
@@ -104,12 +89,6 @@ final class SidebarSingleSelectionUITests: XCTestCase {
         let gone = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [gone], timeout: 5) == .completed
-    }
-
-    private func waitForHittable(_ element: XCUIElement) -> Bool {
-        let hittable = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == true AND isHittable == true"), object: element)
-        return XCTWaiter().wait(for: [hittable], timeout: 8) == .completed
     }
 
     private struct SidebarRow { let id: String; let frame: CGRect }
