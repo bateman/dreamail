@@ -160,4 +160,34 @@ final class SelectionBarIconsUITests: XCTestCase {
         XCTAssertTrue(row(app, "t2").waitForNonExistence(timeout: 10))
         XCTAssertFalse(bar(app, "count").exists, "trashing clears the selection")
     }
+
+    /// Undo after a Trash, by keyboard (the documented chord). Two cases in one
+    /// launch, so a failure says whether the bar is the cause: first the
+    /// control, a Trash from the row's own hover button (code this PR does not
+    /// touch), then the same from the selection bar. No other UI test covers
+    /// Trash then undo in demo mode.
+    func testUndoAfterTrash() {
+        let app = launch()
+        let t1 = row(app, "t1")
+        XCTAssertTrue(t1.waitForExistence(timeout: 10), "demo inbox should load")
+        t1.hover()
+        let trash = rowButton(app, "t1", "rowAction.trash")
+        XCTAssertTrue(trash.waitForExistence(timeout: 5))
+        trash.click()
+        XCTAssertTrue(t1.waitForNonExistence(timeout: 10), "control: the row button trashes")
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(t1.waitForExistence(timeout: 10),
+                      "control: Cmd-Z restores a row trashed from its own button")
+
+        check(app, "t3")
+        check(app, "t4")
+        bar(app, "trash").click()
+        XCTAssertTrue(row(app, "t3").waitForNonExistence(timeout: 10))
+        XCTAssertTrue(row(app, "t4").waitForNonExistence(timeout: 10))
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(row(app, "t3").waitForExistence(timeout: 10),
+                      "bar: Cmd-Z restores t3 after Trash from the selection bar")
+        XCTAssertTrue(row(app, "t4").waitForExistence(timeout: 10),
+                      "bar: Cmd-Z restores t4 after Trash from the selection bar")
+    }
 }
