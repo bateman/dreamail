@@ -990,10 +990,45 @@ extension MailStore {
         }
     }
 
+    /// "Restore" and "Restore all" on the deleted messages shown inline in
+    /// a live conversation (Gmail web's "View message"): only the named
+    /// messages that are still trashed leave the trash, back to the Inbox
+    /// only when the conversation is there
+    /// (`DeletedMessagesInConversation.restoreChange`). The conversation's
+    /// row stays where it is; once written, the message is a live one.
+    func restoreDeletedMessages(gmailIds: [String], inThread threadId: String) {
+        guard !isShuttingDown, !gmailIds.isEmpty else { return }
+        let pool = db
+        Task { @MainActor [weak self] in
+            let loaded = (try? await pool.read { db -> TrashedMessages.RestoreTarget? in
+                guard let row = try MailThread.fetchOne(db, key: threadId), !row.inTrash else { return nil }
+                let trashed = Set(TrashedMessages.trashedIds(
+                    try Message.filter(Column("threadId") == threadId).fetchAll(db)))
+                let ids = gmailIds.filter { trashed.contains($0) }
+                return ids.isEmpty ? nil : TrashedMessages.RestoreTarget(row: row, trashedIds: ids)
+            })
+            guard let self, !self.isShuttingDown, let loaded else { return }
+            let row = loaded.row
+            // The row as the list shows it: an archive made a moment ago
+            // may not be in the stored row yet.
+            let inInbox = self.threads.first { $0.id == row.id }?.inInbox ?? row.inInbox
+            let change = DeletedMessagesInConversation.restoreChange(
+                gmailIds: loaded.trashedIds, conversationInInbox: inInbox)
+            guard case .modifyMessages(let ids, let add, let remove) = change else { return }
+            // The one per-message path (`editMessageLabels`), as "Delete
+            // this message" and its undo: the thread row's pending edits
+            // (read on open, archive) reach the messages first.
+            self.editMessageLabels([(row: row, ids: ids)], add: add, remove: remove,
+                                   foldThreadFlags: true)
+        }
+    }
+
     /// Labels added or removed on exactly these messages of each
     /// conversation (`messages.batchModify`, labels only: never a delete).
-    /// Shared by the Trash view's restore and the actions on one message of
-    /// an open conversation (`MailStore+MessageActions`). Local state first,
+    /// Shared by the Trash view's restore, the Restore of a deleted message
+    /// shown in a live conversation (`restoreDeletedMessages`) and the
+    /// actions on one message of an open conversation
+    /// (`MailStore+MessageActions`). Local state first,
     /// in one transaction: the message rows and the thread row derived from
     /// them, so the list, the open conversation and a relaunch offline all
     /// agree before Gmail answers. The request then goes out on the chained

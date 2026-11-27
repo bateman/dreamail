@@ -597,4 +597,105 @@ final class MessageActionsTests: XCTestCase {
         XCTAssertEqual(TrashedMessages.storedRestores(in: undo.merged(with: star)).map(\.ids), [["b"]],
                        "a later message edit in the same queue row is found")
     }
+
+    // MARK: - With the deleted messages of a live conversation (#107)
+
+    private func payload(_ q: DatabaseQueue) throws -> ThreadDetailPayload {
+        try q.read { try ThreadDetailRepository.fetchPayload(threadId: self.threadId, db: $0) }
+    }
+
+    /// The Restore of a deleted card, as `restoreDeletedMessages` writes it:
+    /// the same per-message path as "Delete this message".
+    private func restore(_ q: DatabaseQueue, _ id: String) throws {
+        let row = try thread(q)
+        guard case .modifyMessages(let ids, let add, let remove) = DeletedMessagesInConversation
+            .restoreChange(gmailIds: [id], conversationInInbox: row.inInbox) else {
+            return XCTFail("a per-message change")
+        }
+        try apply(q, .init(ids: ids, add: add, remove: remove))
+    }
+
+    private func stillTrashed(_ q: DatabaseQueue) throws -> [String] {
+        try q.read { db in
+            TrashedMessages.trashedIds(try Message.filter(Column("threadId") == self.threadId).fetchAll(db))
+        }
+    }
+
+    func testDeletingAMessageShowsTheDeletedLineAndRestoreBringsItBack() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 30, labels: "INBOX"),
+                            msg("c", minutesAgo: 10, labels: "INBOX")])
+        guard case .message(let edit, let undo) = MessageActionPlan.delete(try state(q, "b")) else {
+            return XCTFail("one message of three")
+        }
+        try apply(q, edit)
+        let after = try payload(q)
+        XCTAssertEqual(after.messages.map(\.gmailId), ["a", "c"])
+        XCTAssertEqual(after.deletedSummary?.count, 1, "the line: 1 deleted message")
+        XCTAssertEqual(after.deletedSummary?.messageIds, ["\(account):b"])
+
+        try restore(q, "b")
+        let restored = try payload(q)
+        XCTAssertEqual(restored.messages.map(\.gmailId), ["a", "b", "c"])
+        XCTAssertNil(restored.deletedSummary, "the line goes")
+        XCTAssertTrue(try thread(q).inInbox)
+
+        // The delete's undo after a Restore changes nothing.
+        let labelsBefore = try labels(q, "b")
+        try apply(q, undo)
+        XCTAssertEqual(try labels(q, "b"), labelsBefore)
+        XCTAssertEqual(try payload(q).messages.map(\.gmailId), ["a", "b", "c"])
+    }
+
+    func testRestoreAfterTheUndoHasNothingLeftToRestore() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 10, labels: "INBOX")])
+        guard case .message(let edit, let undo) = MessageActionPlan.delete(try state(q, "b")) else {
+            return XCTFail("one message of two")
+        }
+        try apply(q, edit)
+        XCTAssertEqual(try stillTrashed(q), ["b"])
+        try apply(q, undo)
+        // `restoreDeletedMessages` restores only ids that are still trashed.
+        XCTAssertEqual(try stillTrashed(q), [], "a late Restore sends nothing")
+        XCTAssertNil(try payload(q).deletedSummary)
+        XCTAssertEqual(try payload(q).messages.map(\.gmailId), ["a", "b"])
+    }
+
+    func testTheOpenTargetIgnoresDeletedMessages() throws {
+        // The newest message is deleted, starred and unread: shown through
+        // "View" only, it never decides where the conversation opens.
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 30, labels: "INBOX"),
+                            msg("c", minutesAgo: 10, labels: "TRASH STARRED UNREAD", unread: true)])
+        let live = try payload(q).messages
+        XCTAssertEqual(live.map(\.gmailId), ["a", "b"])
+        XCTAssertNil(ConversationOpenTarget.target(in: live), "no live star: the usual rule")
+        let roles = ThreadMessageRoles(messages: live)
+        XCTAssertNil(roles.starredTargetId)
+        XCTAssertEqual(roles.lastNonDraftId, "\(account):b")
+
+        // A live star still leads; the deleted unread message is not opened.
+        let q2 = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX STARRED"),
+                             msg("b", minutesAgo: 30, labels: "INBOX"),
+                             msg("c", minutesAgo: 10, labels: "TRASH UNREAD", unread: true)])
+        let target = try XCTUnwrap(ConversationOpenTarget.target(in: try payload(q2).messages))
+        XCTAssertEqual(target.scroll, "\(account):a")
+        XCTAssertEqual(target.expanded, ["\(account):a", "\(account):b"])
+    }
+
+    func testADeletedMessageOffersNoDeleteSpamOrBlock() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 10, labels: "TRASH")])
+        let deleted = try state(q, "b")
+        XCTAssertEqual(MessageActionPlan.delete(deleted), .none)
+        XCTAssertFalse(MessageActionPlan.allowsConversationAction(deleted))
+        var context = typical
+        context.isTrashed = true
+        let items = MessageActions.menuItems(context)
+        for gone in [MessageActions.MenuItem.deleteMessage, .blockSender, .unblockSender,
+                     .reportSpam, .reportNotSpam] {
+            XCTAssertFalse(items.contains(gone), "\(gone)")
+        }
+    }
 }

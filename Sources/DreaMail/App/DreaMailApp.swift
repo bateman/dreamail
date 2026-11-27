@@ -236,7 +236,7 @@ struct DreaMailApp: App {
                 // All labelled mail in one list (`g l`); the sidebar now
                 // lists the labels themselves.
                 Button("Labels") { store.goTo(.labels) }
-                ForEach(store.savedViews) { view in
+                ForEach(store.visibleSavedViews) { view in
                     Button(view.name) {
                         store.goTo(.saved(view.id ?? -1, view.name))
                     }

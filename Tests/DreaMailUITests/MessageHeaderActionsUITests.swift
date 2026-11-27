@@ -230,7 +230,8 @@ final class MessageHeaderActionsUITests: XCTestCase {
 
     /// One open message of t2 goes to the Trash alone: the conversation
     /// keeps its other messages and its place in the Inbox; Undo brings
-    /// the message back. Independent of the other steps: it takes the top
+    /// the message back; #107's deleted-messages line then shows it, and
+    /// its Restore brings it back too. Independent of the other steps: it takes the top
     /// open message, whichever the conversation opened on.
     private func stepDeleteThisMessage(_ app: XCUIApplication) {
         open(app, "t2")
@@ -254,5 +255,31 @@ final class MessageHeaderActionsUITests: XCTestCase {
         showList(app)
         XCTAssertTrue(element(app, "threadRow.you@example.com:t2").waitForExistence(timeout: 5),
                       "the conversation is still in the Inbox")
+
+        // #107's line agrees: View shows it "In Trash" with Restore as its
+        // only action (no star, reply or More), and Restore brings it back.
+        open(app, "t2")
+        let line = element(app, "thread.deletedMessages")
+        XCTAssertTrue(line.waitForExistence(timeout: 5), "the deleted-messages line is shown")
+        XCTAssertEqual(line.label, "1 deleted message in this conversation")
+        let moreBefore = frames("messageHeaderMore", in: app).count
+        let view = element(app, "thread.deletedMessages.view")
+        XCTAssertTrue(view.waitForExistence(timeout: 5))
+        view.click()
+        XCTAssertTrue(element(app, "messageInTrashTag").waitForExistence(timeout: 5))
+        let expand = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Open deleted message from'")).firstMatch
+        XCTAssertTrue(expand.waitForExistence(timeout: 5))
+        expand.click()
+        let restore = element(app, "messageActionRestore")
+        XCTAssertTrue(restore.waitForExistence(timeout: 5), "the open deleted message offers Restore")
+        XCTAssertLessThanOrEqual(frames("messageHeaderMore", in: app).count, moreBefore,
+                                 "the deleted message adds no header controls")
+        restore.click()
+        XCTAssertTrue(waitUntil { !self.element(app, "thread.deletedMessages").exists }, "the line goes")
+        let restored = settled("messageRowFrame", in: app) {
+            $0.count == count && !self.element(app, "messageInTrashTag").exists
+        }
+        XCTAssertEqual(restored.count, count, "Restore brings the message back")
     }
 }
