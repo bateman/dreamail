@@ -2,7 +2,7 @@
 """Split the UI test classes into CI shards by measured duration.
 
 The classes are found in the UI test sources (every `class X: XCTestCase`
-in Tests/DreaMailUITests/*.swift), so a new test class lands in a shard with
+in Tests/DreaMailUITests/**/*.swift, as project.yml compiles them), so a new test class lands in a shard with
 no list to edit. Each class weighs its measured duration from
 .github/ui-test-durations.txt; a class not listed there weighs
 DEFAULT_SECONDS. The split is greedy longest-first: each class, slowest
@@ -31,13 +31,19 @@ TARGET = "DreaMailUITests"
 # About the mean of the measured classes (November 2026).
 DEFAULT_SECONDS = 60.0
 
-CLASS = re.compile(r"^\s*(?:(?:final|public|internal|open)\s+)*class\s+(\w+)\s*:\s*XCTestCase\b", re.M)
+# Attributes and modifiers may precede `class` on the same line
+# (`@MainActor final class X: XCTestCase`). A subclass of another test class
+# is not found: it runs in the last shard, and `check` warns about it.
+CLASS = re.compile(
+    r"^[ \t]*(?:@\w+(?:\([^)\n]*\))?[ \t]+)*"
+    r"(?:(?:final|public|internal|open|private|fileprivate|nonisolated)[ \t]+)*"
+    r"class[ \t]+(\w+)[ \t]*:[ \t]*XCTestCase\b", re.M)
 TEST_CASE = re.compile(r"Test Case '-\[(?:\w+\.)?(?P<cls>\w+) \w+\]' (?:passed|failed|skipped)")
 
 
 def find_classes(sources: Path = SOURCES) -> list[str]:
     classes = set()
-    for path in sorted(sources.glob("*.swift")):
+    for path in sorted(sources.rglob("*.swift")):
         classes.update(CLASS.findall(path.read_text(errors="replace")))
     return sorted(classes)
 
@@ -50,6 +56,8 @@ def read_durations(path: Path = DURATIONS) -> dict[str, float]:
             continue
         if len(fields) != 2:
             raise ValueError(f"{path}:{number}: expected 'Class seconds', got {line!r}")
+        if fields[0] in durations:
+            raise ValueError(f"{path}:{number}: {fields[0]} is listed twice")
         durations[fields[0]] = float(fields[1])
     return durations
 

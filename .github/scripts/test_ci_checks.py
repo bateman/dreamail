@@ -424,10 +424,22 @@ class UIShardsTests(TempFiles):
             class BarUITests : XCTestCase {
                 class Nested {}
             }
+            @MainActor final class ActorUITests: XCTestCase {}
+            private final class HiddenUITests: XCTestCase {}
             struct Helper {}
             final class Page: NSObject {}
+            // class CommentedOut: XCTestCase is still prose
             """)
-        self.assertEqual(ui_shards.find_classes(Path(self._dir.name)), ["BarUITests", "FooUITests"])
+        (Path(self._dir.name) / "Sub").mkdir()
+        self.write("Sub/B.swift", "final class DeepUITests: XCTestCase {}\n")
+        self.assertEqual(ui_shards.find_classes(Path(self._dir.name)),
+                         ["ActorUITests", "BarUITests", "DeepUITests", "FooUITests", "HiddenUITests"])
+
+    def test_duplicate_duration_is_refused(self):
+        path = self.write("d.txt", "A 10\nB 20  # note\nA 30\n")
+        with self.assertRaisesRegex(ValueError, "A is listed twice"):
+            ui_shards.read_durations(path)
+        self.assertEqual(ui_shards.read_durations(self.write("ok.txt", "# c\nA 10\n")), {"A": 10.0})
 
     def test_split_is_balanced_deterministic_and_complete(self):
         classes = ["Quick", "Mid", "Slow", "NewA", "NewB"]
@@ -479,13 +491,34 @@ class UIShardsTests(TempFiles):
         # Every source file that subclasses XCTestCase yields a class: one
         # the pattern misses would show here (it would still run, in the
         # last shard, but outside the balance).
-        for path in sorted(ui_shards.SOURCES.glob("*.swift")):
+        for path in sorted(ui_shards.SOURCES.rglob("*.swift")):
             if re.search(r":\s*XCTestCase\b", path.read_text()):
                 self.assertTrue(ui_shards.CLASS.search(path.read_text()), path.name)
         self.assertGreater(len(ui_shards.find_classes()), 1)
         durations = ui_shards.read_durations()
         self.assertTrue(durations)
         self.assertTrue(all(seconds > 0 for seconds in durations.values()))
+
+    def test_workflow_matrix_is_one_consecutive_shard_list(self):
+        # UI_SHARDS is strategy.job-total and UI_SHARD is matrix.shard: they
+        # agree only while the matrix is exactly `shard: [1, ..., N]`. A
+        # second dimension or an include/exclude would leave shards that
+        # run nowhere while every job's check passes.
+        text = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+        job = re.search(r"^  ui-test:\n(?P<body>(?:^(?: {4}.*|\s*)\n)+)", text, re.M)
+        self.assertIsNotNone(job, "no ui-test job in ci.yml")
+        body = job["body"]
+        matrix = re.search(r"^      matrix:\n(?P<keys>(?:^ {8,}.*\n)+)", body, re.M)
+        self.assertIsNotNone(matrix, "ui-test has no strategy.matrix")
+        keys = [line.strip() for line in matrix["keys"].splitlines() if line.strip()]
+        self.assertEqual(len(keys), 1, f"the ui-test matrix must be `shard` alone: {keys}")
+        shards = re.fullmatch(r"shard: \[([\d, ]+)\]", keys[0])
+        self.assertIsNotNone(shards, keys[0])
+        values = [int(v) for v in shards[1].split(",")]
+        self.assertEqual(values, list(range(1, len(values) + 1)))
+        self.assertIn("UI_SHARD: ${{ matrix.shard }}", body)
+        self.assertIn("UI_SHARDS: ${{ strategy.job-total }}", body)
+        self.assertIn("ui-shards.py check", body)
 
 
 class IntegrateOpenPGPTests(unittest.TestCase):

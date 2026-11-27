@@ -276,23 +276,27 @@ ui-test-ci:
 # every class the others do not, so none falls out of all of them.
 # `python3 .github/scripts/ui-shards.py show 3` prints the split.
 # No UI_SHARD: the whole suite.
-UI_SHARDS ?= 3
-UI_SHARD_FLAGS = $$(if [ -n "$(UI_SHARD)" ]; then python3 .github/scripts/ui-shards.py flags "$(UI_SHARD)" "$(UI_SHARDS)"; fi)
 ui-test: gen
 	@if [ "$$CI" != "true" ] && [ "$(UI_TEST_LOCAL)" != "1" ]; then \
 		echo "ui-test is CI-only: XCUITest takes over the desktop while it runs."; \
 		echo "Run it on GitHub with: make ui-test-ci. To run locally anyway: UI_TEST_LOCAL=1 make ui-test"; \
 		exit 1; \
 	fi
-	@if [ -n "$(UI_SHARD)" ]; then python3 .github/scripts/ui-shards.py flags "$(UI_SHARD)" "$(UI_SHARDS)" >/dev/null; fi
 	# XCUITest cannot attach deterministically when another Debug build with the
 	# same bundle id is already open (for example from a different worktree).
 	-pkill -f "DreaMail Debug" 2>/dev/null || true
 	# The throwaway Debug app persists window frames / prefs between runs;
 	# the smoke test asserts default-launch geometry, so start clean.
 	-defaults delete io.github.bateman.DreaMail.debug 2>/dev/null || true
+	# UI_SHARDS has no default: a shard number without its count fails here
+	# instead of guessing one.
+	flags=""; \
+	if [ -n "$(UI_SHARD)" ]; then \
+		flags=$$(python3 .github/scripts/ui-shards.py flags "$(UI_SHARD)" "$(UI_SHARDS)") || exit 1; \
+	fi; \
+	set -x; \
 	xcodebuild test -project $(PROJECT) -scheme DreaMailUITests \
-		-destination '$(DESTINATION)' -derivedDataPath $(DD) $(UI_SHARD_FLAGS)
+		-destination '$(DESTINATION)' -derivedDataPath $(DD) $$flags
 
 # The throwaway test app (Debug identity, isolated data).
 build: gen
