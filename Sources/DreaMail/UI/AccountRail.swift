@@ -201,7 +201,7 @@ struct AccountRail: View {
 
 /// The top of the upside-down "L": a band in the rail's colour, as tall as the
 /// title-bar row, from the window's left edge across the window buttons to the
-/// sidebar's right edge (collapsed, in light: to the window's right edge, see
+/// sidebar's right edge (sidebar collapsed, in light: to the window's right edge, see
 /// `AccountRailMetrics.bandSpansWindow`). An overlay of the window's content, so it also covers
 /// the top of the sidebar; toolbar items (the sidebar toggle) stay above it.
 struct AccountRailTopBand: View {
@@ -211,6 +211,8 @@ struct AccountRailTopBand: View {
     let sidebarVisible: Bool
     /// Whether the collapsed sidebar (`SidebarIconStrip`) is on screen.
     var stripVisible = false
+    /// The sidebar is collapsed (the preference), strip on screen or not.
+    var sidebarCollapsed = false
 
     var body: some View {
         // Read here, not inside the GeometryReader closure, so the view
@@ -219,10 +221,10 @@ struct AccountRailTopBand: View {
             sidebarTrailing: store.sidebarTrailingEdge, sidebarVisible: sidebarVisible,
             stripVisible: stripVisible)
         let spansWindow = AccountRailMetrics.bandSpansWindow(
-            sidebarVisible: sidebarVisible, stripVisible: stripVisible, isLight: colorScheme == .light)
+            sidebarCollapsed: sidebarCollapsed, isLight: colorScheme == .light)
         GeometryReader { proxy in
             let top = proxy.safeAreaInsets.top
-            // Always the rail colour. Collapsed, in light, the content's top
+            // Always the rail colour. Sidebar collapsed, in light, the content's top
             // bar is white against the rail's grey, which cut the sidebar
             // toggle in half; there the band spans the whole window instead,
             // so no seam crosses the toggle, the view icon or the title. Dark

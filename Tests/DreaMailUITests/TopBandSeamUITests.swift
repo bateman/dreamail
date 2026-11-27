@@ -40,6 +40,12 @@ final class TopBandSeamUITests: XCTestCase {
         XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5), "collapsed")
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         let collapsed = try row(window, "collapsed")
+        // Reading pane open (a thread selected), then a row above the glyphs
+        // (y=5) across the window, so a patch of the wrong colour anywhere
+        // along the bar fails.
+        element(app, "threadRow.you@example.com:t3").click()
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        let wide = try row(window, "collapsed, reading pane open", y: 5, xMax: Int(window.frame.width) - 16)
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "composeButton").waitForExistence(timeout: 5), "expanded")
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
@@ -69,26 +75,32 @@ final class TopBandSeamUITests: XCTestCase {
             let right = rgb(collapsed, [128, 132, 136, 140, 144, 148, 152])
             XCTAssertEqual(right.count, 7)
             let reference = try XCTUnwrap(rgb(expanded, [84, 88, 92, 96, 100]).first)
+            let beyond = wide.filter { $0.x >= 84 }
+            XCTAssertGreaterThan(beyond.count, 50)
+            for (x, c) in beyond {
+                XCTAssertTrue(same(c, reference), "top edge at x=\(x): \(c) differs from the rail band \(reference)")
+            }
             for c in left + right {
                 XCTAssertTrue(same(c, reference), "background \(c) differs from the rail band \(reference); \(desc)")
             }
         }
     }
 
-    /// The colour along the middle of the title-bar row, x = 0...420 every 4 pt,
+    /// The colour along a line of the title-bar row (default the middle, y=26), every 4 pt,
     /// printed to the log.
-    private func row(_ window: XCUIElement, _ context: String) throws -> [(x: Int, rgb: [Int])] {
+    private func row(_ window: XCUIElement, _ context: String, y yPoints: Int = 26, xMax: Int = 420)
+        throws -> [(x: Int, rgb: [Int])] {
         let frame = window.frame
         let cg = try XCTUnwrap(window.screenshot().image.cgImage(forProposedRect: nil, context: nil, hints: nil))
         let rep = NSBitmapImageRep(cgImage: cg)
         let scale = Double(cg.width) / Double(frame.width)
-        let y = Int(26 * scale)
+        let y = Int(Double(yPoints) * scale)
         var out: [(x: Int, rgb: [Int])] = []
-        for x in stride(from: 4, through: 420, by: 4) {
+        for x in stride(from: 4, through: xMax, by: 4) {
             guard let c = rep.colorAt(x: Int(Double(x) * scale), y: y)?.usingColorSpace(.sRGB) else { continue }
             out.append((x, [Int(c.redComponent * 255), Int(c.greenComponent * 255), Int(c.blueComponent * 255)]))
         }
-        print("TopBandSeam: \(context): row y=26 " + out.map { "\($0.x):\($0.rgb.map { String($0, radix: 16) }.joined(separator: ","))" }.joined(separator: " "))
+        print("TopBandSeam: \(context): row y=\(yPoints) " + out.map { "\($0.x):\($0.rgb.map { String($0, radix: 16) }.joined(separator: ","))" }.joined(separator: " "))
         return out
     }
 }

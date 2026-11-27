@@ -431,7 +431,8 @@ struct ContentView: View {
             for id in Set(old).subtracting(new) { sidebarDisclosure.forget(accountId: id) }
         }
         .overlay(alignment: .topLeading) {
-            AccountRailTopBand(sidebarVisible: sidebarOnScreen, stripVisible: sidebarStripOnScreen)
+            AccountRailTopBand(sidebarVisible: sidebarOnScreen, stripVisible: sidebarStripOnScreen,
+                               sidebarCollapsed: sidebarHidden)
         }
         // Single ComposeView host for both floating and inline so presentation
         // flips keep editor state. Floating = bottom-trailing card; inline =

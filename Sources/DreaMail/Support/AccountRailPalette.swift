@@ -62,12 +62,14 @@ enum AccountRailMetrics {
         return max(bandMinimumWidth, sidebarTrailing)
     }
     /// Whether the top band spans the whole window width (rail colour all
-    /// along the title-bar row). Only collapsed to the icon strip, in light:
-    /// the content's white would otherwise meet the rail's grey in the middle
-    /// of the sidebar toggle. Dark's content colour is nearly the rail's, so
-    /// its band keeps `bandWidth`; expanded and fully hidden are unchanged.
-    static func bandSpansWindow(sidebarVisible: Bool, stripVisible: Bool, isLight: Bool) -> Bool {
-        stripVisible && !sidebarVisible && isLight
+    /// along the title-bar row). In light, whenever the sidebar is collapsed
+    /// (the preference), whether or not the icon strip is on screen: the
+    /// content's white would otherwise meet the rail's grey in the middle of
+    /// the sidebar toggle, and full-window conversations or split compose
+    /// would flip the bar to white and back. Dark's content colour is nearly
+    /// the rail's, so its band keeps `bandWidth`; expanded is unchanged.
+    static func bandSpansWindow(sidebarCollapsed: Bool, isLight: Bool) -> Bool {
+        sidebarCollapsed && isLight
     }
     /// Settings → Appearance: show the "+" (add account) entry. App-wide.
     static let showAddAccountKey = "showAddAccountInRail"
