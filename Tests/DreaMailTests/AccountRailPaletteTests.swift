@@ -90,6 +90,17 @@ final class AccountRailPaletteTests: XCTestCase {
         XCTAssertEqual(M.bandWidth(sidebarTrailing: 304, sidebarVisible: true, stripVisible: false), 304)
     }
 
+    func testBandSpansWindowOnlyWhenCollapsedInLight() {
+        typealias M = AccountRailMetrics
+        // Collapsed, light: the strip being on screen or not does not matter.
+        XCTAssertTrue(M.bandSpansWindow(sidebarCollapsed: true, isLight: true))
+        // Collapsed, dark: as before.
+        XCTAssertFalse(M.bandSpansWindow(sidebarCollapsed: true, isLight: false))
+        // Expanded: as before, in both appearances.
+        XCTAssertFalse(M.bandSpansWindow(sidebarCollapsed: false, isLight: true))
+        XCTAssertFalse(M.bandSpansWindow(sidebarCollapsed: false, isLight: false))
+    }
+
     func testAddAccountEntryIsShownByDefault() {
         let key = AccountRailMetrics.showAddAccountKey
         let saved = UserDefaults.standard.object(forKey: key)
