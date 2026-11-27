@@ -97,8 +97,8 @@ I rapporti delle sessioni si leggono anche dalla trascrizione:
 - Ha passato a una sessione i nomi reali delle etichette del proprietario,
   finiti nei test: poi tolti. Mai più.
 - Ha dichiarato cause non verificate (posta "non scaricata", messaggi
-  "mancanti"): la prima era la regola del Cestino, la seconda è con ogni
-  probabilità l'ora di invio mostrata al posto di quella di arrivo. Formulare
+  "mancanti"): la prima era la regola del Cestino, la seconda ipotesi (ora di invio al posto di quella di arrivo) è
+  stata poi smentita dal codice. Formulare
   ipotesi come ipotesi e chiedere al proprietario il dato che decide.
 
 ## Stato al momento del passaggio
@@ -116,10 +116,9 @@ Unite il 26-27 novembre (dettagli nel changelog e nel piano): #84, #85, #87-#94,
 |---|---|---|---|---|---|
 | #108 | `fix/label-gmail-color-missing` | `session_019yj8YsiQKRQF3uC3vbUH5g` | Basso rischio | Colori delle etichette mancanti (vedi sotto) | **Passa al nuovo orchestratore.** In lavorazione, CI in corso |
 | #107 | `ux/deleted-messages-in-conversation` | `session_019yj8YuKTzb2MXdQPfTxCHj` | Standard | Riga "N deleted messages · View" nella conversazione viva, come Gmail; "Restore" per messaggio | Resta all'orchestratore uscente fino all'unione |
-| (da aprire) | `fix/message-time-gmail-internal-date` | `session_019yj8YrFF9oGNYu2RPVyZst` | Basso rischio | Ora dei messaggi: quella di arrivo di Gmail (`internalDate`), non l'intestazione `Date` | Resta all'orchestratore uscente fino all'unione |
+| nessuna | `fix/message-time-gmail-internal-date` | `session_019yj8YrFF9oGNYu2RPVyZst` | Basso rischio | Ora dei messaggi diversa da Gmail | **Ipotesi smentita, nessuna modifica**: il codice usa già `internalDate` (`MessageParsing.swift`); nessun punto legge l'intestazione `Date`. Causa ignota; servono dal proprietario, per 2-3 conversazioni, l'ora in Gmail e quella in DreaMail e se la conversazione ha un messaggio più recente in bozza, Cestino o Spam |
 
-L'orchestratore uscente chiude #107 e la PR degli orari e ne registra i
-documenti; il nuovo non li tocca, salvo diversa indicazione del proprietario.
+L'orchestratore uscente chiude #107 e ne registra i documenti; il nuovo non li tocca, salvo diversa indicazione del proprietario.
 Per evitare due scritture concorrenti sui documenti: prima di ogni modifica a
 `CHANGELOG.md` e `docs/`, `git fetch` e ripartire da `origin/main`.
 
@@ -150,6 +149,19 @@ che è anche la prova che manca; (2) i colori difettosi sono quasi tutti scuri o
 poco saturi: cercare una regola di disegno della barra laterale che li renda
 come "senza colore" nei due temi; (3) decodifica di `color` che fallisce per
 intero; (4) `completingColors` che non parte o non viene unito.
+
+Primo rapporto della sessione (PR #108, non ancora verificato da una review):
+- causa trovata **solo per i grigi scuri nel tema scuro**: il pallino della
+  barra laterale (`shape: .dot`) sotto una differenza minima di 25 dallo sfondo
+  (`minimumDotEdgeDifference`) riceve un contorno grigio su un riempimento quasi
+  invisibile, che si legge come "senza colore". La PR lo sostituisce con un
+  riempimento sempre visibile (`LabelPillStyle.visibleTagFill`);
+- verde, oliva, rosso e grigio-blu **restano senza causa**;
+- la griglia mostra 64 dei 102 colori documentati di Gmail: per gli altri 38
+  nessun campione è spuntato, e questo spiega l'azzurro senza spunta;
+- la PR aggiunge la riga "Current: #codice / none" nella finestra;
+- pista non chiusa: una voce di `labels.list` con `type` assente è esclusa da
+  `completingColors` ma salvata come etichetta utente.
 
 Cosa fare: seguire la sessione (leggerne il rapporto, che inizia con
 `REPORT FOR ORCHESTRATOR`; avvisarla con `send_message` che l'orchestratore è
