@@ -106,6 +106,10 @@ final class SettingsWindowUITests: XCTestCase {
             sidebar.scroll(byDeltaX: 0, deltaY: -300)
             tries += 1
         }
+        // The row can come into view after the last read: wait for it.
+        _ = app.windows.firstMatch.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Add view")).firstMatch
+            .waitForExistence(timeout: 5)
         let height = titleHeight("Add view", in: app)
         tries = 0
         while !element("sidebar.inbox", in: app).isHittable, tries < 15 {
