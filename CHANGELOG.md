@@ -175,6 +175,13 @@ minor versions may still change behavior.
   updating. Known limit: the deleted messages of such a conversation cannot
   yet be seen or restored from DreaMail (they can in Gmail's Trash).
 
+- **A message that could not be downloaded is tried again.** When the
+  download of a single message failed during a sync, the sync moved on and
+  the message never arrived (a conversation could show an older time than
+  Gmail, its latest message missing). Such messages are now remembered and
+  retried on later syncs; if some still cannot be downloaded, the sync
+  indicator and Settings → Accounts say how many.
+
 - **The sync indicator tells the truth.** The "last synced" time in the
   toolbar and in Settings → Accounts is refreshed as time passes (it could
   read "now" for hours) and says "Sync failed · last synced …" when the
