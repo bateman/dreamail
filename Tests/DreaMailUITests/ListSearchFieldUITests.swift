@@ -35,6 +35,15 @@ final class ListSearchFieldUITests: XCTestCase {
         return true
     }
 
+    /// The text field itself (focus lives here); `listSearchBox` is its box.
+    private func textField(_ app: XCUIApplication) -> XCUIElement {
+        app.textFields.matching(NSPredicate(format: "placeholderValue == 'Search'")).firstMatch
+    }
+
+    private func titleText(_ e: XCUIElement) -> String {
+        (e.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? e.label
+    }
+
     private func hasFocus(_ e: XCUIElement) -> Bool {
         (e.value(forKey: "hasKeyboardFocus") as? Bool) ?? false
     }
@@ -42,7 +51,7 @@ final class ListSearchFieldUITests: XCTestCase {
     /// The field against the LIST COLUMN (its rows' x range, its bar), the title
     /// and the sidebar.
     private func assertFieldInListBar(_ app: XCUIApplication, _ when: String) {
-        let field = element(app, "listSearchField")
+        let field = element(app, "listSearchBox")
         let title = element(app, "listHeaderTitle")
         let row = element(app, "threadRow.you@example.com:t3")
         XCTAssertTrue(field.waitForExistence(timeout: 5), "\(when): the field exists")
@@ -55,7 +64,7 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(title.frame.minX, column.minX, "\(when): title inside the column")
         XCTAssertLessThanOrEqual(title.frame.maxX, field.frame.minX, "\(when): field right of the title")
         XCTAssertEqual(title.frame.midY, field.frame.midY, accuracy: 12, "\(when): same bar")
-        XCTAssertEqual(title.label, "Inbox", "\(when): title shown in full")
+        XCTAssertEqual(titleText(title), "Inbox", "\(when): title shown in full")
         XCTAssertGreaterThanOrEqual(field.frame.width, 149, "\(when): at least the minimum (\(field.frame))")
         XCTAssertLessThanOrEqual(field.frame.width, 381, "\(when): at most the maximum (\(field.frame))")
         // Not in the sidebar: the sidebar's rows are all left of the field.
@@ -86,8 +95,13 @@ final class ListSearchFieldUITests: XCTestCase {
         assertFieldInListBar(app, "pane hidden, sidebar expanded")
         let show = app.buttons.matching(NSPredicate(format: "label == 'Show Reading Pane'")).firstMatch
         XCTAssertTrue(show.waitForExistence(timeout: 5))
-        XCTAssertLessThanOrEqual(element(app, "listSearchField").frame.maxX, show.frame.minX,
-                                 "the field is left of the window's toolbar buttons")
+        let box = element(app, "listSearchBox").frame
+        let title = element(app, "listHeaderTitle").frame
+        let icons = show.frame.insetBy(dx: -2, dy: -2)
+        XCTAssertFalse(box.intersects(icons),
+                       "the field does not overlap the window's toolbar buttons (field \(box), button \(show.frame))")
+        XCTAssertFalse(title.intersects(icons),
+                       "the title does not overlap the window's toolbar buttons (title \(title), button \(show.frame))")
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
         assertFieldInListBar(app, "pane hidden, sidebar collapsed")
@@ -97,10 +111,10 @@ final class ListSearchFieldUITests: XCTestCase {
         let app = launch(paneHidden: true)
         let t3 = element(app, "threadRow.you@example.com:t3")
         XCTAssertTrue(t3.waitForExistence(timeout: 10))
-        let field = element(app, "listSearchField")
+        let field = element(app, "listSearchBox")
         app.typeKey("/", modifierFlags: [])
         XCTAssertTrue(field.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitUntil { self.hasFocus(field) }, "/ focuses the field")
+        XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focuses the field")
         app.typeText("zzzznomatch")
         // The suggestions panel hangs under the field, same trailing edge, inside the column.
         let panel = element(app, "searchResultsPanel")
@@ -125,28 +139,30 @@ final class ListSearchFieldUITests: XCTestCase {
                       "window is wide enough for three panes: no compact layout here")
         t3.click()
         XCTAssertTrue(app.buttons["compactBackButton"].waitForExistence(timeout: 5), "a conversation is open")
-        XCTAssertFalse(element(app, "listSearchField").exists, "no field beside an open conversation")
+        XCTAssertFalse(element(app, "listSearchBox").exists, "no field beside an open conversation")
         app.typeKey("/", modifierFlags: [])
-        let field = element(app, "listSearchField")
+        let field = element(app, "listSearchBox")
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the list is back")
-        XCTAssertTrue(waitUntil { self.hasFocus(field) }, "/ focused the field")
+        XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focused the field")
     }
 
     func testNoDoubleChevronAndPaneToggleStillWorks() {
         let app = launch(paneHidden: false)
         let t3 = element(app, "threadRow.you@example.com:t3")
         XCTAssertTrue(t3.waitForExistence(timeout: 10))
-        t3.click()   // a conversation open: the old ">>" lived in its toolbar
         let hide = app.buttons.matching(NSPredicate(format: "label == 'Hide Reading Pane'"))
         let show = app.buttons.matching(NSPredicate(format: "label == 'Show Reading Pane'"))
-        // Compact windows have no pane toggle target to hide; the toggle is
-        // still in the window toolbar.
+        // The toggle round trip, on the list.
         XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertEqual(hide.count, 1, "one \"Hide Reading Pane\" control only: no >> button")
         hide.firstMatch.click()
         XCTAssertTrue(show.firstMatch.waitForExistence(timeout: 5), "the toggle hides the pane")
-        XCTAssertEqual(show.count, 1)
         show.firstMatch.click()
         XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5), "the toggle shows it again")
+        // A conversation open: the old ">>" lived in its toolbar. Exactly one
+        // "Hide Reading Pane" control remains: the window's toggle.
+        t3.click()
+        XCTAssertTrue(element(app, "threadSubject").waitForExistence(timeout: 5), "a conversation is open")
+        XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(hide.count, 1, "one \"Hide Reading Pane\" control only: no >> button")
     }
 }

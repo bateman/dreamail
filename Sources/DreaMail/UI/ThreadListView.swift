@@ -428,7 +428,6 @@ struct ThreadListView: View {
             } // ScrollViewReader
         }
         .background(Color.mailContent)
-        .navigationTitle(store.selectedView.title)
         .overlay {
             if groupedThreadCount == 0 {
                 emptyState

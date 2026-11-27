@@ -134,9 +134,10 @@ final class SidebarIconStripUITests: XCTestCase {
 
     private func stepSearchFocusesTheTopBarFieldAndKeepsTheStrip(_ app: XCUIApplication) {
         element(app, "sidebarStrip.search").click()
-        let field = element(app, "listSearchField")
+        let field = element(app, "listSearchBox")
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the field is in the list's top bar")
-        XCTAssertTrue(waitUntil { (field.value(forKey: "hasKeyboardFocus") as? Bool) ?? false },
+        let text = app.textFields.matching(NSPredicate(format: "placeholderValue == 'Search'")).firstMatch
+        XCTAssertTrue(waitUntil { (text.value(forKey: "hasKeyboardFocus") as? Bool) ?? false },
                       "the search field has the focus")
         XCTAssertTrue(element(app, "sidebarStrip").exists, "the sidebar stays collapsed")
         XCTAssertFalse(element(app, "composeButton").exists, "the sidebar did not expand")

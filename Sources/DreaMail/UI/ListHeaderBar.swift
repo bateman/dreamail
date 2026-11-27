@@ -34,14 +34,18 @@ struct ListHeaderBar: ViewModifier {
         !store.committedSearch.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// The title moves into the bar below; the window title stays. The toolbar
-    /// title can only be removed from macOS 15 (the app targets 14).
+    /// The title moves into the bar below. From macOS 15 the toolbar title is
+    /// removed and the window title stays; on macOS 14 (the app's minimum)
+    /// that cannot be done, so the window title is left empty instead of
+    /// drawing the title twice on top of each other.
     @ViewBuilder
     private func withoutToolbarTitle(_ content: Content) -> some View {
         if #available(macOS 15.0, *) {
-            content.toolbar(removing: .title)
-        } else {
             content
+                .navigationTitle(store.selectedView.title)
+                .toolbar(removing: .title)
+        } else {
+            content.navigationTitle("")
         }
     }
 
@@ -111,7 +115,9 @@ struct ListHeaderBar: ViewModifier {
             })
             .frame(minWidth: ListSearchMetrics.minWidth, maxWidth: ListSearchMetrics.maxWidth)
             .help("Search — from: to: subject: label: has:attachment is:unread is:starred after: before:")
-            .accessibilityIdentifier("listSearchField")
+            // One element for the whole field box (its children keep their own).
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("listSearchBox")
             // Gmail's `/`: focus search. A request made while this column was
             // not mounted (compact layout) is honoured when it appears.
             .onChange(of: store.searchFocusToken) { searchFocused = true }
