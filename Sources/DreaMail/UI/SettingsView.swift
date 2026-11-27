@@ -78,6 +78,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollIndicators(.never)
             .frame(width: 190)
 
             Divider()
@@ -111,7 +112,7 @@ struct SettingsView: View {
             }
         }
         .accessibilityIdentifier("settings.pane.\(p.rawValue)")
-        // The selection capsule in the custom accent (`AccentSelectionBackground`).
+        // The selection band in the custom accent (`AccentSelectionBackground`).
         .listRowBackground(AccentSelectionBackground.sidebar(selected: pane == p, accent: accent))
         .tag(p)
     }
@@ -416,6 +417,7 @@ struct AccountsSettings: View {
                                         failed: store.syncHealth.failed(
                                             account: account.id,
                                             needsReauth: store.accountsNeedingReauth.contains(account.id)),
+                                        undownloaded: store.syncHealth.undownloaded[account.id] ?? 0,
                                         now: context.date) {
                                         Text(text)
                                             .font(.caption).foregroundStyle(.secondary)

@@ -2,15 +2,15 @@ import AppKit
 import XCTest
 
 /// A custom accent colour (Settings → Appearance → Accent color) paints
-/// the selection: the selected sidebar row's capsule and the selected
+/// the selection: the selected sidebar row's band and the selected
 /// thread row are drawn in the stored colour whatever has the focus (their
 /// list focused in the key window, another list focused, an inactive
 /// window), as Gmail's open conversation and current mailbox are, with
 /// glyph and title in white or black as the contrast rule picks
 /// (`AccentPalette.onFill`): white on red, black on yellow. With Default
 /// the unfocused selection is the system's emphasized colour, not grey.
-/// A 3 pt bar in that ink at the leading edge marks the focused list's
-/// row: present only while its list is focused in the key window.
+/// No bar in that ink shows at the leading edge of either list's selected
+/// row, in any state (there used to be a 3 pt one on the focused list).
 ///
 /// Reads the rendered pixels of window-only screenshots, like
 /// `SidebarIconTintUITests`: each check crops the row's leading strip,
@@ -155,10 +155,11 @@ final class AccentColorUITests: XCTestCase {
         let sidebarStrip = { Self.sidebarStrip(row: inbox, window: main) }
         try assertRow(sidebarStrip, in: main, is: .accent(accent), "sidebar, focused")
         try assertNoSystemBlue(around: inbox, in: main, "sidebar, focused")
-        // The focus bar is in the leading edge now; the other states are
-        // judged against this capture (the bar is the only difference).
+        // No focus bar at the leading edge, in any state; the other states'
+        // edges are also compared with this capture.
         let sidebarEdge = { Self.sidebarEdge(row: inbox, window: main) }
         let sidebarFocusedEdge = try capture(sidebarEdge(), in: main, "sidebar edge, focused").stats.all
+        try assertNoBar(sidebarEdge, in: main, accent: accent, "sidebar, focused")
 
         // An unselected row keeps the sidebar background: the accent is
         // only on the selection.
@@ -183,10 +184,12 @@ final class AccentColorUITests: XCTestCase {
         // accent (and its ink), not the system grey.
         try assertRow(sidebarStrip, in: main, is: .accent(accent), "sidebar, focus in the thread list")
         try assertNoSystemBlue(around: inbox, in: main, "sidebar, focus in the thread list")
-        // No bar on the unfocused sidebar row. This also proves the thread
-        // list took the focus: every state paints the same accent.
-        let sidebarUnfocusedEdge = try assertBar(sidebarEdge, in: main, focused: sidebarFocusedEdge,
-                                                 present: false, "sidebar, focus in the thread list")
+        // No bar on the thread list's focused row nor on the unfocused
+        // sidebar row, which looks like the focused one: the edge is the same.
+        try assertNoBar(threadEdge, in: main, accent: accent, "thread list, focused")
+        let sidebarUnfocusedEdge = try assertNoBar(sidebarEdge, in: main, accent: accent,
+                                                   same: sidebarFocusedEdge,
+                                                   "sidebar, focus in the thread list")
 
         // Inactive window: the small, centred About panel takes key status.
         let about = app.menuItems["About DreaMail"]
@@ -209,12 +212,12 @@ final class AccentColorUITests: XCTestCase {
         }
         try assertRow(threadClear, in: main, is: .accent(accent), "thread list, inactive window")
         try assertRow(sidebarStrip, in: main, is: .accent(accent), "sidebar, inactive window")
-        // The bar goes with the key window: neither list shows it. The
-        // inactive sidebar edge is the unfocused one.
-        _ = try assertBar(threadEdge, in: main, focused: threadFocusedEdge, present: false,
-                          "thread list, inactive window")
-        let sidebarInactiveEdge = try assertBar(sidebarEdge, in: main, focused: sidebarFocusedEdge,
-                                                present: false, "sidebar, inactive window")
+        // Neither list shows a bar in the inactive window either, and its
+        // edges look like the focused ones.
+        _ = try assertNoBar(threadEdge, in: main, accent: accent, same: threadFocusedEdge,
+                            "thread list, inactive window")
+        let sidebarInactiveEdge = try assertNoBar(sidebarEdge, in: main, accent: accent,
+                                                  same: sidebarFocusedEdge, "sidebar, inactive window")
         XCTAssertLessThan(Self.differing(sidebarInactiveEdge, sidebarUnfocusedEdge), Self.barPixels,
                           "the unfocused and inactive sidebar edges should look the same")
     }
@@ -250,23 +253,22 @@ final class AccentColorUITests: XCTestCase {
 
     private struct NotReached: Error {}
 
-    // MARK: - Focus bar
+    // MARK: - No focus bar
 
-    /// Pixels the bar changes in a capture: CI measured 93 on the thread
-    /// row and 36 on the sidebar row, and 0 between states without a bar.
+    /// Pixels in the ink that would make a bar: a 3 pt wide bar is 72 or more
+    /// on either row's edge strip; the strip holds none besides antialiasing.
     private static let barPixels = 20
 
-    /// The sidebar row's leading edge: the capsule's left side, wide enough
-    /// for wherever the capsule starts. The glyph in it is the same in
-    /// every state; the bar is the only difference between states.
+    /// The sidebar row's leading edge: from the window's side of the glyph
+    /// to the glyph. Only the band is there: the glyph starts at the row's
+    /// content edge and the strip stops 6 pt short of it.
     private static func sidebarEdge(row: XCUIElement, window: XCUIElement) -> CGRect {
         let r = row.frame
-        return CGRect(x: r.minX - 40, y: r.minY + 2, width: 46, height: max(1, r.height - 4))
+        return CGRect(x: r.minX - 40, y: r.minY + 2, width: 34, height: max(1, r.height - 4))
     }
 
-    /// The selected thread row's leading edge. The row's accessibility frame
-    /// is its content, inside the list's own padding, which the row's
-    /// background (and the bar at its edge) covers: so start well left of it.
+    /// The selected thread row's leading edge, left of its content (inside
+    /// the list's own padding, which the row's band covers).
     private static func threadEdge(strip: CGRect) -> CGRect {
         CGRect(x: strip.minX - 40, y: strip.minY, width: 50, height: strip.height)
     }
@@ -278,39 +280,59 @@ final class AccentColorUITests: XCTestCase {
         return zip(a, b).filter { Pixels.distance($0, $1) > 30 }.count
     }
 
-    /// Waits until the edge differs from the focused one (the bar is
-    /// there only in the focused capture) or not, as `present` says the bar
-    /// is expected in the current state; returns the capture.
-    /// `present: false`: the edge differs from `focused` (no bar now).
+    /// No bar at the row's leading edge. The band's start is found on the
+    /// strip's mid-line (the first pixel in the accent); the 6 pt from there
+    /// hold fewer than `barPixels` pixels in the selection ink (a bar is 3 pt
+    /// wide and as tall as the row). With `same`, the strip also differs from
+    /// that capture in fewer than `barPixels` pixels. Returns the capture.
     @discardableResult
-    private func assertBar(_ rect: () -> CGRect, in window: XCUIElement,
-                           focused: [(Double, Double, Double)], present: Bool, _ context: String,
-                           file: StaticString = #filePath, line: UInt = #line) throws
+    private func assertNoBar(_ rect: () -> CGRect, in window: XCUIElement,
+                             accent: Accent, same: [(Double, Double, Double)]? = nil,
+                             _ context: String,
+                             file: StaticString = #filePath, line: UInt = #line) throws
         -> [(Double, Double, Double)] {
         var edge: [(Double, Double, Double)] = []
-        var changed = 0
+        var inked = 0, changed = 0
+        var bandFound = false
         let deadline = Date().addingTimeInterval(5)
         repeat {
-            edge = try capture(rect(), in: window, "\(context) edge", file: file, line: line).stats.all
-            changed = Self.differing(edge, focused)
-            if (changed >= Self.barPixels) != present { break }
+            let area = rect()
+            let stats = try capture(area, in: window, "\(context) edge", file: file, line: line).stats
+            edge = stats.all
+            let w = stats.width, h = stats.height
+            let scale = Double(w) / max(1, Double(area.width))
+            let mid = h / 2
+            if w > 0, let start = (0..<w).first(where: {
+                Pixels.distance(edge[mid * w + $0], accent.rgb) < 40 }) {
+                bandFound = true
+                let end = min(w, start + Int((6 * scale).rounded()))
+                let rows = Int((2 * scale).rounded())..<max(Int((2 * scale).rounded()) + 1, h - Int((2 * scale).rounded()))
+                // Only rows where the band is (the pixel at its start is the
+                // accent), so the sidebar and the rail never count as ink.
+                inked = rows.reduce(0) { sum, y in
+                    guard Pixels.distance(edge[y * w + start], accent.rgb) < 40 else { return sum }
+                    return sum + (start..<end).filter {
+                        Pixels.distance(edge[y * w + $0], accent.ink) < 40 }.count
+                }
+            }
+            changed = same.map { Self.differing(edge, $0) } ?? 0
+            if bandFound, inked < Self.barPixels, changed < Self.barPixels { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         } while Date() < deadline
-        print("AccentColor: \(context): \(changed) pixels differ from the focused edge")
-        if present {
-            XCTAssertLessThan(changed, Self.barPixels, "\(context): the focus bar should be shown",
-                              file: file, line: line)
-        } else {
-            XCTAssertGreaterThanOrEqual(changed, Self.barPixels,
-                                        "\(context): the focus bar should be gone",
-                                        file: file, line: line)
-        }
+        print("AccentColor: \(context): \(inked) ink pixels at the band's start, \(changed) changed pixels")
+        XCTAssertTrue(bandFound, "\(context): no accent pixel on the leading edge's mid-line",
+                      file: file, line: line)
+        XCTAssertLessThan(inked, Self.barPixels, "\(context): a focus bar shows at the leading edge",
+                          file: file, line: line)
+        XCTAssertLessThan(changed, Self.barPixels,
+                          "\(context): the leading edge differs from the focused one",
+                          file: file, line: line)
         return edge
     }
 
     // MARK: - Strips
 
-    /// Glyph and title, inside the capsule around them.
+    /// Glyph and title, inside the band around them.
     private static func sidebarStrip(row: XCUIElement, window: XCUIElement) -> CGRect {
         let r = row.frame
         return CGRect(x: r.minX - 4, y: r.minY, width: r.width + 4, height: r.height)
@@ -343,7 +365,7 @@ final class AccentColorUITests: XCTestCase {
     }
 
     /// No system-blue pixel shows around a painted selection (the corners
-    /// of a capsule painted smaller than AppKit's, a seam at an edge).
+    /// of a band painted smaller than AppKit's capsule, a seam at an edge).
     private func assertNoSystemBlue(around row: XCUIElement, in window: XCUIElement,
                                     _ context: String, file: StaticString = #filePath,
                                     line: UInt = #line) throws {
@@ -394,7 +416,7 @@ final class AccentColorUITests: XCTestCase {
                       "\(context): background should be \(expected), \(stats.summary)",
                       file: file, line: line)
         guard case .accent(let accent) = expected else { return }
-        // Glyph and title (or sender) stand out from the capsule …
+        // Glyph and title (or sender) stand out from the band …
         XCTAssertGreaterThanOrEqual(stats.foreground, 40, "\(context): nothing drawn on the accent",
                                     file: file, line: line)
         // … and are the rule's ink, blended over the accent at their
@@ -429,6 +451,9 @@ final class AccentColorUITests: XCTestCase {
         var background = (0.0, 0.0, 0.0)
         var drawn: [(Double, Double, Double)] = []
         var all: [(Double, Double, Double)] = []
+        /// Size of the cropped image in pixels; `all` is row-major.
+        var width = 0
+        var height = 0
         var foreground: Int { drawn.count }
 
         var summary: String {
@@ -441,6 +466,8 @@ final class AccentColorUITests: XCTestCase {
 
         init(_ image: CGImage) {
             let w = image.width, h = image.height
+            width = w
+            height = h
             var data = [UInt8](repeating: 0, count: w * h * 4)
             guard let space = CGColorSpace(name: CGColorSpace.sRGB),
                   let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8,

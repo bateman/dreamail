@@ -126,10 +126,10 @@ minor versions may still change behavior.
   selected row in the list and in the sidebar stays in the accent colour
   when you click elsewhere or the window is inactive, as in Gmail: the
   colour means "this is open", not "this list has focus" (it used to turn
-  a heavy grey). The list that has the keyboard focus shows a thin bar at
-  the row's leading edge. In the sidebar the coloured selection keeps the
-  system's rounded shape, inset from the edges, so it does not touch the
-  message list. On macOS 14 and 15 nothing changes. Also: the
+  a heavy grey). In the sidebar, in Settings and in the collapsed icon
+  strip the selection is a square band like the one of the message list,
+  reaching the list's edge, the same with and without focus; the sidebar
+  shows no scroll bar. On macOS 14 and 15 the system's selection stays. Also: the
   "+" next to Labels is larger and neutral, the label "⋮" is vertical and
   neutral (not accent blue), the hover actions on a conversation row have
   a little more space between them, and the "Defaults" table in Settings →
@@ -164,6 +164,28 @@ minor versions may still change behavior.
   English names now always work, and those of the Mac's language still do
   ("ven", "set 12", also without accents: "venerdi"); suggestions are
   titled in English. "mar 5" on an Italian Mac offers March 5 first.
+
+- **New mail in a conversation you had deleted shows up again.** A
+  conversation counted as deleted as soon as one of its messages was in the
+  Trash, so a reply arriving later stayed hidden there, missing from Inbox
+  and All Mail. As in Gmail, a conversation is in the Trash only when all
+  its messages are; new mail brings it back with the new message only: the
+  messages you deleted stay out of the conversation, of search and of the
+  counts. Conversations hidden this way come back at the first sync after
+  updating. Known limit: the deleted messages of such a conversation cannot
+  yet be seen or restored from DreaMail (they can in Gmail's Trash).
+
+- **A message that could not be downloaded is tried again.** When the
+  download of a single message failed during a sync, the sync moved on and
+  the message never arrived (a conversation could show an older time than
+  Gmail, its latest message missing). Such messages are now remembered and
+  retried on later syncs; if some still cannot be downloaded, the sync
+  indicator and Settings → Accounts say how many.
+
+- **The sync indicator tells the truth.** The "last synced" time in the
+  toolbar and in Settings → Accounts is refreshed as time passes (it could
+  read "now" for hours) and says "Sync failed · last synced …" when the
+  last pass of an account failed.
 
 - **Labels in the sidebar as in Gmail: whole families, Gmail's order.** A
   label and its sublabels always stay together, nested: the whole family is

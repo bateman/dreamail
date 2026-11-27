@@ -2006,6 +2006,14 @@ struct Sidebar: View {
             .environment(\.defaultMinListRowHeight, sidebarDensity.minRowHeight)
             .modifier(SidebarListDensity(density: sidebarDensity))
             .scrollContentBackground(.hidden)
+            // No scroller gutter beside the rows: the selection band reaches
+            // the column's trailing edge. The list still scrolls by wheel,
+            // trackpad and keyboard.
+            .scrollIndicators(.never)
+            // The list spans the column edge to edge: macOS 26 insets a
+            // sidebar list by its safe area (CI: column x 64-313, list scroll
+            // view x 72-312), and no row background can paint outside it.
+            .ignoresSafeArea(.container, edges: .horizontal)
 
             Divider()
             if store.demoMode {
@@ -2045,7 +2053,16 @@ struct Sidebar: View {
             // Settings moved to the account rail (AccountRail).
             Color.clear.frame(height: 8)
         }
-        .background(Color.mailSidebar)
+        .background {
+            // The selected row's band across the column, behind the list.
+            ZStack {
+                Color.mailSidebar
+                // Into the column's safe-area margin like the colour above it
+                // (CI, macOS 26.7.2: the column starts at x 64, the list at 72).
+                SidebarSelectionBand(accent: accent)
+                    .ignoresSafeArea(.container, edges: .horizontal)
+            }
+        }
         .background(TrailingEdgeReader { store.sidebarTrailingEdge = $0 })
         .sheet(item: $newLabel) { request in
             NewLabelSheet(request: request)
@@ -2140,7 +2157,7 @@ struct Sidebar: View {
                                painted: accent.paintsSelection || (selected && accent.keepsSelectionColor)))
         .environment(\.sidebarRowSelected, selected)
         .accessibilityIdentifier(sidebarAccessibilityID(for: view))
-        // The selection capsule in the custom accent (`AccentSelectionBackground`).
+        // The selection band in the custom accent (`AccentSelectionBackground`).
         .listRowBackground(AccentSelectionBackground.sidebar(selected: selected, accent: accent))
         .simultaneousGesture(
             TapGesture().onEnded { store.goTo(view) },
