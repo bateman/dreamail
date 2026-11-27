@@ -948,8 +948,8 @@ private struct ThreadListSections: View, Equatable {
     }
 
     /// One item of the row menu. `bulkIds`: the checked set the menu was
-    /// built for (empty: this row); Mute, Move to inbox and Move to act on
-    /// exactly those ids, the others through the keys' own bulk paths.
+    /// built for (empty: this row); Mute, Move to inbox, Move to and Label as
+    /// act on exactly those ids, the others through the keys' own bulk paths.
     @ViewBuilder
     private func threadMenuItem(_ item: ThreadRowMenuItem, thread: MailThread, bulkIds: [String],
                                 sender: String, address: String?,
@@ -1002,7 +1002,9 @@ private struct ThreadListSections: View, Equatable {
                 if bulk { store.openMovePicker(ids: bulkIds) } else { store.openMovePicker(thread: thread) }
             } label: { label }
         case .labelAs:
-            Button { store.openLabelPicker(for: thread) } label: { label }
+            Button {
+                if bulk { store.openLabelPicker(ids: bulkIds) } else { store.openLabelPicker(for: thread) }
+            } label: { label }
         case .mute, .unmute:
             Button {
                 if bulk { store.toggleMuteTargets(ids: bulkIds) } else { store.toggleMuteTargets(thread) }

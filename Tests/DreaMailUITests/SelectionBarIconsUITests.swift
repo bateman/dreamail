@@ -158,8 +158,8 @@ final class SelectionBarIconsUITests: XCTestCase {
     private func stepMixedLabels(_ app: XCUIApplication) {
         let expected: [(String, String)] = [
             ("archive", "Archive"), ("reportSpam", "Report spam"), ("trash", "Trash"),
-            ("toggleRead", "Mark as read"), ("snooze", "Snooze"), ("moveTo", "Move to"),
-            ("labelAs", "Label as"), ("star", "Star"),
+            ("toggleRead", "Mark as read"), ("snooze", "Snooze"), ("moveTo", "Move to…"),
+            ("labelAs", "Label as…"), ("star", "Star"),
         ]
         // Star: one row is not starred, the click stars. Read: one row is
         // unread, the click marks read. (Under More, the item says the same.)
@@ -177,17 +177,34 @@ final class SelectionBarIconsUITests: XCTestCase {
         XCTAssertTrue(bar(app, "count").exists, "closing the menu keeps the selection")
     }
 
+    /// Move to and Label as open the picker for both checked rows; one
+    /// click in the bulk Label as picker puts the label on both (the box
+    /// goes from off to on), and clears the selection like the other bulk
+    /// actions. The rows are checked again for the steps after.
     private func stepPickersOpen(_ app: XCUIApplication) {
         let search = app.descendants(matching: .any).matching(identifier: "labelPicker.search").firstMatch
-        for (id, placeholder) in [("labelAs", "Label 2 conversations…"),
-                                  ("moveTo", "Move 2 conversations to…")] {
-            tap(app, id)
-            XCTAssertTrue(search.waitForExistence(timeout: 5), "\(id) opens the picker")
-            XCTAssertEqual(search.placeholderValue, placeholder, "for both checked rows")
-            app.typeKey(.escape, modifierFlags: [])
-            XCTAssertTrue(UITestWait.until { !search.exists }, "Esc closes the picker")
-            XCTAssertEqual((bar(app, "count").value as? String) ?? bar(app, "count").label, "2 selected")
-        }
+        tap(app, "moveTo")
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "Move to opens the picker")
+        XCTAssertEqual(search.placeholderValue, "Move 2 conversations to…", "for both checked rows")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(UITestWait.until { !search.exists }, "Esc closes the picker")
+        XCTAssertEqual((bar(app, "count").value as? String) ?? bar(app, "count").label, "2 selected")
+
+        tap(app, "labelAs")
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "Label as opens the picker")
+        XCTAssertEqual(search.placeholderValue, "Label 2 conversations…", "for both checked rows")
+        let travel = app.descendants(matching: .any).matching(identifier: "labelPicker.row.Travel").firstMatch
+        XCTAssertTrue(travel.waitForExistence(timeout: 5))
+        XCTAssertEqual(travel.value as? String, "off", "neither row has Travel")
+        travel.click()
+        XCTAssertTrue(UITestWait.until { (travel.value as? String) == "on" },
+                      "one click puts Travel on both rows: \(String(describing: travel.value))")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(UITestWait.until { !search.exists }, "Esc closes the picker")
+        XCTAssertFalse(bar(app, "count").exists, "labelling clears the selection")
+        check(app, "t3")
+        check(app, "t4")
+        XCTAssertEqual((bar(app, "count").value as? String) ?? bar(app, "count").label, "2 selected")
     }
 
     private func stepReadActs(_ app: XCUIApplication) {

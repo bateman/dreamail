@@ -110,7 +110,9 @@ enum LabelPickerInboxRow {
 
 /// "Label as" over several conversations, after Gmail's label menu: a label
 /// on every target shows checked, on some a dash, on none empty; a click
-/// adds it to all unless all have it, then removes it from all.
+/// adds it to all unless all have it, then removes it from all. Pure;
+/// `MailStore.toggleLabel(ids:labelId:accountId:)` writes a `Plan`, and the
+/// picker draws its boxes from the same `targets`.
 enum BulkLabel {
     enum State: Equatable { case all, some, none }
 
@@ -122,5 +124,65 @@ enum BulkLabel {
 
     static func adds(_ labelId: String, to targets: [MailThread]) -> Bool {
         state(labelId, in: targets) != .all
+    }
+
+    /// The conversations a bulk label edit acts on, in pick order: the ids
+    /// still in the list, on `accountId` (labels belong to one account),
+    /// without Trash copies of live conversations (DEC-081). The boxes and
+    /// the click both read this one answer.
+    static func targets(ids: [String], in threads: [MailThread], accountId: String,
+                        isPartlyTrashed: (MailThread) -> Bool) -> [MailThread] {
+        ThreadRowMenu.liveTargets(ids: ids, in: threads)
+            .filter { $0.accountId == accountId && !isPartlyTrashed($0) }
+    }
+
+    /// Picked ids still in the list that belong to another account.
+    static func otherAccountCount(ids: [String], in threads: [MailThread],
+                                  accountId: String) -> Int {
+        ThreadRowMenu.liveTargets(ids: ids, in: threads).filter { $0.accountId != accountId }.count
+    }
+
+    /// One click on a label over `targets`.
+    struct Plan {
+        let labelId: String
+        let adds: Bool
+        /// The targets whose state the click changes: only these are
+        /// written and sent, and only these are given back by the undo.
+        let changing: [MailThread]
+
+        init(labelId: String, targets: [MailThread]) {
+            let adds = BulkLabel.adds(labelId, to: targets)
+            self.labelId = labelId
+            self.adds = adds
+            changing = targets.filter { $0.labels.contains(labelId) != adds }
+        }
+
+        var remote: RemoteThreadChange {
+            adds ? .modify(add: [labelId]) : .modify(remove: [labelId])
+        }
+
+        var undoRemote: RemoteThreadChange {
+            adds ? .modify(remove: [labelId]) : .modify(add: [labelId])
+        }
+
+        func apply(_ t: inout MailThread) {
+            if adds { t.applyLabelMutation(add: [labelId]) } else { t.applyLabelMutation(remove: [labelId]) }
+        }
+
+        func restore(_ t: inout MailThread) {
+            if adds { t.applyLabelMutation(remove: [labelId]) } else { t.applyLabelMutation(add: [labelId]) }
+        }
+
+        func undoLabel() -> String {
+            let n = changing.count
+            let noun = n == 1 ? "1 conversation" : "\(n) conversations"
+            return adds ? "Label added to \(noun)" : "Label removed from \(noun)"
+        }
+    }
+
+    /// `l` over checked rows labels all of them, as Gmail; with none
+    /// checked, nil: the focused conversation's picker.
+    static func keyTargets(checkedInOrder: [String]) -> [String]? {
+        checkedInOrder.isEmpty ? nil : checkedInOrder
     }
 }

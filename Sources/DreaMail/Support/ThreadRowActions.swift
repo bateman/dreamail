@@ -78,8 +78,9 @@ enum SelectionBarAction: String, CaseIterable {
         case .trash: return "Trash"
         case .toggleRead: return ThreadRowHoverAction.toggleRead.title(isUnread: flag)
         case .snooze: return "Snooze"
-        case .moveTo: return "Move to"
-        case .labelAs: return "Label as"
+        // They open a picker: the ellipsis, as in the row menu.
+        case .moveTo: return ThreadRowMenuItem.moveTo.title()
+        case .labelAs: return ThreadRowMenuItem.labelAs.title()
         case .star: return flag ? "Star" : "Unstar"
         }
     }

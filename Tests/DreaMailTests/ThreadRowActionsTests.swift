@@ -102,8 +102,8 @@ final class SelectionBarActionTests: XCTestCase {
         XCTAssertEqual(SelectionBarAction.reportSpam.title(flag: false), "Report spam")
         XCTAssertEqual(SelectionBarAction.notSpam.title(flag: false), "Not spam")
         XCTAssertEqual(SelectionBarAction.snooze.title(flag: false), "Snooze")
-        XCTAssertEqual(SelectionBarAction.moveTo.title(flag: false), "Move to")
-        XCTAssertEqual(SelectionBarAction.labelAs.title(flag: false), "Label as")
+        XCTAssertEqual(SelectionBarAction.moveTo.title(flag: false), "Move to…", "opens a picker")
+        XCTAssertEqual(SelectionBarAction.labelAs.title(flag: false), "Label as…", "opens a picker")
     }
 
     func testGlyphsAreTheOnesTheRowsAndToolbarAlreadyUse() {
@@ -132,7 +132,7 @@ final class SelectionBarTooltipTests: XCTestCase {
         XCTAssertEqual(SelectionBarAction.star.tooltip(flag: true, shortcut: "s"), "Star selected (s)")
         XCTAssertEqual(SelectionBarAction.toggleRead.tooltip(flag: true, shortcut: nil), "Mark as read")
         XCTAssertEqual(SelectionBarAction.reportSpam.tooltip(flag: false, shortcut: "!"), "Report spam (!)")
-        XCTAssertEqual(SelectionBarAction.labelAs.tooltip(flag: false, shortcut: "l"), "Label as (l)")
+        XCTAssertEqual(SelectionBarAction.labelAs.tooltip(flag: false, shortcut: "l"), "Label as… (l)")
         XCTAssertEqual(SelectionBarAction.moveToInbox.tooltip(flag: false, shortcut: nil), "Move to inbox")
     }
 }
@@ -348,13 +348,20 @@ final class SelectionBarLayoutTests: XCTestCase {
     }
 }
 
+/// Bulk "Label as". The hostless unit target does not compile `MailStore`,
+/// so these run the pure parts it is made of: `toggleLabel(ids:labelId:
+/// accountId:)` is `BulkLabel.targets` → `BulkLabel.Plan` → `mutateThreads(
+/// plan.changing, remote: plan.remote, local: plan.apply)`, its undo is
+/// `plan.undoRemote` / `plan.restore` on the same rows, and the picker's
+/// boxes are `BulkLabel.state` over the same `targets`.
 final class BulkLabelTests: XCTestCase {
-    private func thread(_ id: String, labels: String) -> MailThread {
+    private func thread(_ id: String, labels: String, account: String = "a@x.com",
+                        trash: Bool = false) -> MailThread {
         MailThread(
-            id: "a@x.com:\(id)", accountId: "a@x.com", gmailThreadId: id,
+            id: "\(account):\(id)", accountId: account, gmailThreadId: id,
             subject: "S", snippet: "sn", fromDisplay: "F",
             lastDate: Date(), isUnread: false, isStarred: false,
-            inInbox: true, inTrash: false,
+            inInbox: !trash, inTrash: trash,
             labelIds: labels, snoozeUntil: nil, participants: "F",
             messageCount: 1, hasAttachment: false, reminderAt: nil)
     }
@@ -369,5 +376,78 @@ final class BulkLabelTests: XCTestCase {
         XCTAssertFalse(BulkLabel.adds("L1", to: both), "on all: the click removes it from all")
         XCTAssertTrue(BulkLabel.adds("L1", to: one), "on some: the click adds it to the rest")
         XCTAssertTrue(BulkLabel.adds("L1", to: none))
+    }
+
+    /// Review finding: in the Trash, A (trashed, has X) and B (a Trash copy
+    /// of a live conversation, without X). The box and the click read the
+    /// same targets, B left out: the box says "all", and the click removes X
+    /// from A, as the box promised — never "mixed" with a remove.
+    func testBoxesAndClickShareTheTargetsWithoutTrashCopies() {
+        let a = thread("a", labels: "TRASH X", trash: true)
+        let b = thread("b", labels: "TRASH", trash: true)
+        let targets = BulkLabel.targets(ids: [a.id, b.id], in: [a, b], accountId: "a@x.com",
+                                        isPartlyTrashed: { $0.id == b.id })
+        XCTAssertEqual(targets.map(\.id), [a.id])
+        XCTAssertEqual(BulkLabel.state("X", in: targets), .all, "the box shows what the click acts on")
+        let plan = BulkLabel.Plan(labelId: "X", targets: targets)
+        XCTAssertFalse(plan.adds)
+        XCTAssertEqual(plan.changing.map(\.id), [a.id], "B is never written")
+    }
+
+    func testOnlyTheConversationsThatChangeAreSentAddOnly() {
+        let a = thread("a", labels: "INBOX X"), b = thread("b", labels: "INBOX"), c = thread("c", labels: "INBOX")
+        let plan = BulkLabel.Plan(labelId: "X", targets: [a, b, c])
+        XCTAssertTrue(plan.adds)
+        XCTAssertEqual(plan.changing.map(\.id), [b.id, c.id], "A already has it: not sent")
+        XCTAssertEqual(plan.remote, .modify(add: ["X"]), "add only, nothing removed")
+        XCTAssertEqual(plan.undoRemote, .modify(remove: ["X"]))
+    }
+
+    func testRemoveOnlyWhenAllHaveIt() {
+        let a = thread("a", labels: "INBOX X"), b = thread("b", labels: "INBOX X")
+        let plan = BulkLabel.Plan(labelId: "X", targets: [a, b])
+        XCTAssertFalse(plan.adds)
+        XCTAssertEqual(plan.changing.map(\.id), [a.id, b.id])
+        XCTAssertEqual(plan.remote, .modify(remove: ["X"]), "remove only, nothing added")
+        XCTAssertEqual(plan.undoRemote, .modify(add: ["X"]))
+    }
+
+    func testOtherAccountsAndRowsNoLongerListedAreLeftOut() {
+        let a = thread("a", labels: "INBOX"), b = thread("b", labels: "INBOX", account: "b@x.com")
+        let gone = thread("g", labels: "INBOX")
+        let ids = [a.id, b.id, gone.id]
+        let targets = BulkLabel.targets(ids: ids, in: [a, b], accountId: "a@x.com", isPartlyTrashed: { _ in false })
+        XCTAssertEqual(targets.map(\.id), [a.id], "another account's row and a row out of the list are left out")
+        XCTAssertEqual(BulkLabel.otherAccountCount(ids: ids, in: [a, b], accountId: "a@x.com"), 1)
+    }
+
+    /// The undo gives back the split as it was: the rows that had the label
+    /// keep it, the others lose it again.
+    func testUndoRestoresTheOriginalSplit() {
+        let a = thread("a", labels: "INBOX X"), b = thread("b", labels: "INBOX")
+        let plan = BulkLabel.Plan(labelId: "X", targets: [a, b])
+        var acted = plan.changing
+        for i in acted.indices { plan.apply(&acted[i]) }
+        XCTAssertTrue(acted.allSatisfy { $0.labels.contains("X") })
+        for i in acted.indices { plan.restore(&acted[i]) }
+        XCTAssertEqual(acted.map { $0.labels.contains("X") }, [false], "b loses it again")
+        XCTAssertTrue(a.labels.contains("X"), "a, never written, keeps it")
+
+        let all = [thread("a", labels: "INBOX X"), thread("b", labels: "INBOX X")]
+        let remove = BulkLabel.Plan(labelId: "X", targets: all)
+        var removed = remove.changing
+        for i in removed.indices { remove.apply(&removed[i]) }
+        XCTAssertFalse(removed.contains { $0.labels.contains("X") })
+        for i in removed.indices { remove.restore(&removed[i]) }
+        XCTAssertTrue(removed.allSatisfy { $0.labels.contains("X") })
+        XCTAssertEqual(remove.undoLabel(), "Label removed from 2 conversations")
+        XCTAssertEqual(plan.undoLabel(), "Label added to 1 conversation")
+    }
+
+    /// `l` over ticked rows opens the bulk picker on all of them (Gmail);
+    /// with none ticked, the focused conversation's picker.
+    func testLabelKeyOverTickedRows() {
+        XCTAssertEqual(BulkLabel.keyTargets(checkedInOrder: ["a", "b"]), ["a", "b"])
+        XCTAssertNil(BulkLabel.keyTargets(checkedInOrder: []))
     }
 }

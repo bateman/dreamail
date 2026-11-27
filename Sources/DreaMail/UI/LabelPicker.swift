@@ -56,7 +56,7 @@ struct LabelPicker: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12).padding(.top, 10)
                     HStack(spacing: 6) {
-                        TextField(placeholder, text: $picker.query)
+                        TextField(placeholder(bulkCount: bulk.count), text: $picker.query)
                             .textFieldStyle(.plain)
                             .font(.system(size: 15))
                             .focused($focused)
@@ -225,6 +225,11 @@ struct LabelPicker: View {
                         }
                     }
                 }
+            } else {
+                // Every conversation the picker was opened for left the list
+                // (a label change in a label view, a sync): close it rather
+                // than leave an empty dimmed backdrop.
+                Color.clear.onAppear { store.mailboxOverlay = nil }
             }
         }
     }
@@ -232,9 +237,11 @@ struct LabelPicker: View {
     private var title: String { picker.mode == .move ? "Move to:" : "Label as:" }
 
     /// "Move 5 conversations to…" when the move covers several.
-    private var placeholder: String {
+    /// `bulkCount`: the conversations a bulk label click acts on (live, on
+    /// the picker's account, no Trash copies).
+    private func placeholder(bulkCount: Int) -> String {
+        guard picker.mode == .move else { return bulkCount > 1 ? "Label \(bulkCount) conversations…" : "" }
         let n = picker.moveTargetIds.count
-        guard picker.mode == .move else { return n > 1 ? "Label \(n) conversations…" : "" }
         return n > 1 ? "Move \(n) conversations to…" : "Move to…"
     }
 

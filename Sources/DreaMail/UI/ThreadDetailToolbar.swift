@@ -315,9 +315,9 @@ struct ThreadDetailToolbar: ViewModifier {
                             Button {
                                 store.markSpam(thread)
                             } label: {
-                                Label("Mark as spam", systemImage: SelectionBarAction.reportSpamSymbol)
+                                Label("Report spam", systemImage: SelectionBarAction.reportSpamSymbol)
                             }
-                            .help("Mark as spam (\(store.keyBindings.displayKey(for: .markSpam)))")
+                            .help("Report spam (\(store.keyBindings.displayKey(for: .markSpam)))")
                             .disabled(store.isPartlyTrashedRow(thread))
                         }
                         // Report phishing deferred — public Gmail API has no

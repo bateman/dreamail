@@ -79,8 +79,9 @@ enum ThreadRowMenuItem: String, CaseIterable, Hashable {
 ///
 /// Right-clicking one of several checked rows acts on the checked set, as
 /// Gmail does: only the items with a bulk form are shown (Reply, Forward,
-/// Find emails from, Label as, Remind me, VIP and the link need one
-/// conversation), and their titles follow the bulk rules of the keys.
+/// Find emails from, Remind me, VIP and the link need one conversation;
+/// Label as works on the set, `BulkLabel`), and their titles follow the
+/// bulk rules of the keys.
 enum ThreadRowMenu {
     struct State: Equatable {
         var offersMoveToInbox = false
@@ -157,8 +158,7 @@ enum ThreadRowMenu {
         if !s.bulk && !s.draftOnly { out.append([.reply, .replyAll, .forward]) }
         out.append([s.offersMoveToInbox ? .moveToInbox : .archive, .delete,
                     s.isUnread ? .markRead : .markUnread, .snooze])
-        out.append(s.bulk ? [.moveTo, s.isMuted ? .unmute : .mute]
-                          : [.moveTo, .labelAs, s.isMuted ? .unmute : .mute])
+        out.append([.moveTo, .labelAs, s.isMuted ? .unmute : .mute])
         if !s.bulk && s.hasSenderAddress { out.append([.findFromSender]) }
         var own: [ThreadRowMenuItem] = [s.isStarred ? .unstar : .star]
         if !s.bulk {
