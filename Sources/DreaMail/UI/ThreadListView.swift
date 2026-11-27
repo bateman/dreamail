@@ -782,7 +782,7 @@ private struct ThreadListSections: View, Equatable {
             // As the keys: the newest *sent* message, never a draft.
             Button {
                 guard let msg = store.newestSentMessage(inThread: thread.id) else { return }
-                store.openCompose(ComposeRequest(replyTo: msg, replyAll: item == .replyAll,
+                store.openCompose(.init(replyTo: msg, replyAll: item == .replyAll,
                                                  forward: item == .forward))
             } label: { label }
         case .moveToInbox:
