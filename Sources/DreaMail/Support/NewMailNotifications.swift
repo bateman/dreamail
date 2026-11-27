@@ -27,6 +27,10 @@ struct NewMailNotifications {
         var inSocial: Bool
         var snoozeUntil: Date?
         var gmailSnoozed: Bool = false
+        /// A star pins a thread through an Inbox category hide (`CategoryHide`).
+        var isStarred: Bool = false
+        /// Space-separated Gmail label ids, for an Updates / Forums hide.
+        var labelIds: String = ""
     }
 
     /// False until the launch baseline (or the first sync pass, whichever
@@ -62,13 +66,24 @@ struct NewMailNotifications {
         return String(id[..<colon.lowerBound])
     }
 
-    /// Primary-tab unread only, awake. `unreadInboxCandidates` applies the
-    /// same filter in SQL to keep the read narrow; this is the rule of record.
+    /// Unread and awake in the Inbox, whatever its Gmail category.
+    /// `unreadInboxCandidates` narrows the read in SQL; this is the rule of
+    /// record. An Inbox category hide does not make a thread ineligible: it
+    /// only silences it (`isHidden`), so the thread is still recorded and
+    /// lifting the hide or starring it later does not replay old mail.
     static func isEligible(_ c: Candidate, now: Date) -> Bool {
-        guard c.isUnread, c.inInbox, !c.inTrash, !c.inSpam,
-              !c.inPromotions, !c.inSocial else { return false }
+        guard c.isUnread, c.inInbox, !c.inTrash, !c.inSpam else { return false }
         if let until = c.snoozeUntil, until > now { return false }
         return !c.gmailSnoozed
+    }
+
+    /// Whether the user's Inbox category hide (`hide`, empty by default)
+    /// keeps the thread out of the Inbox list: same rule as the list and its
+    /// unread badge (`SidebarCounts.isHiddenFromInbox`), a star pins through.
+    static func isHidden(_ c: Candidate, hide: Set<String>) -> Bool {
+        SidebarCounts.isHiddenFromInbox(
+            hide: hide, isStarred: c.isStarred, inPromotions: c.inPromotions,
+            inSocial: c.inSocial, labelIds: c.labelIds)
     }
 
     /// Adopts `current` as already known, so none of it notifies.
@@ -82,10 +97,13 @@ struct NewMailNotifications {
     /// Silent when: this is the first pass (it becomes the baseline), the
     /// thread is first seen and its mail is backlog (`quietBacklog`), demo
     /// mode, the thread has no inbound message (own sent mail), the inbound
-    /// date did not advance, or a blocked sender wrote in the thread. Silent
-    /// passes still record what they saw, so unblocking a sender or leaving
-    /// the demo does not replay old mail as new.
+    /// date did not advance, a blocked sender wrote in the thread, or the
+    /// user's Inbox category hide (`hide`) keeps it out of the Inbox list.
+    /// Silent passes still record what they saw, so unblocking a sender,
+    /// leaving the demo, lifting a hide or starring hidden mail does not
+    /// replay old mail as new.
     mutating func fresh(current: [Candidate], now: Date, demoMode: Bool,
+                        hide: Set<String> = [],
                         isBlocked: (String) -> Bool) -> [String] {
         guard isSeeded else {
             seed(current.filter { Self.isEligible($0, now: now) })
@@ -101,7 +119,8 @@ struct NewMailNotifications {
                let cutoff = backlogBefore[Self.accountId(ofThread: c.id)], inbound < cutoff {
                 continue
             }
-            if demoMode || Self.hasBlockedSender(c, isBlocked: isBlocked) { continue }
+            if demoMode || Self.hasBlockedSender(c, isBlocked: isBlocked)
+                || Self.isHidden(c, hide: hide) { continue }
             ids.append(c.id)
         }
         return ids
@@ -129,24 +148,22 @@ struct NewMailNotifications {
     /// pushes the projection into SQL, so SQLCipher only decrypts what the
     /// decision needs.
     static func unreadInboxCandidates(_ db: Database, now: Date) throws -> [Candidate] {
-        // Primary-tab unread only. Starred promo/social can appear in the
-        // inbox *list* (CategoryHide pin-through) but do not notify — a
-        // star is a list pin, not a reclassification into Primary.
-        // Match primary badge / inbox list: skip actively snoozed rows so
+        // Every unread Inbox thread, any category: the Inbox lists them all
+        // by default. An Inbox category hide only silences (`fresh`).
+        // Match inbox badge / inbox list: skip actively snoozed rows so
         // a sleeping unread does not notify or seed the baseline.
         try MailThread
             .filter(Column("isUnread") == true)
             .filter(Column("inInbox") == true)
             .filter(Column("inTrash") == false)
             .filter(Column("inSpam") == false)
-            .filter(Column("inPromotions") == false)
-            .filter(Column("inSocial") == false)
             .filter(Column("snoozeUntil") == nil || Column("snoozeUntil") <= now)
             .filter(Column("gmailSnoozed") == false)
             .select(Column("id"), Column("fromEmail"), Column("allFromEmails"),
                     Column("lastInboundDate"), Column("isUnread"), Column("inInbox"),
                     Column("inTrash"), Column("inSpam"), Column("inPromotions"),
-                    Column("inSocial"), Column("snoozeUntil"), Column("gmailSnoozed"))
+                    Column("inSocial"), Column("snoozeUntil"), Column("gmailSnoozed"),
+                    Column("isStarred"), Column("labelIds"))
             .asRequest(of: Candidate.self)
             .fetchAll(db)
     }

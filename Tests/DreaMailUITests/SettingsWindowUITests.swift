@@ -106,6 +106,9 @@ final class SettingsWindowUITests: XCTestCase {
             sidebar.scroll(byDeltaX: 0, deltaY: -300)
             tries += 1
         }
+        // The row can come into view after the last read: wait until its
+        // title has a frame, which is what is read below.
+        _ = waitUntil { self.titleHeight("Add view", in: app) != nil }
         let height = titleHeight("Add view", in: app)
         tries = 0
         while !element("sidebar.inbox", in: app).isHittable, tries < 15 {
