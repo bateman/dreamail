@@ -7,7 +7,7 @@ import XCTest
 final class ListSearchFieldUITests: XCTestCase {
     /// `paneHidden: nil` passes no `-readingPaneHidden`: a launch argument sits in
     /// the defaults' argument domain and overrides what the toggle writes.
-    private func launch(paneHidden: Bool?) -> XCUIApplication {
+    private func launch(paneHidden: Bool?, openStyle: String = "readingPane") -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
@@ -15,7 +15,7 @@ final class ListSearchFieldUITests: XCTestCase {
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
-                                "-threadOpenStyle", "readingPane"]
+                                "-threadOpenStyle", openStyle]
         if let paneHidden { app.launchArguments += ["-readingPaneHidden", paneHidden ? "YES" : "NO"] }
         app.terminate()
         app.launch()
@@ -54,24 +54,38 @@ final class ListSearchFieldUITests: XCTestCase {
             ?? app.windows.firstMatch.staticTexts[text]
     }
 
-    /// Prints the window toolbar's buttons and the field, and asserts there is
-    /// no overflow chevron, every button of the window group is there and
-    /// hittable, and the field is hittable.
-    private func assertToolbarIntact(_ app: XCUIApplication, _ when: String) {
+    private static var dumpedToolbar = false
+
+    /// What the toolbar really holds, and that it is all there. Asserted
+    /// positively: the field, the pane toggle and the focus button exist and
+    /// are hittable (so nothing was clipped into an overflow menu), also
+    /// "Search all of Gmail" while a search is committed, and Ask AI where the
+    /// build shows it. Prints the toolbar once and the field's width.
+    private func assertToolbarIntact(_ app: XCUIApplication, _ when: String, searching: Bool = false) {
         let box = element(app, "listSearchBox")
         XCTAssertTrue(box.waitForExistence(timeout: 5), "\(when): the field exists")
-        let buttons = app.toolbars.buttons.allElementsBoundByIndex
-            .filter { $0.exists && !$0.frame.isEmpty }
-            .map { ($0.label, $0.identifier, $0.frame) }
-        print("ListSearchField frames [\(when)]: window \(app.windows.firstMatch.frame), field \(box.frame), toolbar buttons \(buttons)")
-        let overflow = buttons.filter {
-            $0.0.localizedCaseInsensitiveContains("overflow") || $0.1.localizedCaseInsensitiveContains("overflow")
-                || $0.0 == "More" || $0.0.contains("»") || $0.0.localizedCaseInsensitiveContains("Show More")
+        if !Self.dumpedToolbar {
+            Self.dumpedToolbar = true
+            let all = app.toolbars.descendants(matching: .any).allElementsBoundByIndex
+                .filter { $0.exists }
+                .map { "\($0.elementType.rawValue)|\($0.identifier)|\($0.label)|\($0.frame)" }
+            print("ListSearchField toolbar dump: \(all)")
         }
-        XCTAssertTrue(overflow.isEmpty, "\(when): no overflow chevron in the toolbar (\(overflow))")
+        let window = app.windows.firstMatch
+        print("ListSearchField [\(when)]: window \(window.frame), field \(box.frame) (width \(box.frame.width))")
         XCTAssertTrue(box.isHittable, "\(when): the field is hittable (\(box.frame))")
-        XCTAssertTrue(buttons.contains { $0.0.hasSuffix("Reading Pane") }, "\(when): the pane toggle is in the toolbar")
-        XCTAssertTrue(buttons.contains { $0.0.contains("Conversation") || $0.0.contains("Focus") }, "\(when): the focus button is in the toolbar")
+        XCTAssertGreaterThanOrEqual(box.frame.width, ListHeaderMetrics.minWidth - 1,
+                                    "\(when): the field is at least its minimum (\(box.frame))")
+        let toggle = app.toolbars.buttons.matching(NSPredicate(format: "label ENDSWITH 'Reading Pane'")).firstMatch
+        XCTAssertTrue(toggle.exists && toggle.isHittable, "\(when): the pane toggle is in the toolbar and hittable")
+        let focus = app.toolbars.buttons.matching(NSPredicate(format: "label == 'Focus Conversation' OR label == 'Exit Focus'")).firstMatch
+        XCTAssertTrue(focus.exists && focus.isHittable, "\(when): the focus button is in the toolbar and hittable")
+        if searching {
+            let all = app.toolbars.buttons.matching(NSPredicate(format: "label CONTAINS 'Search all of Gmail' OR label CONTAINS 'Searching'")).firstMatch
+            XCTAssertTrue(all.exists && all.isHittable, "\(when): \"Search all of Gmail\" is in the toolbar and hittable")
+        }
+        let askAI = app.toolbars.buttons["Ask AI"]
+        if askAI.exists { XCTAssertTrue(askAI.isHittable, "\(when): Ask AI is hittable") }
     }
 
     /// The field against the LIST COLUMN (its rows' x range), the title and the sidebar.
@@ -116,15 +130,28 @@ final class ListSearchFieldUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }
 
-    /// Drags the window's bottom-right corner far to the left: the window
-    /// stops at its minimum size.
-    private func shrinkToMinimum(_ app: XCUIApplication) {
+    /// Drags the window's bottom-right corner by `dx`: far to the left the
+    /// window stops at its minimum size; to the right it grows.
+    private func dragCorner(_ app: XCUIApplication, dx: CGFloat) {
         let window = app.windows.firstMatch
         let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -2, dy: -2))
-        let target = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -700, dy: -300))
+        let target = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: dx, dy: -2))
         corner.press(forDuration: 0.2, thenDragTo: target)
+    }
+
+    private func shrinkToMinimum(_ app: XCUIApplication) {
+        let window = app.windows.firstMatch
+        dragCorner(app, dx: -700)
         XCTAssertTrue(waitUntil(timeout: 8) { window.frame.width <= 970 },
                       "the window shrank to its minimum width (now \(window.frame))")
+    }
+
+    /// Widens the window past the three-pane threshold (1080 pt).
+    private func widen(_ app: XCUIApplication) {
+        let window = app.windows.firstMatch
+        dragCorner(app, dx: 500)
+        XCTAssertTrue(waitUntil(timeout: 8) { window.frame.width >= 1100 },
+                      "the window grew to a three-pane width (now \(window.frame))")
     }
 
     func testFieldInTheListBar_paneOpen() {
@@ -172,7 +199,7 @@ final class ListSearchFieldUITests: XCTestCase {
         app.typeText("zzzznomatch")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(waitUntil { !self.element(app, "threadRow.you@example.com:t3").exists }, "the search is committed")
-        assertToolbarIntact(app, "minimum window, searching")
+        assertToolbarIntact(app, "minimum window, searching", searching: true)
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }
 
@@ -200,14 +227,15 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(t3.waitForExistence(timeout: 5), "Esc restores the full list")
     }
 
-    /// Compact layout (the default window is narrower than three panes): with a
-    /// conversation open there is no list, `/` goes back to it and focuses.
-    func testSlashFromAConversationInTheCompactLayout() throws {
+    /// Compact layout (below 1080 pt; the window is shrunk to its minimum so
+    /// the test always runs it): with a conversation open there is no list,
+    /// `/` goes back to it and focuses (the pending focus on mount).
+    func testSlashFromAConversationInTheCompactLayout() {
         let app = launch(paneHidden: false)
         let t3 = element(app, "threadRow.you@example.com:t3")
         XCTAssertTrue(t3.waitForExistence(timeout: 10))
-        try XCTSkipIf(app.windows.firstMatch.frame.width >= 1080,
-                      "window is wide enough for three panes: no compact layout here")
+        shrinkToMinimum(app)
+        XCTAssertTrue(t3.waitForExistence(timeout: 5))
         t3.click()
         XCTAssertTrue(app.buttons["compactBackButton"].waitForExistence(timeout: 5), "a conversation is open")
         XCTAssertFalse(element(app, "listSearchBox").exists, "no field beside an open conversation")
@@ -215,6 +243,53 @@ final class ListSearchFieldUITests: XCTestCase {
         let field = element(app, "listSearchBox")
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the list is back")
         XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focused the field")
+    }
+
+    /// Three panes (window widened past 1080 pt): the list is the middle
+    /// column. A click focuses the field, the panel opens inside the column,
+    /// and no toolbar item is missing.
+    func testFieldInThreePanes() {
+        let app = launch(paneHidden: false)
+        let t3 = element(app, "threadRow.you@example.com:t3")
+        XCTAssertTrue(t3.waitForExistence(timeout: 10))
+        widen(app)
+        XCTAssertTrue(t3.waitForExistence(timeout: 5))
+        assertToolbarIntact(app, "three panes")
+        let column = t3.frame
+        let box = element(app, "listSearchBox").frame
+        XCTAssertGreaterThanOrEqual(box.minX, column.minX, "the field is not left of the list column")
+        XCTAssertLessThanOrEqual(box.maxX, column.maxX + 24, "the field is in the middle column, not past it (field \(box), column \(column))")
+        let text = textField(app)
+        text.click()
+        XCTAssertTrue(waitUntil { self.hasFocus(text) }, "three panes: a click focuses the field")
+        app.typeText("zzzznomatch")
+        let panel = element(app, "searchResultsPanel")
+        XCTAssertTrue(panel.waitForExistence(timeout: 5), "the panel opens")
+        print("ListSearchField three panes: column \(column), field \(box), panel \(panel.frame)")
+        XCTAssertGreaterThanOrEqual(panel.frame.minX, column.minX - 1, "the panel is inside the column")
+        XCTAssertLessThanOrEqual(panel.frame.maxX, column.maxX + 24, "the panel is inside the column")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+    }
+
+    /// A conversation filling the window (full-window style) or floating over
+    /// the list (centre peek): `/` leaves it and focuses the field, as it does
+    /// in the compact layout; the field does not take focus behind the peek.
+    func testSlashFromAFullWindowConversationAndAPeek() {
+        for style in ["fullWindow", "centerPeek"] {
+            let app = launch(paneHidden: nil, openStyle: style)
+            let t3 = element(app, "threadRow.you@example.com:t3")
+            XCTAssertTrue(t3.waitForExistence(timeout: 10), "\(style): the list")
+            t3.click()
+            XCTAssertTrue(app.buttons["exitFocusButton"].waitForExistence(timeout: 5), "\(style): a conversation fills the window")
+            if style == "centerPeek" {
+                XCTAssertFalse(textField(app).isEnabled, "centerPeek: the field behind the card is disabled")
+            }
+            app.typeKey("/", modifierFlags: [])
+            XCTAssertTrue(waitUntil { !app.buttons["exitFocusButton"].exists }, "\(style): / left the conversation")
+            XCTAssertTrue(element(app, "listSearchBox").waitForExistence(timeout: 5), "\(style): the list is back")
+            XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "\(style): / focused the field")
+            app.terminate()
+        }
     }
 
     func testNoDoubleChevronAndPaneToggleStillWorks() {

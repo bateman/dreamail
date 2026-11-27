@@ -94,14 +94,17 @@ struct ContentView: View {
     }
 
     /// Gmail's `/` (and the strip's search icon): focus the search field in
-    /// the list column's top bar. With a conversation open in the compact
-    /// layout the list is not on screen — go back to it first.
+    /// the list column's toolbar. It always reaches search: with a
+    /// conversation filling the window (full-window style, centre peek) or
+    /// open in the compact layout there is no list to focus, so the
+    /// conversation is left first, as Esc does, and the field focuses when the
+    /// list mounts (`searchFocusPending`).
     private func revealSearch() {
-        // No list on screen in a full-window conversation: nothing to focus.
-        guard layoutMode != .threadFocus else { return }
-        // Compact layout with a conversation open: back to the list first;
-        // the field focuses when the list mounts (`searchFocusPending`).
-        if layoutMode == .compactDetail { store.clearSelection() }
+        if store.threadFocusMode {
+            store.threadFocusMode = false
+        } else if layoutMode == .compactDetail {
+            store.clearSelection()
+        }
         store.focusSearch()
     }
 

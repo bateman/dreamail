@@ -212,8 +212,8 @@ final class MailStore {
     /// The query the thread list is actually filtered by. Set when a search
     /// is committed (Enter / View all results / picking a suggestion).
     var committedSearch: String = ""
-    /// Bumped by `/` (Gmail-style) to move keyboard focus into the sidebar
-    /// search field. The list column's top-bar field watches this and drives its `@FocusState`.
+    /// Bumped by `/` (Gmail-style) to move keyboard focus into the search
+    /// field. The list column's toolbar field watches this and drives its `@FocusState`.
     var searchFocusToken = 0
     /// A focus request the field has not yet honoured (see `focusSearch`).
     var searchFocusPending = false

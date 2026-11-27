@@ -9,8 +9,11 @@ import SwiftUI
 /// icon strip's search button focus it via `store.searchFocusToken` /
 /// `searchFocusPending`.
 ///
-/// The item is flexible (`ListHeaderLayout`: ideal 260 pt, minimum 140 pt), so
-/// the system narrows the field before it would overflow anything.
+/// The item is flexible (`ListHeaderLayout`: ideal 260 pt, 140-380 pt).
+/// `ListSearchFieldUITests` measures its width and the toolbar's items at the
+/// window's minimum size. While a conversation fills the window (full-window
+/// style, centre peek) the field is disabled: it must not take focus behind
+/// the peek's card (`/` leaves the conversation first).
 struct ListSearchToolbar: ViewModifier {
     @Environment(MailStore.self) private var store
     @FocusState private var searchFocused: Bool
@@ -32,6 +35,7 @@ struct ListSearchToolbar: ViewModifier {
                     .frame(minWidth: ListHeaderLayout.fieldMinWidth,
                            idealWidth: ListHeaderLayout.fieldIdealWidth,
                            maxWidth: ListHeaderLayout.fieldMaxWidth)
+                    .disabled(store.threadFocusMode)
                     .help("Search — from: to: subject: label: has:attachment is:unread is:starred after: before:")
                     // One element for the whole field box (its children keep their own).
                     .accessibilityElement(children: .contain)
