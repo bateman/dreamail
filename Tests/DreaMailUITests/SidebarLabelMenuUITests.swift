@@ -270,4 +270,29 @@ final class SidebarLabelMenuUITests: XCTestCase {
             format: "label == 'Vendors' OR identifier == 'Vendors'")).count, 1,
                        "the parent's name appears once")
     }
+
+    /// The color sheet states what is stored: the demo's Work label has
+    /// Gmail color #6E56CF, which is not one of the 64 swatches, so the line
+    /// says so and no swatch is checked.
+    func testColorSheetShowsTheStoredColorAndNoSwatchForAnOffGridOne() {
+        let app = launch()
+        let work = label("Label_work", in: app)
+        XCTAssertTrue(work.waitForExistence(timeout: 10))
+        work.rightClick()
+        let color = menuItem("labelMenu.color", "Label color", in: app)
+        XCTAssertTrue(color.waitForExistence(timeout: 5))
+        color.hover()
+        let choose = menuItem("labelMenu.color.choose", "Choose color…", in: app)
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        choose.click()
+        let current = element("labelColor.current.gmail", in: app)
+        XCTAssertTrue(current.waitForExistence(timeout: 5), "the sheet has a Current line")
+        XCTAssertEqual(current.label, "Current: #6e56cf (not in this palette)")
+        let swatches = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'labelColor.gmail.'"))
+        XCTAssertGreaterThan(swatches.count, 0, "the grid is there")
+        for i in 0..<swatches.count {
+            XCTAssertFalse(swatches.element(boundBy: i).isSelected, "no swatch is checked for an off-grid color")
+        }
+        XCTAssertEqual(element("labelColor.current.mac", in: app).label, "Current: none")
+    }
 }
