@@ -5,6 +5,11 @@ import Foundation
 protocol GmailThreadEditing: Sendable {
     func modifyThread(id: String, add: [String], remove: [String]) async throws
     func trashThread(id: String) async throws
+    /// `messages.batchModify` on exactly `ids`: labels only, never a delete.
+    func modifyMessages(ids: [String], add: [String], remove: [String]) async throws
+    /// `messages/{id}/modify` on one message; Gmail answers 404 for an id
+    /// it no longer has.
+    func modifyMessage(id: String, add: [String], remove: [String]) async throws
 }
 
 extension GmailClient: GmailThreadEditing {}
@@ -19,7 +24,44 @@ enum RemoteThreadSend {
             try await client.modifyThread(id: gmailThreadId, add: add, remove: remove)
         case .trash:
             try await client.trashThread(id: gmailThreadId)
+        case .modifyMessages(let ids, let add, let remove):
+            guard !ids.isEmpty, !(add.isEmpty && remove.isEmpty) else { return }
+            do {
+                try await client.modifyMessages(ids: ids, add: add, remove: remove)
+            } catch let error where isRejectedId(error) {
+                // One id Gmail no longer has can fail the whole batch: the
+                // others still need the change. One by one, skipping the
+                // ones that are gone (404). Any other refusal (a 400 for a
+                // label deleted elsewhere, say) does not stop the others;
+                // the last one reaches the caller, also for a batch of one.
+                var refusal: Error?
+                for id in ids {
+                    do {
+                        try await client.modifyMessage(id: id, add: add, remove: remove)
+                    } catch let error where isNotFound(error) {
+                        continue
+                    } catch {
+                        refusal = error
+                    }
+                }
+                if let refusal { throw refusal }
+            }
+        case .sequence(let steps):
+            for step in steps {
+                try await send(step, via: client, gmailThreadId: gmailThreadId)
+            }
         }
+    }
+
+    /// A batch Gmail refused for its ids (400 or 404), not for the account.
+    static func isRejectedId(_ error: Error) -> Bool {
+        guard case GmailError.http(let code, _) = error else { return false }
+        return code == 400 || code == 404
+    }
+
+    static func isNotFound(_ error: Error) -> Bool {
+        guard case GmailError.http(404, _) = error else { return false }
+        return true
     }
 
     enum FailureDisposition: Equatable {

@@ -93,6 +93,31 @@ enum ThreadUndo {
         }
     }
 
+    /// A thread's messages just before a trash (Gmail ids, drafts left out).
+    struct TrashState: Equatable, Sendable {
+        var liveIds: [String]
+        var trashedIds: [String]
+    }
+
+    /// Undo of a trash. `threads.trash` reaches every message Gmail holds,
+    /// including ones this Mac does not store (pruned by date, or arrived
+    /// after the last sync), so the undo always un-trashes the whole
+    /// thread: no mail the trash reached can stay behind in Gmail's Trash.
+    /// When the thread already had trashed messages, those are put back in
+    /// the trash afterwards (deleted earlier: they stay deleted).
+    /// - Nothing trashed before, or unknown state (nil): the thread-level
+    ///   un-trash alone, as before.
+    /// - A conversation entirely in the trash is never trashed again
+    ///   (`MailStore.trash`), so there is no undo for it to get wrong.
+    /// Queued with a trash not sent yet, the pair folds so the trash is
+    /// never sent (`RemoteThreadChange.merged`).
+    static func undoTrashRemote(wasInInbox: Bool, before: TrashState?) -> RemoteThreadChange {
+        let untrash = undoRemote(.trash, wasInInbox: wasInInbox)
+        guard let before, !before.trashedIds.isEmpty else { return untrash }
+        let inbox = wasInInbox ? ["INBOX"] : []
+        return .sequence([untrash, .modifyMessages(ids: before.trashedIds, add: ["TRASH"], remove: inbox)])
+    }
+
     /// Gmail side of the undo. Can be empty (archive or snooze of a thread
     /// that had no INBOX): the caller must not send an empty modify.
     static func undoRemote(_ action: Action, wasInInbox: Bool) -> RemoteThreadChange {

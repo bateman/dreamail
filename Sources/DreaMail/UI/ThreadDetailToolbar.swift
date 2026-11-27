@@ -167,6 +167,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Label("Archive", systemImage: "archivebox")
                     }
                     .help("Archive (\(store.keyBindings.displayKey(for: .archive)))")
+                    .disabled(store.isPartlyTrashedRow(thread))
                     Button { store.toggleStar(thread) } label: {
                         Label(thread.isStarred ? "Unstar" : "Star",
                               systemImage: thread.isStarred ? "star.fill" : "star")
@@ -175,6 +176,7 @@ struct ThreadDetailToolbar: ViewModifier {
                     .help(thread.isStarred
                           ? "Unstar (\(store.keyBindings.displayKey(for: .toggleStar)))"
                           : "Star (\(store.keyBindings.displayKey(for: .toggleStar)))")
+                    .disabled(store.isPartlyTrashedRow(thread))
                     Button { store.openLabelPicker() } label: {
                         Label("Label", systemImage: "tag")
                     }
@@ -183,6 +185,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Label("Trash", systemImage: "trash")
                     }
                     .help("Move to Trash (\(store.keyBindings.displayKey(for: .trash)))")
+                    .disabled(thread.inTrash || store.isPartlyTrashedRow(thread))
                     // Reply/forward target the newest *sent* message — never a draft
                     // (shared ForwardComposer.newestSentMessage; drafts open via
                     // Continue / editDraft, not Reply).
@@ -258,11 +261,13 @@ struct ThreadDetailToolbar: ViewModifier {
                                   systemImage: thread.isUnread
                                     ? "envelope.open" : "envelope.badge")
                         }
+                        .disabled(store.isPartlyTrashedRow(thread))
                         Button {
                             store.mailboxOverlay = .snoozeThread(thread)
                         } label: {
                             Label("Snooze", systemImage: "clock")
                         }
+                        .disabled(store.isPartlyTrashedRow(thread))
                         Button {
                             store.toggleMuteTargets(thread)
                         } label: {
@@ -270,6 +275,7 @@ struct ThreadDetailToolbar: ViewModifier {
                                   systemImage: thread.isMuted ? "bell" : "bell.slash")
                         }
                         .help("\(thread.isMuted ? "Unmute" : "Mute") (\(store.keyBindings.displayKey(for: .mute)))")
+                        .disabled(store.isPartlyTrashedRow(thread))
                         Button {
                             store.setImportantTargets(!thread.isImportant, thread: thread)
                         } label: {
@@ -279,6 +285,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         .help(thread.isImportant
                               ? "Mark as not important (\(store.keyBindings.displayKey(for: .markNotImportant)))"
                               : "Mark as important (\(store.keyBindings.displayKey(for: .markImportant)))")
+                              .disabled(store.isPartlyTrashedRow(thread))
                         Button {
                             store.openMovePicker(thread: thread)
                         } label: {
@@ -293,6 +300,7 @@ struct ThreadDetailToolbar: ViewModifier {
                                 Label("Not spam", systemImage: "tray")
                             }
                             .help("Not spam (\(store.keyBindings.displayKey(for: .markSpam)))")
+                            .disabled(store.isPartlyTrashedRow(thread))
                         } else {
                             Button {
                                 store.markSpam(thread)
@@ -300,6 +308,7 @@ struct ThreadDetailToolbar: ViewModifier {
                                 Label("Mark as spam", systemImage: "exclamationmark.octagon")
                             }
                             .help("Mark as spam (\(store.keyBindings.displayKey(for: .markSpam)))")
+                            .disabled(store.isPartlyTrashedRow(thread))
                         }
                         // Report phishing deferred — public Gmail API has no
                         // phishing endpoint (other clients may soft-map to spam). See

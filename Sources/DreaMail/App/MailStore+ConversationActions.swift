@@ -18,7 +18,9 @@ extension MailStore {
     /// `m`: mute (unmute when every target is already muted). `thread`: the
     /// conversation toolbar's own thread instead of the key's targets.
     func toggleMuteTargets(_ thread: MailThread? = nil) {
-        let targets = thread.map { [$0] } ?? actionTargets
+        let all = thread.map { [$0] } ?? actionTargets
+        guard !refusesPartlyTrashed(all) else { return }
+        let targets = all.filter { !isPartlyTrashedRow($0) }
         guard !targets.isEmpty else { return }
         let action = ConversationAction.muteToggle(for: targets)
         let n = targets.count
@@ -33,8 +35,9 @@ extension MailStore {
 
     /// `+` / `=` and `-`, with an undo toast as in Gmail.
     func setImportantTargets(_ important: Bool, thread: MailThread? = nil) {
-        let targets = (thread.map { [$0] } ?? actionTargets)
-            .filter { $0.isImportant != important }
+        let all = thread.map { [$0] } ?? actionTargets
+        guard !refusesPartlyTrashed(all) else { return }
+        let targets = all.filter { $0.isImportant != important && !isPartlyTrashedRow($0) }
         guard !targets.isEmpty else { return }
         if !important {
             // Under Priority "starred + important" the rows can leave the
@@ -81,7 +84,28 @@ extension MailStore {
     func moveThreads(ids: [String], toLabel labelId: String, accountId: String) {
         mailboxOverlay = nil
         let byId = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let all = ids.compactMap { byId[$0] }
+        var all = ids.compactMap { byId[$0] }
+        // A Trash row of a conversation that is otherwise live gives back
+        // only its trashed messages; the rest of it is not touched.
+        do {
+            let partial = all.filter {
+                isPartlyTrashedRow($0) && $0.accountId == accountId
+            }
+            if !partial.isEmpty {
+                restoreTrashedMessages(partial, toLabel: labelId)
+                let partialIds = Set(partial.map(\.id))
+                all.removeAll { partialIds.contains($0.id) }
+                if all.isEmpty {
+                    // Only Trash copies: say what was done, as a move does.
+                    // No undo: a restore has none.
+                    let name = labelName(labelId, account: accountId) ?? "label"
+                    if !checkedThreadIds.isEmpty { clearCheckedThreads() }
+                    showNotice(partial.count == 1 ? "Moved to \(name)"
+                                                  : "Moved \(partial.count) to \(name)")
+                    return
+                }
+            }
+        }
         let plan = ConversationActionRun(
             .moveTo(labelId: labelId, alsoRemove: MoveSource.alsoRemove(
                 labelViewId: currentLabelViewId(account: accountId),
@@ -148,21 +172,27 @@ extension MailStore {
 
     private func run(_ plan: ConversationActionRun, bulk: Bool,
                      autoAdvance: String?, undoLabel: String?) {
-        guard !plan.targets.isEmpty else { return }
+        // A Trash row of an otherwise live conversation takes no thread-wide
+        // action: say so, and offer no undo for what was not done.
+        let targets = plan.targets.filter { !isPartlyTrashedRow($0) }
+        guard !targets.isEmpty else {
+            if !plan.targets.isEmpty { showNotice(Self.partlyTrashedNotice) }
+            return
+        }
         let action = plan.action
         let focus = selectedThreadId
         let acted: [MailThread]
         if bulk {
-            acted = mutateThreads(plan.targets, autoAdvanceAction: autoAdvance,
+            acted = mutateThreads(targets, autoAdvanceAction: autoAdvance,
                                   remote: action.remote, local: { action.apply(&$0) })
             clearCheckedThreads()
         } else {
-            acted = [mutateThread(plan.targets[0], autoAdvanceAction: autoAdvance,
+            acted = [mutateThread(targets[0], autoAdvanceAction: autoAdvance,
                                   remote: action.remote) { action.apply(&$0) }]
         }
         guard let undoLabel else { return }
-        let ids = plan.targets.map(\.id)
-        let groups = action.undoGroups(acted: acted, originals: plan.targets)
+        let ids = targets.map(\.id)
+        let groups = action.undoGroups(acted: acted, originals: targets)
         offerUndo(undoLabel) { [weak self] in
             guard let self else { return }
             self.pinReadStateKeep(ids)
