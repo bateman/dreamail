@@ -3,6 +3,7 @@ import AppKit
 
 extension AccountRailPalette {
     static let background = Color(nsColor: .adaptive(light: backgroundLight, dark: backgroundDark))
+    static let collapsedBand = Color(nsColor: .adaptive(light: collapsedBandLight, dark: collapsedBandDark))
     static let glyph = Color(nsColor: .adaptive(light: glyphLight, dark: glyphDark))
     static let idleRing = Color(nsColor: .adaptive(light: idleRingLight, dark: idleRingDark))
 }
@@ -216,7 +217,9 @@ struct AccountRailTopBand: View {
             stripVisible: stripVisible)
         GeometryReader { proxy in
             let top = proxy.safeAreaInsets.top
-            AccountRailPalette.background
+            // Collapsed: the colour right of the band's edge, so the toggle
+            // does not straddle two colours (see `collapsedBandLight`).
+            (stripVisible && !sidebarVisible ? AccountRailPalette.collapsedBand : AccountRailPalette.background)
                 .frame(width: width, height: top)
                 .offset(y: -top)
                 // Only the UI test looks the band up, by frame.

@@ -13,6 +13,13 @@ final class AccountRailPaletteTests: XCTestCase {
         XCTAssertLessThan(dark.luminance, sidebarDark.luminance)
     }
 
+    func testCollapsedBandMatchesTheContentLeftOfTheListInLightOnly() {
+        // Light: the content colour (white), so the toggle on the band's
+        // edge sits on one colour. Dark: unchanged, the rail colour.
+        XCTAssertEqual(AccountRailPalette.collapsedBandLight, 0xFFFFFF)
+        XCTAssertEqual(AccountRailPalette.collapsedBandDark, AccountRailPalette.backgroundDark)
+    }
+
     func testGlyphsAreReadableOnTheRail() {
         XCTAssertGreaterThanOrEqual(
             LabelRGB(hex: AccountRailPalette.glyphLight)
