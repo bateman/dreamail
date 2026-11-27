@@ -2121,7 +2121,7 @@ actor SyncEngine {
         return nil
     }
 
-    /// Tab placement for Promotions / Social (Primary inbox hides both).
+    /// Tab placement for the Promotions / Social rows (and an Inbox hide of them).
     ///
     /// Uses the **newest message that currently has INBOX**. Gmail keeps
     /// `CATEGORY_PROMOTIONS` on old no-reply invites after a human reply

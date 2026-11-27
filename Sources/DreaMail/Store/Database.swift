@@ -42,7 +42,7 @@ struct MailThread: Codable, Identifiable, Hashable, FetchableRecord, Persistable
     // for common mailbox filters (Sent, Drafts, Promotions, Social).
     var inSent: Bool = false
     var inDrafts: Bool = false
-    /// Tab placement for Promotions (Primary inbox hides this). Set from the
+    /// Tab placement for the Promotions row (and an Inbox hide). Set from the
     /// newest *INBOX-bearing* message at derive time — not from the union of
     /// `labelIds`, which keeps historical CATEGORY_PROMOTIONS on old invites.
     var inPromotions: Bool = false
@@ -2290,7 +2290,9 @@ final class AppDatabase: @unchecked Sendable {
         // full-table SUM(CASE) badge SQL. These partials make each count scan
         // only matching rows (unread inbox, starred, drafts, …).
         m.registerMigration("v21") { db in
-            // Primary inbox unread (+ dock badge same predicate).
+            // Primary inbox unread, the count before category mail joined the
+            // Inbox. No count query matches it any more; drop in a later
+            // migration.
             try db.execute(sql: """
                 CREATE INDEX thread_unread_primary_inbox
                 ON thread(accountId)
