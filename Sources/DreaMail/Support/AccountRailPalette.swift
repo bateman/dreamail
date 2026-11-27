@@ -10,14 +10,6 @@ import CoreGraphics
 enum AccountRailPalette {
     static let backgroundLight: UInt32 = 0xE4E5E8
     static let backgroundDark: UInt32 = 0x1A1D23
-    /// The top band while the sidebar is collapsed to the icon strip. The
-    /// system sidebar toggle sits right of the window buttons and the band's
-    /// right edge (rail + strip) runs through it, so the band takes the
-    /// colour of what is right of that edge (`Color.mailContent`: FFFFFF in
-    /// light) and the toggle has one background. Dark keeps the rail colour
-    /// (the content, 191919, is nearly the same; no change there).
-    static let collapsedBandLight: UInt32 = 0xFFFFFF
-    static let collapsedBandDark: UInt32 = backgroundDark
     /// Gear and other rail glyphs, and the selection ring of "All accounts".
     static let glyphLight: UInt32 = 0x3C4049
     static let glyphDark: UInt32 = 0xD3D6DC
