@@ -9,9 +9,6 @@ import XCTest
 /// also spans the row's frame.
 final class SidebarSingleSelectionUITests: XCTestCase {
 
-    private static let rows = ["inbox", "starred", "snoozed", "sent", "drafts", "more",
-                               "promotions", "social", "updates", "forums", "spam"]
-
     func testOneBandFollowsTheSelectedView() throws {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
@@ -67,6 +64,15 @@ final class SidebarSingleSelectionUITests: XCTestCase {
         row("more").click()
         XCTAssertTrue(waitForAbsence(row("promotions")))
         expect(only: nil, in: main, "More closed over Promotions")
+
+        // A row of every kind: a system row above More, a label.
+        row("trash").exists ? () : row("more").click()
+        for id in ["important", "allMail", "trash", "label.you@example.com.Label_research"] {
+            let target = row(id)
+            guard target.waitForExistence(timeout: 3) else { continue }
+            target.click()
+            expect(only: id, in: main, "click on \(id)")
+        }
     }
 
     // MARK: - Pixels
@@ -97,14 +103,16 @@ final class SidebarSingleSelectionUITests: XCTestCase {
         }
     }
 
-    /// The listed rows that show a band, and each band's vertical extent
-    /// (screen points), read at 3 pt inside the sidebar content's leading edge.
+    /// Every sidebar row on screen (system rows, labels, nested labels, saved
+    /// views) that shows a selected look: an accent pixel at one of four points
+    /// inside the row's own band (just inside both edges and 14 pt in, where
+    /// AppKit's rounded capsule would be), and each such row's vertical extent.
     private func bands(in window: XCUIElement) -> ([String], [String: (Double, Double)]) {
         let image = window.screenshot().image
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return ([], [:]) }
         let frame = window.frame
         let scale = Double(cg.width) / Double(frame.width)
-        let band = window.descendants(matching: .any)
+        let area = window.descendants(matching: .any)
             .matching(identifier: "sidebarSelectionBand").firstMatch.frame
         let width = cg.width, height = cg.height
         var data = [UInt8](repeating: 0, count: width * height * 4)
@@ -119,22 +127,28 @@ final class SidebarSingleSelectionUITests: XCTestCase {
             let i = (y * width + x) * 4
             return max(data[i], data[i + 1], data[i + 2]) - min(data[i], data[i + 1], data[i + 2]) > 60
         }
-        let x = Int(((band.minX - frame.minX + 3) * scale).rounded())
+        func px(_ x: Double) -> Int { Int(((x - frame.minX) * scale).rounded()) }
+        let xs = [px(area.minX + 3), px(area.minX + 14), px(area.maxX - 14), px(area.maxX - 3)]
+        let rows = window.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'sidebar.'")).allElementsBoundByIndex
         var drawn: [String] = []
         var spans: [String: (Double, Double)] = [:]
-        for id in Self.rows {
-            let element = window.descendants(matching: .any)
-                .matching(identifier: "sidebar.\(id)").firstMatch
-            guard element.exists else { continue }
+        for element in rows where element.exists {
+            let id = element.identifier
+            if id == "sidebar.more" || id == "sidebar.labels.add" { continue }
             let f = element.frame
+            guard f.height > 8, f.minY >= area.minY, f.maxY <= area.maxY,
+                  f.midX > area.minX, f.midX < area.maxX else { continue }
             let midY = Int(((f.midY - frame.minY) * scale).rounded())
-            guard isAccent(x, midY) else { continue }
+            guard let x = xs.first(where: { isAccent($0, midY) }) else { continue }
             var top = midY, bottom = midY
             while isAccent(x, top - 1) { top -= 1 }
             while isAccent(x, bottom + 1) { bottom += 1 }
-            drawn.append(id)
-            spans[id] = (Double(top) / scale + Double(frame.minY), Double(bottom + 1) / scale + Double(frame.minY))
+            let short = String(id.dropFirst("sidebar.".count))
+            drawn.append(short)
+            spans[short] = (Double(top) / scale + Double(frame.minY),
+                            Double(bottom + 1) / scale + Double(frame.minY))
         }
-        return (drawn, spans)
+        return (drawn.sorted(), spans)
     }
 }
