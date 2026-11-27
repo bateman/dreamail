@@ -151,38 +151,162 @@ final class CategoryRowsTests: XCTestCase {
         try q.read { Set(try request.fetchAll($0).map(\.id)) }
     }
 
-    func testInboxListAndUnreadCountsDoNotDependOnTheSetting() throws {
-        let q = try makeDB()
-        func snapshot(off: Set<String>) throws -> (Set<String>, Int, [String: Int], Int) {
-            let hide = CategoryRows.scoped(FilterChips.initial(for: .inbox, store: store).category,
-                                           shown: false).hide
-            let list = try ids(q, CategoryHide.apply(ThreadListQuery.inbox(), hide: hide))
-            let (counts, badge) = try q.read {
-                try SidebarCounts.fetch(db: $0, activeAccount: nil, badgeAccount: nil,
-                                        hideCategories: hide, categoryRowsOff: off)
-            }
-            let perAccount = try q.read {
-                try SidebarCounts.fetchUnreadByAccount(db: $0, hideCategories: hide)
-            }
-            return (list, counts["inbox"] ?? -1, perAccount, badge)
-        }
-        let on = try snapshot(off: [])
-        let off = try snapshot(off: [a])
-        XCTAssertEqual(on.0.count, 6, "every Inbox conversation, any category")
-        XCTAssertEqual(on.0, off.0)
-        XCTAssertEqual(on.1, off.1)
-        XCTAssertEqual(on.2, off.2)
-        XCTAssertEqual(on.3, off.3)
-        XCTAssertEqual(off.1, 6)
+    /// What the app derives from one stored Inbox pick and the accounts that
+    /// have the setting off: the list, the counts, the badges and the
+    /// notification decision, each through the code the app runs.
+    private struct Outcome: Equatable {
+        var list: Set<String>
+        var inboxCount: Int
+        var perAccount: [String: Int]
+        var dockBadge: Int
+        var notified: Set<String>
+        var optimistic: Set<String>
     }
 
-    func testAllMailAndSearchDoNotDependOnTheSetting() throws {
+    private func outcome(_ q: DatabaseQueue, hide: Set<String>, off: Set<String>) throws -> Outcome {
+        let list = try ids(q, CategoryHide.apply(ThreadListQuery.inbox(), hide: hide,
+                                                 exemptAccounts: off))
+        let (counts, badge) = try q.read {
+            try SidebarCounts.fetch(db: $0, activeAccount: nil, badgeAccount: nil,
+                                    hideCategories: hide, categoryRowsOff: off)
+        }
+        let perAccount = try q.read {
+            try SidebarCounts.fetchUnreadByAccount(db: $0, hideCategories: hide,
+                                                   categoryRowsOff: off)
+        }
+        let candidates = try q.read {
+            try NewMailNotifications.unreadInboxCandidates($0, now: Date())
+        }
+        var state = NewMailNotifications()
+        state.seed([])
+        let notified = Set(state.fresh(current: candidates, now: Date(), demoMode: false,
+                                       hide: hide, categoryRowsOff: off,
+                                       isBlocked: { _ in false }))
+        let rows = try q.read { try MailThread.fetchAll($0) }
+        let optimistic = Set(rows.filter {
+            DockBadge.counts($0, badgeAccount: nil, hideCategories: hide, categoryRowsOff: off)
+        }.map(\.id))
+        return Outcome(list: list, inboxCount: counts["inbox"] ?? -1, perAccount: perAccount,
+                       dockBadge: badge, notified: notified, optimistic: optimistic)
+    }
+
+    /// No stored pick: the setting changes nothing anywhere.
+    func testNothingChangesWithoutAStoredPick() throws {
         let q = try makeDB()
-        // The two queries do not read the setting at all.
-        XCTAssertEqual(try ids(q, MailThread.all().filter(Column("inTrash") == false)).count, 6)
-        let restricted = CategoryRows.restrict(MailThread.all(), view: .allMail,
-                                               activeAccount: nil, off: [a])
-        XCTAssertEqual(try ids(q, restricted).count, 6, "only the two views are restricted")
+        let on = try outcome(q, hide: [], off: [])
+        XCTAssertEqual(on.list.count, 6)
+        XCTAssertEqual(on.inboxCount, 6)
+        for off in [[a], [b], [a, b]] as [Set<String>] {
+            XCTAssertEqual(try outcome(q, hide: [], off: off), on)
+        }
+    }
+
+    /// A stored "hide Promotions" pick applies to the accounts that have the
+    /// setting on and to none that has it off, in the list, the Inbox count,
+    /// each account's badge, the Dock badge and the notification decision;
+    /// an account with it off is exactly as if nothing were hidden.
+    func testAStoredPickAppliesPerAccountEverywhere() throws {
+        let q = try makeDB()
+        let hide: Set<String> = ["CATEGORY_PROMOTIONS"]
+        let nothingHidden = try outcome(q, hide: [], off: [])
+
+        let allOn = try outcome(q, hide: hide, off: [])
+        XCTAssertEqual(allOn.list, ["\(a):primary", "\(a):social", "\(b):primary", "\(b):social"])
+        XCTAssertEqual(allOn.inboxCount, 4)
+        XCTAssertEqual(allOn.perAccount, [a: 2, b: 2])
+        XCTAssertEqual(allOn.dockBadge, 4)
+        XCTAssertEqual(allOn.notified, allOn.list)
+        XCTAssertEqual(allOn.optimistic, allOn.list)
+
+        // A on, B off: B's promotion is listed, counted, badged and notified;
+        // A's is not, whichever account is on screen.
+        let mixed = try outcome(q, hide: hide, off: [b])
+        XCTAssertEqual(mixed.list, allOn.list.union(["\(b):promo"]))
+        XCTAssertEqual(mixed.inboxCount, 5)
+        XCTAssertEqual(mixed.perAccount, [a: 2, b: 3])
+        XCTAssertEqual(mixed.dockBadge, 5)
+        XCTAssertEqual(mixed.notified, mixed.list)
+        XCTAssertEqual(mixed.optimistic, mixed.list)
+
+        // Both off: as if no pick were stored.
+        XCTAssertEqual(try outcome(q, hide: hide, off: [a, b]), nothingHidden)
+    }
+
+    /// The same stored pick for "show Promotions only" does not narrow an
+    /// account that has the setting off.
+    func testAStoredShowPickDoesNotNarrowAClosedAccount() throws {
+        let q = try makeDB()
+        let list = try ids(q, CategoryHide.applyShow(
+            ThreadListQuery.inbox(), show: ["CATEGORY_PROMOTIONS"], exemptAccounts: [b]))
+        XCTAssertEqual(list, ["\(a):promo", "\(b):primary", "\(b):promo", "\(b):social"])
+    }
+
+    /// The instant count after an action: mail of an account with the
+    /// setting off never counts under Promotions or Social.
+    func testTheOptimisticCountsSkipAClosedAccount() throws {
+        let q = try makeDB()
+        let rows = try q.read { try MailThread.fetchAll($0) }
+        let promoB = try XCTUnwrap(rows.first { $0.id == "\(b):promo" })
+        let promoA = try XCTUnwrap(rows.first { $0.id == "\(a):promo" })
+        XCTAssertTrue(SidebarCounts.memberships(of: promoB, categoryRowsOff: [])
+            .isSuperset(of: ["promotions", "inbox"]))
+        let closed = SidebarCounts.memberships(of: promoB, categoryRowsOff: [b])
+        XCTAssertTrue(closed.contains("inbox"), "still in the Inbox count")
+        XCTAssertFalse(closed.contains("promotions"))
+        XCTAssertTrue(SidebarCounts.memberships(of: promoA, categoryRowsOff: [b])
+            .contains("promotions"), "another account's mail still counts")
+        // Marking B's promotion read: the Promotions row does not move.
+        var read = promoB
+        read.isUnread = false
+        let before = SidebarCounts.memberships(of: promoB, categoryRowsOff: [b])
+        let after = SidebarCounts.memberships(of: read, categoryRowsOff: [b])
+        XCTAssertEqual(before.subtracting(after), ["inbox"])
+    }
+
+    // MARK: - Views left, chips offered
+
+    func testTogglingOffWhileSocialIsOnScreenLeavesForTheInbox() {
+        // One account, the setting turned off.
+        XCTAssertEqual(CategoryRows.view(
+            .social, shown: CategoryRows.shown(accounts: [a], scope: a, off: [a])), .inbox)
+        // All accounts, the last account that had it on turns it off.
+        XCTAssertEqual(CategoryRows.view(
+            .social, shown: CategoryRows.shown(accounts: [a, b], scope: nil, off: [a, b])), .inbox)
+        // All accounts, another still has it on: the view stays.
+        XCTAssertEqual(CategoryRows.view(
+            .social, shown: CategoryRows.shown(accounts: [a, b], scope: nil, off: [a])), .social)
+    }
+
+    func testSwitchingToAnAccountThatHasItOffLeavesForTheInbox() {
+        let off: Set<String> = [b]
+        XCTAssertEqual(CategoryRows.view(
+            .social, shown: CategoryRows.shown(accounts: [a, b], scope: a, off: off)), .social)
+        XCTAssertEqual(CategoryRows.view(
+            .social, shown: CategoryRows.shown(accounts: [a, b], scope: b, off: off)), .inbox)
+    }
+
+    func testRemovingTheLastAccountThatShowsThemClosesTheViewInAllAccounts() {
+        let off: Set<String> = [b]
+        XCTAssertTrue(CategoryRows.shown(accounts: [a, b], scope: nil, off: off))
+        // A is removed: only B is left, and B has it off.
+        XCTAssertFalse(CategoryRows.shown(accounts: [b], scope: nil, off: off))
+        XCTAssertEqual(CategoryRows.view(.promotions, shown: false), .inbox)
+    }
+
+    func testTheConversationChipFollowsItsOwnAccount() {
+        XCTAssertFalse(CategoryRows.showsChip(label: "CATEGORY_SOCIAL", accountOn: false))
+        XCTAssertFalse(CategoryRows.showsChip(label: "CATEGORY_PROMOTIONS", accountOn: false))
+        XCTAssertTrue(CategoryRows.showsChip(label: "CATEGORY_SOCIAL", accountOn: true))
+        XCTAssertTrue(CategoryRows.showsChip(label: "CATEGORY_UPDATES", accountOn: false),
+                      "Updates and Forums are out of scope")
+        XCTAssertTrue(CategoryRows.showsChip(label: "CATEGORY_FORUMS", accountOn: false))
+    }
+
+    func testTheFilterOffersTheTwoOnlyWhileShown() {
+        let all = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"]
+        XCTAssertEqual(CategoryRows.offered(all, shown: true), all)
+        XCTAssertEqual(CategoryRows.offered(all, shown: false),
+                       ["CATEGORY_UPDATES", "CATEGORY_FORUMS"])
     }
 
     func testTheAllAccountsListsHoldTheAccountsThatShowThem() throws {

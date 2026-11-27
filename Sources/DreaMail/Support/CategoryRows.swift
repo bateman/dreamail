@@ -75,6 +75,32 @@ enum CategoryRows {
         return result
     }
 
+    /// Whether a conversation's Gmail category chip is shown: Promotions and
+    /// Social only while the conversation's account has the setting on.
+    static func showsChip(label: String, accountOn: Bool) -> Bool {
+        accountOn || !categories.contains(label)
+    }
+
+    /// The categories a filter offers: not the two while they are closed.
+    static func offered(_ categories: [String], shown: Bool) -> [String] {
+        shown ? categories : categories.filter { !Self.categories.contains($0) }
+    }
+
+    /// `hide` for mail of `account`: Promotions and Social are never hidden
+    /// from an account that has the setting off. Every Inbox count, badge and
+    /// notification decides per thread's account with this, whichever scope
+    /// is on screen.
+    static func hide(_ hide: Set<String>, account: String, off: Set<String>) -> Set<String> {
+        off.contains(account) ? hide.subtracting(categories) : hide
+    }
+
+    /// SQL list of quoted account ids, for `accountId IN (…)`.
+    static func sqlList(_ accounts: Set<String>) -> String {
+        accounts.sorted()
+            .map { "'" + $0.replacingOccurrences(of: "'", with: "''") + "'" }
+            .joined(separator: ",")
+    }
+
     /// The Promotions and Social lists of the all-accounts view hold the mail
     /// of the accounts that have the setting on only.
     static func restrict(_ query: QueryInterfaceRequest<MailThread>, view: MailboxView,

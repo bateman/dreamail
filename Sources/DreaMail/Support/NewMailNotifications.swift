@@ -80,9 +80,11 @@ struct NewMailNotifications {
     /// Whether the user's Inbox category hide (`hide`, empty by default)
     /// keeps the thread out of the Inbox list: same rule as the list and its
     /// unread badge (`SidebarCounts.isHiddenFromInbox`), a star pins through.
-    static func isHidden(_ c: Candidate, hide: Set<String>) -> Bool {
+    static func isHidden(_ c: Candidate, hide: Set<String>,
+                         categoryRowsOff: Set<String> = []) -> Bool {
         SidebarCounts.isHiddenFromInbox(
-            hide: hide, isStarred: c.isStarred, inPromotions: c.inPromotions,
+            hide: CategoryRows.hide(hide, account: accountId(ofThread: c.id),
+                                    off: categoryRowsOff), isStarred: c.isStarred, inPromotions: c.inPromotions,
             inSocial: c.inSocial, labelIds: c.labelIds)
     }
 
@@ -104,6 +106,7 @@ struct NewMailNotifications {
     /// replay old mail as new.
     mutating func fresh(current: [Candidate], now: Date, demoMode: Bool,
                         hide: Set<String> = [],
+                        categoryRowsOff: Set<String> = [],
                         isBlocked: (String) -> Bool) -> [String] {
         guard isSeeded else {
             seed(current.filter { Self.isEligible($0, now: now) })
@@ -120,7 +123,7 @@ struct NewMailNotifications {
                 continue
             }
             if demoMode || Self.hasBlockedSender(c, isBlocked: isBlocked)
-                || Self.isHidden(c, hide: hide) { continue }
+                || Self.isHidden(c, hide: hide, categoryRowsOff: categoryRowsOff) { continue }
             ids.append(c.id)
         }
         return ids

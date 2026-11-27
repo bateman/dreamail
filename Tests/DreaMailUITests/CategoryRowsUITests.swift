@@ -7,7 +7,7 @@ import XCTest
 final class CategoryRowsUITests: XCTestCase {
     private let account = "you@example.com"
 
-    private func launch(categoryRows: Bool) -> XCUIApplication {
+    private func launch(categoryRows: Bool?) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
@@ -17,8 +17,11 @@ final class CategoryRowsUITests: XCTestCase {
                                 "-NSQuitAlwaysKeepsWindows", "NO",
                                 "-threadOpenStyle", "readingPane",
                                 // Promotions and Social sit under "More": open it.
-                                "-sidebar.more.expanded", "YES",
-                                "-categoryRows.\(account)", categoryRows ? "YES" : "NO"]
+                                "-sidebar.more.expanded", "YES"]
+        // `nil`: the stored setting decides (the test turns it off itself).
+        if let categoryRows {
+            app.launchArguments += ["-categoryRows.\(account)", categoryRows ? "YES" : "NO"]
+        }
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
@@ -77,5 +80,40 @@ final class CategoryRowsUITests: XCTestCase {
         XCTAssertTrue(promotions.waitForExistence(timeout: 5))
         XCTAssertTrue(social.exists)
         XCTAssertLessThan(promotions.frame.minY, social.frame.minY)
+    }
+
+    /// Turning the setting off in Settings while Promotions is on screen
+    /// leaves it for the Inbox and removes the row.
+    func testTurningTheSettingOffLeavesTheOpenView() {
+        let app = launch(categoryRows: nil)
+        XCTAssertTrue(element("threadRow.\(account):t3", in: app).waitForExistence(timeout: 10))
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
+        let promotions = element("sidebar.promotions", in: app)
+        XCTAssertTrue(promotions.waitForExistence(timeout: 5))
+        promotions.click()
+        // The launch argument does not stop the toggle from writing the
+        // stored setting: flip it back at the end so no other suite inherits it.
+        func flip() {
+            app.typeKey(",", modifierFlags: .command)
+            let settings = app.windows.matching(
+                NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
+            XCTAssertTrue(settings.waitForExistence(timeout: 5))
+            let pane = element("settings.pane.accounts", in: settings)
+            XCTAssertTrue(pane.waitForExistence(timeout: 5))
+            pane.click()
+            let toggle = element("settings.account.categoryRows.\(account)", in: settings)
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            toggle.click()
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
+        }
+        flip()
+        XCTAssertTrue(waitForAbsence(element("sidebar.promotions", in: app)),
+                      "the row is gone")
+        XCTAssertTrue(element("threadRow.\(account):t3", in: app).waitForExistence(timeout: 5),
+                      "the Inbox is on screen")
+        flip()
+        XCTAssertTrue(element("sidebar.promotions", in: app).waitForExistence(timeout: 5),
+                      "turned on again: the row is back, and the setting is left as found")
     }
 }

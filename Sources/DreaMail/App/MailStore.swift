@@ -339,7 +339,7 @@ final class MailStore {
     func resetChips() {
         suppressChipPersistence = true
         chips = FilterChips.initial(for: selectedView)
-        chips.category = CategoryRows.scoped(chips.category, shown: categoryRowsShown)
+        chips.category = storedCategory(for: selectedView)
         suppressChipPersistence = false
     }
 
@@ -347,6 +347,8 @@ final class MailStore {
 
     /// Accounts whose "Show Promotions and Social" is off.
     private(set) var categoryRowsOff: Set<String> = []
+    @ObservationIgnored
+    private var categoryRowsApplied = false
 
     /// Whether the Promotions and Social views exist for what is on screen:
     /// the account in scope, or (all accounts) any account that has them on.
@@ -372,10 +374,17 @@ final class MailStore {
     /// pick, without Promotions and Social while they are closed. Not a user
     /// edit, so nothing is persisted.
     private func refreshCategoryChips() {
+        // A view with no stored pick (a saved view) keeps the chips it has.
+        guard selectedView.prefsKey != nil else { return }
         suppressChipPersistence = true
-        chips.category = CategoryRows.scoped(
-            FilterChips.initial(for: selectedView).category, shown: categoryRowsShown)
+        chips.category = storedCategory(for: selectedView)
         suppressChipPersistence = false
+    }
+
+    /// The stored category pick of `view` as the scope on screen applies it:
+    /// without Promotions and Social while they are closed.
+    private func storedCategory(for view: MailboxView) -> CategoryFilter {
+        CategoryRows.scoped(FilterChips.initial(for: view).category, shown: categoryRowsShown)
     }
 
     /// The scope's category setting changed: leave a closed view for the
@@ -383,8 +392,10 @@ final class MailStore {
     private func categoryScopeChanged() {
         let next = CategoryRows.view(selectedView, shown: categoryRowsShown)
         if next != selectedView {
+            // The view change reloads (ContentView's `selectedView` onChange).
             clearSelection()
             selectedView = next
+            return
         }
         refreshCategoryChips()
         reloadThreads()
@@ -2864,8 +2875,10 @@ struct ComposeRequest: Identifiable {
         let nextOff = CategoryRows.off(accounts: nextAccounts.map(\.id))
         if nextOff != categoryRowsOff {
             categoryRowsOff = nextOff
-            categoryScopeChanged()
+            // At launch (init) there is nothing on screen to reload yet.
+            if categoryRowsApplied { categoryScopeChanged() } else { refreshCategoryChips() }
         }
+        categoryRowsApplied = true
         if Set(nextAccounts.map(\.id)) != loadedPhotoAccountIds {
             loadedPhotoAccountIds = Set(nextAccounts.map(\.id))
             scheduleAccountPhotoLoad()
@@ -3041,7 +3054,8 @@ struct ComposeRequest: Identifiable {
                             // Widen from inbox-only before layering the other chips.
                             q = MailStore.widen(q, for: view, archived: chips.showArchived, sent: chips.showSent)
                         }
-                        q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds)
+                        q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds,
+                                                 categoryRowsOff: categoryOff)
                         if let activeAccount { q = q.filter(Column("accountId") == activeAccount) }
                         q = CategoryRows.restrict(q, view: view, activeAccount: activeAccount,
                                                   off: categoryOff)
@@ -3093,7 +3107,8 @@ struct ComposeRequest: Identifiable {
                         db: db, activeAccount: activeAccount, badgeAccount: badgeAccount,
                         hideCategories: inboxHideCategories, categoryRowsOff: categoryOff)
                     let perAccount = try SidebarCounts.fetchUnreadByAccount(
-                        db: db, hideCategories: inboxHideCategories)
+                        db: db, hideCategories: inboxHideCategories,
+                        categoryRowsOff: categoryOff)
                     return (sidebar.counts, sidebar.badge, perAccount)
                 }
                 let (counts, badge, accountUnread) = fetched
@@ -3269,7 +3284,8 @@ struct ComposeRequest: Identifiable {
                     if chips.showArchived || chips.showSent {
                         q = MailStore.widen(q, for: view, archived: chips.showArchived, sent: chips.showSent)
                     }
-                    q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds)
+                    q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds,
+                                             categoryRowsOff: categoryOff)
                     if let activeAccount { q = q.filter(Column("accountId") == activeAccount) }
                     q = CategoryRows.restrict(q, view: view, activeAccount: activeAccount,
                                               off: categoryOff)
@@ -3410,34 +3426,15 @@ struct ComposeRequest: Identifiable {
     // nonisolated: pure query builder — safe to call from DatabasePool.read.
     nonisolated static func applyChips(_ query: QueryInterfaceRequest<MailThread>, _ chips: FilterChips,
                            keepIds: [String] = [],
-                           starKeepIds: [String] = []) -> QueryInterfaceRequest<MailThread> {
+                           starKeepIds: [String] = [],
+                           categoryRowsOff: Set<String> = []) -> QueryInterfaceRequest<MailThread> {
         var q = query
         // Category-tab hide; starred (+ sticky keep) pins through (see CategoryHide).
-        q = CategoryHide.apply(q, hide: chips.category.hide, keepIds: starKeepIds)
-        if !chips.category.show.isEmpty {
-            // Contains any of the selected categories. Denorm for promo/social;
-            // labelIds LIKE for Updates/Forums (no denorm columns yet).
-            // Spam is never a category tab — keep SPAM out of promo/social chips.
-            var parts: [String] = []
-            var args: [any DatabaseValueConvertible] = []
-            var needsNotSpam = false
-            for cat in chips.category.show {
-                switch cat {
-                case "CATEGORY_PROMOTIONS":
-                    parts.append("inPromotions = 1")
-                    needsNotSpam = true
-                case "CATEGORY_SOCIAL":
-                    parts.append("inSocial = 1")
-                    needsNotSpam = true
-                default:
-                    parts.append("labelIds LIKE ?")
-                    args.append("%\(cat)%")
-                }
-            }
-            q = q.filter(sql: parts.joined(separator: " OR "),
-                         arguments: StatementArguments(args))
-            if needsNotSpam { q = q.filter(Column("inSpam") == false) }
-        }
+        // Accounts with "Show Promotions and Social" off are exempt from the
+        // two categories, hide and show alike.
+        q = CategoryHide.apply(q, hide: chips.category.hide, keepIds: starKeepIds,
+                               exemptAccounts: categoryRowsOff)
+        q = CategoryHide.applyShow(q, show: chips.category.show, exemptAccounts: categoryRowsOff)
         if chips.unreadOnly { q = q.filter(Column("isUnread") == true || keepIds.contains(Column("id"))) }
         if chips.readOnly { q = q.filter(Column("isUnread") == false || keepIds.contains(Column("id"))) }
         if let labelId = chips.labelId {
@@ -3717,7 +3714,8 @@ struct ComposeRequest: Identifiable {
                                                   badgeAccount: badgeAccount,
                                                   hideCategories: hideCategories,
                                                   categoryRowsOff: categoryOff),
-                 try SidebarCounts.fetchUnreadByAccount(db: db, hideCategories: hideCategories))
+                 try SidebarCounts.fetchUnreadByAccount(db: db, hideCategories: hideCategories,
+                                                        categoryRowsOff: categoryOff))
             }) else { return }
             let result = read.0
             guard let self, !self.isShuttingDown,
@@ -3836,10 +3834,13 @@ struct ComposeRequest: Identifiable {
     var inboxBadgeHideCategories: Set<String> {
         switch selectedView {
         case .inbox, .account:
-            return chips.category.hide
+            // The pick as stored, closed categories included: each account
+            // applies it (or not) by its own setting (`CategoryRows.hide`).
+            return CategoryRows.restoring(
+                chips.category, from: FilterChips.savedCategory(for: selectedView),
+                shown: categoryRowsShown).hide
         default:
-            return CategoryRows.scoped(FilterChips.initial(for: .inbox).category,
-                                       shown: categoryRowsShown).hide
+            return FilterChips.initial(for: .inbox).category.hide
         }
     }
 

@@ -1084,10 +1084,9 @@ struct FilterBar: View {
     private var filterOptions: [FilterOption] {
         allFilterOptions.filter { option in
             // Promotions and Social are not offered while closed (`CategoryRows`).
-            if store.categoryRowsShown { return true }
             switch option.kind {
             case .showCategory(let cat), .hideCategory(let cat):
-                return !CategoryRows.categories.contains(cat)
+                return !CategoryRows.offered([cat], shown: store.categoryRowsShown).isEmpty
             default: return true
             }
         }
@@ -2149,9 +2148,8 @@ struct CategoriesPopover: View {
                 GridItem(.flexible(), spacing: 6),
                 GridItem(.flexible(), spacing: 6),
             ], spacing: 6) {
-                ForEach(Self.categoryOrder.filter {
-                    store.categoryRowsShown || !CategoryRows.categories.contains($0)
-                }, id: \.self) { cat in
+                ForEach(CategoryRows.offered(Self.categoryOrder, shown: store.categoryRowsShown),
+                        id: \.self) { cat in
                     categoryPill(cat)
                 }
             }
