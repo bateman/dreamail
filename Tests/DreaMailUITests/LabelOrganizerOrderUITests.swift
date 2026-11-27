@@ -70,7 +70,13 @@ final class LabelOrganizerOrderUITests: XCTestCase {
         XCTAssertGreaterThan(rows.count, 2, "some top-level rows are on screen")
         let first = rows[0]
         let last = rows[rows.count - 1]
-        first.press(forDuration: 0.5, thenDragTo: last)
+        // Slow, with a hold before the drop: the table's drag session does
+        // not start from a fast synthesized drag (CI, November 2026: a plain
+        // press-and-drag left the list unchanged).
+        first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 1.0,
+            thenDragTo: last.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.0)),
+            withVelocity: .slow, thenHoldForDuration: 0.5)
         var dragged = topLevelNames(app)
         let moved = Date().addingTimeInterval(3)
         while dragged == names, Date() < moved {
