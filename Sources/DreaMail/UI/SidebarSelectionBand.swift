@@ -129,12 +129,12 @@ struct SidebarSelectionBand: NSViewRepresentable {
 
         private static func carries(_ id: String, _ element: Any, depth: Int) -> Bool {
             guard depth < 12 else { return false }
-            if let node = element as? NSAccessibilityProtocol, node.accessibilityIdentifier?() == id {
+            if let node = element as? NSAccessibilityProtocol, node.accessibilityIdentifier == id {
                 return true
             }
             var children: [Any] = []
             if let view = element as? NSView { children += view.subviews }
-            if let node = element as? NSAccessibilityProtocol { children += node.accessibilityChildren?() ?? [] }
+            if let node = element as? NSAccessibilityProtocol { children += node.accessibilityChildren ?? [] }
             return children.contains { carries(id, $0, depth: depth + 1) }
         }
 
