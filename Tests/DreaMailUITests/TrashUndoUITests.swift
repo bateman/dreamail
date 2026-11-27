@@ -14,6 +14,10 @@ final class TrashUndoUITests: XCTestCase {
         app.launchEnvironment["DREAMAIL_DEMO_LABELS"] = "small"
         // Exposes the row's hover buttons to the tree.
         app.launchEnvironment["DREAMAIL_UI_ROW_BUTTONS"] = "1"
+        // The toast lasts 3.5 s; XCUITest needs about 4 s from the Trash click
+        // to the next key (run 46046609501: the toast expired first). This
+        // test is about the undo, not the toast's lifetime.
+        app.launchEnvironment["DREAMAIL_UNDO_TOAST_SECONDS"] = "30"
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
@@ -60,9 +64,9 @@ final class TrashUndoUITests: XCTestCase {
         }
 
         XCTContext.runActivity(named: "Undo button after Trash") { _ in
-            trash(app, "t2")
+            trash(app, "t3")
             undoButton(app).click()
-            let back = row(app, "t2").waitForExistence(timeout: 10)
+            let back = row(app, "t3").waitForExistence(timeout: 10)
             report("Undo button")
             XCTAssertTrue(back, "the toast's Undo button brings the trashed row back")
         }

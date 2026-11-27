@@ -9,8 +9,15 @@ enum UndoToast {
     /// Short enough that keyboard triage doesn't leave a lingering capsule;
     /// long enough to catch a mis-press with `z` / ⌘Z.
     static var displayDuration: TimeInterval {
+        // UI tests only: XCUITest takes seconds between a click and the next
+        // key, so a test of the undo itself sets a longer toast.
+        let env = ProcessInfo.processInfo.environment
+        if env["DREAMAIL_UI_TEST"] == "1",
+           let seconds = env["DREAMAIL_UNDO_TOAST_SECONDS"].flatMap(TimeInterval.init), seconds > 0 {
+            return seconds
+        }
         // VoiceOver users need a little longer to hear and reach the action.
-        NSWorkspace.shared.isVoiceOverEnabled ? 7.0 : 3.5
+        return NSWorkspace.shared.isVoiceOverEnabled ? 7.0 : 3.5
     }
 
     /// Animate enter/exit on presence only. Driving animation off
