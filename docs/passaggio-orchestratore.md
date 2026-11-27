@@ -115,7 +115,7 @@ Unite il 26-27 novembre (dettagli nel changelog e nel piano): #84, #85, #87-#94,
 | PR | Ramo | Sessione | Livello | Cosa | Stato |
 |---|---|---|---|---|---|
 | #108 | `fix/label-gmail-color-missing` | `session_019yj8YsiQKRQF3uC3vbUH5g` | Basso rischio | Colori delle etichette mancanti (vedi sotto) | **Passa al nuovo orchestratore.** In lavorazione, CI in corso |
-| #107 | `ux/deleted-messages-in-conversation` | `session_019yj8YuKTzb2MXdQPfTxCHj` | Standard | Riga "N deleted messages · View" nella conversazione viva, come Gmail; "Restore" per messaggio | Resta all'orchestratore uscente fino all'unione |
+| #107 | `ux/deleted-messages-in-conversation` | archiviata | Standard | Riga "N deleted messages · View" nella conversazione viva | **Unita** (`e935e38`), documenti registrati (C-87, DEC-086). L'orchestratore uscente è archiviato |
 | nessuna | `fix/message-time-gmail-internal-date` | `session_019yj8YrFF9oGNYu2RPVyZst` | Basso rischio | Ora dei messaggi diversa da Gmail | **Ipotesi smentita, nessuna modifica**: il codice usa già `internalDate` (`MessageParsing.swift`); nessun punto legge l'intestazione `Date`. Causa ignota; servono dal proprietario, per 2-3 conversazioni, l'ora in Gmail e quella in DreaMail e se la conversazione ha un messaggio più recente in bozza, Cestino o Spam |
 
 L'orchestratore uscente chiude #107 e ne registra i documenti; il nuovo non li tocca, salvo diversa indicazione del proprietario.

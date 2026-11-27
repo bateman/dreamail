@@ -613,6 +613,16 @@ minor versions may still change behavior.
   a reply draft's conversation dropped out of Drafts on the next list refresh.
   Autosave now stores the saved draft from Gmail and drops the old one in one
   step, so the row and the open conversation stay in place.
+- **A conversation shows that it has deleted messages, as Gmail does.**
+  When some messages of a conversation are in the Trash and others are
+  not, the reading pane shows the line "N deleted messages in this
+  conversation" with "View". "View" shows them in place, dimmed and marked
+  "In Trash"; "Hide" puts them away again. Each has "Restore", and the line
+  has "Restore all": they take the messages out of the Trash on Gmail and
+  back into the conversation. A deleted message shown this way loads no
+  remote images until you ask, and is not checked for OpenPGP. Deleted
+  messages stay out of the list row, search, counts, quoted replies and
+  the assistant.
 
 ## [0.7.0] - 2026-11-13
 
