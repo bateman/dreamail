@@ -108,7 +108,8 @@ final class MessageActionsTests: XCTestCase {
             XCTAssertFalse(items.contains(.reportSpam))
             XCTAssertFalse(items.contains(.reportNotSpam))
             XCTAssertTrue(items.contains(.markUnreadFromHere), "acts on the trashed messages shown")
-            XCTAssertTrue(items.contains(.blockSender), "sender-level")
+            XCTAssertFalse(items.contains(.blockSender), "the blocklist reaches live conversations")
+            XCTAssertFalse(items.contains(.unblockSender))
         }
     }
 
@@ -153,6 +154,48 @@ final class MessageActionsTests: XCTestCase {
                 lastNonDraftId: roles.lastNonDraftId, scrollTargetId: roles.scrollTargetId),
                            id == "\(account):c", id)
         }
+    }
+
+    /// Read on open writes only the thread row: once it says read, the
+    /// message rows' unread flags say nothing and are ignored.
+    func testAReadConversationIgnoresStaleUnreadRows() {
+        let messages = [msg("a", minutesAgo: 60, labels: "INBOX STARRED"),
+                        msg("b", minutesAgo: 30, labels: "INBOX UNREAD", unread: true),
+                        msg("c", minutesAgo: 10, labels: "INBOX UNREAD", unread: true)]
+        let read = ConversationOpenTarget.target(in: messages, threadUnread: false)
+        XCTAssertEqual(read?.expanded, ids(["a", "c"]), "the star and the newest only")
+        XCTAssertEqual(read?.scroll, "\(account):a")
+        let roles = ThreadMessageRoles(messages: messages, threadUnread: false)
+        XCTAssertEqual(roles.openExpandedIds, Set(ids(["a", "c"])))
+        XCTAssertEqual(ThreadRefresh.initialScrolledMessageId(in: messages, threadUnread: false),
+                       "\(account):a")
+        let unread = ConversationOpenTarget.target(in: messages, threadUnread: true)
+        XCTAssertEqual(unread?.scroll, "\(account):b")
+    }
+
+    func testALongUnreadConversationOpensAtMostFiveCards() {
+        var messages = [msg("s", minutesAgo: 1_000, labels: "INBOX STARRED")]
+        for i in 0..<40 {
+            messages.append(msg("u\(i)", minutesAgo: Double(900 - i * 10),
+                                labels: "INBOX UNREAD", unread: true))
+        }
+        let target = try? XCTUnwrap(ConversationOpenTarget.target(in: messages))
+        XCTAssertEqual(target?.expanded.count, ConversationOpenTarget.maxExpanded)
+        XCTAssertEqual(target?.scroll, "\(account):u0", "the oldest unread newer than the star")
+        XCTAssertEqual(target?.expanded, ids(["s", "u0", "u37", "u38", "u39"]),
+                       "the star, the scroll target and the newest unread")
+        XCTAssertEqual(ThreadRefresh.hydratedOnOpen(messages).count, ConversationOpenTarget.maxExpanded,
+                       "only those bodies are read with the payload")
+        // The seed marks only bodies the payload brought (and the newest,
+        // as before): header-only rows still get their body fetched.
+        XCTAssertEqual(Set(ThreadRefresh.initialBodyLoadSeedIds(in: messages)),
+                       Set(ids(["s", "u0", "u37", "u38", "u39"])))
+        let headerOnly = messages.map { m -> Message in
+            var copy = m
+            copy.bodyText = ""
+            return copy
+        }
+        XCTAssertEqual(ThreadRefresh.initialBodyLoadSeedIds(in: headerOnly), ["\(account):u39"])
     }
 
     func testUnreadMailOlderThanTheStarOpensButTheStarLeads() {
@@ -240,6 +283,10 @@ final class MessageActionsTests: XCTestCase {
         XCTAssertEqual(MessageActions.downloadFilename(subject: "a/b: c"), "a-b- c.eml",
                        "separators replaced, nothing kept only from the tail")
         XCTAssertEqual(MessageActions.downloadFilename(subject: "...hidden"), "hidden.eml")
+        XCTAssertEqual(MessageActions.downloadFilename(subject: ". .x"), "x.eml")
+        XCTAssertEqual(MessageActions.downloadFilename(subject: ".\u{0301}x"), "x.eml",
+                       "a dot carrying a combining mark is stripped too")
+        XCTAssertFalse(MessageActions.downloadFilename(subject: " . \u{0301}. y").hasPrefix("."))
         XCTAssertEqual(MessageActions.downloadFilename(subject: "in\u{202E}voice\u{0007}\n"), "invoice.eml",
                        "bidi override and control characters dropped")
         let long = MessageActions.downloadFilename(subject: String(repeating: "é", count: 400))

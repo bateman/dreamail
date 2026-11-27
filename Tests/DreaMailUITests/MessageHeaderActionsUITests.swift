@@ -125,7 +125,10 @@ final class MessageHeaderActionsUITests: XCTestCase {
     }
 
     private func stepMoreMenuKeepsGmailsOrder(_ app: XCUIApplication) {
-        element(app, "messageHeaderMore").click()
+        open(app, "t7")
+        let more = element(app, "messageHeaderMore")
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        more.click()
         let expected = ["Reply", "Reply to all", "Forward", "Filter messages like this",
                         "Delete this message", "Block \"Marcus Bell\"", "Report spam",
                         "Show original", "Download message", "Mark unread from here"]
@@ -194,6 +197,19 @@ final class MessageHeaderActionsUITests: XCTestCase {
         let stars = app.descendants(matching: .any).matching(identifier: "messageHeaderStar")
             .allElementsBoundByIndex.sorted { $0.frame.minY < $1.frame.minY }
         XCTAssertEqual(stars.first?.label, "Unstar this message", "the top open message is the starred one")
+
+        // Collapsing one of the open cards closes only that one: the date is
+        // a real button (keyboard and VoiceOver reach it).
+        let collapse = app.buttons.matching(identifier: "messageHeaderDate")
+            .allElementsBoundByIndex.filter { !$0.frame.isEmpty }
+            .max { $0.frame.minY < $1.frame.minY }
+        XCTAssertNotNil(collapse, "an open message's date is a button")
+        collapse?.click()
+        let after = settled("messageRowFrame", in: app) { $0.count == 4 && $0[3].height < 100 }
+        guard after.count == 4 else { return }
+        XCTAssertGreaterThan(after[0].height, after[1].height + 40,
+                             "the starred message stays open")
+        XCTAssertLessThan(after[3].height, 100, "the newest collapsed")
     }
 
     /// One open message of t2 goes to the Trash alone: the conversation

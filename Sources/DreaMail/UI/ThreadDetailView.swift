@@ -69,7 +69,7 @@ struct ThreadDetailView: View {
         // Every mutation (assign, subscript write, animated merge) lands here,
         // so the draft/sent split below can never go stale.
         didSet {
-            messageRoles = ThreadMessageRoles(messages: messages)
+            messageRoles = ThreadMessageRoles(messages: messages, threadUnread: thread.isUnread)
             toolbarModel.publish(threadId: thread.id, messages: messages)
             summaryFingerprint = ThreadSummaryPolicy.fingerprint(subject: thread.subject, messages: messages)
             summaryEligible = ThreadSummaryPolicy.isWorthSummarizing(messages)
@@ -169,6 +169,9 @@ struct ThreadDetailView: View {
     @State private var blockTarget: BlockTarget?
     /// Message ids we already tried to backfill List-Unsubscribe for.
     @State private var unsubscribeRefreshAttempted: Set<String> = []
+    /// "Mark unread from here" during the read-on-open dwell: the dwell
+    /// must not mark the conversation read again.
+    @State private var markedUnreadSinceOpen = false
 
     /// `.id(thread.id)` remounts this view for every conversation, so `@State`
     /// starts empty and `.task` cannot run until *after* the first body
@@ -192,7 +195,8 @@ struct ThreadDetailView: View {
         self.onReply = onReply
         guard let initialPayload else { return }
         _messages = State(initialValue: initialPayload.messages)
-        let initialRoles = ThreadMessageRoles(messages: initialPayload.messages)
+        let initialRoles = ThreadMessageRoles(messages: initialPayload.messages,
+                                             threadUnread: thread.isUnread)
         _messageRoles = State(initialValue: initialRoles)
         // Open the default card set in the first frame too. Without it the
         // seeded conversation painted every card collapsed — a one-message
@@ -216,10 +220,10 @@ struct ThreadDetailView: View {
         _scrollAnchor = State(
             initialValue: ThreadScrollAnchor(
                 id: ThreadRefresh.initialScrolledMessageId(
-                    in: initialPayload.messages)))
+                    in: initialPayload.messages, threadUnread: thread.isUnread)))
         _bodyLoadAttempted = State(
             initialValue: Set(ThreadRefresh.initialBodyLoadSeedIds(
-                in: initialPayload.messages)))
+                in: initialPayload.messages, threadUnread: thread.isUnread)))
     }
 
     /// Space below each block above the messages (subject, chips, summary,
@@ -337,7 +341,8 @@ struct ThreadDetailView: View {
                         } else {
                             messageCard(for: message,
                                         lastNonDraftId: messageRoles.lastNonDraftId,
-                                        scrollTargetId: messageRoles.scrollTargetId)
+                                        scrollTargetId: messageRoles.scrollTargetId,
+                                        starredTargetId: messageRoles.starredTargetId)
                                 .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
                                 .id(message.id)
                                 .background { pinnedHeightReader(id: message.id, proxy: proxy) }
@@ -389,6 +394,7 @@ struct ThreadDetailView: View {
                 unsubscribeTarget = nil
                 blockTarget = nil
                 unsubscribeRefreshAttempted = []
+                markedUnreadSinceOpen = false
                 // Cancel any in-flight neighbor paints from the previous open.
                 HTMLBodyNeighborPrerender.cancel()
                 // Did `init` already seed from the mirror? When this is 1 the
@@ -441,7 +447,8 @@ struct ThreadDetailView: View {
                 guard MarkReadOnOpen.shouldMarkRead(
                     selectedId: store.selectedThreadId,
                     threadId: thread.id,
-                    liveIsUnread: liveThread?.isUnread),
+                    liveIsUnread: liveThread?.isUnread,
+                    userMarkedUnread: markedUnreadSinceOpen),
                       let liveThread else { return }
                 store.setRead(liveThread, read: true)
             }
@@ -619,7 +626,7 @@ struct ThreadDetailView: View {
     /// Split out of `body`: the full MessageCard initializer inside the
     /// thread ForEach is too much for the type checker in one expression.
     private func messageCard(for message: Message, lastNonDraftId: String?,
-                             scrollTargetId: String?) -> some View {
+                             scrollTargetId: String?, starredTargetId: String?) -> some View {
         MessageCard(message: message,
                     isLast: message.id == scrollTargetId,
                     attachments: attachmentsByMessageId[message.id] ?? [],
@@ -637,7 +644,7 @@ struct ThreadDetailView: View {
                         policy: messageExpandPolicy,
                         expanded: expandedMessageIds,
                         lastNonDraftId: lastNonDraftId,
-                        scrollTargetId: scrollTargetId)
+                        scrollTargetId: starredTargetId)
                         ? paneViewportHeight : nil,
                     loadImagesForThread: $loadRemoteImagesForThread,
                     threadInSpam: thread.inSpam,
@@ -656,6 +663,7 @@ struct ThreadDetailView: View {
                         Task { await refreshUnsubscribeHeaders(message) }
                     },
                     onMarkUnreadFromHere: {
+                        markedUnreadSinceOpen = true
                         store.markUnreadFromHere(message, shown: messages)
                     })
     }
@@ -834,9 +842,9 @@ struct ThreadDetailView: View {
             backfillUnsubscribeHeaders()
             if wasEmpty {
                 bodyLoadAttempted.formUnion(
-                    ThreadRefresh.initialBodyLoadSeedIds(in: merged))
+                    ThreadRefresh.initialBodyLoadSeedIds(in: merged, threadUnread: thread.isUnread))
                 applyScrollAnchor(
-                    ThreadRefresh.initialScrolledMessageId(in: merged),
+                    ThreadRefresh.initialScrolledMessageId(in: merged, threadUnread: thread.isUnread),
                     proxy: proxy)
                 // First population via refresh (initial .task was superseded):
                 // open the policy default set, same as applyDetailPayload.
@@ -1245,7 +1253,7 @@ struct ThreadDetailView: View {
         let loaded = payload.messages
         // Newest sent + draft cards arrive hydrated; seed so we don't
         // re-query. Shared with refreshMessages' empty→full path.
-        bodyLoadAttempted.formUnion(ThreadRefresh.initialBodyLoadSeedIds(in: loaded))
+        bodyLoadAttempted.formUnion(ThreadRefresh.initialBodyLoadSeedIds(in: loaded, threadUnread: thread.isUnread))
         messages = loaded
         attachmentsByMessageId = payload.attachmentsByMessageId
         bodyPrepByMessageId = payload.bodyPrepByMessageId
@@ -1272,7 +1280,7 @@ struct ThreadDetailView: View {
         // Anchor on newest sent when multi-message; draft-only falls back to
         // the last row so a pure-draft pane still positions.
         applyScrollAnchor(
-            ThreadRefresh.initialScrolledMessageId(in: messages),
+            ThreadRefresh.initialScrolledMessageId(in: messages, threadUnread: thread.isUnread),
             proxy: proxy)
         if inlineComposeActive {
             beginInlineComposeScroll(proxy: proxy)
@@ -2276,21 +2284,21 @@ struct MessageCard: View {
                     }
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("messageSender")
-                    // Redrawn every minute so "(12 hours ago)" stays true.
-                    TimelineView(.everyMinute) { context in
-                        Text(dateText(now: context.date))
-                            .font(.system(size: metrics.dateFontSize).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .help(message.date.formatted(date: .complete, time: .shortened))
+                    if expanded, isCollapsible {
+                        // An open message collapses from a real button (the
+                        // date), so Full Keyboard Access and VoiceOver reach
+                        // it; a click elsewhere on the header does the same.
+                        Button {
+                            toggleExpanded()
+                        } label: {
+                            headerDate
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Collapse")
+                        .accessibilityIdentifier("messageHeaderDate")
+                    } else {
+                        headerDate
                             .accessibilityIdentifier("messageHeaderDate")
-                            // The header click collapses an open message;
-                            // VoiceOver gets the same as an action (the
-                            // keyboard has Gmail's `:`).
-                            .accessibilityAction(named: "Collapse") {
-                                if expanded, isCollapsible { toggleExpanded() }
-                            }
                     }
                     if expanded {
                         headerControls
@@ -2425,6 +2433,19 @@ struct MessageCard: View {
                 .fixedSize()
                 .help("Remote images can track opens. Click for this message; menu for the whole conversation (Spam messages still need their own click). The image policy is in Settings → Appearance.")
             }
+        }
+    }
+
+    /// The name line's date, redrawn every minute so "(12 hours ago)"
+    /// stays true.
+    private var headerDate: some View {
+        TimelineView(.everyMinute) { context in
+            Text(dateText(now: context.date))
+                .font(.system(size: metrics.dateFontSize).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+                .help(message.date.formatted(date: .complete, time: .shortened))
         }
     }
 

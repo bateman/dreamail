@@ -44,7 +44,9 @@ enum MessageActions {
         if context.canReplyAll { items.append(.replyAll) }
         items += [.forward, .filterLikeThis]
         if !context.isTrashed { items.append(.deleteMessage) }
-        if !context.fromSelf {
+        // Not from the Trash view: the blocklist reaches the sender's live
+        // conversations, which are not on screen there.
+        if !context.fromSelf, !context.isTrashed {
             items.append(context.senderBlocked ? .unblockSender : .blockSender)
         }
         if !context.isTrashed {
@@ -130,8 +132,16 @@ enum MessageActions {
                 base.unicodeScalars.append(scalar == "/" || scalar == ":" ? "-" : scalar)
             }
         }
-        base = base.trimmingCharacters(in: .whitespaces)
-        while base.hasPrefix(".") { base.removeFirst() }
+        // Leading dots, spaces and the marks left attached to nothing, at
+        // scalar level: ". .x" and a dot carrying a combining mark (one
+        // character, so `hasPrefix(".")` misses it) give "x".
+        let leading = base.unicodeScalars.prefix { scalar in
+            switch scalar.properties.generalCategory {
+            case .nonspacingMark, .spacingMark, .enclosingMark: return true
+            default: return scalar == "." || scalar.properties.isWhitespace
+            }
+        }
+        base = String(String.UnicodeScalarView(base.unicodeScalars.dropFirst(leading.count)))
         base = base.trimmingCharacters(in: .whitespaces)
         var cut = ""
         for character in base {
@@ -154,12 +164,17 @@ enum MessageActions {
 /// Which messages a conversation opens on (Gmail, decided for DreaMail by
 /// the orchestrator). Without a starred message the pane keeps its rule:
 /// the newest message open and at the top. With one:
-/// - open: the newest starred message, every unread message and the
-///   newest message;
+/// - open: the newest starred message, the newest message and the unread
+///   ones, at most `maxExpanded` cards in all (unread newest first; the
+///   scroll target always open), so a long unread conversation does not
+///   load every body;
 /// - at the top: the newest starred message, unless unread mail is newer
 ///   than it: then the oldest of those unread messages, so new mail is
 ///   never hidden below the fold.
 /// Drafts never count; a starred message in the Trash does not either.
+/// Unread comes from the message rows only while the thread row is unread:
+/// read on open writes only the thread row, so once it says read the rows
+/// say nothing until the next sync.
 enum ConversationOpenTarget: Equatable {
     struct Target: Equatable {
         /// Message ids, in the pane's order.
@@ -167,20 +182,25 @@ enum ConversationOpenTarget: Equatable {
         var scroll: String
     }
 
+    static let maxExpanded = 5
+
     /// `messages` oldest first, as the pane shows them. Nil without a
     /// starred message.
-    static func target(in messages: [Message]) -> Target? {
+    static func target(in messages: [Message], threadUnread: Bool = true) -> Target? {
         let candidates = messages.filter { !TrashedMessages.isDraft($0) }
         guard let starIndex = candidates.lastIndex(where: {
             MessageActions.isStarred($0) && !TrashedMessages.isTrashed($0)
         }) else { return nil }
         let last = candidates.count - 1
-        let expanded = candidates.indices.filter {
-            $0 == starIndex || $0 == last || candidates[$0].isUnread
+        let unread = threadUnread ? candidates.indices.filter { candidates[$0].isUnread } : []
+        let newerUnread = unread.first { $0 > starIndex }
+        let scroll = newerUnread ?? starIndex
+        var open: Set<Int> = [starIndex, last, scroll]
+        for index in unread.reversed() where open.count < maxExpanded {
+            open.insert(index)
         }
-        let newerUnread = candidates.indices.first { $0 > starIndex && candidates[$0].isUnread }
-        return Target(expanded: expanded.map { candidates[$0].id },
-                      scroll: candidates[newerUnread ?? starIndex].id)
+        return Target(expanded: open.sorted().map { candidates[$0].id },
+                      scroll: candidates[scroll].id)
     }
 }
 

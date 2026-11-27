@@ -140,6 +140,11 @@ enum TrashedMessages {
     /// The thread row is read again here, inside the write: a reply a sync
     /// stored since `thread` was read must not be marked read. `thread`
     /// stands in only when the row is gone. Call inside one write.
+    /// shortcut: the pending thread edits are written to the message rows
+    /// as Gmail will apply them, but a later refusal of that thread edit
+    /// (offline archive, then a star here, then Gmail refuses the archive)
+    /// reverts only what its own change names; the message rows keep the
+    /// folded archive until the next sync of their labels.
     static func applyMessageEdit(_ db: Database, thread captured: MailThread,
                                  ids: [String], add: [String], remove: [String]) throws {
         let thread = try MailThread.fetchOne(db, key: captured.id) ?? captured

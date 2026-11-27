@@ -17,12 +17,15 @@ enum MessageExpandPolicy: Equatable {
     case multiple
 
     /// Toggle `id` open/closed under this policy. Callers skip the toggle for
-    /// a card that is not `isCollapsible`.
+    /// a card that is not `isCollapsible`. In the reading pane, with several
+    /// cards open (a starred conversation opens on them,
+    /// `ConversationOpenTarget`), a toggle closes or opens only `id`.
     func applyingToggle(id: String, currently: Set<String>) -> Set<String> {
         let isOpen = currently.contains(id)
         switch self {
         case .single:
-            return isOpen ? [] : [id]
+            if isOpen { return currently.subtracting([id]) }
+            return currently.count > 1 ? currently.union([id]) : [id]
         case .multiple:
             var next = currently
             if isOpen { next.remove(id) } else { next.insert(id) }
@@ -30,11 +33,12 @@ enum MessageExpandPolicy: Equatable {
         }
     }
 
-    /// Force-open `id` without collapsing siblings when multiple is allowed.
+    /// Force-open `id` without collapsing siblings when multiple is allowed,
+    /// nor in the reading pane while several cards are open.
     func applyingExpand(id: String, currently: Set<String>) -> Set<String> {
         switch self {
         case .single:
-            return [id]
+            return currently.count > 1 ? currently.union([id]) : [id]
         case .multiple:
             var next = currently
             next.insert(id)
@@ -142,7 +146,10 @@ enum MessageExpandPolicy: Equatable {
     ) -> Bool {
         switch policy {
         case .single:
-            return expanded.contains(id) && (expanded.count == 1 || id == scrollTargetId)
+            // Without a scroll target (no starred message) as before: every
+            // open card.
+            guard let scrollTargetId, expanded.count > 1 else { return expanded.contains(id) }
+            return id == scrollTargetId && expanded.contains(id)
         case .multiple:
             return id == lastNonDraftId
         }

@@ -888,6 +888,8 @@ actor ThreadDetailRepository {
         // Deleted messages of a live conversation stay out of it (Gmail).
         let threadInTrash = try Bool.fetchOne(
             db, sql: "SELECT inTrash FROM thread WHERE id = ?", arguments: [threadId]) ?? false
+        let threadUnread = try Bool.fetchOne(
+            db, sql: "SELECT isUnread FROM thread WHERE id = ?", arguments: [threadId]) ?? true
         messages = trashView
             ? TrashedMessages.inTrashView(messages, threadInTrash: threadInTrash)
             : TrashedMessages.shown(messages, threadInTrash: threadInTrash)
@@ -898,7 +900,7 @@ actor ThreadDetailRepository {
         // exactly those bodies.
         var hydrateIds = Set(
             messages.filter { Self.isLiveDraft($0.labelIds) }.map(\.id))
-        hydrateIds.formUnion(ThreadRefresh.hydratedOnOpen(messages))
+        hydrateIds.formUnion(ThreadRefresh.hydratedOnOpen(messages, threadUnread: threadUnread))
         if !hydrateIds.isEmpty {
             let bodies = try MessageBody
                 .filter(hydrateIds.contains(Column("messageId")))
