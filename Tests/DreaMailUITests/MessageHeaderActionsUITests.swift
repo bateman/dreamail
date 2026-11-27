@@ -216,14 +216,8 @@ final class MessageHeaderActionsUITests: XCTestCase {
         XCTAssertLessThan(after[3].height, 100, "the newest collapsed")
     }
 
-    /// One open message of t2 goes to the Trash alone: the conversation
-    /// keeps its other messages and its place in the Inbox; Undo brings
-    /// the message back. Independent of the other steps: it takes the top
-    /// open message, whichever the conversation opened on.
-    private func stepDeleteThisMessage(_ app: XCUIApplication) {
-        open(app, "t2")
-        let before = settled("messageRowFrame", in: app) { $0.count >= 2 }
-        let count = before.count
+    /// Deletes the topmost open message of t2 from its More menu.
+    private func deleteTopOpenMessage(_ app: XCUIApplication) {
         let more = app.descendants(matching: .any).matching(identifier: "messageHeaderMore")
             .allElementsBoundByIndex.filter { !$0.frame.isEmpty }
             .min { $0.frame.minY < $1.frame.minY }
@@ -232,19 +226,33 @@ final class MessageHeaderActionsUITests: XCTestCase {
         let delete = moreMenu(app).menuItems["Delete this message"]
         XCTAssertTrue(delete.waitForExistence(timeout: 5))
         delete.click()
+    }
+
+    /// One open message of t2 goes to the Trash alone: the conversation
+    /// keeps its other messages and its place in the Inbox; Undo brings
+    /// the message back. Independent of the other steps: it takes the top
+    /// open message, whichever the conversation opened on.
+    private func stepDeleteThisMessage(_ app: XCUIApplication) {
+        open(app, "t2")
+        let count = settled("messageRowFrame", in: app) { $0.count >= 2 }.count
+
+        // The undo capsule stays 3.5 s: checked and clicked right away.
+        deleteTopOpenMessage(app)
+        let undo = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Undo'")).firstMatch
+        XCTAssertTrue(undo.waitForExistence(timeout: 3), "the delete offers Undo")
+        XCTAssertTrue(waitUntil(3) { self.frames("messageRowFrame", in: app).count == count - 1 },
+                      "only that message leaves the conversation")
+        if undo.exists { undo.click() }
+        let back = settled("messageRowFrame", in: app) { $0.count == count }
+        XCTAssertEqual(back.count, count, "Undo brings the message back")
+
+        // Deleted again, without undo: the conversation stays open and in the Inbox.
+        deleteTopOpenMessage(app)
         let left = settled("messageRowFrame", in: app) { $0.count == count - 1 }
         XCTAssertEqual(left.count, count - 1, "only that message leaves the conversation")
         XCTAssertTrue(element(app, "threadSubject").exists, "the conversation stays open")
-
         showList(app)
         XCTAssertTrue(element(app, "threadRow.you@example.com:t2").waitForExistence(timeout: 5),
                       "the conversation is still in the Inbox")
-
-        let undo = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Undo'")).firstMatch
-        XCTAssertTrue(undo.waitForExistence(timeout: 5), "the delete offers Undo")
-        undo.click()
-        open(app, "t2")
-        let back = settled("messageRowFrame", in: app) { $0.count == count }
-        XCTAssertEqual(back.count, count, "Undo brings the message back")
     }
 }
