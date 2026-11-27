@@ -107,21 +107,41 @@ final class TrashViewTests: XCTestCase {
                                                remove: ["INBOX", "TRASH"])])
     }
 
-    func testUndoOfTrashRestoresOnlyWhatTheTrashReached() async throws {
+    /// The trash already reached Gmail (possibly a reply not synced yet):
+    /// the undo un-trashes the whole thread, so that reply comes back too,
+    /// then re-trashes only what was trashed before the action.
+    func testUndoOfASentTrashRestoresAllItReachedAndKeepsEarlierDeletions() async throws {
         let before = [msg("a", minutesAgo: 60, labels: "TRASH"),
                       msg("b", minutesAgo: 30, labels: "INBOX"),
                       msg("c", minutesAgo: 10, labels: "INBOX UNREAD")]
-        let live = TrashedMessages.liveIds(before)
-        XCTAssertEqual(live, ["b", "c"])
-        let undo = ThreadUndo.undoTrashRemote(wasInInbox: true, liveMessageIds: live)
-        XCTAssertEqual(undo, .modifyMessages(ids: ["b", "c"], add: ["INBOX"], remove: ["TRASH"]))
+        let state = ThreadUndo.TrashState(
+            liveIds: TrashedMessages.liveIds(before),
+            trashedIds: before.filter(TrashedMessages.isTrashed).map(\.gmailId))
+        XCTAssertEqual(state, ThreadUndo.TrashState(liveIds: ["b", "c"], trashedIds: ["a"]))
+        let undo = ThreadUndo.undoTrashRemote(wasInInbox: true, before: state)
         let stub = StubThreadEditing()
         try await RemoteThreadSend.send(undo, via: stub, gmailThreadId: "t1")
         let calls = await stub.calls
-        XCTAssertEqual(calls, [.modifyMessages(ids: ["b", "c"], add: ["INBOX"], remove: ["TRASH"])])
-        // Unknown ids: the whole thread, as before.
-        XCTAssertEqual(ThreadUndo.undoTrashRemote(wasInInbox: false, liveMessageIds: nil),
+        XCTAssertEqual(calls, [.modify(id: "t1", add: ["INBOX"], remove: ["TRASH"]),
+                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: ["INBOX"])])
+    }
+
+    func testUndoWithoutEarlierDeletionsIsTheThreadUntrash() {
+        XCTAssertEqual(ThreadUndo.undoTrashRemote(
+            wasInInbox: false, before: .init(liveIds: ["b"], trashedIds: [])),
                        .modify(add: [], remove: ["TRASH"]))
+        // Unknown state: the whole thread, as before.
+        XCTAssertEqual(ThreadUndo.undoTrashRemote(wasInInbox: false, before: nil),
+                       .modify(add: [], remove: ["TRASH"]))
+    }
+
+    /// F5: a trash that reached nothing (all already trashed, e.g. `#` in
+    /// the Trash view) has nothing to undo: nothing is sent, nothing
+    /// deleted earlier comes back.
+    func testUndoOfATrashThatReachedNothingSendsNothing() async throws {
+        let undo = ThreadUndo.undoTrashRemote(
+            wasInInbox: false, before: .init(liveIds: [], trashedIds: ["a", "b"]))
+        XCTAssertTrue(undo.isEmpty)
     }
 
     /// The local edit a running pass lays over the messages: only the named ones.
@@ -135,17 +155,41 @@ final class TrashViewTests: XCTestCase {
 
     // MARK: - Offline queue folding
 
-    /// A trash queued offline, then its undo: both go out, in order, so the
-    /// messages deleted earlier stay deleted.
-    func testQueuedTrashThenUndoKeepsBothInOrder() async throws {
-        let undo = RemoteThreadChange.modifyMessages(ids: ["b"], add: ["INBOX"], remove: ["TRASH"])
+    /// F3: a trash queued offline, then its undo. The trash is never sent:
+    /// a reply arriving before the replay is not trashed. The re-trash of
+    /// the earlier deletions only repeats what Gmail already holds.
+    func testQueuedTrashThenUndoNeverSendsTheTrash() async throws {
+        let undo = ThreadUndo.undoTrashRemote(
+            wasInInbox: true, before: .init(liveIds: ["b"], trashedIds: ["a"]))
         let merged = RemoteThreadChange.trash.merged(with: undo)
-        XCTAssertEqual(merged, .sequence([.trash, undo]))
         let stub = StubThreadEditing()
         try await RemoteThreadSend.send(merged, via: stub, gmailThreadId: "t1")
         let calls = await stub.calls
-        XCTAssertEqual(calls, [.trash(id: "t1"),
-                               .modifyMessages(ids: ["b"], add: ["INBOX"], remove: ["TRASH"])])
+        XCTAssertFalse(calls.contains(.trash(id: "t1")))
+        XCTAssertEqual(calls, [.modify(id: "t1", add: ["INBOX"], remove: ["TRASH"]),
+                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: ["INBOX"])])
+        // Without earlier deletions, as on main: one modify, no trash.
+        XCTAssertEqual(RemoteThreadChange.trash.merged(
+            with: ThreadUndo.undoTrashRemote(wasInInbox: true,
+                                             before: .init(liveIds: ["b"], trashedIds: []))),
+                       .modify(add: ["INBOX"], remove: ["TRASH"]))
+        // A restore of a thread whose trash was never sent: only the restore.
+        let restore = RemoteThreadChange.modifyMessages(ids: ["a"], add: ["Label_1"],
+                                                        remove: ["INBOX", "TRASH"])
+        XCTAssertEqual(RemoteThreadChange.trash.merged(with: restore), restore)
+    }
+
+    /// A trash flushed (sent) before the undo: the undo is queued alone and
+    /// sends the thread un-trash, which also brings back a reply that
+    /// arrived after the last sync, then re-trashes the earlier deletions.
+    func testUndoAfterTheTrashWasSentIsSentOnItsOwn() async throws {
+        let undo = ThreadUndo.undoTrashRemote(
+            wasInInbox: false, before: .init(liveIds: ["b"], trashedIds: ["a"]))
+        let stub = StubThreadEditing()
+        try await RemoteThreadSend.send(undo, via: stub, gmailThreadId: "t1")
+        let calls = await stub.calls
+        XCTAssertEqual(calls, [.modify(id: "t1", add: [], remove: ["TRASH"]),
+                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: [])])
     }
 
     func testFoldingKeepsEveryStep() {

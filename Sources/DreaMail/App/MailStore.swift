@@ -3763,9 +3763,9 @@ struct ComposeRequest: Identifiable {
         let suppressed = suppressedDraftMessageIds
         let revision = contentRevisions.revision(of: threadId)
         let fontScale = Self.readingPaneFontScale()
-        // Opened from the Trash view: its trashed messages (only those, when
-        // the conversation is otherwise live), never cached.
-        let trashView = selectedView == .trash
+        // Opened from a Trash view row of an otherwise live conversation:
+        // its trashed messages only, never cached.
+        let trashView = opensTrashReader(threadId: threadId)
         let load = await threadDetailRepository.payload(
             threadId: threadId,
             suppressingDrafts: suppressed,
@@ -3808,9 +3808,20 @@ struct ComposeRequest: Identifiable {
     /// repository instead costs a MainActor → actor → MainActor round-trip
     /// whose return hop waits on the very SwiftUI work the delete just queued
     /// — measured at 176–209 ms, and identical for cache hits and misses.
+    /// Whether opening `threadId` shows only its trashed messages: a row
+    /// of the Trash list (no committed search) whose conversation is
+    /// otherwise live. Every other open (a search result, a notification,
+    /// a link, the palette) shows the conversation as it is live, unless
+    /// it is that same Trash row.
+    func opensTrashReader(threadId: String) -> Bool {
+        selectedView == .trash
+            && committedSearch.trimmingCharacters(in: .whitespaces).isEmpty
+            && trashViewProjectedIds.contains(threadId)
+    }
+
     func warmThreadDetail(threadId: String) -> ThreadDetailPayload? {
-        // The Trash view never paints from the cache (`threadDetailPayload`).
-        guard selectedView != .trash else { return nil }
+        // The Trash reader never paints from the cache (`threadDetailPayload`).
+        guard !opensTrashReader(threadId: threadId) else { return nil }
         return payloadMirror.payload(
             for: threadId,
             revision: contentRevisions.revision(of: threadId),

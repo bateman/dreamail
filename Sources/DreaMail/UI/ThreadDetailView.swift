@@ -259,7 +259,9 @@ struct ThreadDetailView: View {
                         .padding(.bottom, Self.headerBlockSpacing)
 
                     // Its .task is the auto-summary: gone with the section.
-                    if AIFeatures.isEnabled {
+                    // Not for the trashed messages of a live conversation
+                    // opened from the Trash view.
+                    if AIFeatures.isEnabled, !store.opensTrashReader(threadId: thread.id) {
                         summarySection
                             .padding(.bottom, Self.headerBlockSpacing)
                     }
@@ -1560,7 +1562,8 @@ struct ThreadDetailView: View {
     }
 
     private func summarizeThread(quiet: Bool = false) {
-        guard !summarizing, !summaryFingerprint.isEmpty else { return }
+        guard !summarizing, !summaryFingerprint.isEmpty,
+              !store.opensTrashReader(threadId: thread.id) else { return }
         summaryError = nil
         aiSummary = nil
         let fingerprint = summaryFingerprint
