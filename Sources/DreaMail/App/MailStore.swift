@@ -1589,9 +1589,7 @@ struct ComposeRequest: Identifiable {
     /// Saved views the current setting lets through: those of all accounts
     /// are hidden (not deleted) while the unified inbox is off.
     var visibleSavedViews: [SavedView] {
-        savedViews.filter {
-            UnifiedInbox.savedViewVisible(accountId: $0.accountId, enabled: unifiedInboxEnabled)
-        }
+        UnifiedInbox.visible(savedViews, accountId: \.accountId, enabled: unifiedInboxEnabled)
     }
 
     /// Brings the account filter and the selected view in line with the
@@ -1603,6 +1601,13 @@ struct ComposeRequest: Identifiable {
                                         railOrder: accounts.map(\.id))
         let view = viewAfterUnifiedSetting(selectedView)
         guard scoped != activeAccountId || view != selectedView else { return }
+        // One account: the same list either way. Nothing on screen changes,
+        // so keep the open conversation and the checked threads.
+        if accounts.count == 1, activeAccountId == nil, view == selectedView {
+            activeAccountId = scoped
+            if reload { reloadThreadsDebounced() }
+            return
+        }
         if reload {
             setActiveAccount(scoped)
         } else {
@@ -1914,8 +1919,6 @@ struct ComposeRequest: Identifiable {
         // Primaries immediately; send-as aliases fill in after the API call.
         sendIdentities = fallbackIdentities()
         reloadSavedViews()
-        // A saved "off" must not show the unified view at launch.
-        enforceUnifiedScope(reload: false)
         loadVIPs()
         // Tiny table, but correctness-critical before any early Sync All:
         // applyBlocklist with an empty set is a silent no-op. Keep this on
@@ -4032,6 +4035,11 @@ struct ComposeRequest: Identifiable {
     func saveView(_ view: SavedView) {
         guard cacheAcceptsWrites() else { return }
         var v = view
+        // Unified inbox off: a new view belongs to the account on screen
+        // (one for all accounts would be hidden at once).
+        v.accountId = UnifiedInbox.accountForNewView(
+            requested: v.accountId, enabled: unifiedInboxEnabled,
+            active: activeAccountId, railOrder: accounts.map(\.id))
         // If this is a lossless (chips-backed) view, fold any edits made to the
         // ViewEditor's structured fields back into the JSON so chipsJSON stays
         // authoritative and form edits still take effect.

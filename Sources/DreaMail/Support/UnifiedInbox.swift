@@ -16,10 +16,26 @@ enum UnifiedInbox {
 
     /// The account filter to apply for a requested one. Unified off: no
     /// request (nil = every account) stands; the first account in rail order
-    /// does. nil only when there is no account at all.
+    /// does. nil only when there is no account at all. A request for an account
+    /// that is not in the rail counts as no request.
     static func scope(requested: String?, enabled: Bool, railOrder: [String]) -> String? {
-        if requested != nil || enabled { return requested }
+        // An account that is gone (removed, or the demo left) is no request.
+        let known = requested.flatMap { railOrder.contains($0) ? $0 : nil }
+        if known != nil || enabled { return known }
         return railOrder.first
+    }
+
+    /// The account of a view being saved. Off, "all accounts" is not on
+    /// offer: the account on screen, else the first.
+    static func accountForNewView(requested: String?, enabled: Bool,
+                                  active: String?, railOrder: [String]) -> String? {
+        if requested != nil || enabled { return requested }
+        return scope(requested: active, enabled: false, railOrder: railOrder)
+    }
+
+    /// The saved views the setting lets through (sidebar, Go menu, palette).
+    static func visible<T>(_ views: [T], accountId: (T) -> String?, enabled: Bool) -> [T] {
+        views.filter { savedViewVisible(accountId: accountId($0), enabled: enabled) }
     }
 
     /// The rail's "All accounts" entry: with one account it never shows

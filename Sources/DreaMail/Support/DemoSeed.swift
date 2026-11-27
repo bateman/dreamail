@@ -82,7 +82,7 @@ enum DemoSeed {
             return false
         }
         if seed(db) { return true }
-        if existing == [account] {
+        if existing.contains(account), existing.allSatisfy(owns) {
             NSLog("DreaMail: using the previous demo fixture after reseed failure")
             return true
         }

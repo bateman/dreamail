@@ -356,10 +356,7 @@ extension MailStore {
         }
         if AccountLifecycle.activeAccountAfterRemoval(active: activeAccountId, removed: id)
             != activeAccountId {
-            // Unified inbox off: the first remaining account instead.
-            setActiveAccount(UnifiedInbox.scope(
-                requested: nil, enabled: unifiedInboxEnabled,
-                railOrder: accounts.map(\.id).filter { $0 != id }))
+            setActiveAccount(nil)
         }
         let badgeRaw = Self.badgeScope.rawValue
         if AccountLifecycle.badgeScopeRawAfterRemoval(raw: badgeRaw, removed: id) != badgeRaw {

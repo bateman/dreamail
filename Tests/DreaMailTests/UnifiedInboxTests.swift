@@ -79,6 +79,68 @@ final class UnifiedInboxTests: XCTestCase {
         }
     }
 
+    func testAnAccountThatIsGoneIsNoRequest() {
+        // The demo left, or the active account was removed.
+        XCTAssertNil(UnifiedInbox.scope(requested: "gone@example.com", enabled: true, railOrder: rail))
+        XCTAssertEqual(UnifiedInbox.scope(requested: "gone@example.com", enabled: false, railOrder: rail),
+                       "a@example.com", "off: the first account in rail order")
+        XCTAssertNil(UnifiedInbox.scope(requested: "gone@example.com", enabled: false, railOrder: []),
+                     "left the demo with no account yet")
+        XCTAssertEqual(UnifiedInbox.scope(requested: "gone@example.com", enabled: false,
+                                          railOrder: ["real@example.com"]), "real@example.com")
+    }
+
+    func testRemovingTheActiveAccountWhileOffLandsOnTheFirstRemaining() {
+        let after = ["b@example.com", "c@example.com"]
+        XCTAssertEqual(UnifiedInbox.scope(requested: nil, enabled: false, railOrder: after),
+                       "b@example.com")
+    }
+
+    func testFirstAccountAddedWhileOffTakesTheScope() {
+        XCTAssertNil(UnifiedInbox.scope(requested: nil, enabled: false, railOrder: []))
+        XCTAssertEqual(UnifiedInbox.scope(requested: nil, enabled: false, railOrder: ["new@example.com"]),
+                       "new@example.com")
+    }
+
+    func testOneAccountOnAndOff() {
+        let one = ["a@example.com"]
+        XCTAssertFalse(UnifiedInbox.railShowsEntry(enabled: true, accountCount: 1))
+        XCTAssertFalse(UnifiedInbox.railShowsEntry(enabled: false, accountCount: 1))
+        XCTAssertNil(UnifiedInbox.scope(requested: nil, enabled: true, railOrder: one))
+        XCTAssertEqual(UnifiedInbox.scope(requested: nil, enabled: false, railOrder: one), "a@example.com")
+        XCTAssertEqual(UnifiedInbox.shortcut(digit: 1, enabled: false, railOrder: one), .account("a@example.com"))
+        XCTAssertEqual(UnifiedInbox.shortcut(digit: 2, enabled: true, railOrder: one), .account("a@example.com"))
+    }
+
+    func testNewViewsBelongToAnAccountWhileOff() {
+        // On: as chosen (nil = all accounts).
+        XCTAssertNil(UnifiedInbox.accountForNewView(requested: nil, enabled: true,
+                                                    active: "b@example.com", railOrder: rail))
+        // Off: the account on screen, else the first; a chosen account stands.
+        XCTAssertEqual(UnifiedInbox.accountForNewView(requested: nil, enabled: false,
+                                                      active: "b@example.com", railOrder: rail), "b@example.com")
+        XCTAssertEqual(UnifiedInbox.accountForNewView(requested: nil, enabled: false,
+                                                      active: nil, railOrder: rail), "a@example.com")
+        XCTAssertEqual(UnifiedInbox.accountForNewView(requested: "c@example.com", enabled: false,
+                                                      active: "b@example.com", railOrder: rail), "c@example.com")
+    }
+
+    func testHiddenSavedViewsStayInTheListAndLeaveEveryMenu() {
+        var all = SavedView.empty(); all.id = 1; all.name = "Everything"
+        var one = SavedView.empty(); one.id = 2; one.name = "Mine"; one.accountId = "a@example.com"
+        let views = [all, one]
+        XCTAssertEqual(UnifiedInbox.visible(views, accountId: \.accountId, enabled: true).map(\.name),
+                       ["Everything", "Mine"])
+        let shown = UnifiedInbox.visible(views, accountId: \.accountId, enabled: false)
+        XCTAssertEqual(shown.map(\.name), ["Mine"])
+        XCTAssertEqual(views.count, 2, "hidden, not deleted")
+        // The command palette lists what the sidebar and Go menu list.
+        let entries = PaletteCommands.entries(.init(
+            focused: nil, savedViews: shown.map { .init(id: $0.id ?? -1, name: $0.name) }))
+        XCTAssertTrue(entries.contains { $0.id == "saved.2" })
+        XCTAssertFalse(entries.contains { $0.id == "saved.1" })
+    }
+
     func testDemoSecondAccountIsDemoOwned() {
         XCTAssertTrue(DemoSeed.canActivate(accountIDs: [DemoSeed.account, DemoSeed.secondAccount]))
         XCTAssertFalse(DemoSeed.canActivate(accountIDs: [DemoSeed.secondAccount, "person@example.org"]))

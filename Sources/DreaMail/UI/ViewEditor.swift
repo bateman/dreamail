@@ -79,7 +79,9 @@ struct ViewEditor: View {
         // No "All accounts" choice while the unified inbox is off.
         .onAppear {
             if !store.unifiedInboxEnabled, view.accountId == nil {
-                view.accountId = store.accounts.first?.id
+                view.accountId = UnifiedInbox.accountForNewView(
+                    requested: nil, enabled: false, active: store.activeAccountId,
+                    railOrder: store.accounts.map(\.id))
             }
         }
     }
