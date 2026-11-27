@@ -220,9 +220,10 @@ minor versions may still change behavior.
   With the sidebar reduced to the icon strip, the band at the top of the
   window was grey above the account bar and the strip and white above the
   message list, and the seam ran behind the sidebar button. In light
-  appearance, with the sidebar reduced, the band is now white like the
-  list, so the window buttons sit on white and the account bar starts below
-  the band. Dark appearance and the open sidebar are unchanged.
+  appearance, with the sidebar reduced, the whole top bar now has the grey
+  of the account bar, from the window buttons to the right edge, as dark
+  appearance looks; it stays grey when a conversation fills the window.
+  Dark appearance and the open sidebar are unchanged.
 
 - **The unified inbox can be switched off.** Settings → Appearance →
   "Show unified inbox (All accounts)", on by default. Off, the "All
