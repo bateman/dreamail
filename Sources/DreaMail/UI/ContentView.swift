@@ -937,7 +937,10 @@ struct ContentView: View {
     }
 
     private var listColumnWithSearch: some View {
-        listColumn.modifier(ListHeaderBar(leadingReserve: layoutMode == .list ? ListSearchMetrics.windowButtonsReserve : 0))
+        listColumn.modifier(ListHeaderBar(leadingReserve: layoutMode == .list
+            ? ListSearchMetrics.windowButtonsReserve(paneToggle: !fullWindowThreads,
+                                                     askAI: AIFeatures.isEnabled)
+            : 0))
     }
 
     @ViewBuilder

@@ -7,11 +7,17 @@ enum ListSearchMetrics {
     static let maxWidth: CGFloat = 380
     /// Side padding of the bar; the results panel uses the same trailing edge.
     static let sidePadding: CGFloat = 10
-    /// Room left for the window's toolbar buttons (reading-pane toggle, focus,
-    /// Ask AI; 45 pt each) when the list is the window's last column: macOS
-    /// puts them at that column's leading edge (CI: toggle at x 316-361 with
-    /// the column starting at 312), where this row would sit under them.
-    static let windowButtonsReserve: CGFloat = 160
+    /// Room left for the window's toolbar buttons when the list is the window's
+    /// last column: macOS puts them at that column's leading edge (CI: toggle
+    /// at x 316-361, 45 pt wide, the column starting at ~312), where this row
+    /// would sit under them. Estimate: 45 pt per button plus a margin, for the
+    /// buttons actually shown (pane toggle unless full-window style, focus,
+    /// Ask AI when AI features are on). Only the toggle's width is measured.
+    static let windowButtonWidth: CGFloat = 45
+    static func windowButtonsReserve(paneToggle: Bool, askAI: Bool) -> CGFloat {
+        let count = (paneToggle ? 1 : 0) + 1 + (askAI ? 1 : 0)
+        return CGFloat(count) * windowButtonWidth + 10
+    }
     /// Widest the results panel gets.
     static let panelMaxWidth: CGFloat = 600
 }
