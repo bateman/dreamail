@@ -80,7 +80,7 @@ struct SidebarIconStrip: View {
     @Environment(MailStore.self) private var store
     @Environment(SidebarDisclosureModel.self) private var disclosure
     @Environment(\.mailAccent) private var accent
-    /// Expands the sidebar and focuses its search field (as `/`).
+    /// Focuses the search field in the list column's top bar (as `/`).
     let onSearch: () -> Void
 
     private typealias Metrics = AccountRailMetrics

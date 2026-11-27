@@ -213,7 +213,7 @@ final class MailStore {
     /// is committed (Enter / View all results / picking a suggestion).
     var committedSearch: String = ""
     /// Bumped by `/` (Gmail-style) to move keyboard focus into the sidebar
-    /// search field. The sidebar watches this and drives its `@FocusState`.
+    /// search field. The list column's field watches this and drives its `@FocusState`.
     var searchFocusToken = 0
     /// Bumped by View ▸ Reset Sidebar Order; the sidebar resets its order.
     var sidebarOrderResetToken = 0
@@ -4180,7 +4180,7 @@ struct ComposeRequest: Identifiable {
         }
     }
 
-    /// Gmail's `/`: move keyboard focus into the sidebar search field. Bumps a
+    /// Gmail's `/`: move keyboard focus into the search field. Bumps a
     /// token instead of holding focus state directly so a repeated `/` (after
     /// the user clicked away) re-focuses.
     func focusSearch() {

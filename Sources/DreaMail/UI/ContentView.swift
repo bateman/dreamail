@@ -93,15 +93,20 @@ struct ContentView: View {
         return layoutMode != .threadFocus || centerPeekThreads
     }
 
-    /// Gmail's `/` (and the strip's search icon): focus the sidebar search
-    /// field. A collapsed sidebar has no field to focus — reveal it first and
-    /// focus once the column is installed.
+    /// Gmail's `/` (and the strip's search icon): focus the search field in
+    /// the list column's top bar. With a conversation open in the compact
+    /// layout the list is not on screen — go back to it first.
     private func revealSearch() {
-        if sidebarHidden {
-            withAnimation { sidebarHidden = false }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                store.focusSearch()
-            }
+        let mode = MailLayout.mode(
+            width: MailLayout.modeWidth(host: composeHostFrame.width, askAIPanel: 0,
+                                        stripShown: sidebarStripOnScreen),
+            readingPaneHidden: readingPaneHidden,
+            hasSelection: store.openedThreadId != nil,
+            threadFocus: store.threadFocusMode,
+            fullWindowThreads: fullWindowThreads)
+        if mode == .compactDetail {
+            store.clearSelection()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { store.focusSearch() }
         } else {
             store.focusSearch()
         }
@@ -269,7 +274,7 @@ struct ContentView: View {
             store.demoteInlineComposeIfPaneTooShort(paneHeight: frame.height)
         }
         .onPreferenceChange(ComposeHostFrameKey.self) { composeHostFrame = $0 }
-        // Search lives in the sidebar, not the toolbar.
+        // Search lives in the list column's top bar (ListSearchToolbar).
         // Typing only feeds the dropdown preview; the list follows
         // committedSearch. Clearing the field also clears an active search.
         .onChange(of: store.searchText) {
@@ -338,7 +343,7 @@ struct ContentView: View {
             store.readingPaneHiddenForCompose = effectivePaneHidden
             store.openDetail(store.selectedThreadId)
             installKeyMonitor()
-            // Don't let the sidebar search field start with keyboard focus —
+            // Don't let the search field start with keyboard focus —
             // it would swallow Esc/j/k until clicked away.
             DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
             considerDefaultMailPrompt()
@@ -573,19 +578,6 @@ struct ContentView: View {
                 )
             }
         }
-        // Wide command-K-style search panel, floated at the window level so it
-        // spills over the message list (not confined to the sidebar column).
-        .overlay(alignment: .topLeading) {
-            if store.searchActive {
-                SearchResultsPanel()
-                    .frame(width: 600, alignment: .leading)
-                    .padding(.leading, 10)
-                    .padding(.top, 76)
-                    // Snappy fade in place — no slide-in; this app is fast.
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.06), value: store.searchActive)
         // Non-modal error banner (a background sync hiccup shouldn't interrupt
         // you). Sits above the undo/notice toast; stays until dismissed.
         .overlay(alignment: .bottom) {
@@ -713,7 +705,7 @@ struct ContentView: View {
                 Sidebar()
                     .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
             } detail: {
-                listColumn
+                listColumnWithSearch
             }
         case .compactDetail:
             NavigationSplitView(columnVisibility: splitVisibility(whenHidden: .detailOnly)) {
@@ -727,7 +719,7 @@ struct ContentView: View {
                 Sidebar()
                     .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
             } content: {
-                listColumn
+                listColumnWithSearch
                     .navigationSplitViewColumnWidth(min: 420, ideal: 560)
             } detail: {
                 detailPane(compact: false)
@@ -949,6 +941,10 @@ struct ContentView: View {
         } else {
             ThreadListView()
         }
+    }
+
+    private var listColumnWithSearch: some View {
+        listColumn.modifier(ListSearchToolbar())
     }
 
     @ViewBuilder
@@ -1587,7 +1583,7 @@ private extension ContentView {
                 _ = store.handleKey(chars)
                 return nil
             }
-            // Gmail's `/`: jump focus to the sidebar search field.
+            // Gmail's `/`: jump focus to the search field.
             if event.charactersIgnoringModifiers == "/" {
                 revealSearch()
                 return nil
@@ -1879,8 +1875,6 @@ struct Sidebar: View {
     /// access to the store go through this instead of `$store`.
     private var bound: Bindable<MailStore> { Bindable(store) }
     @ObservedObject private var updates = UpdateChecker.shared
-    // Driven by `/` (Gmail-style) via store.searchFocusToken.
-    @FocusState private var searchFocused: Bool
     @State private var viewToDelete: SavedView?
     /// Shared with the icon strip (`ContentView` owns it).
     @Environment(SidebarDisclosureModel.self) private var disclosure
@@ -1898,8 +1892,7 @@ struct Sidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header: account (avatar, name, address) with
-            // compose right next to it, search on its own row below.
+            // Header: compose. (Search lives in the list column's top bar.)
             HStack(spacing: 6) {
                 // The account switcher lives in the rail (AccountRail).
                 Spacer(minLength: 0)
@@ -1921,27 +1914,6 @@ struct Sidebar: View {
                 .accessibilityIdentifier("composeButton")
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
-            SearchField(prompt: "Search", text: bound.searchText, focused: $searchFocused,
-                        emphasized: searchFocused, onSubmit: {
-                    // Fallback path — with the dropdown open, Enter is handled
-                    // by the key monitor and routed to the panel instead.
-                    store.commitSearch(store.searchText)
-                    store.dismissSearchPanel()
-                    NSApp.keyWindow?.makeFirstResponder(nil)
-                    if store.selectedThreadId == nil { store.moveSelection(1) }
-                })
-                .help("Search — from: to: subject: label: has:attachment is:unread is:starred after: before:")
-                .padding(.horizontal, 10).padding(.bottom, 8)
-                // Gmail's `/`: focus search.
-                .onChange(of: store.searchFocusToken) { searchFocused = true }
-                // View ▸ Reset Sidebar Order: the sidebar being shown.
-                .onChange(of: store.sidebarOrderResetToken) {
-                    disclosure.setSystemOrder(nil, orderScope)
-                }
-                // Drive the window-level results panel from the field's focus.
-                // Blur is deferred (see noteSearchFocused) so a click on a
-                // result row can land before the panel is torn down.
-                .onChange(of: searchFocused) { store.noteSearchFocused(searchFocused) }
             List(selection: bound.selectedView) {
                 // Gmail's system views, in Gmail's order unless dragged.
                 Section {
@@ -2014,6 +1986,10 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            // View ▸ Reset Sidebar Order: the sidebar being shown.
+            .onChange(of: store.sidebarOrderResetToken) {
+                disclosure.setSystemOrder(nil, orderScope)
+            }
             .environment(\.defaultMinListRowHeight, sidebarDensity.minRowHeight)
             .modifier(SidebarListDensity(density: sidebarDensity))
             .scrollContentBackground(.hidden)
