@@ -33,9 +33,10 @@ final class ThreadListIndexTests: XCTestCase {
         return "\(detail)\n  SQL: \(sql)"
     }
 
-    /// Mirrors `FilterChips.defaults(for: .inbox)` (hide Promotions and
-    /// Social; starred pins through) — FilterChips itself is app-only.
-    private func withDefaultInboxChips(
+    /// An Inbox with Promotions and Social hidden by the user (starred pins
+    /// through): the heaviest common category hide. The default hides
+    /// nothing (`testDefaultInboxChipsHideNothingAndWalkSortIndex`).
+    private func withPromoSocialHidden(
         _ q: QueryInterfaceRequest<MailThread>
     ) -> QueryInterfaceRequest<MailThread> {
         CategoryHide.apply(q, hide: ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"])
@@ -54,9 +55,20 @@ final class ThreadListIndexTests: XCTestCase {
                       "expected index \(index): \(plan)", file: file, line: line)
     }
 
+    /// The Inbox's factory chips add no category filter, so its first page
+    /// is the bare inbox query on its sort index.
+    func testDefaultInboxChipsHideNothingAndWalkSortIndex() throws {
+        let hide = FilterChips.defaults(for: .inbox).category.hide
+        XCTAssertEqual(hide, [])
+        try makeDB().read { db in
+            let p = try plan(db, page(CategoryHide.apply(ThreadListQuery.inbox(), hide: hide)))
+            assertIndexedOrder(p, index: "thread_inbox_sort")
+        }
+    }
+
     func testInboxFirstPageWalksSortIndex() throws {
         try makeDB().read { db in
-            let p = try plan(db, page(withDefaultInboxChips(ThreadListQuery.inbox())))
+            let p = try plan(db, page(withPromoSocialHidden(ThreadListQuery.inbox())))
             assertIndexedOrder(p, index: "thread_inbox_sort")
         }
     }
@@ -64,7 +76,7 @@ final class ThreadListIndexTests: XCTestCase {
     /// Load older adds the cursor predicate on the same sort key.
     func testInboxLoadOlderWalksSortIndex() throws {
         try makeDB().read { db in
-            let q = withDefaultInboxChips(ThreadListQuery.inbox())
+            let q = withPromoSocialHidden(ThreadListQuery.inbox())
                 .filter(sql: ThreadListPaging.olderThanSQL(inboundSort: true),
                         arguments: [Date(), Date(), "a:x"])
             let p = try plan(db, page(q))
@@ -75,10 +87,10 @@ final class ThreadListIndexTests: XCTestCase {
     /// Unified inbox with one account selected, and the per-account inbox.
     func testAccountScopedInboxWalksAccountSortIndex() throws {
         try makeDB().read { db in
-            let scoped = withDefaultInboxChips(ThreadListQuery.inbox())
-                .filter(Column("accountId") == "a@x.com")
+            let scoped = withPromoSocialHidden(ThreadListQuery.inbox())
+                .filter(Column("accountId") == "a@example.com")
             assertIndexedOrder(try plan(db, page(scoped)), index: "_sort")
-            let account = withDefaultInboxChips(ThreadListQuery.accountInbox("a@x.com"))
+            let account = withPromoSocialHidden(ThreadListQuery.accountInbox("a@example.com"))
             assertIndexedOrder(try plan(db, page(account)), index: "thread_account_inbox_sort")
         }
     }

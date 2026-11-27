@@ -4,10 +4,11 @@ import Foundation
 /// them. `Notifier.setBadge` paints what these return; `MailStore` is the
 /// only caller and decides when.
 ///
-/// What it counts (Gmail's rule): unread conversations in the primary
-/// Inbox — not archived, trashed, spam, Promotions/Social, actively snoozed,
-/// nor Updates/Forums while the inbox filter hides them. It is the
-/// `"inbox"` sidebar count, scoped by `Scope` instead of the sidebar focus.
+/// What it counts (Gmail's rule, no category tabs): unread conversations
+/// the Inbox lists, whatever their category — not archived, trashed, spam,
+/// actively snoozed, nor in a category the user hides in the Inbox (a star
+/// pins through). It is the `"inbox"` sidebar count, scoped by `Scope`
+/// instead of the sidebar focus.
 enum DockBadge {
     /// What the badge counts. Stored in UserDefaults ("badgeScope"): every
     /// account, the inbox currently focused in the sidebar, or one specific

@@ -7,12 +7,14 @@ import GRDB
 /// (no AppKit). Prefer per-predicate `COUNT(*)` over a full-table
 /// `SUM(CASE…)` so SQLite can use partial indexes from migration v21.
 enum SidebarCounts {
-    /// Gmail categories that have no dedicated sidebar tab. When the inbox
-    /// filter hides them (`CategoryFilter.hide`), the primary unread badge
-    /// must drop them too — otherwise the counter still looks like Updates
-    /// (etc.) are in the list. Promo/Social always route to their own badges
-    /// regardless of the hide set.
-    static let primaryHideableCategories: Set<String> = [
+    /// Gmail categories the Inbox can hide (`CategoryFilter.hide`). Like
+    /// Gmail with no category tabs, the Inbox lists every INBOX conversation
+    /// by default; only a hide the user turned on removes one, and then from
+    /// the list, the Inbox unread, the Dock badge and the avatar badges
+    /// alike. A star pins through a hide, as in `CategoryHide`.
+    static let inboxHideableCategories: Set<String> = [
+        "CATEGORY_PROMOTIONS",
+        "CATEGORY_SOCIAL",
         "CATEGORY_UPDATES",
         "CATEGORY_FORUMS",
     ]
@@ -34,8 +36,8 @@ enum SidebarCounts {
     /// actions use this to keep sidebar badges in the same frame as the row;
     /// the coalesced database reconciliation remains the source of truth.
     ///
-    /// `hideCategories` is the inbox "do not contain" set (Updates/Forums
-    /// only affect the primary badge; promo/social always tab-split).
+    /// `hideCategories` is the inbox "do not contain" set (empty by
+    /// default): it removes a category from the inbox badge only.
     /// Actively snoozed mail is list-hidden from Inbox/Promo/Social and must
     /// not inflate those unread badges (it still counts under Snoozed).
     static func memberships(
@@ -54,12 +56,10 @@ enum SidebarCounts {
             if thread.inSocial {
                 result.insert("social")
             }
-            // Primary badge only — not starred pin-through. Starred promo/social
-            // can show in the inbox list (CategoryHide) but still count under
-            // their category tab, not the inbox unread badge. Hidden Updates/
-            // Forums likewise stay out of the primary badge (no tab for them).
-            if !thread.inPromotions && !thread.inSocial
-                && !isHiddenFromPrimary(thread, hide: hideCategories) {
+            // Inbox badge: every conversation the Inbox lists, whatever its
+            // category, unless the user hides that category (star pins
+            // through, as in the list).
+            if !isHiddenFromInbox(thread, hide: hideCategories) {
                 result.insert("inbox")
             }
         }
@@ -129,25 +129,39 @@ enum SidebarCounts {
     static let labelUnreadSQL =
         "thread.isUnread = 1 AND thread.inTrash = 0 AND thread.inSpam = 0"
 
-    /// Whether a non-promo/non-social thread is excluded from the primary
-    /// badge by the inbox category hide set.
-    static func isHiddenFromPrimary(_ thread: MailThread, hide: Set<String>) -> Bool {
-        let labels = Set(thread.labels)
-        for cat in hide where primaryHideableCategories.contains(cat) {
-            if labels.contains(cat) { return true }
-        }
-        return false
+    /// Whether the inbox category hide set removes this thread from the
+    /// Inbox list: in a hidden category and not starred (`CategoryHide`).
+    static func isHiddenFromInbox(_ thread: MailThread, hide: Set<String>) -> Bool {
+        isHiddenFromInbox(hide: hide, isStarred: thread.isStarred,
+                          inPromotions: thread.inPromotions, inSocial: thread.inSocial,
+                          labelIds: thread.labelIds)
     }
 
-    /// SQL fragment (AND-joined) excluding hideable categories present in
-    /// `hide`. Empty when none apply. Uses the same `labelIds LIKE` token
-    /// style as `CategoryHide` for Updates/Forums.
-    static func primaryHideSQL(hide: Set<String>) -> String {
+    /// The one in-memory form of the rule, for rows and for notification
+    /// candidates. Category membership as `StarStickiness.isInHiddenCategory`
+    /// (the same matching as `CategoryHide` and `inboxHideSQL`).
+    static func isHiddenFromInbox(hide: Set<String>, isStarred: Bool, inPromotions: Bool,
+                                  inSocial: Bool, labelIds: String) -> Bool {
+        guard !isStarred else { return false }
+        return StarStickiness.isInHiddenCategory(
+            hide: hide.intersection(inboxHideableCategories),
+            inPromotions: inPromotions, inSocial: inSocial, labelIds: labelIds)
+    }
+
+    /// SQL fragment (AND-joined) with the same rule as `CategoryHide.apply`
+    /// for the categories in `hide`. Empty when none apply (the default).
+    static func inboxHideSQL(hide: Set<String>) -> String {
         var parts: [String] = []
-        for cat in hide.sorted() where primaryHideableCategories.contains(cat) {
-            // labelIds is space-separated; bound tokens are fixed Gmail ids
-            // (not user text), so interpolating is safe and matches CategoryHide.
-            parts.append("labelIds NOT LIKE '%\(cat)%'")
+        for cat in hide.sorted() where inboxHideableCategories.contains(cat) {
+            switch cat {
+            case "CATEGORY_PROMOTIONS": parts.append("(inPromotions = 0 OR isStarred = 1)")
+            case "CATEGORY_SOCIAL": parts.append("(inSocial = 0 OR isStarred = 1)")
+            default:
+                // labelIds is space-separated; bound tokens are fixed Gmail
+                // ids (not user text), so interpolating is safe and matches
+                // CategoryHide.
+                parts.append("(labelIds NOT LIKE '%\(cat)%' OR isStarred = 1)")
+            }
         }
         return parts.isEmpty ? "" : " AND " + parts.joined(separator: " AND ")
     }
@@ -158,8 +172,8 @@ enum SidebarCounts {
     /// archived and disagree with list filters).
     ///
     /// `hideCategories` is the inbox category-hide set (typically from
-    /// `FilterChips` for the inbox view). Promo/Social always stay out of
-    /// the primary badge; Updates/Forums drop out only when hidden.
+    /// `FilterChips` for the inbox view; empty by default). A category drops
+    /// out of the Inbox count only when it is hidden.
     static func fetch(
         db: Database,
         activeAccount: String?,
@@ -167,15 +181,14 @@ enum SidebarCounts {
         now: Date = Date(),
         hideCategories: Set<String> = []
     ) throws -> (counts: [String: Int], badge: Int) {
-        let hideSQL = primaryHideSQL(hide: hideCategories)
+        let hideSQL = inboxHideSQL(hide: hideCategories)
         // Not actively snoozed — same gate as inbox list `notSnoozed`. A reply
         // on a sleeping thread used to keep UNREAD+INBOX while list-hidden,
         // inflating the badge with nothing visible under is:unread.
         let awake = notActivelySnoozedSQL
-        // Primary-tab unread only (matches memberships). Starred category mail
-        // is list-pinned via CategoryHide but does not inflate this badge.
+        // Every unread conversation the Inbox lists (matches memberships).
         let inbox = try count(db, account: activeAccount,
-                              where: primaryUnreadSQL(hideSQL: hideSQL),
+                              where: inboxUnreadSQL(hideSQL: hideSQL),
                               arguments: [now])
         let promotions = try count(db, account: activeAccount, where: """
             isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
@@ -207,14 +220,14 @@ enum SidebarCounts {
             isUnread = 1 AND inSpam = 1
             """)
 
-        // Dock badge uses the same primary-inbox predicate as `inbox`, but
+        // Dock badge uses the same Inbox predicate as `inbox`, but
         // may scope to a different account. Reuse when scopes match.
         let badge: Int
         if badgeAccount == activeAccount {
             badge = inbox
         } else {
             badge = try count(db, account: badgeAccount,
-                              where: primaryUnreadSQL(hideSQL: hideSQL),
+                              where: inboxUnreadSQL(hideSQL: hideSQL),
                               arguments: [now])
         }
 
@@ -233,13 +246,13 @@ enum SidebarCounts {
         return (counts, badge)
     }
 
-    /// The primary-inbox unread predicate behind the inbox count, the Dock
-    /// badge and the per-account avatar badges: one definition, so they
-    /// cannot drift. Bind `now` as its sole argument.
-    private static func primaryUnreadSQL(hideSQL: String) -> String {
+    /// The Inbox unread predicate behind the inbox count, the Dock badge and
+    /// the per-account avatar badges: one definition, so they cannot drift.
+    /// Same rows as the Inbox list (`ThreadListQuery.inbox` + `CategoryHide`),
+    /// unread and out of spam. Bind `now` as its sole argument.
+    static func inboxUnreadSQL(hideSQL: String) -> String {
         """
-        isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-        AND inPromotions = 0 AND inSocial = 0\(hideSQL)\(notActivelySnoozedSQL)
+        isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1\(hideSQL)\(notActivelySnoozedSQL)
         """
     }
 
@@ -251,7 +264,7 @@ enum SidebarCounts {
         now: Date = Date(),
         hideCategories: Set<String> = []
     ) throws -> [String: Int] {
-        let predicate = primaryUnreadSQL(hideSQL: primaryHideSQL(hide: hideCategories))
+        let predicate = inboxUnreadSQL(hideSQL: inboxHideSQL(hide: hideCategories))
         let rows = try Row.fetchAll(db, sql: """
             SELECT accountId, COUNT(*) AS n FROM thread
             WHERE (\(predicate)) GROUP BY accountId

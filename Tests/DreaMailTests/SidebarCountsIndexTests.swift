@@ -40,20 +40,25 @@ final class SidebarCountsIndexTests: XCTestCase {
             file: file, line: line)
     }
 
+    /// The Inbox unread / Dock badge count as the app builds it
+    /// (`SidebarCounts.inboxUnreadSQL`), with no hide and with every category
+    /// hidden: an index search on the Inbox key columns (inInbox, inTrash),
+    /// never a scan. The v21 partial `thread_unread_primary_inbox` cannot
+    /// serve it (its WHERE excludes promo/social) and is not expected.
     func testPrimaryCountPredicatesAreIndexed() throws {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q)
         try q.read { db in
-            try self.assertIndexedCount(db, sql: """
-                SELECT COUNT(*) FROM thread
-                WHERE isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-                  AND inPromotions = 0 AND inSocial = 0
-                """)
-            try self.assertIndexedCount(db, sql: """
-                SELECT COUNT(*) FROM thread
-                WHERE accountId = ? AND isUnread = 1 AND inTrash = 0 AND inSpam = 0
-                  AND inInbox = 1 AND inPromotions = 0 AND inSocial = 0
-                """, arguments: ["a@x.com"])
+            for hide in Self.hides {
+                let predicate = SidebarCounts.inboxUnreadSQL(
+                    hideSQL: SidebarCounts.inboxHideSQL(hide: hide))
+                try self.assertInboxKeyIndex(db, sql: """
+                    SELECT COUNT(*) FROM thread WHERE (\(predicate))
+                    """, arguments: [Date()], hide: hide)
+                try self.assertInboxKeyIndex(db, sql: """
+                    SELECT COUNT(*) FROM thread WHERE accountId = ? AND (\(predicate))
+                    """, arguments: ["a@example.com", Date()], hide: hide)
+            }
             try self.assertIndexedCount(db, sql: """
                 SELECT COUNT(*) FROM thread
                 WHERE isStarred = 1 AND inTrash = 0
@@ -66,19 +71,41 @@ final class SidebarCountsIndexTests: XCTestCase {
     }
 
     /// The per-account unread count (avatar badges) is a grouped COUNT over
-    /// the same predicate; it must not scan the whole table.
+    /// the same predicate (`fetchUnreadByAccount`); same index rule.
     func testUnreadByAccountIsIndexed() throws {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q)
         try q.read { db in
-            try self.assertIndexedCount(db, sql: """
-                SELECT accountId, COUNT(*) AS n FROM thread
-                WHERE (isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-                  AND inPromotions = 0 AND inSocial = 0
-                  AND (snoozeUntil IS NULL OR snoozeUntil <= ?))
-                GROUP BY accountId
-                """, arguments: [Date()])
+            for hide in Self.hides {
+                let predicate = SidebarCounts.inboxUnreadSQL(
+                    hideSQL: SidebarCounts.inboxHideSQL(hide: hide))
+                try self.assertInboxKeyIndex(db, sql: """
+                    SELECT accountId, COUNT(*) AS n FROM thread
+                    WHERE (\(predicate)) GROUP BY accountId
+                    """, arguments: [Date()], hide: hide)
+            }
         }
+    }
+
+    private static let hides: [Set<String>] = [
+        [],
+        ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"],
+    ]
+
+    /// Indexed on the Inbox key (`inInbox=? AND inTrash=?`, as the
+    /// v18/v32/v42 inbox composites), or on an unread partial index.
+    private func assertInboxKeyIndex(_ db: Database, sql: String,
+                                     arguments: StatementArguments, hide: Set<String>,
+                                     file: StaticString = #filePath, line: UInt = #line) throws {
+        try assertIndexedCount(db, sql: sql, arguments: arguments, file: file, line: line)
+        let detail = try explainDetail(db, sql: sql, arguments: arguments)
+        XCTAssertTrue(detail.contains("inInbox=? AND inTrash=?")
+                        || detail.contains("thread_unread_live"),
+                      "hide \(hide): expected the Inbox key or an unread partial index, got: \(detail)",
+                      file: file, line: line)
+        XCTAssertFalse(detail.contains("thread_unread_primary_inbox"),
+                       "the v21 primary partial cannot match the new predicate: \(detail)",
+                       file: file, line: line)
     }
 
     /// v22 partials have no v18 competitor — pin the exact index name so a
