@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.44
+Versione: 0.45
 Ultimo aggiornamento: 27 novembre 2026
 Stato: documento in evoluzione
 
@@ -101,6 +101,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-087 | **Etichette disegnate con il preset di colore di Gmail** | Gmail può dare a un'etichetta un "preset" di colore (`colorPreset`, 21 valori) che REST v1 non documenta: l'app lo legge se arriva, lo conserva così com'è e lo mostra nel foglio del colore. Il preset decide il disegno solo quando il colore di Gmail manca o è la coppia neutra `#eeeeee`/`#222222`; un colore vero di Gmail e un colore scelto solo su questo Mac vengono prima. L'app non scrive mai il preset: per toglierlo serve Gmail web, e una rimozione che lo lascia è un errore dichiarato, non un successo. Una nuova sottoetichetta eredita il colore con cui la madre è disegnata (precisa DEC-071), mai quello scelto solo su questo Mac. Il nome del preset è mostrato solo se ben formato, altrimenti "unknown preset". Prosegue DEC-083. PR #118. |
 | DEC-088 | **"Move to inbox" e menu del clic destro come Gmail** | Come Gmail web: una conversazione che non è in Inbox mostra "Move to inbox" dove quelle in Inbox mostrano "Archive" (non nel Cestino, non nello Spam, non una bozza sola: lì restano le azioni proprie). Il pulsante conserva le etichette; "Move to… → Inbox" da dentro un'etichetta la toglie, e da una conversazione cestinata toglie anche TRASH. Scelta dell'app, non verificata su Gmail: riportare in Inbox toglie anche il silenziamento. Nessun tasto predefinito (Gmail non ne ha). Il menu del clic destro sulla riga segue ordine, gruppi, parole e icone di Gmail, con le voci proprie dell'app in coda; "Delete" è la parola di Gmail solo in questo menu, altrove resta "Trash" finché il proprietario non decide. Il clic destro su una di più righe spuntate agisce sull'insieme spuntato. Fuori per scelta: "Add to Tasks" (deciso dal proprietario), "Forward as attachment" e "Open in new window" (mancano i mattoni nell'app). Un'azione ha una sola icona in tutta l'app. PR #116. |
 | DEC-089 | **Promotions e Social disattivabili per account** | Ogni account ha "Show Promotions and Social" (acceso per default): spento, l'account non ha le due righe, le due scelte nei filtri né il chip di categoria. È una scelta di presentazione, non un filtro: la posta resta in Inbox, All Mail, ricerca, conteggi, Dock e notifiche (DEC-084 resta valida). In "All accounts" le due righe si vedono se almeno un account le ha accese ed elencano solo la posta di quegli account. Un filtro di categoria memorizzato per Inbox è senza effetto per un account spento, nel suo ambito come in "All accounts", e resta memorizzato. Le viste salvate conservano i propri filtri anche per un account spento (deciso dal proprietario). Scostamento da Gmail, che ha le schede per casella e non questo interruttore nell'app. PR #119. |
+| DEC-090 | **Azioni sul singolo messaggio e apertura sui messaggi stellati** | Come Gmail web: ogni messaggio aperto ha stella, Reply, Reply all e un menu "⋮" con le sole voci che l'app sa fare, senza voci spente. La stella e "Delete this message" valgono per quel solo messaggio; cancellare un messaggio sposta nel Cestino solo quello (etichetta TRASH, mai una cancellazione definitiva) e la conversazione resta dov'è finché ha un messaggio vivo (DEC-081); cancellato l'ultimo, va nel Cestino la conversazione. Deciso dal proprietario: una conversazione con messaggi stellati si apre sul messaggio stellato più recente; precisazione dell'orchestratore: restano aperti anche l'ultimo messaggio e i non letti (al più 5), e se c'è posta non letta più recente della stella la vista va sul più vecchio di quei non letti. Senza stelle l'apertura non cambia. Da un messaggio cestinato non si offrono azioni che toccano i messaggi vivi (Delete, Report spam, Block). Fuori: Print (in attesa del permesso di stampa), Add sender to Contacts, Report phishing, Translate. PR #110. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -524,6 +525,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-27 | **0.42** | Aggiunta DEC-087 (etichette disegnate con il preset di colore di Gmail), che prosegue DEC-083 e precisa DEC-071. |
 | 2026-11-27 | **0.43** | Aggiunta DEC-088 ("Move to inbox" e menu del clic destro come Gmail). |
 | 2026-11-27 | **0.44** | Aggiunta DEC-089 (Promotions e Social disattivabili per account). |
+| 2026-11-27 | **0.45** | Aggiunta DEC-090 (azioni sul singolo messaggio e apertura sui messaggi stellati). |
 
 ---
 

@@ -252,6 +252,20 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **Actions on a single message, as in Gmail.** Every open message in a
+  conversation now has, after its date: Star, Reply, Reply all (when it
+  differs from Reply) and a More (⋮) menu with Reply, Reply to all,
+  Forward, Filter messages like this, Delete this message, Block sender,
+  Report spam, Show original, Download message and Mark unread from here.
+  The star is on that message only. "Delete this message" moves only that
+  message to the Trash: the conversation stays where it is while another
+  message remains, shows "1 deleted message in this conversation", and the
+  deletion can be undone. An open message is closed from its date.
+  Not included: Print, Add sender to Contacts, Report phishing, Translate.
+- **A conversation with starred messages opens on them.** The newest
+  starred message is open and in view, together with the newest message
+  and the unread ones (five at most); unread mail newer than the star
+  comes first. Without stars a conversation opens as before.
 - **Fixed: two rows highlighted in the sidebar.** After some changes of
   view (for example from a row under "More", or with a keyboard jump), the
   sidebar could show the highlight on two rows, the new view and the one
