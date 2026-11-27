@@ -490,6 +490,7 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .help("Undo (\(store.keyBindings.displayKey(for: .undo)) or ⌘Z)")
+                        .accessibilityIdentifier("undoToast.undo")
                     }
                     .padding(.horizontal, 22).padding(.vertical, 13)
                     .background(.regularMaterial, in: Capsule())
