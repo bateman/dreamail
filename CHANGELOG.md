@@ -126,10 +126,10 @@ minor versions may still change behavior.
   selected row in the list and in the sidebar stays in the accent colour
   when you click elsewhere or the window is inactive, as in Gmail: the
   colour means "this is open", not "this list has focus" (it used to turn
-  a heavy grey). The list that has the keyboard focus shows a thin bar at
-  the row's leading edge. In the sidebar the coloured selection keeps the
-  system's rounded shape, inset from the edges, so it does not touch the
-  message list. On macOS 14 and 15 nothing changes. Also: the
+  a heavy grey). In the sidebar, in Settings and in the collapsed icon
+  strip the selection is a square band like the one of the message list,
+  reaching the list's edge, the same with and without focus; the sidebar
+  shows no scroll bar. On macOS 14 and 15 the system's selection stays. Also: the
   "+" next to Labels is larger and neutral, the label "⋮" is vertical and
   neutral (not accent blue), the hover actions on a conversation row have
   a little more space between them, and the "Defaults" table in Settings →
