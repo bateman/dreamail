@@ -30,7 +30,7 @@ final class CategoryRowsUITests: XCTestCase {
         return app
     }
 
-    private func element(_ id: String, in app: XCUIApplication) -> XCUIElement {
+    private func element(_ id: String, in app: XCUIElement) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
