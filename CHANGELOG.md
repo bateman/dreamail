@@ -252,6 +252,14 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **The search field is in the top bar.** It moved from the sidebar to the
+  bar at the top of the message list, to the right of the view's icon and
+  name, and narrows with the list when there is less room. It works as
+  before: click it or press `/`, Esc leaves it, and the results panel
+  opens under it. With the sidebar reduced to icons, its Search button now
+  puts the cursor in that field instead of reopening the sidebar. The
+  "»" button at the right of the reading pane's bar is gone: it did the
+  same as the button that shows and hides the reading pane.
 - **Actions on a single message, as in Gmail.** Every open message in a
   conversation now has, after its date: Star, Reply, Reply all (when it
   differs from Reply) and a More (⋮) menu with Reply, Reply to all,
