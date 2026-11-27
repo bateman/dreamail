@@ -460,11 +460,12 @@ struct ThreadListView: View {
         // Undo toast and notice toast (both bottom-leading) live in ContentView.
     }
 
+    /// The key bound to the action's command, if any: no shortcut, no hint.
     private func shortcut(for action: SelectionBarAction) -> String? {
         switch action {
-        case .archive: return store.keyBindings.displayKey(for: .archive)
-        case .trash: return store.keyBindings.displayKey(for: .trash)
-        case .star: return store.keyBindings.displayKey(for: .toggleStar)
+        case .archive: return store.keyBindings.key(for: .archive)
+        case .trash: return store.keyBindings.key(for: .trash)
+        case .star: return store.keyBindings.key(for: .toggleStar)
         case .toggleRead: return store.keyBindings.key(for: .toggleRead)
         }
     }
@@ -492,19 +493,19 @@ struct ThreadListView: View {
                 .lineLimit(1)
                 .accessibilityIdentifier("selectionBar.hint")
             Spacer(minLength: 8)
-            let targets = store.actionableCheckedThreads
-            let starring = targets.contains { !$0.isStarred }
-            let anyUnread = targets.contains { $0.isUnread }
-            HStack(spacing: ThreadRowActionLayout.spacing) {
+            let state = SelectionBarState(actionable: store.actionableCheckedThreads)
+            HStack(spacing: SelectionBarLayout.spacing) {
                 ForEach(SelectionBarAction.allCases, id: \.self) { action in
-                    let flag = action == .star ? starring : anyUnread
+                    let flag = state.flag(for: action)
                     SelectionBarIconButton(
                         action: action,
                         symbol: action.symbol(flag: flag),
                         title: action.title(flag: flag),
                         tooltip: action.tooltip(flag: flag, shortcut: shortcut(for: action)),
+                        side: SelectionBarLayout.side(fontScale: fontScale),
                         fontScale: fontScale
                     ) { perform(action) }
+                    .disabled(!state.isEnabled(action))
                 }
             }
             Button {
@@ -524,13 +525,14 @@ struct ThreadListView: View {
     }
 }
 
-/// One icon of the bulk bar: same glyph size and padding as the row's hover
-/// actions, with a faint hover wash.
+/// One icon of the bulk bar: the row hover actions' glyph size in a fixed
+/// square target, with a faint hover wash.
 private struct SelectionBarIconButton: View {
     let action: SelectionBarAction
     let symbol: String
     let title: String
     let tooltip: String
+    let side: Double
     let fontScale: Double
     let onTap: () -> Void
     @State private var hovering = false
@@ -540,8 +542,7 @@ private struct SelectionBarIconButton: View {
             Image(systemName: symbol)
                 .font(.system(size: ThreadRowActionLayout.iconSize * fontScale))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, ThreadRowActionLayout.iconPaddingH)
-                .padding(.vertical, ThreadRowActionLayout.iconPaddingV)
+                .frame(width: side, height: side)
                 .background(hovering ? Color.primary.opacity(0.08) : .clear,
                             in: RoundedRectangle(cornerRadius: PMRadius.sm))
                 .contentShape(Rectangle())
