@@ -29,9 +29,28 @@ struct MissingMessages: Codable, Equatable {
     static let maxBackoff: TimeInterval = 6 * 3600
     /// Ids retried per pass.
     static let retryBatch = 50
+    /// A failure other than 404 is retried this long, then dropped, so the
+    /// count shown cannot stay up for ever.
+    static let maxAge: TimeInterval = 30 * 86_400
 
     var count: Int { entries.count }
     var isEmpty: Bool { entries.isEmpty }
+
+    /// What the status line counts: ids whose last failure was not a 404.
+    /// A 404 is the normal answer for a message deleted between the
+    /// history read and its download (a draft saved again, a message
+    /// deleted at once); those wait silently for their second answer.
+    var undownloadedCount: Int { entries.values.filter { !$0.lastWasNotFound }.count }
+
+    /// Gmail reported these deleted (`messagesDeleted`): nothing to retry.
+    mutating func forget(_ ids: some Sequence<String>) {
+        for id in ids { entries.removeValue(forKey: id) }
+    }
+
+    /// Drops ids first seen more than `maxAge` ago.
+    mutating func expire(now: Date) {
+        entries = entries.filter { now.timeIntervalSince($0.value.firstSeen) < Self.maxAge }
+    }
 
     /// A catch-up could not download `ids` (`notFound`: Gmail answered 404).
     mutating func noteMissed(_ ids: [String], notFound: Bool, now: Date) {
@@ -57,6 +76,7 @@ struct MissingMessages: Codable, Equatable {
     /// Ids whose wait has passed, oldest first, at most `limit`.
     func due(now: Date, limit: Int = retryBatch) -> [String] {
         entries
+            .filter { now.timeIntervalSince($0.value.firstSeen) < Self.maxAge }
             .filter { now.timeIntervalSince($0.value.lastTried) >= Self.backoff(attempts: $0.value.attempts) }
             .sorted { ($0.value.firstSeen, $0.key) < ($1.value.firstSeen, $1.key) }
             .prefix(limit)
@@ -78,6 +98,7 @@ struct MissingMessages: Codable, Equatable {
         for id in failed where entries[id] != nil {
             noteMissed([id], notFound: false, now: now)
         }
+        expire(now: now)
     }
 
     private mutating func trim() {

@@ -533,7 +533,9 @@ extension MailStore {
     /// one that does; `lastSyncAt` stays at the last completed pass. No
     /// network is not a failure here: the sync control reads "Offline".
     func noteSyncOutcome(account id: String, error: Error?) {
-        let missing = MissingMessages.load(accountId: id).count
+        // Mutating a stored struct publishes even when nothing changes, so
+        // compare first: this runs after every pass of every account.
+        let missing = MissingMessages.load(accountId: id).undownloadedCount
         if syncHealth.undownloaded[id] ?? 0 != missing {
             syncHealth.setUndownloaded(account: id, count: missing)
         }
