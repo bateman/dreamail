@@ -30,17 +30,21 @@ enum RemoteThreadSend {
                 try await client.modifyMessages(ids: ids, add: add, remove: remove)
             } catch let error where isRejectedId(error) {
                 // One id Gmail no longer has can fail the whole batch: the
-                // others still need the change. One by one, skipping only
-                // the ones that are gone (404); any other refusal (a 400
-                // for a label deleted elsewhere, say) reaches the caller,
-                // also for a batch of one.
+                // others still need the change. One by one, skipping the
+                // ones that are gone (404). Any other refusal (a 400 for a
+                // label deleted elsewhere, say) does not stop the others;
+                // the last one reaches the caller, also for a batch of one.
+                var refusal: Error?
                 for id in ids {
                     do {
                         try await client.modifyMessage(id: id, add: add, remove: remove)
                     } catch let error where isNotFound(error) {
                         continue
+                    } catch {
+                        refusal = error
                     }
                 }
+                if let refusal { throw refusal }
             }
         case .sequence(let steps):
             for step in steps {

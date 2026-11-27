@@ -122,6 +122,10 @@ enum TrashedMessages {
     static func applyRestore(_ db: Database, accountId: String, threadId: String,
                              ids: [String], add: [String], remove: [String]) throws {
         try relabel(db, accountId: accountId, ids: ids, add: add, remove: remove)
+        // shortcut: the re-derive starts from the message rows, so a thread
+        // edit not yet in them (archive, star, read made just before, still
+        // unsynced or queued) shows its message-row state until the next
+        // sync. Gmail gets the edit either way.
         try SyncEngine.deriveThreads(db, for: [threadId], accountId: accountId)
     }
 

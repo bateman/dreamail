@@ -95,7 +95,15 @@ extension MailStore {
                 restoreTrashedMessages(partial, toLabel: labelId)
                 let partialIds = Set(partial.map(\.id))
                 all.removeAll { partialIds.contains($0.id) }
-                if all.isEmpty { return }
+                if all.isEmpty {
+                    // Only Trash copies: say what was done, as a move does.
+                    // No undo: a restore has none.
+                    let name = labelName(labelId, account: accountId) ?? "label"
+                    if !checkedThreadIds.isEmpty { clearCheckedThreads() }
+                    showNotice(partial.count == 1 ? "Moved to \(name)"
+                                                  : "Moved \(partial.count) to \(name)")
+                    return
+                }
             }
         }
         let plan = ConversationActionRun(

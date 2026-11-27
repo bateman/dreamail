@@ -191,12 +191,14 @@ extension MailStore {
         // the refused or dropped edit over the messages again. Every revert
         // path (direct refusal, dropped queued edit) comes through here.
         LocalThreadEdits.shared.forget(threadId: threadId)
-        _ = try? await db.write { db in
-            if let refused {
-                try TrashedMessages.revertStoredRestores(db, accountId: accountId, change: refused)
-            }
+        let reverted = (try? await db.write { db -> Bool in
+            let reverted = try refused.map {
+                try TrashedMessages.revertStoredRestores(db, accountId: accountId, change: $0)
+            } ?? false
             try OptimisticThreadWrite.rederiveOrDelete(db, threadId: threadId, accountId: accountId)
-        }
+            return reverted
+        }) ?? false
+        if reverted { applyThreadContentChange(.threads([threadId])) }
         scheduleThreadMutationReconciliation()
     }
 
@@ -1007,7 +1009,12 @@ extension MailStore {
             self.bulkRemoteTail = Task {
                 _ = await predecessor?.value
                 let result = await written.result
-                await MainActor.run { self.scheduleThreadMutationReconciliation() }
+                await MainActor.run {
+                    // Message rows changed: the reader cache and mirror
+                    // must not open the live conversation without them.
+                    if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
+                    self.scheduleThreadMutationReconciliation()
+                }
                 if case .failure(let error) = result {
                     await MainActor.run {
                         self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
@@ -1066,10 +1073,10 @@ extension MailStore {
         guard !targets.isEmpty else { return }
         let focus = selectedThreadId
         let statesBefore = loadTrashStates(targets.map(\.id))
+        // Chained also for a single checked row, like `trash` and the undo.
         let acted = mutateThreads(targets, autoAdvanceAction: "trash",
-                                  remote: ThreadUndo.remote(.trash), local: {
-            ThreadUndo.apply(.trash, &$0)
-        })
+                                  remote: ThreadUndo.remote(.trash), alwaysChained: true,
+                                  local: { ThreadUndo.apply(.trash, &$0) })
         clearCheckedThreads()
         let n = targets.count
         let ids = targets.map(\.id)
@@ -1334,7 +1341,8 @@ extension MailStore {
         // current list), and a picker left open on a no-op pick looks stuck.
         dismissSnoozePicker()
         // Gmail-snoozed rows are left to Gmail (see `snooze(_:until:)`).
-        let targets = checkedThreadsInOrder.filter { !$0.gmailSnoozed }
+        // Trash copies are left out here, so the toast counts what was done.
+        let targets = checkedThreadsInOrder.filter { !$0.gmailSnoozed && !isPartlyTrashedRow($0) }
         guard !targets.isEmpty else { return }
         let focus = selectedThreadId
         let action = ThreadUndo.Action.snooze(until: date)

@@ -59,6 +59,17 @@ enum OpenFromSearch {
         return (nextList, nextProjected)
     }
 
+    /// A Trash list reload or page: the conversation opened live from it
+    /// (`openingLive`) stays live while it is still selected, instead of
+    /// flipping back to its Trash copy. `stored` are the rows before the
+    /// projection. Pure — tested.
+    static func keepingLive(_ liveId: String?, rows: [MailThread], projected: Set<String>,
+                            stored: [MailThread]) -> (list: [MailThread], projected: Set<String>) {
+        guard let liveId, projected.contains(liveId),
+              let row = stored.first(where: { $0.id == liveId }) else { return (rows, projected) }
+        return openingLive(row, in: rows, projected: projected)
+    }
+
     /// Whether the reading pane shows the open thread from its trashed
     /// messages only; part of the pane's identity, so a change remounts it.
     static func showsTrashReader(openedId: String?, projected: Set<String>) -> Bool {

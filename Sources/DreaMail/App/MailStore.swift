@@ -2650,6 +2650,7 @@ struct ComposeRequest: Identifiable {
             let next = OpenFromSearch.openingLive(thread, in: threads, projected: trashViewProjectedIds)
             threads = next.list
             trashViewProjectedIds = next.projected
+            liveOpenedFromTrashId = thread.id
         }
         threads = OpenFromSearch.ensuringVisible(opening: thread, in: threads)
         selectThread(thread.id, intent: .explicitOpen)
@@ -2925,6 +2926,7 @@ struct ComposeRequest: Identifiable {
             return UserDefaults.standard.integer(forKey: "priorityMaxCount")
         }()
         let priorityHiddenCategories = chips.category.hide
+        let liveOpened = currentLiveOpenedFromTrashId()
         let pool = db
 
         threadReloadTask?.cancel()
@@ -3011,8 +3013,10 @@ struct ComposeRequest: Identifiable {
                 if search.isEmpty ? view == .trash
                     : SearchQuery.parse(search).location == .trash {
                     let shown = try TrashedMessages.projectTrashView(listPage, db: db)
-                    listPage = shown.rows
-                    projected = shown.projected
+                    let kept = OpenFromSearch.keepingLive(liveOpened, rows: shown.rows,
+                                                          projected: shown.projected, stored: listPage)
+                    listPage = kept.list
+                    projected = kept.projected
                 }
                 let vipHits = try PerfMetrics.measure(.reloadVIP, meta: "n=\(listPage.count)") {
                     try MailStore.computeVIPThreadIds(
@@ -3181,6 +3185,7 @@ struct ComposeRequest: Identifiable {
         let starKeepIds = Array(starStateKeepIds)
         let savedViewsSnapshot = savedViews
         let activeVIP = activeVIPEmails
+        let liveOpened = currentLiveOpenedFromTrashId()
         let pool = db
         loadMoreTask = Task { [weak self] in
             defer {
@@ -3223,7 +3228,9 @@ struct ComposeRequest: Identifiable {
                let projected = try? await pool.read({ db in
                    try TrashedMessages.projectTrashView(page, db: db)
                }) {
-                shown = projected
+                let kept = OpenFromSearch.keepingLive(liveOpened, rows: projected.rows,
+                                                      projected: projected.projected, stored: page)
+                shown = (kept.list, kept.projected)
             } else {
                 shown = (page, [])
             }
@@ -4041,6 +4048,16 @@ struct ComposeRequest: Identifiable {
     /// leaves this set, so the reader mode, the summary and every action
     /// gate always describe what is on screen. Assign only on a change.
     var trashViewProjectedIds: Set<String> = []
+    /// A conversation `openThread` opened live from the Trash list: later
+    /// reloads keep it live while it stays selected
+    /// (`OpenFromSearch.keepingLive`).
+    @ObservationIgnored var liveOpenedFromTrashId: String?
+    /// The live-opened id a reload should honour: dropped once the
+    /// selection moved on.
+    func currentLiveOpenedFromTrashId() -> String? {
+        if let id = liveOpenedFromTrashId, id != selectedThreadId { liveOpenedFromTrashId = nil }
+        return liveOpenedFromTrashId
+    }
 
 
 
@@ -4422,6 +4439,9 @@ struct ComposeRequest: Identifiable {
     }
 
     func toggleLabel(_ thread: MailThread, labelId: String) {
+        // A Trash copy takes no thread-wide edit: say so rather than let
+        // the toggle look applied (`mutateThread` would skip it silently).
+        guard !refusesPartlyTrashed([thread]) else { return }
         let has = thread.labels.contains(labelId)
         mutateThread(thread, remote: .modify(add: has ? [] : [labelId],
                                              remove: has ? [labelId] : [])) { t in

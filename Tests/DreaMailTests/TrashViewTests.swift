@@ -345,12 +345,17 @@ final class TrashUndoEdgeTests: XCTestCase {
             if case .modifyMessage("b", _, _) = call { throw GmailError.http(400, "Invalid label") }
         }
         do {
-            try await RemoteThreadSend.send(.modifyMessages(ids: ["a", "b"], add: ["Label_9"]),
+            try await RemoteThreadSend.send(.modifyMessages(ids: ["a", "b", "c"], add: ["TRASH"]),
                                             via: client, gmailThreadId: "t1")
             XCTFail("the 400 reaches the caller")
         } catch {
             XCTAssertEqual(RemoteThreadSend.disposition(for: error), .revert)
         }
+        // Item 4: the ids after the refused one are still sent.
+        let calls = await client.calls
+        XCTAssertEqual(calls.suffix(3), [.modifyMessage(id: "a", add: ["TRASH"], remove: []),
+                                         .modifyMessage(id: "b", add: ["TRASH"], remove: []),
+                                         .modifyMessage(id: "c", add: ["TRASH"], remove: [])])
     }
 
     /// ...and on one id: never swallowed as a success.
@@ -630,6 +635,19 @@ final class TrashReaderModeTests: XCTestCase {
         // Not a Trash copy: nothing changes.
         let other = OpenFromSearch.openingLive(row("z", inTrash: false), in: [copy], projected: ["x"])
         XCTAssertEqual(other.projected, ["x"])
+    }
+
+    /// Item 5: a Trash list reload after a live open keeps the row live
+    /// while it is selected; with no live-opened id, it projects as before.
+    func testAReloadKeepsALiveOpenedRowLive() {
+        let stored = row("x", inTrash: false)
+        let copy = row("x", inTrash: true)
+        let kept = OpenFromSearch.keepingLive("x", rows: [copy], projected: ["x"], stored: [stored])
+        XCTAssertEqual(kept.projected, [])
+        XCTAssertEqual(kept.list.map(\.inTrash), [false])
+        let projected = OpenFromSearch.keepingLive(nil, rows: [copy], projected: ["x"], stored: [stored])
+        XCTAssertEqual(projected.projected, ["x"])
+        XCTAssertEqual(projected.list.map(\.inTrash), [true])
     }
 
     /// A search committed while the Trash copy is open: the reload does not
