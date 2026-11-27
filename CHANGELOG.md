@@ -251,6 +251,14 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **Promotions and Social can be turned off per account.** Settings →
+  Accounts has a new switch for each account, "Show Promotions and
+  Social", on by default. Off, that account has no Promotions and Social
+  rows in the sidebar, no such choices in the filters and no such chip on
+  a conversation. No mail is hidden: everything stays in the Inbox, in
+  All Mail, in search, in the counts and in notifications. In "All
+  accounts" the two rows are shown while at least one account has them
+  on, and list only those accounts' mail. Saved views are not changed.
 - **Move to inbox.** A conversation that is not in the Inbox (archived,
   or reached from a label, All Mail or a search) can be moved back, as in
   Gmail: "Move to inbox" takes the place of Archive in the conversation
