@@ -2904,8 +2904,8 @@ struct ComposeRequest: Identifiable {
         let badgeAccount = DockBadge.account(for: Self.badgeScope, focused: activeAccount)
         let badgeTicket = dockBadgeTicket(account: badgeAccount)
         let accountUnreadEpoch = self.accountUnreadEpoch
-        // Primary badge tracks the inbox category hide set (Updates/Forums),
-        // not only the fixed promo/social tab split.
+        // Inbox badge tracks the inbox category hide set (empty by default),
+        // so it counts what the Inbox lists.
         let inboxHideCategories = inboxBadgeHideCategories
         // Priority candidate fetch (inbox only): snapshot settings on MainActor.
         // Defaults match ThreadListView @AppStorage (starred / 7 days / 10).

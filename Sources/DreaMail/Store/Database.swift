@@ -42,7 +42,7 @@ struct MailThread: Codable, Identifiable, Hashable, FetchableRecord, Persistable
     // for common mailbox filters (Sent, Drafts, Promotions, Social).
     var inSent: Bool = false
     var inDrafts: Bool = false
-    /// Tab placement for Promotions (Primary inbox hides this). Set from the
+    /// Tab placement for the Promotions row (and an Inbox hide). Set from the
     /// newest *INBOX-bearing* message at derive time — not from the union of
     /// `labelIds`, which keeps historical CATEGORY_PROMOTIONS on old invites.
     var inPromotions: Bool = false

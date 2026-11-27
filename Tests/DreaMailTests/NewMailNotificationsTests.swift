@@ -10,12 +10,14 @@ final class NewMailNotificationsTests: XCTestCase {
         _ id: String, from: String = "alice@example.com", allFrom: String? = nil,
         inbound: Date?, isUnread: Bool = true, inInbox: Bool = true,
         inTrash: Bool = false, inSpam: Bool = false, inPromotions: Bool = false,
-        inSocial: Bool = false, snoozeUntil: Date? = nil
+        inSocial: Bool = false, snoozeUntil: Date? = nil,
+        isStarred: Bool = false, labelIds: String = "INBOX UNREAD"
     ) -> NewMailNotifications.Candidate {
         .init(id: id, fromEmail: from, allFromEmails: allFrom ?? from,
               lastInboundDate: inbound, isUnread: isUnread, inInbox: inInbox,
               inTrash: inTrash, inSpam: inSpam, inPromotions: inPromotions,
-              inSocial: inSocial, snoozeUntil: snoozeUntil)
+              inSocial: inSocial, snoozeUntil: snoozeUntil,
+              isStarred: isStarred, labelIds: labelIds)
     }
 
     private func seeded(_ current: [NewMailNotifications.Candidate] = []) -> NewMailNotifications {
@@ -27,8 +29,10 @@ final class NewMailNotificationsTests: XCTestCase {
     private func fresh(_ state: inout NewMailNotifications,
                        _ current: [NewMailNotifications.Candidate],
                        demoMode: Bool = false,
+                       hide: Set<String> = [],
                        blocked: Set<String> = []) -> [String] {
-        state.fresh(current: current, now: now, demoMode: demoMode) { blocked.contains($0) }
+        state.fresh(current: current, now: now, demoMode: demoMode,
+                    hide: hide) { blocked.contains($0) }
     }
 
     // MARK: Baseline
@@ -135,12 +139,36 @@ final class NewMailNotificationsTests: XCTestCase {
         ]), [])
     }
 
-    func testPromotionsAndSocialDoNotNotify() {
+    /// The Inbox lists category mail by default, so it notifies like any
+    /// other Inbox mail.
+    func testCategoryInboxMailNotifies() {
         var state = seeded()
         XCTAssertEqual(fresh(&state, [
-            candidate("a:promo", inbound: nineAM, inPromotions: true),
-            candidate("a:social", inbound: nineAM, inSocial: true),
-        ]), [])
+            candidate("a:promo", inbound: nineAM, inPromotions: true,
+                      labelIds: "INBOX UNREAD CATEGORY_PROMOTIONS"),
+            candidate("a:social", inbound: nineAM, inSocial: true,
+                      labelIds: "INBOX UNREAD CATEGORY_SOCIAL"),
+            candidate("a:updates", inbound: nineAM,
+                      labelIds: "INBOX UNREAD CATEGORY_UPDATES"),
+            candidate("a:forums", inbound: nineAM,
+                      labelIds: "INBOX UNREAD CATEGORY_FORUMS"),
+        ]), ["a:promo", "a:social", "a:updates", "a:forums"])
+    }
+
+    /// A category the user hides in the Inbox does not notify, unless a
+    /// star pins it into the list (same rule as the list and the badge).
+    func testHiddenCategoryDoesNotNotifyUnlessStarred() {
+        var state = seeded()
+        XCTAssertEqual(fresh(&state, [
+            candidate("a:social", inbound: nineAM, inSocial: true,
+                      labelIds: "INBOX UNREAD CATEGORY_SOCIAL"),
+            candidate("a:starredSocial", inbound: nineAM, inSocial: true,
+                      isStarred: true, labelIds: "INBOX UNREAD STARRED CATEGORY_SOCIAL"),
+            candidate("a:updates", inbound: nineAM,
+                      labelIds: "INBOX UNREAD CATEGORY_UPDATES"),
+            candidate("a:promo", inbound: nineAM, inPromotions: true,
+                      labelIds: "INBOX UNREAD CATEGORY_PROMOTIONS"),
+        ], hide: ["CATEGORY_SOCIAL", "CATEGORY_UPDATES"]), ["a:starredSocial", "a:promo"])
     }
 
     func testSnoozedThreadDoesNotNotifyUntilItWakes() {

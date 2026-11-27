@@ -1,7 +1,7 @@
 import Foundation
 
 enum MailboxView: Hashable {
-    case inbox          // unified inbox, minus Promotions/Social
+    case inbox          // unified inbox: every INBOX conversation, any category
     case promotions
     case social
     case starred
@@ -208,35 +208,33 @@ struct FilterChips: Equatable, Codable {
         try values.encode(hideCalendar, forKey: .hideCalendar)
     }
 
-    /// Built-in factory default chips for a view (inbox hides
-    /// Promotions/Social). Pure — never reads persisted state, so
-    /// "changed vs default" comparisons and Clear all mean the factory
-    /// default, and Clear all is always a way back to it.
+    /// Built-in factory default chips for a view. Every view, the Inbox
+    /// included, starts with no category hidden: like Gmail without category
+    /// tabs, the Inbox lists every conversation with the INBOX label. Pure —
+    /// never reads persisted state, so "changed vs default" comparisons and
+    /// Clear all mean the factory default, and Clear all is always a way
+    /// back to it.
     static func defaults(for view: MailboxView) -> FilterChips {
-        var chips = FilterChips()
-        switch view {
-        case .inbox, .account:
-            chips.category = CategoryFilter(
-                exclude: true,
-                hide: ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"])
-        default:
-            break
-        }
-        return chips
+        FilterChips()
     }
 
     /// What a view opens with: the factory defaults, plus the category pick
     /// the user made earlier (persisted per view) so it survives view
     /// switches and relaunch.
-    static func initial(for view: MailboxView) -> FilterChips {
+    static func initial(for view: MailboxView,
+                        store: UserDefaults = .standard) -> FilterChips {
         var chips = defaults(for: view)
-        if let saved = savedCategory(for: view) { chips.category = saved }
+        if let saved = savedCategory(for: view, store: store) { chips.category = saved }
         return chips
     }
 
-    static func savedCategory(for view: MailboxView) -> CategoryFilter? {
+    static func savedCategory(for view: MailboxView,
+                              store: UserDefaults = .standard) -> CategoryFilter? {
+        // First read of the Inbox pick (MailStore's initial chips, the badge)
+        // runs the one-time reset before anything uses the stored value.
+        if view.prefsKey == MailboxView.inbox.prefsKey { resetInboxCategoryDefaultOnce(store) }
         guard let key = view.prefsKey,
-              let data = UserDefaults.standard.data(forKey: "categoryFilter.\(key)")
+              let data = store.data(forKey: "categoryFilter.\(key)")
         else { return nil }
         return try? JSONDecoder().decode(CategoryFilter.self, from: data)
     }
@@ -250,6 +248,33 @@ struct FilterChips: Equatable, Codable {
             UserDefaults.standard.removeObject(forKey: "categoryFilter.\(key)")
         } else {
             UserDefaults.standard.set(data, forKey: "categoryFilter.\(key)")
+        }
+    }
+
+    /// UserDefaults flag of the one-time reset below.
+    static let inboxCategoryResetKey = "categoryFilter.inbox.showAllReset"
+
+    /// Categories the Inbox hid by default until this reset.
+    static let formerInboxDefaultHide: Set<String> = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"]
+
+    /// One-time: the Inbox used to hide Promotions and Social by default.
+    /// A stored Inbox pick that still hides them cannot be told from that
+    /// old default (early builds stored the default itself; adding Updates
+    /// stored it with the default's two), so they are taken out of it and
+    /// the mail is shown. Updates and Forums were never hidden by default:
+    /// a stored hide of those is the user's own and stays. Idempotent.
+    static func resetInboxCategoryDefaultOnce(_ store: UserDefaults = .standard) {
+        guard !store.bool(forKey: inboxCategoryResetKey) else { return }
+        defer { store.set(true, forKey: inboxCategoryResetKey) }
+        guard let key = MailboxView.inbox.prefsKey,
+              let data = store.data(forKey: "categoryFilter.\(key)"),
+              var category = try? JSONDecoder().decode(CategoryFilter.self, from: data)
+        else { return }
+        category.hide.subtract(formerInboxDefaultHide)
+        if category == Self.defaults(for: .inbox).category {
+            store.removeObject(forKey: "categoryFilter.\(key)")
+        } else if let fixed = try? JSONEncoder().encode(category) {
+            store.set(fixed, forKey: "categoryFilter.\(key)")
         }
     }
 }
