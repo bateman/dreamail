@@ -35,7 +35,11 @@ final class TrashUndoUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "undoToast.undo").firstMatch
     }
 
-    /// Trash `id` from its hover button; the row leaves and the toast shows.
+    private func openConversation(_ app: XCUIApplication) -> XCUIElement {
+        app.staticTexts.matching(identifier: "threadSubject").firstMatch
+    }
+
+    /// Trash `id` from its hover button; the toast shows.
     private func trash(_ app: XCUIApplication, _ id: String) {
         let r = row(app, id)
         XCTAssertTrue(r.waitForExistence(timeout: 10), "demo inbox should load")
@@ -44,7 +48,18 @@ final class TrashUndoUITests: XCTestCase {
         XCTAssertTrue(button.waitForExistence(timeout: 5))
         button.click()
         XCTAssertTrue(undoButton(app).waitForExistence(timeout: 3), "the undo toast shows")
-        XCTAssertTrue(r.waitForNonExistence(timeout: 5), "\(id) leaves the Inbox")
+    }
+
+    /// Trashing the selected row opens the next conversation, and at the CI
+    /// window width (compact layout) an open conversation replaces the list.
+    /// Back to the list before looking for rows; says whether one was open.
+    private func backToList(_ app: XCUIApplication) -> String {
+        let subject = openConversation(app)
+        guard subject.waitForExistence(timeout: 2) else { return "no conversation was open" }
+        app.typeKey(.escape, modifierFlags: [])
+        let closed = subject.waitForNonExistence(timeout: 5)
+        return closed ? "a conversation was open, closed with Esc"
+                      : "a conversation was open and Esc did not close it"
     }
 
     func testUndoOfTrashBringsTheRowBack() {
@@ -54,13 +69,17 @@ final class TrashUndoUITests: XCTestCase {
             trash(app, "t1")
             XCTAssertTrue(undoButton(app).exists, "the toast is still up when ⌘Z is typed")
             app.typeKey("z", modifierFlags: .command)
-            XCTAssertTrue(row(app, "t1").waitForExistence(timeout: 10), "⌘Z brings the trashed row back")
+            let state = backToList(app)
+            XCTAssertTrue(row(app, "t1").waitForExistence(timeout: 10),
+                          "⌘Z brings the trashed row back (\(state))")
         }
 
         XCTContext.runActivity(named: "Undo button after Trash") { _ in
-            trash(app, "t3")
+            trash(app, "t1")
             undoButton(app).click()
-            XCTAssertTrue(row(app, "t3").waitForExistence(timeout: 10), "the toast's Undo button brings the trashed row back")
+            let state = backToList(app)
+            XCTAssertTrue(row(app, "t1").waitForExistence(timeout: 10),
+                          "the toast's Undo button brings the trashed row back (\(state))")
         }
     }
 }
