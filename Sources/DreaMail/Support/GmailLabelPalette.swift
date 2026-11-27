@@ -76,7 +76,8 @@ enum GmailLabelColorPreset {
         GmailLabelColor(background: $0.0, text: $0.1)!
     }
 
-    private static let table: [String: (String, String)] = [
+    /// Internal, not private, so a test checks every pair builds.
+    static let table: [String: (String, String)] = [
         "BLACK": ("#000000", "#ffffff"), "DARK_GRAY": ("#434343", "#ffffff"),
         "GRAY": ("#666666", "#ffffff"), "LIGHT_GRAY": ("#cccccc", "#000000"),
         "WHITE": ("#ffffff", "#000000"), "RED": ("#fb4c2f", "#ffffff"),
@@ -123,10 +124,12 @@ enum GmailLabelColorPreset {
     }
 
     /// The preset as shown: the name without `prefix`, or the raw value
-    /// when it does not start with it. nil for nil or empty.
+    /// when it does not start with it. nil for nil, empty, or the bare
+    /// prefix: those say nothing about a preset.
     static func shortName(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
-        return raw.hasPrefix(prefix) ? String(raw.dropFirst(prefix.count)) : raw
+        let name = raw.hasPrefix(prefix) ? String(raw.dropFirst(prefix.count)) : raw
+        return name.isEmpty ? nil : name
     }
 
     /// The colors a label is drawn with: Gmail's own pair, unless it is
@@ -143,19 +146,22 @@ enum GmailLabelColorPreset {
 /// label, so a color outside the 64 swatches (Gmail's palette has 102
 /// backgrounds, and any text color) is still visible.
 enum LabelCurrentColor {
-    /// "Current: none", or "Current: #rrggbb" with ", text #rrggbb" when
-    /// there is a text color, then `presetPart`, and " (not in this
-    /// palette)" when the background is not one of `palette`.
+    /// "Current: none" ("Current: no color" when a `presetPart` follows),
+    /// or "Current: #rrggbb" with ", text #rrggbb" when there is a text
+    /// color and " (not in this palette)" when the background is not one
+    /// of `palette`, then `presetPart`.
     static func text(background: String?, text: String? = nil, presetPart: String = "",
                      palette: [String]) -> String {
-        guard let raw = background else { return "Current: none" + presetPart }
+        guard let raw = background else {
+            return presetPart.isEmpty ? "Current: none" : "Current: no color" + presetPart
+        }
         guard let hex = LabelRGB.normalizedHex(raw) else { return "Current: unreadable value" + presetPart }
         var line = "Current: " + hex
         if let fg = LabelRGB.normalizedHex(text) { line += ", text " + fg }
-        line += presetPart
         let known = Set(palette.compactMap { LabelRGB.normalizedHex($0) })
+        // Before the preset part: it is the color that is off the palette.
         if !known.contains(hex) { line += " (not in this palette)" }
-        return line
+        return line + presetPart
     }
 
     /// ", preset NAME" for a preset Gmail sent (without

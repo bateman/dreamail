@@ -327,12 +327,13 @@ actor SyncEngine {
         // leave it uncolored until the next change. Costs one `labels.get`
         // per uncolored user label, per launch and then per interval.
         let now = Date()
-        // The same for one listed with the neutral #eeeeee / #222222 pair and
-        // no preset: the full read may carry the preset the list leaves out.
-        let due = Set(listed.filter {
-            $0.type == "user" && GmailLabelColorPreset.wantsFullRead($0)
-                && now.timeIntervalSince(colorCheckedAt[$0.id] ?? .distantPast) >= Self.colorRecheck
-        }.map(\.id))
+        let notReadInFull = try await db.read { [accountId] db in
+            try String.fetchSet(db, sql: """
+                SELECT gmailLabelId FROM label WHERE accountId = ? AND gmailColorReadInFull = 0
+                """, arguments: [accountId])
+        }
+        let due = Self.fullReadsDue(listed, checkedAt: colorCheckedAt,
+                                    notReadInFull: notReadInFull, now: now)
         var completed = listed
         var readInFull: Set<String> = []
         if !due.isEmpty {
@@ -353,6 +354,20 @@ actor SyncEngine {
 
     /// How long a label read in full without a color is trusted.
     static let colorRecheck: TimeInterval = 6 * 3600
+
+    /// The listed user labels to read in full this pass: those the list
+    /// shows without a background, or with the neutral #eeeeee / #222222
+    /// pair and no preset (`GmailLabelColorPreset.wantsFullRead`), once per
+    /// `colorRecheck`; sooner when the stored row is not from a full read
+    /// (`notReadInFull`, e.g. after a color write stored a PATCH answer).
+    static func fullReadsDue(_ listed: [GLabel], checkedAt: [String: Date],
+                             notReadInFull: Set<String>, now: Date) -> Set<String> {
+        Set(listed.filter {
+            $0.type == "user" && GmailLabelColorPreset.wantsFullRead($0)
+                && (notReadInFull.contains($0.id)
+                    || now.timeIntervalSince(checkedAt[$0.id] ?? .distantPast) >= colorRecheck)
+        }.map(\.id))
+    }
     private var colorCheckedAt: [String: Date] = [:]
 
     /// `labels` with the color (and a missing visibility) of the labels in

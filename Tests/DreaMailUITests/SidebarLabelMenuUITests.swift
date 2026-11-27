@@ -287,7 +287,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         choose.click()
         let current = element("labelColor.current.gmail", in: app)
         XCTAssertTrue(current.waitForExistence(timeout: 5), "the sheet has a Current line")
-        XCTAssertEqual(current.label, "Current: #6e56cf, no preset (list only) (not in this palette)")
+        XCTAssertEqual(current.label, "Current: #6e56cf (not in this palette), no preset (list only)")
         let swatches = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'labelColor.gmail.'"))
         XCTAssertGreaterThan(swatches.count, 0, "the grid is there")
         for i in 0..<swatches.count {

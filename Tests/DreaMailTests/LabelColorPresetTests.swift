@@ -132,6 +132,33 @@ final class LabelColorPresetTests: XCTestCase {
             label(LabelColors(background: "#eeeeee", text: "#000000"), preset: nil)))
     }
 
+    /// A color write stores Gmail's answer, not a full read: the next sync
+    /// reads that label in full again, inside the recheck interval too.
+    func testColorWriteMakesTheNextSyncReadTheLabelInFull() async throws {
+        let q = try makeDB()
+        try sync(q, [label(fallback, preset: "LABEL_COLOR_PRESET_DARK_GREEN")], readInFull: ["Label_1"])
+        let now = Date()
+        let checked = ["Label_1": now]
+        let listed = [label(fallback, preset: nil)]
+        XCTAssertTrue(SyncEngine.fullReadsDue(listed, checkedAt: checked, notReadInFull: [], now: now)
+            .isEmpty, "read in full a moment ago")
+        try await GmailLabelColorEdit.apply(nil, labelRowId: rowId, db: q,
+                                            pending: PendingLabelColorEdits()) { _, _ in
+            self.label(nil, preset: nil)
+        }
+        XCTAssertFalse(try stored(q).gmailColorReadInFull)
+        let notRead = try await q.read { db in
+            try String.fetchSet(db, sql: "SELECT gmailLabelId FROM label WHERE gmailColorReadInFull = 0")
+        }
+        XCTAssertEqual(SyncEngine.fullReadsDue(listed, checkedAt: checked, notReadInFull: notRead, now: now),
+                       ["Label_1"])
+        // Still only labels the list leaves uncolored, and only user labels.
+        XCTAssertTrue(SyncEngine.fullReadsDue([label(darkGreen, preset: nil)], checkedAt: checked,
+                                              notReadInFull: notRead, now: now).isEmpty)
+        XCTAssertEqual(SyncEngine.fullReadsDue(listed, checkedAt: checked, notReadInFull: [],
+                                               now: now + SyncEngine.colorRecheck), ["Label_1"])
+    }
+
     /// A preset learned from the full read stays while later lists send no
     /// preset and no color other than the neutral pair (or none); a listed
     /// preset or a real color replaces it.
@@ -146,6 +173,9 @@ final class LabelColorPresetTests: XCTestCase {
         try sync(q, [label(nil, preset: nil)])
         XCTAssertEqual(try stored(q).gmailColorPreset, "LABEL_COLOR_PRESET_DARK_GREEN",
                        "no color in the list is no contradiction")
+        try sync(q, [label(fallback, preset: "LABEL_COLOR_PRESET_")])
+        XCTAssertEqual(try stored(q).gmailColorPreset, "LABEL_COLOR_PRESET_DARK_GREEN",
+                       "the bare prefix says nothing")
         try sync(q, [label(fallback, preset: "LABEL_COLOR_PRESET_TEAL")])
         XCTAssertEqual(try stored(q).gmailColorPreset, "LABEL_COLOR_PRESET_TEAL")
         XCTAssertFalse(try stored(q).gmailColorReadInFull, "the list's own preset")
@@ -164,7 +194,7 @@ final class LabelColorPresetTests: XCTestCase {
         XCTAssertNil(try stored(q).gmailColorPreset)
         XCTAssertTrue(try stored(q).gmailColorReadInFull)
         XCTAssertEqual(LabelCurrentColor.gmail(try stored(q)),
-                       "Current: #eeeeee, text #222222, no preset (list and get) (not in this palette)")
+                       "Current: #eeeeee, text #222222 (not in this palette), no preset (list and get)")
     }
 
     /// The list and the full read are merged: the full read's preset wins,
@@ -278,6 +308,8 @@ final class LabelColorPresetTests: XCTestCase {
         }
         XCTAssertEqual(result.failed, [rowId])
         XCTAssertEqual(result.cause as? GmailLabelColorEdit.Failure, .presetKept)
+        XCTAssertEqual(result.permanent, [rowId], "a retry gets the same answer")
+        XCTAssertTrue(result.retryable.isEmpty)
     }
 
     // MARK: - New labels
@@ -344,17 +376,17 @@ final class LabelColorPresetTests: XCTestCase {
 
     func testCurrentLineShowsWhatGmailSent() {
         XCTAssertEqual(LabelCurrentColor.gmail(row(fallback, preset: "LABEL_COLOR_PRESET_DARK_GREEN")),
-                       "Current: #eeeeee, text #222222, preset DARK_GREEN (not in this palette)")
+                       "Current: #eeeeee, text #222222 (not in this palette), preset DARK_GREEN")
         XCTAssertEqual(LabelCurrentColor.gmail(row(darkGreen, preset: "LABEL_COLOR_PRESET_DARK_GREEN")),
                        "Current: #076239, text #ffffff, preset DARK_GREEN")
         XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "LABEL_COLOR_PRESET_TEAL")),
-                       "Current: none, preset TEAL")
+                       "Current: no color, preset TEAL")
         XCTAssertEqual(LabelCurrentColor.gmail(row(fallback)),
-                       "Current: #eeeeee, text #222222, no preset (list only) (not in this palette)")
+                       "Current: #eeeeee, text #222222 (not in this palette), no preset (list only)")
         XCTAssertEqual(LabelCurrentColor.gmail(row(fallback, readInFull: true)),
-                       "Current: #eeeeee, text #222222, no preset (list and get) (not in this palette)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row()), "Current: none, no preset (list only)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(readInFull: true)), "Current: none, no preset (list and get)")
+                       "Current: #eeeeee, text #222222 (not in this palette), no preset (list and get)")
+        XCTAssertEqual(LabelCurrentColor.gmail(row()), "Current: no color, no preset (list only)")
+        XCTAssertEqual(LabelCurrentColor.gmail(row(readInFull: true)), "Current: no color, no preset (list and get)")
         XCTAssertEqual(LabelCurrentColor.gmail(row(LabelColors(background: "oops", text: nil))),
                        "Current: unreadable value, no preset (list only)")
     }
@@ -362,10 +394,12 @@ final class LabelColorPresetTests: XCTestCase {
     /// A preset the app does not know is shown too, exactly as sent.
     func testCurrentLineShowsAnUnknownPreset() {
         XCTAssertEqual(LabelCurrentColor.gmail(row(fallback, preset: "LABEL_COLOR_PRESET_NEW_HUE")),
-                       "Current: #eeeeee, text #222222, preset NEW_HUE (not in this palette)")
+                       "Current: #eeeeee, text #222222 (not in this palette), preset NEW_HUE")
         XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "SOMETHING_ELSE")),
-                       "Current: none, preset SOMETHING_ELSE")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "")), "Current: none, no preset (list only)")
+                       "Current: no color, preset SOMETHING_ELSE")
+        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "")), "Current: no color, no preset (list only)")
+        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "LABEL_COLOR_PRESET_")),
+                       "Current: no color, no preset (list only)", "the bare prefix names no preset")
     }
 
     /// Only a plain name (1-40 of A-Z, 0-9, _) is shown; anything else is
@@ -376,13 +410,12 @@ final class LabelColorPresetTests: XCTestCase {
                     "LABEL_COLOR_PRESET_RED\nCurrent: #ffffff",
                     "LABEL_COLOR_PRESET_RED\u{202E}NEERG",
                     "LABEL_COLOR_PRESET_dark_green",
-                    "LABEL_COLOR_PRESET_",
                     "LABEL_COLOR_PRESET_ÄÖ",
                     "LABEL_COLOR_PRESET_RED GREEN"] {
-            XCTAssertEqual(LabelCurrentColor.gmail(row(preset: raw)), "Current: none, unknown preset", raw)
+            XCTAssertEqual(LabelCurrentColor.gmail(row(preset: raw)), "Current: no color, unknown preset", raw)
         }
         XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "LABEL_COLOR_PRESET_" + forty)),
-                       "Current: none, preset " + forty)
+                       "Current: no color, preset " + forty)
         let q = try makeDB()
         let odd = "LABEL_COLOR_PRESET_RED\u{202E}X"
         try sync(q, [label(nil, preset: odd)])
@@ -481,6 +514,15 @@ final class LabelColorPresetTests: XCTestCase {
         let white = try XCTUnwrap(GmailLabelColorPreset.colors["WHITE"])
         XCTAssertNotNil(SidebarTagStyle.resolve(white.colors, appearance: .light).outline,
                         "white keeps its outline")
+    }
+
+    /// Every pair of the table is one `GmailLabelColor` accepts, so building
+    /// `colors` never traps.
+    func testEveryPresetPairBuildsAColor() {
+        XCTAssertEqual(GmailLabelColorPreset.table.count, 21)
+        for (name, pair) in GmailLabelColorPreset.table {
+            XCTAssertNotNil(GmailLabelColor(background: pair.0, text: pair.1), name)
+        }
     }
 
     /// All 21 pairs Google's Gmail MCP schema gives, kept independently of

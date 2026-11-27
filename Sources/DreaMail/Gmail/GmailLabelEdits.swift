@@ -657,7 +657,10 @@ extension GmailLabelColorEdit {
         result.cause = errors.first?.1
         result.mixedCauses = Set(errors.map { "\($0.1)" }).count > 1
         result.permanent = Set(errors.filter { _, error in
-            if let failure = error as? Failure { return failure == .systemLabel || failure == .unknownLabel }
+            // A kept preset: a retry sends the same patch and gets the same answer.
+            if let failure = error as? Failure {
+                return failure == .systemLabel || failure == .unknownLabel || failure == .presetKept
+            }
             return LabelBatch.isPermanent(error)
         }.map(\.0))
         return result

@@ -232,9 +232,12 @@ enum GmailLabelColorEdit {
     }
 
     /// The preset Gmail's answer carries (nil when it carries none), so a
-    /// write never leaves an older preset stored.
+    /// write never leaves an older preset stored. Not a full read: the
+    /// next label sync reads the label in full again
+    /// (`SyncEngine.fullReadsDue`), as a PATCH answer may leave a preset out.
     static func storePreset(_ db: Database, _ preset: String?, id: String) throws {
-        try db.execute(sql: "UPDATE label SET gmailColorPreset = ? WHERE id = ?", arguments: [preset, id])
+        try db.execute(sql: "UPDATE label SET gmailColorPreset = ?, gmailColorReadInFull = 0 WHERE id = ?",
+                       arguments: [preset, id])
     }
 
     static func store(_ db: Database, _ colors: LabelColors, id: String) throws {
