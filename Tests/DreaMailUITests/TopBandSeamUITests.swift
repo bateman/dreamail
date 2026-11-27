@@ -34,7 +34,7 @@ final class TopBandSeamUITests: XCTestCase {
         // Collapsed whatever an earlier suite left.
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5), "collapsed")
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         try check(window, "collapsed", dark: dark)
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "composeButton").waitForExistence(timeout: 5), "expanded")
@@ -55,8 +55,9 @@ final class TopBandSeamUITests: XCTestCase {
             let b = buttons.element(boundBy: i)
             guard b.exists else { continue }
             let f = b.frame
-            guard f.midY - rowTop < 60, f.minX - window.frame.minX >= 80 else { continue }
+            guard f.midY - rowTop < 60 else { continue }
             print("TopBandSeam: \(context): title-bar button id=\(b.identifier) label=\(b.label) frame=\(f)")
+            guard f.minX - window.frame.minX >= 80 else { continue }
             if toggle == nil || f.minX < toggle!.frame.minX { toggle = b }
         }
         let frame = window.frame
@@ -76,6 +77,13 @@ final class TopBandSeamUITests: XCTestCase {
             else { return [] }
             return [Int(c.redComponent * 255), Int(c.greenComponent * 255), Int(c.blueComponent * 255)]
         }
+        // Diagnostic: the colour along the middle of the title-bar row.
+        var row: [String] = []
+        for x in stride(from: CGFloat(4), to: 420, by: 8) {
+            let p = pixel(frame.minX + x)
+            row.append("\(Int(x)):\(p.map { String($0, radix: 16) }.joined(separator: ","))")
+        }
+        print("TopBandSeam: \(context): row y=\(t.midY) \(row.joined(separator: " "))")
         let left = pixel(t.minX - 3), right = pixel(t.maxX + 3)
         XCTAssertEqual(left.count, 3, desc)
         XCTAssertEqual(right.count, 3, desc)
