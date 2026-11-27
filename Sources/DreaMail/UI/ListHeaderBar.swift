@@ -7,9 +7,11 @@ enum ListSearchMetrics {
     static let maxWidth: CGFloat = 380
     /// Side padding of the bar; the results panel uses the same trailing edge.
     static let sidePadding: CGFloat = 10
-    /// Room left for the window's trailing toolbar buttons (reading-pane
-    /// toggle, focus, Ask AI) when the list is the window's last column.
-    static let windowButtonsReserve: CGFloat = 170
+    /// Room left for the window's toolbar buttons (reading-pane toggle, focus,
+    /// Ask AI; 45 pt each) when the list is the window's last column: macOS
+    /// puts them at that column's leading edge (CI: toggle at x 316-361 with
+    /// the column starting at 312), where this row would sit under them.
+    static let windowButtonsReserve: CGFloat = 160
     /// Widest the results panel gets.
     static let panelMaxWidth: CGFloat = 600
 }
@@ -27,8 +29,8 @@ enum ListSearchMetrics {
 struct ListHeaderBar: ViewModifier {
     @Environment(MailStore.self) private var store
     @FocusState private var searchFocused: Bool
-    /// Extra trailing space for the window's own toolbar buttons.
-    var trailingReserve: CGFloat = 0
+    /// Extra leading space for the window's own toolbar buttons.
+    var leadingReserve: CGFloat = 0
 
     private var searching: Bool {
         !store.committedSearch.trimmingCharacters(in: .whitespaces).isEmpty
@@ -65,7 +67,7 @@ struct ListHeaderBar: ViewModifier {
                                 .frame(maxWidth: ListSearchMetrics.panelMaxWidth,
                                        alignment: .trailing)
                                 .padding(.leading, ListSearchMetrics.sidePadding)
-                                .padding(.trailing, ListSearchMetrics.sidePadding + trailingReserve)
+                                .padding(.trailing, ListSearchMetrics.sidePadding)
                                 .padding(.top, 4)
                                 .accessibilityElement(children: .contain)
                                 .accessibilityIdentifier("searchResultsPanel")
@@ -130,7 +132,7 @@ struct ListHeaderBar: ViewModifier {
                 store.noteSearchFocused(searchFocused)
             }
         }
-        .padding(.leading, ListSearchMetrics.sidePadding + 4)
-        .padding(.trailing, ListSearchMetrics.sidePadding + trailingReserve)
+        .padding(.leading, ListSearchMetrics.sidePadding + 4 + leadingReserve)
+        .padding(.trailing, ListSearchMetrics.sidePadding)
     }
 }

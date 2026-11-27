@@ -97,11 +97,17 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(show.waitForExistence(timeout: 5))
         let box = element(app, "listSearchBox").frame
         let title = element(app, "listHeaderTitle").frame
-        let icons = show.frame.insetBy(dx: -2, dy: -2)
-        XCTAssertFalse(box.intersects(icons),
-                       "the field does not overlap the window's toolbar buttons (field \(box), button \(show.frame))")
-        XCTAssertFalse(title.intersects(icons),
-                       "the title does not overlap the window's toolbar buttons (title \(title), button \(show.frame))")
+        var buttons: [CGRect] = []
+        for label in ["Show Reading Pane", "Focus Conversation", "Ask AI"] {
+            let b = app.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
+            if b.exists { buttons.append(b.frame) }
+        }
+        print("ListSearchField frames: field \(box), title \(title), window buttons \(buttons)")
+        for button in buttons {
+            let hit = button.insetBy(dx: -2, dy: -2)
+            XCTAssertFalse(box.intersects(hit), "the field does not overlap a window toolbar button (field \(box), button \(button))")
+            XCTAssertFalse(title.intersects(hit), "the title does not overlap a window toolbar button (title \(title), button \(button))")
+        }
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
         assertFieldInListBar(app, "pane hidden, sidebar collapsed")
