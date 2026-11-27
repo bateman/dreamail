@@ -440,6 +440,7 @@ struct AccountsSettings: View {
                         }
                         SyncWindowPicker(accountId: account.id)
                         notificationToggle(account)
+                        categoryRowsToggle(account)
                         LabeledContent("Gmail filters") {
                             Button("Show Filters…") {
                                 store.settingsFiltersAccount = account.id
@@ -496,6 +497,20 @@ struct AccountsSettings: View {
                 Text(AccountLifecycle.removalConfirmationMessage(
                     aiFeaturesEnabled: AIFeatures.isEnabled))
             }
+        }
+    }
+
+    /// On by default. Off closes the Promotions and Social views for this
+    /// account; its mail stays where it is (`CategoryRows`).
+    private func categoryRowsToggle(_ account: Account) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Show Promotions and Social", isOn: Binding(
+                get: { store.showsPromotionsAndSocial(account.id) },
+                set: { store.setShowsPromotionsAndSocial(account.id, $0) }))
+                .accessibilityIdentifier("settings.account.categoryRows.\(account.id)")
+                .accessibilityLabel("Show Promotions and Social for \(account.id)")
+            Text("Off: this account has no Promotions and Social views. Its mail stays in the Inbox, All Mail and search.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

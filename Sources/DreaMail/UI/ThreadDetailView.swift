@@ -1432,7 +1432,10 @@ struct ThreadDetailView: View {
         for label in thread.labels {
             if label == "IMPORTANT" {
                 items.append((label, "Important", nil))
-            } else if label.hasPrefix("CATEGORY_"), label != "CATEGORY_PERSONAL" {
+            } else if label.hasPrefix("CATEGORY_"), label != "CATEGORY_PERSONAL",
+                      // Promotions and Social are closed for this account.
+                      store.showsPromotionsAndSocial(thread.accountId)
+                        || !CategoryRows.categories.contains(label) {
                 items.append((label, String(label.dropFirst("CATEGORY_".count)).capitalized, nil))
             }
         }

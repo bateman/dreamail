@@ -58,6 +58,8 @@ enum PaletteCommands {
         /// Ask AI and AI sorting are listed only in a build with the AI
         /// features on.
         var aiFeatures = AIFeatures.isEnabled
+        /// Promotions and Social are offered while an account in scope shows them.
+        var categoryViews = true
     }
 
     enum Action: Equatable {
@@ -99,6 +101,7 @@ enum PaletteCommands {
         list.append(Entry(id: "newview", title: "Add View…", icon: "plus", action: .addView))
         list += threadActions(ctx)
         for mailbox in BuiltinMailbox.allCases {
+            if !ctx.categoryViews, mailbox == .promotions || mailbox == .social { continue }
             list.append(Entry(id: "view.\(mailbox.title)", title: "Go to \(mailbox.title)",
                               icon: "tray", action: .goTo(mailbox)))
         }

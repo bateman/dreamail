@@ -1082,6 +1082,18 @@ struct FilterBar: View {
 
     /// The full ordered filter list. `primary` ones show before "More filters".
     private var filterOptions: [FilterOption] {
+        allFilterOptions.filter { option in
+            // Promotions and Social are not offered while closed (`CategoryRows`).
+            if store.categoryRowsShown { return true }
+            switch option.kind {
+            case .showCategory(let cat), .hideCategory(let cat):
+                return !CategoryRows.categories.contains(cat)
+            default: return true
+            }
+        }
+    }
+
+    private var allFilterOptions: [FilterOption] {
         [
             .init(icon: "person.crop.circle", title: "From", primary: true, kind: .field(.from)),
             .init(icon: "paperclip", title: "Has attachments", primary: true,
@@ -2137,7 +2149,9 @@ struct CategoriesPopover: View {
                 GridItem(.flexible(), spacing: 6),
                 GridItem(.flexible(), spacing: 6),
             ], spacing: 6) {
-                ForEach(Self.categoryOrder, id: \.self) { cat in
+                ForEach(Self.categoryOrder.filter {
+                    store.categoryRowsShown || !CategoryRows.categories.contains($0)
+                }, id: \.self) { cat in
                     categoryPill(cat)
                 }
             }

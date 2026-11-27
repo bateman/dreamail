@@ -179,7 +179,8 @@ enum SidebarCounts {
         activeAccount: String?,
         badgeAccount: String?,
         now: Date = Date(),
-        hideCategories: Set<String> = []
+        hideCategories: Set<String> = [],
+        categoryRowsOff: Set<String> = []
     ) throws -> (counts: [String: Int], badge: Int) {
         let hideSQL = inboxHideSQL(hide: hideCategories)
         // Not actively snoozed — same gate as inbox list `notSnoozed`. A reply
@@ -190,14 +191,21 @@ enum SidebarCounts {
         let inbox = try count(db, account: activeAccount,
                               where: inboxUnreadSQL(hideSQL: hideSQL),
                               arguments: [now])
+        // The all-accounts Promotions and Social rows count the accounts that
+        // show them (`CategoryRows`); one account's own count is unchanged.
+        let off = activeAccount == nil ? categoryRowsOff.sorted() : []
+        let offSQL = off.isEmpty
+            ? "" : " AND accountId NOT IN (\(off.map { _ in "?" }.joined(separator: ",")))"
+        var categoryArguments: [any DatabaseValueConvertible] = [now]
+        categoryArguments += off
         let promotions = try count(db, account: activeAccount, where: """
             isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-            AND inPromotions = 1\(awake)
-            """, arguments: [now])
+            AND inPromotions = 1\(awake)\(offSQL)
+            """, arguments: categoryArguments)
         let social = try count(db, account: activeAccount, where: """
             isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-            AND inSocial = 1\(awake)
-            """, arguments: [now])
+            AND inSocial = 1\(awake)\(offSQL)
+            """, arguments: categoryArguments)
         let reminders = try count(db, account: activeAccount, where: """
             reminderAt IS NOT NULL
             """)
