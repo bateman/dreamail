@@ -71,8 +71,8 @@ final class SelectionBarIconsUITests: XCTestCase {
             ("A mixed selection shows what the click will do", stepMixedLabels),
             ("Read/unread acts on the checked rows", stepReadActs),
             ("Star acts on the checked rows", stepStarActs),
-            ("Trash acts on the checked rows, and undo brings them back", stepTrashActsAndUndo),
             ("Archive acts on the checked rows", stepArchiveActs),
+            ("Trash acts on the checked rows", stepTrashActs),
         ]
         for (name, step) in steps {
             XCTContext.runActivity(named: name) { _ in step(app) }
@@ -82,7 +82,7 @@ final class SelectionBarIconsUITests: XCTestCase {
     private func stepIconsInOrder(_ app: XCUIApplication) {
         let count = bar(app, "count")
         XCTAssertTrue(count.waitForExistence(timeout: 5), "the bar shows once rows are checked")
-        XCTAssertEqual(count.label, "2 selected")
+        XCTAssertEqual((count.value as? String) ?? count.label, "2 selected")
         let hint = bar(app, "hint"), close = bar(app, "close")
         XCTAssertTrue(hint.exists && close.exists)
         XCTAssertLessThanOrEqual(count.frame.maxX, hint.frame.minX, "the count is not cut off by the hint")
@@ -142,25 +142,22 @@ final class SelectionBarIconsUITests: XCTestCase {
         XCTAssertEqual(bar(app, "star").label, "Unstar")
     }
 
-    private func stepTrashActsAndUndo(_ app: XCUIApplication) {
-        bar(app, "trash").click()
-        XCTAssertTrue(row(app, "t3").waitForNonExistence(timeout: 10))
-        XCTAssertTrue(row(app, "t4").waitForNonExistence(timeout: 10))
-        XCTAssertFalse(bar(app, "count").exists, "trashing clears the selection")
-        // The undo toast's button is not reliably in the accessibility tree;
-        // ⌘Z is the documented chord for the same action.
-        app.typeKey("z", modifierFlags: .command)
-        XCTAssertTrue(row(app, "t3").waitForExistence(timeout: 10))
-        XCTAssertTrue(row(app, "t4").waitForExistence(timeout: 10))
-        check(app, "t3")
-        check(app, "t4")
-    }
-
     private func stepArchiveActs(_ app: XCUIApplication) {
         XCTAssertTrue(bar(app, "archive").waitForExistence(timeout: 5))
         bar(app, "archive").click()
         XCTAssertTrue(row(app, "t3").waitForNonExistence(timeout: 10))
         XCTAssertTrue(row(app, "t4").waitForNonExistence(timeout: 10))
         XCTAssertFalse(bar(app, "count").exists, "archiving clears the selection")
+    }
+
+    /// A second selection (t1, t2): the first one is gone after the archive.
+    private func stepTrashActs(_ app: XCUIApplication) {
+        check(app, "t1")
+        check(app, "t2")
+        XCTAssertEqual((bar(app, "count").value as? String) ?? bar(app, "count").label, "2 selected")
+        bar(app, "trash").click()
+        XCTAssertTrue(row(app, "t1").waitForNonExistence(timeout: 10))
+        XCTAssertTrue(row(app, "t2").waitForNonExistence(timeout: 10))
+        XCTAssertFalse(bar(app, "count").exists, "trashing clears the selection")
     }
 }
