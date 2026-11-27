@@ -1001,10 +1001,14 @@ extension MailStore {
     /// every thread edit (`applyRemoteThreadChange`).
     /// - `foldThreadFlags`: write the thread row's pending thread-level
     ///   edits to its messages first (`TrashedMessages.applyMessageEdit`).
+    /// Returns the local write and its refresh, for a caller that orders
+    /// its next read after them (`MailStore+MessageActions`).
+    @discardableResult
     func editMessageLabels(_ edits: [(row: MailThread, ids: [String])],
-                           add: [String], remove: [String], foldThreadFlags: Bool) {
+                           add: [String], remove: [String],
+                           foldThreadFlags: Bool) -> Task<Void, Never>? {
         let edits = edits.filter { !$0.ids.isEmpty }
-        guard !isShuttingDown, !edits.isEmpty, !(add.isEmpty && remove.isEmpty) else { return }
+        guard !isShuttingDown, !edits.isEmpty, !(add.isEmpty && remove.isEmpty) else { return nil }
         var remotes: [String: RemoteThreadChange] = [:]
         for edit in edits {
             remotes[edit.row.id] = .modifyMessages(ids: edit.ids, add: add, remove: remove)
@@ -1033,26 +1037,28 @@ extension MailStore {
                 }
             }
         }
+        // The list and the open conversation follow the local write at once,
+        // not after earlier bulk Gmail work.
+        let refreshed = Task { @MainActor () -> Bool in
+            let result = await written.result
+            // Message rows changed: the reader cache and mirror must not
+            // open the live conversation without them.
+            if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
+            self.scheduleThreadMutationReconciliation()
+            if case .failure(let error) = result {
+                self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
+                return false
+            }
+            return true
+        }
         let isDemo = demoMode
         let predecessor = bulkRemoteTail
         bulkRemoteTail = Task {
             _ = await predecessor?.value
-            let result = await written.result
-            await MainActor.run {
-                // Message rows changed: the reader cache and mirror
-                // must not open the live conversation without them.
-                if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
-                self.scheduleThreadMutationReconciliation()
-            }
-            if case .failure(let error) = result {
-                await MainActor.run {
-                    self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
-                }
-                return
-            }
-            guard !isDemo, !self.isShuttingDown else { return }
+            guard await refreshed.value, !isDemo, !self.isShuttingDown else { return }
             await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
         }
+        return Task { _ = await refreshed.value }
     }
 
     func trash(_ thread: MailThread) {

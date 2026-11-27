@@ -6,15 +6,15 @@ import Foundation
 /// `MailStore+MessageActions` runs it.
 enum MessageActions {
     /// Gmail web's per-message "More" menu, in its order, keeping only what
-    /// DreaMail really does. Left out on purpose: "Add to Contacts list"
-    /// (needs a Contacts permission DreaMail does not have), "Report
-    /// phishing" and "Translate message" (they send the message to Google).
+    /// DreaMail really does. Left out on purpose: "Print" (needs the print
+    /// entitlement, the owner's decision), "Add to Contacts list" (needs a
+    /// Contacts permission DreaMail does not have), "Report phishing" and
+    /// "Translate message" (they send the message to Google).
     enum MenuItem: Equatable, CaseIterable {
         case reply
         case replyAll
         case forward
         case filterLikeThis
-        case print
         case deleteMessage
         case blockSender
         case unblockSender
@@ -33,19 +33,22 @@ enum MessageActions {
         var senderBlocked: Bool
         var threadInSpam: Bool
         /// The message is in the Trash (read from the Trash view, or a
-        /// discarded draft): there is nothing to delete.
+        /// discarded draft). Nothing that acts on the conversation is
+        /// offered: its live messages are not on screen (DEC-081).
         var isTrashed: Bool
     }
 
     static func menuItems(_ context: Context) -> [MenuItem] {
         var items: [MenuItem] = [.reply]
         if context.canReplyAll { items.append(.replyAll) }
-        items += [.forward, .filterLikeThis, .print]
+        items += [.forward, .filterLikeThis]
         if !context.isTrashed { items.append(.deleteMessage) }
         if !context.fromSelf {
             items.append(context.senderBlocked ? .unblockSender : .blockSender)
         }
-        items.append(context.threadInSpam ? .reportNotSpam : .reportSpam)
+        if !context.isTrashed {
+            items.append(context.threadInSpam ? .reportNotSpam : .reportSpam)
+        }
         items += [.showOriginal, .downloadMessage, .markUnreadFromHere]
         return items
     }
@@ -57,7 +60,6 @@ enum MessageActions {
         case .replyAll: return "Reply to all"
         case .forward: return "Forward"
         case .filterLikeThis: return "Filter messages like this"
-        case .print: return "Print"
         case .deleteMessage: return "Delete this message"
         case .blockSender: return "Block \"\(senderName)\""
         case .unblockSender: return "Unblock \"\(senderName)\""
@@ -69,52 +71,114 @@ enum MessageActions {
         }
     }
 
-    static func isDraft(_ message: Message) -> Bool {
-        SyncEngine.labelIdsContain(message.labelIds, "DRAFT")
-    }
-
     static func isStarred(_ message: Message) -> Bool {
         SyncEngine.labelIdsContain(message.labelIds, "STARRED")
     }
 
-    /// The message a conversation opens on: its newest starred message
-    /// (Gmail), else nil and the pane keeps its default, the newest
-    /// message. `messages` oldest first, as the pane shows them.
-    static func starredOpenTarget(in messages: [Message]) -> Message? {
-        messages.last { !isDraft($0) && !TrashedMessages.isTrashed($0) && isStarred($0) }
-    }
-
     /// Gmail ids "Mark unread from here" changes: this message and the
-    /// later ones the pane shows, drafts left out, those not unread yet.
+    /// later ones the pane shows, drafts left out. A message whose row
+    /// still says unread is included: read on open writes only the thread
+    /// row, so that row says nothing about what Gmail holds.
     static func unreadFromHereIds(in messages: [Message], from id: String) -> [String] {
         guard let start = messages.firstIndex(where: { $0.id == id }) else { return [] }
         return messages[start...]
-            .filter { !isDraft($0) && !$0.isUnread }
+            .filter { !TrashedMessages.isDraft($0) }
             .map(\.gmailId)
     }
 
-    /// The suggested file name for "Download message".
-    static func downloadFilename(subject: String) -> String {
-        let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = MessageParser.safeFilename(trimmed.isEmpty ? "message" : trimmed)
-        return base + ".eml"
+    /// The From address "Filter messages like this" starts from, only when
+    /// it is a plain address: Gmail reads the criterion as search syntax,
+    /// so anything else (quotes, spaces, operators, braces) leaves the
+    /// field empty for the user to fill.
+    static func filterFromAddress(_ fromHeader: String) -> String {
+        let email = MessageParser.emailAddress(fromHeader)
+        let parts = email.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty, parts[1].contains("."),
+              !parts[1].hasPrefix("."), !parts[1].hasSuffix("."), email.count <= 254
+        else { return "" }
+        let local = CharacterSet(charactersIn:
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._%+-")
+        let domain = CharacterSet(charactersIn:
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        // A leading "-" would read as Gmail's "not" operator.
+        let alphanumeric = CharacterSet.alphanumerics
+        guard parts[0].unicodeScalars.allSatisfy(local.contains),
+              parts[1].unicodeScalars.allSatisfy(domain.contains),
+              let first = email.unicodeScalars.first, alphanumeric.contains(first),
+              let domainFirst = parts[1].unicodeScalars.first, alphanumeric.contains(domainFirst)
+        else { return "" }
+        return email
     }
 
-    /// The text "Print" lays out: the headers Gmail prints, then the body
-    /// as text (never the HTML: printing must not load remote content).
-    static func printableText(_ message: Message) -> String {
-        var lines: [String] = []
-        lines.append(message.subject.isEmpty ? "(no subject)" : message.subject)
-        lines.append("")
-        lines.append("From: \(message.fromHeader)")
-        if !message.toHeader.isEmpty { lines.append("To: \(message.toHeader)") }
-        if !message.ccHeader.isEmpty { lines.append("Cc: \(message.ccHeader)") }
-        lines.append("Date: \(message.date.formatted(date: .complete, time: .shortened))")
-        lines.append("")
-        let text = message.bodyText.isEmpty
-            ? MessageParser.stripHTML(message.bodyHTML ?? "")
-            : message.bodyText
-        lines.append(text)
-        return lines.joined(separator: "\n")
+    /// Longest file name base "Download message" suggests, in UTF-8 bytes:
+    /// with ".eml" it stays under the 255-byte limit of macOS volumes.
+    static let filenameBaseByteLimit = 200
+
+    /// The suggested file name for "Download message": the subject with
+    /// path separators replaced, control and invisible formatting
+    /// characters (bidi overrides among them) and leading dots dropped,
+    /// cut to `filenameBaseByteLimit` bytes; ".eml" always last.
+    static func downloadFilename(subject: String) -> String {
+        var base = ""
+        for scalar in subject.unicodeScalars {
+            switch scalar.properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator,
+                 .surrogate, .privateUse, .unassigned:
+                continue
+            default:
+                base.unicodeScalars.append(scalar == "/" || scalar == ":" ? "-" : scalar)
+            }
+        }
+        base = base.trimmingCharacters(in: .whitespaces)
+        while base.hasPrefix(".") { base.removeFirst() }
+        base = base.trimmingCharacters(in: .whitespaces)
+        var cut = ""
+        for character in base {
+            guard cut.utf8.count + String(character).utf8.count <= filenameBaseByteLimit else { break }
+            cut.append(character)
+        }
+        cut = cut.trimmingCharacters(in: .whitespaces)
+        return (cut.isEmpty ? "message" : cut) + ".eml"
+    }
+
+    /// What "Show original" displays: at most `limit` bytes of the raw
+    /// message (a body with large attachments is megabytes of base64,
+    /// slow to lay out), and whether it was cut. Bounded by bytes, so
+    /// stacked combining marks cannot make it longer.
+    static func originalPreview(_ raw: Data, limit: Int) -> (text: String, truncated: Bool) {
+        (String(decoding: raw.prefix(limit), as: UTF8.self), raw.count > limit)
+    }
+}
+
+/// Which messages a conversation opens on (Gmail, decided for DreaMail by
+/// the orchestrator). Without a starred message the pane keeps its rule:
+/// the newest message open and at the top. With one:
+/// - open: the newest starred message, every unread message and the
+///   newest message;
+/// - at the top: the newest starred message, unless unread mail is newer
+///   than it: then the oldest of those unread messages, so new mail is
+///   never hidden below the fold.
+/// Drafts never count; a starred message in the Trash does not either.
+enum ConversationOpenTarget: Equatable {
+    struct Target: Equatable {
+        /// Message ids, in the pane's order.
+        var expanded: [String]
+        var scroll: String
+    }
+
+    /// `messages` oldest first, as the pane shows them. Nil without a
+    /// starred message.
+    static func target(in messages: [Message]) -> Target? {
+        let candidates = messages.filter { !TrashedMessages.isDraft($0) }
+        guard let starIndex = candidates.lastIndex(where: {
+            MessageActions.isStarred($0) && !TrashedMessages.isTrashed($0)
+        }) else { return nil }
+        let last = candidates.count - 1
+        let expanded = candidates.indices.filter {
+            $0 == starIndex || $0 == last || candidates[$0].isUnread
+        }
+        let newerUnread = candidates.indices.first { $0 > starIndex && candidates[$0].isUnread }
+        return Target(expanded: expanded.map { candidates[$0].id },
+                      scroll: candidates[newerUnread ?? starIndex].id)
     }
 }

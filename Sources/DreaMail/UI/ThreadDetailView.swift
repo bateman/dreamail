@@ -202,7 +202,8 @@ struct ThreadDetailView: View {
             initialValue: MessageExpandPolicy.initialExpandedIds(
                 policy: splitMode ? .multiple : .single,
                 nonDraftIds: initialRoles.nonDraftIds,
-                lastNonDraftId: initialRoles.openTargetId))
+                lastNonDraftId: initialRoles.lastNonDraftId,
+                openIds: initialRoles.openExpandedIds))
         _summaryFingerprint = State(initialValue: ThreadSummaryPolicy.fingerprint(
             subject: thread.subject, messages: initialPayload.messages))
         _summaryEligible = State(initialValue: ThreadSummaryPolicy.isWorthSummarizing(initialPayload.messages))
@@ -336,7 +337,7 @@ struct ThreadDetailView: View {
                         } else {
                             messageCard(for: message,
                                         lastNonDraftId: messageRoles.lastNonDraftId,
-                                        openTargetId: messageRoles.openTargetId)
+                                        scrollTargetId: messageRoles.scrollTargetId)
                                 .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
                                 .id(message.id)
                                 .background { pinnedHeightReader(id: message.id, proxy: proxy) }
@@ -618,9 +619,9 @@ struct ThreadDetailView: View {
     /// Split out of `body`: the full MessageCard initializer inside the
     /// thread ForEach is too much for the type checker in one expression.
     private func messageCard(for message: Message, lastNonDraftId: String?,
-                             openTargetId: String?) -> some View {
+                             scrollTargetId: String?) -> some View {
         MessageCard(message: message,
-                    isLast: message.id == openTargetId,
+                    isLast: message.id == scrollTargetId,
                     attachments: attachmentsByMessageId[message.id] ?? [],
                     bodyPrep: bodyPrepByMessageId[message.id],
                     cidInlinedHTML: cidInlinedHTMLById[message.id],
@@ -635,7 +636,8 @@ struct ThreadDetailView: View {
                         id: message.id,
                         policy: messageExpandPolicy,
                         expanded: expandedMessageIds,
-                        lastNonDraftId: lastNonDraftId)
+                        lastNonDraftId: lastNonDraftId,
+                        scrollTargetId: scrollTargetId)
                         ? paneViewportHeight : nil,
                     loadImagesForThread: $loadRemoteImagesForThread,
                     threadInSpam: thread.inSpam,
@@ -919,7 +921,8 @@ struct ThreadDetailView: View {
             current: expandedMessageIds,
             policy: messageExpandPolicy,
             nonDraftIds: messageRoles.nonDraftIds,
-            lastNonDraftId: messageRoles.openTargetId)
+            lastNonDraftId: messageRoles.lastNonDraftId,
+            openIds: messageRoles.openExpandedIds)
         for id in expandedMessageIds {
             loadBodyIfNeeded(id: id)
         }
@@ -1920,10 +1923,19 @@ struct MessageCard: View {
     let onNeedUnsubscribeHeaders: () -> Void
     /// "Mark unread from here": the parent knows the later messages.
     let onMarkUnreadFromHere: () -> Void
-    /// "Filter messages like this": the filter editor, from this sender.
-    @State private var filterTarget: GmailFilterEditTarget?
-    /// "Show original" is open.
-    @State private var showingOriginal = false
+    /// The sheet a "More" item opened: the filter editor ("Filter messages
+    /// like this", from this sender) or "Show original".
+    private enum MenuSheet: Identifiable {
+        case filter(GmailFilterEditTarget)
+        case original
+        var id: String {
+            switch self {
+            case .filter(let target): return target.id.uuidString
+            case .original: return "original"
+            }
+        }
+    }
+    @State private var menuSheet: MenuSheet?
     // Full FROM/TO/CC rows ("Show more"); compact by default.
     @State private var recipientsExpanded = false
     /// Last height the HTML body reported for this card; nil until the
@@ -2273,6 +2285,12 @@ struct MessageCard: View {
                             .fixedSize()
                             .help(message.date.formatted(date: .complete, time: .shortened))
                             .accessibilityIdentifier("messageHeaderDate")
+                            // The header click collapses an open message;
+                            // VoiceOver gets the same as an action (the
+                            // keyboard has Gmail's `:`).
+                            .accessibilityAction(named: "Collapse") {
+                                if expanded, isCollapsible { toggleExpanded() }
+                            }
                     }
                     if expanded {
                         headerControls
@@ -2419,7 +2437,7 @@ struct MessageCard: View {
     /// Star (not on a draft), reply, reply all (when it differs from
     /// reply, as in Gmail) and "More".
     private var headerControlCount: Int {
-        (MessageActions.isDraft(message) ? 0 : 1) + 1 + (canReplyAll ? 1 : 0) + 1
+        (TrashedMessages.isDraft(message) ? 0 : 1) + 1 + (canReplyAll ? 1 : 0) + 1
     }
 
     /// After the open message's date, as in Gmail on the web: star, reply,
@@ -2427,7 +2445,7 @@ struct MessageCard: View {
     /// line's only flexible child and gives way first.
     private var headerControls: some View {
         HStack(spacing: metrics.headerControlSpacing) {
-            if !MessageActions.isDraft(message) {
+            if !TrashedMessages.isDraft(message) {
                 Button {
                     store.toggleMessageStar(message)
                 } label: {
@@ -2512,11 +2530,9 @@ struct MessageCard: View {
                     store.openCompose(.init(replyTo: message, forward: true))
                 case .filterLikeThis:
                     var draft = GmailFilterDraft()
-                    draft.from = email
-                    filterTarget = GmailFilterEditTarget(
-                        accountId: message.accountId, original: nil, prefill: draft)
-                case .print:
-                    store.printMessage(message)
+                    draft.from = MessageActions.filterFromAddress(message.fromHeader)
+                    menuSheet = .filter(GmailFilterEditTarget(
+                        accountId: message.accountId, original: nil, prefill: draft))
                 case .deleteMessage:
                     store.trashMessage(message)
                 case .blockSender:
@@ -2528,7 +2544,7 @@ struct MessageCard: View {
                 case .reportNotSpam:
                     store.reportSpam(message, spam: false)
                 case .showOriginal:
-                    showingOriginal = true
+                    menuSheet = .original
                 case .downloadMessage:
                     store.downloadMessage(message)
                 case .markUnreadFromHere:
@@ -2572,11 +2588,11 @@ struct MessageCard: View {
             }
         }
         .coordinateSpace(.named(Self.cardSpace))
-        .sheet(item: $filterTarget) { target in
-            GmailFilterEditorSheet(target: target)
-        }
-        .sheet(isPresented: $showingOriginal) {
-            OriginalMessageSheet(message: message)
+        .sheet(item: $menuSheet) { sheet in
+            switch sheet {
+            case .filter(let target): GmailFilterEditorSheet(target: target)
+            case .original: OriginalMessageSheet(message: message)
+            }
         }
         // A collapsed row is all header, and its header is a button.
         .onAppear {

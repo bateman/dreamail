@@ -60,7 +60,7 @@ final class MessageActionsTests: XCTestCase {
             MessageActions.title($0, senderName: "Ann")
         }
         XCTAssertEqual(titles, [
-            "Reply", "Reply to all", "Forward", "Filter messages like this", "Print",
+            "Reply", "Reply to all", "Forward", "Filter messages like this",
             "Delete this message", "Block \"Ann\"", "Report spam", "Show original",
             "Download message", "Mark unread from here",
         ])
@@ -73,7 +73,7 @@ final class MessageActionsTests: XCTestCase {
             let titles = MessageActions.menuItems(context).map {
                 MessageActions.title($0, senderName: "Ann").lowercased()
             }
-            for gone in ["phishing", "translate", "contacts"] {
+            for gone in ["phishing", "translate", "contacts", "print"] {
                 XCTAssertFalse(titles.contains { $0.contains(gone) }, gone)
             }
         }
@@ -83,51 +83,125 @@ final class MessageActionsTests: XCTestCase {
         var c = typical
         c.canReplyAll = false
         c.fromSelf = true
-        c.threadInSpam = true
-        c.isTrashed = true
         let items = MessageActions.menuItems(c)
         XCTAssertFalse(items.contains(.replyAll), "as the header: only when it differs from Reply")
         XCTAssertFalse(items.contains(.blockSender), "never one's own address")
-        XCTAssertFalse(items.contains(.deleteMessage), "already in the Trash")
-        XCTAssertTrue(items.contains(.reportNotSpam))
-        XCTAssertFalse(items.contains(.reportSpam))
+        c = typical
+        c.threadInSpam = true
+        XCTAssertTrue(MessageActions.menuItems(c).contains(.reportNotSpam))
+        XCTAssertFalse(MessageActions.menuItems(c).contains(.reportSpam))
         c = typical
         c.senderBlocked = true
         XCTAssertTrue(MessageActions.menuItems(c).contains(.unblockSender))
         XCTAssertFalse(MessageActions.menuItems(c).contains(.blockSender))
     }
 
+    /// From the Trash view: nothing that reaches the conversation's live
+    /// messages, which are not on screen (DEC-081).
+    func testATrashedMessageOffersNoConversationAction() {
+        for spam in [false, true] {
+            var c = typical
+            c.isTrashed = true
+            c.threadInSpam = spam
+            let items = MessageActions.menuItems(c)
+            XCTAssertFalse(items.contains(.deleteMessage), "already in the Trash")
+            XCTAssertFalse(items.contains(.reportSpam))
+            XCTAssertFalse(items.contains(.reportNotSpam))
+            XCTAssertTrue(items.contains(.markUnreadFromHere), "acts on the trashed messages shown")
+            XCTAssertTrue(items.contains(.blockSender), "sender-level")
+        }
+    }
+
     // MARK: - The message a conversation opens on
 
-    func testOpensOnTheNewestStarredMessage() {
-        let messages = [msg("a", minutesAgo: 60, labels: "INBOX STARRED"),
-                        msg("b", minutesAgo: 40, labels: "INBOX STARRED"),
-                        msg("c", minutesAgo: 20, labels: "INBOX"),
-                        msg("d", minutesAgo: 10, labels: "DRAFT STARRED")]
-        XCTAssertEqual(MessageActions.starredOpenTarget(in: messages)?.gmailId, "b",
-                       "the newest starred, drafts left out")
-        let roles = ThreadMessageRoles(messages: messages)
-        XCTAssertEqual(roles.openTargetId, "\(account):b")
-        XCTAssertEqual(roles.lastNonDraftId, "\(account):c", "unchanged")
-        XCTAssertEqual(ThreadRefresh.initialScrolledMessageId(in: messages), "\(account):b")
-        XCTAssertEqual(MessageExpandPolicy.initialExpandedIds(
-            policy: .single, nonDraftIds: roles.nonDraftIds, lastNonDraftId: roles.openTargetId),
-                       ["\(account):b"])
-    }
+    private func ids(_ names: [String]) -> [String] { names.map { "\(account):\($0)" } }
 
     func testWithoutStarredMessagesTheNewestStillOpens() {
         let messages = [msg("a", minutesAgo: 60, labels: "INBOX"),
-                        msg("b", minutesAgo: 20, labels: "INBOX"),
-                        msg("t", minutesAgo: 10, labels: "TRASH STARRED")]
-        XCTAssertNil(MessageActions.starredOpenTarget(in: messages), "a trashed star does not count")
-        let roles = ThreadMessageRoles(messages: Array(messages.prefix(2)))
-        XCTAssertEqual(roles.openTargetId, roles.lastNonDraftId)
-        XCTAssertEqual(ThreadRefresh.initialScrolledMessageId(in: Array(messages.prefix(2))),
-                       "\(account):b")
+                        msg("b", minutesAgo: 30, labels: "INBOX UNREAD", unread: true),
+                        msg("c", minutesAgo: 20, labels: "INBOX")]
+        XCTAssertNil(ConversationOpenTarget.target(in: messages))
+        let roles = ThreadMessageRoles(messages: messages)
+        XCTAssertEqual(roles.openExpandedIds, ["\(account):c"], "as before: the newest only")
+        XCTAssertEqual(roles.scrollTargetId, "\(account):c")
+        XCTAssertEqual(ThreadRefresh.initialScrolledMessageId(in: messages), "\(account):c")
+        XCTAssertEqual(ThreadRefresh.initialBodyLoadSeedIds(in: messages), ["\(account):c"])
+    }
+
+    func testOldStarAndNewUnreadMailOpensOnTheNewMail() {
+        let messages = [msg("a", minutesAgo: 60, labels: "INBOX STARRED"),
+                        msg("b", minutesAgo: 40, labels: "INBOX"),
+                        msg("c", minutesAgo: 30, labels: "INBOX UNREAD", unread: true),
+                        msg("d", minutesAgo: 20, labels: "INBOX UNREAD", unread: true),
+                        msg("e", minutesAgo: 10, labels: "INBOX")]
+        let target = ConversationOpenTarget.target(in: messages)
+        XCTAssertEqual(target?.expanded, ids(["a", "c", "d", "e"]),
+                       "the star, every unread message and the newest")
+        XCTAssertEqual(target?.scroll, "\(account):c", "the oldest unread newer than the star")
+        let roles = ThreadMessageRoles(messages: messages)
+        XCTAssertEqual(roles.openExpandedIds, Set(ids(["a", "c", "d", "e"])))
+        XCTAssertEqual(ThreadRefresh.initialScrolledMessageId(in: messages), "\(account):c")
+        XCTAssertEqual(MessageExpandPolicy.initialExpandedIds(
+            policy: .single, nonDraftIds: roles.nonDraftIds, lastNonDraftId: roles.lastNonDraftId,
+            openIds: roles.openExpandedIds), Set(ids(["a", "c", "d", "e"])))
+        XCTAssertEqual(Set(ThreadRefresh.initialBodyLoadSeedIds(in: messages)),
+                       Set(ids(["a", "c", "d", "e"])), "their bodies arrive with the payload")
+        // One card fills the pane while its body loads: the scroll target.
+        for id in ids(["a", "c", "d", "e"]) {
+            XCTAssertEqual(MessageExpandPolicy.fillsPane(
+                id: id, policy: .single, expanded: roles.openExpandedIds,
+                lastNonDraftId: roles.lastNonDraftId, scrollTargetId: roles.scrollTargetId),
+                           id == "\(account):c", id)
+        }
+    }
+
+    func testUnreadMailOlderThanTheStarOpensButTheStarLeads() {
+        let messages = [msg("a", minutesAgo: 60, labels: "INBOX UNREAD", unread: true),
+                        msg("b", minutesAgo: 40, labels: "INBOX STARRED"),
+                        msg("c", minutesAgo: 10, labels: "INBOX")]
+        let target = ConversationOpenTarget.target(in: messages)
+        XCTAssertEqual(target?.expanded, ids(["a", "b", "c"]))
+        XCTAssertEqual(target?.scroll, "\(account):b")
+    }
+
+    func testStarOnTheLastMessage() {
+        let messages = [msg("a", minutesAgo: 60, labels: "INBOX"),
+                        msg("b", minutesAgo: 10, labels: "INBOX STARRED")]
+        let target = ConversationOpenTarget.target(in: messages)
+        XCTAssertEqual(target?.expanded, ids(["b"]))
+        XCTAssertEqual(target?.scroll, "\(account):b")
+    }
+
+    func testSeveralStarsOpenOnTheNewestStarred() {
+        let messages = [msg("a", minutesAgo: 60, labels: "INBOX STARRED"),
+                        msg("b", minutesAgo: 40, labels: "INBOX STARRED"),
+                        msg("c", minutesAgo: 10, labels: "INBOX")]
+        let target = ConversationOpenTarget.target(in: messages)
+        XCTAssertEqual(target?.expanded, ids(["b", "c"]))
+        XCTAssertEqual(target?.scroll, "\(account):b")
+    }
+
+    func testDraftsNeverCount() {
+        let messages = [msg("a", minutesAgo: 60, labels: "INBOX STARRED"),
+                        msg("b", minutesAgo: 30, labels: "INBOX"),
+                        msg("d", minutesAgo: 10, labels: "DRAFT STARRED UNREAD", unread: true)]
+        let target = ConversationOpenTarget.target(in: messages)
+        XCTAssertEqual(target?.expanded, ids(["a", "b"]), "the newest non-draft, not the draft")
+        XCTAssertEqual(target?.scroll, "\(account):a")
+        XCTAssertNil(ConversationOpenTarget.target(in: [msg("d", minutesAgo: 1, labels: "DRAFT STARRED")]))
+    }
+
+    func testATrashedStarDoesNotCount() {
+        let messages = [msg("a", minutesAgo: 60, labels: "INBOX"),
+                        msg("t", minutesAgo: 30, labels: "TRASH STARRED"),
+                        msg("b", minutesAgo: 20, labels: "INBOX")]
+        XCTAssertNil(ConversationOpenTarget.target(in: messages))
     }
 
     // MARK: - Pure helpers
 
+    /// Read on open writes only the thread row: a message row can still
+    /// say unread. It is marked all the same.
     func testMarkUnreadFromHereTakesThisAndTheLaterMessages() {
         let messages = [msg("a", minutesAgo: 60, labels: "INBOX"),
                         msg("b", minutesAgo: 40, labels: "INBOX"),
@@ -135,24 +209,56 @@ final class MessageActionsTests: XCTestCase {
                         msg("d", minutesAgo: 20, labels: "DRAFT"),
                         msg("e", minutesAgo: 10, labels: "INBOX")]
         XCTAssertEqual(MessageActions.unreadFromHereIds(in: messages, from: "\(account):b"),
-                       ["b", "e"], "already unread and drafts left out")
+                       ["b", "c", "e"], "drafts left out, rows that say unread kept")
         XCTAssertEqual(MessageActions.unreadFromHereIds(in: messages, from: "\(account):x"), [])
+        let lone = [msg("a", minutesAgo: 5, labels: "INBOX UNREAD", unread: true)]
+        XCTAssertEqual(MessageActions.unreadFromHereIds(in: lone, from: "\(account):a"), ["a"])
+    }
+
+    func testFilterPrefillTakesOnlyAPlainAddress() {
+        XCTAssertEqual(MessageActions.filterFromAddress("Ann <ann@example.com>"), "ann@example.com")
+        XCTAssertEqual(MessageActions.filterFromAddress("ann.b+news@mail.example.com"),
+                       "ann.b+news@mail.example.com")
+        for crafted in ["\"a b\"@example.com", "a@example.com OR from:b@example.com",
+                        "{a@example.com b@example.com}", "a(x)@example.com", "-a@example.com",
+                        "a@@example.com", "a@example", "@example.com", "a@example.com\"",
+                        "Ann <a@b@example.com>", "a@exa mple.com", "a@.example.com",
+                        "Undisclosed recipients:;", ""] {
+            let prefill = MessageActions.filterFromAddress(crafted)
+            XCTAssertTrue(prefill.isEmpty || !prefill.contains(where: { " \"(){}:".contains($0) }),
+                          crafted)
+            if crafted.contains(" OR ") || crafted.contains("{") || crafted.contains("\"")
+                || crafted.contains("(") || crafted.contains("@@") || crafted.hasPrefix("-") {
+                XCTAssertEqual(prefill, "", crafted)
+            }
+        }
     }
 
     func testDownloadFilename() {
         XCTAssertEqual(MessageActions.downloadFilename(subject: "Plans"), "Plans.eml")
         XCTAssertEqual(MessageActions.downloadFilename(subject: "  "), "message.eml")
-        XCTAssertFalse(MessageActions.downloadFilename(subject: "a/b").contains("/"))
+        XCTAssertEqual(MessageActions.downloadFilename(subject: "a/b: c"), "a-b- c.eml",
+                       "separators replaced, nothing kept only from the tail")
+        XCTAssertEqual(MessageActions.downloadFilename(subject: "...hidden"), "hidden.eml")
+        XCTAssertEqual(MessageActions.downloadFilename(subject: "in\u{202E}voice\u{0007}\n"), "invoice.eml",
+                       "bidi override and control characters dropped")
+        let long = MessageActions.downloadFilename(subject: String(repeating: "é", count: 400))
+        XCTAssertTrue(long.hasSuffix(".eml"))
+        XCTAssertLessThanOrEqual(long.utf8.count, MessageActions.filenameBaseByteLimit + 4)
+        XCTAssertLessThanOrEqual(MessageActions.downloadFilename(
+            subject: String(repeating: "👩‍👩‍👧", count: 100)).utf8.count, 255)
     }
 
-    func testPrintUsesTextNeverHTML() {
-        var m = msg("a", minutesAgo: 1, labels: "INBOX")
-        m.bodyText = ""
-        m.bodyHTML = "<p>Hello <img src=\"https://tracker.example/p.gif\"></p>"
-        let text = MessageActions.printableText(m)
-        XCTAssertTrue(text.contains("Hello"))
-        XCTAssertFalse(text.contains("tracker.example"))
-        XCTAssertTrue(text.contains("From: Ann <ann@example.com>"))
+    func testOriginalPreviewIsCutByBytes() {
+        let small = Data("Subject: hi\r\n\r\nbody".utf8)
+        XCTAssertEqual(MessageActions.originalPreview(small, limit: 1_000).text,
+                       "Subject: hi\r\n\r\nbody")
+        XCTAssertFalse(MessageActions.originalPreview(small, limit: 1_000).truncated)
+        // One grapheme of 50 000 combining marks is still cut at the limit.
+        let stuffed = Data(("e" + String(repeating: "\u{0301}", count: 50_000)).utf8)
+        let preview = MessageActions.originalPreview(stuffed, limit: 1_000)
+        XCTAssertTrue(preview.truncated)
+        XCTAssertLessThanOrEqual(preview.text.utf8.count, 1_000 + 3)
     }
 
     // MARK: - Header controls fit the narrowest pane
@@ -237,6 +343,161 @@ final class MessageActionsTests: XCTestCase {
         }
         XCTAssertTrue(try thread(q).isUnread)
         XCTAssertFalse(SyncEngine.labelIdsContain(try labels(q, "a"), "UNREAD"))
+    }
+
+    // MARK: - The store's plans, applied to the database
+
+    private func state(_ q: DatabaseQueue, _ id: String) throws -> MessageActionPlan.State {
+        let m = try XCTUnwrap(try q.read { try Message.fetchOne($0, key: "\(self.account):\(id)") })
+        return try XCTUnwrap(try q.read { try MessageActionPlan.State.load($0, message: m) })
+    }
+
+    private func apply(_ q: DatabaseQueue, _ edit: MessageActionPlan.Edit) throws {
+        let row = try thread(q)
+        try q.write { db in
+            try TrashedMessages.applyMessageEdit(db, thread: row, ids: edit.ids,
+                                                 add: edit.add, remove: edit.remove)
+        }
+    }
+
+    private func markRead(_ q: DatabaseQueue) throws {
+        let stored = try thread(q)
+        var read = stored
+        read.isUnread = false
+        try q.write { db in try OptimisticThreadWrite.updateChangedColumns(db, from: stored, to: read) }
+    }
+
+    func testDeletePlanTrashesThatMessageAndItsUndoRestoresIt() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 10, labels: "INBOX STARRED")])
+        guard case .message(let edit, let undo) = MessageActionPlan.delete(try state(q, "b")) else {
+            return XCTFail("one message of two")
+        }
+        XCTAssertEqual(edit, .init(ids: ["b"], add: ["TRASH"]))
+        XCTAssertEqual(undo, .init(ids: ["b"], add: ["INBOX"], remove: ["TRASH"]))
+        try apply(q, edit)
+        var row = try thread(q)
+        XCTAssertTrue(row.inInbox)
+        XCTAssertEqual(row.messageCount, 1)
+        XCTAssertFalse(row.isStarred, "the starred message left the conversation")
+        XCTAssertEqual(MessageActionPlan.delete(try state(q, "b")), .none, "already in the Trash")
+        try apply(q, undo)
+        row = try thread(q)
+        XCTAssertEqual(row.messageCount, 2)
+        XCTAssertTrue(row.isStarred)
+        XCTAssertTrue(row.inInbox)
+    }
+
+    func testUndoDoesNotBringAnArchivedConversationBackToTheInbox() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 10, labels: "INBOX")])
+        // Archived on the thread row only, not yet on its messages.
+        let stored = try thread(q)
+        var archived = stored
+        archived.inInbox = false
+        try q.write { db in try OptimisticThreadWrite.updateChangedColumns(db, from: stored, to: archived) }
+        guard case .message(_, let undo) = MessageActionPlan.delete(try state(q, "b")) else {
+            return XCTFail("one message of two")
+        }
+        XCTAssertEqual(undo.add, [], "no INBOX: the conversation was archived")
+    }
+
+    func testDeletingTheLastMessageTrashesTheConversation() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "TRASH"),
+                            msg("b", minutesAgo: 10, labels: "INBOX")])
+        XCTAssertEqual(MessageActionPlan.delete(try state(q, "b")), .conversation)
+    }
+
+    func testDeletingTheOnlyMessageBesideADraftKeepsTheDraft() throws {
+        let q = try makeDB([msg("b", minutesAgo: 20, labels: "INBOX"),
+                            msg("d", minutesAgo: 10, labels: "DRAFT")])
+        guard case .message(let edit, _) = MessageActionPlan.delete(try state(q, "b")) else {
+            return XCTFail("the draft stays: only the message goes")
+        }
+        XCTAssertEqual(edit.ids, ["b"])
+        try apply(q, edit)
+        XCTAssertEqual(try shown(q), ["d"], "the draft is still there")
+        XCTAssertFalse(SyncEngine.labelIdsContain(try labels(q, "d"), "TRASH"))
+        XCTAssertFalse(try thread(q).inTrash)
+    }
+
+    func testDraftsAndTrashedMessagesHaveNothingToDelete() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("t", minutesAgo: 30, labels: "TRASH"),
+                            msg("d", minutesAgo: 10, labels: "DRAFT")])
+        XCTAssertEqual(MessageActionPlan.delete(try state(q, "t")), .none)
+        XCTAssertEqual(MessageActionPlan.delete(try state(q, "d")), .none)
+        XCTAssertNil(MessageActionPlan.toggleStar(try state(q, "d")), "no star on a draft")
+    }
+
+    func testStarTogglesFromTheStoredState() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 10, labels: "INBOX")])
+        let first = try XCTUnwrap(MessageActionPlan.toggleStar(try state(q, "a")))
+        XCTAssertEqual(first, .init(ids: ["a"], add: ["STARRED"]))
+        try apply(q, first)
+        XCTAssertTrue(try thread(q).isStarred)
+        // A second click, read after the first write: it undoes it.
+        let second = try XCTUnwrap(MessageActionPlan.toggleStar(try state(q, "a")))
+        XCTAssertEqual(second, .init(ids: ["a"], remove: ["STARRED"]))
+        try apply(q, second)
+        XCTAssertFalse(try thread(q).isStarred)
+        XCTAssertEqual(try thread(q).messageCount, 2)
+    }
+
+    func testSpamIsRefusedFromATrashedMessage() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("t", minutesAgo: 30, labels: "TRASH")])
+        XCTAssertFalse(MessageActionPlan.allowsConversationAction(try state(q, "t")))
+        XCTAssertTrue(MessageActionPlan.allowsConversationAction(try state(q, "a")))
+    }
+
+    /// Opened unread, so read on the thread row while both message rows
+    /// still say unread; "from here" on the first marks both.
+    func testMarkUnreadFromHereRightAfterOpeningUnreadMail() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 10, labels: "INBOX UNREAD", unread: true)])
+        try markRead(q)
+        XCTAssertFalse(try thread(q).isUnread)
+        let shownNow = try q.read { db in
+            try ThreadDetailRepository.fetchPayload(threadId: self.threadId, db: db).messages
+        }
+        let ids = MessageActions.unreadFromHereIds(in: shownNow, from: "\(account):a")
+        XCTAssertEqual(ids, ["a", "b"])
+        try apply(q, .init(ids: ids, add: ["UNREAD"]))
+        XCTAssertTrue(try thread(q).isUnread)
+        XCTAssertTrue(SyncEngine.labelIdsContain(try labels(q, "a"), "UNREAD"))
+        XCTAssertTrue(SyncEngine.labelIdsContain(try labels(q, "b"), "UNREAD"),
+                      "the fold must not strip the message being marked")
+    }
+
+    func testMarkUnreadOnTheOnlyMessageJustOpened() throws {
+        let q = try makeDB([msg("a", minutesAgo: 5, labels: "INBOX UNREAD", unread: true)])
+        try markRead(q)
+        let shownNow = try q.read { db in
+            try ThreadDetailRepository.fetchPayload(threadId: self.threadId, db: db).messages
+        }
+        let ids = MessageActions.unreadFromHereIds(in: shownNow, from: "\(account):a")
+        XCTAssertEqual(ids, ["a"], "something is sent")
+        try apply(q, .init(ids: ids, add: ["UNREAD"]))
+        XCTAssertTrue(try thread(q).isUnread)
+    }
+
+    /// A reply stored by a sync after the action read the thread row is
+    /// not marked read by the fold (`applyMessageEdit` reads the row again).
+    func testAReplyStoredMeanwhileStaysUnread() throws {
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX")])
+        let captured = try thread(q)
+        try q.write { db in
+            try self.msg("r", minutesAgo: 1, labels: "INBOX UNREAD", unread: true).insert(db)
+            try SyncEngine.deriveThreads(db, for: [self.threadId], accountId: self.account)
+        }
+        try q.write { db in
+            try TrashedMessages.applyMessageEdit(db, thread: captured, ids: ["a"],
+                                                 add: ["STARRED"], remove: [])
+        }
+        XCTAssertTrue(SyncEngine.labelIdsContain(try labels(q, "r"), "UNREAD"))
+        XCTAssertTrue(try thread(q).isUnread)
     }
 
     // MARK: - What reaches Gmail, offline and refused

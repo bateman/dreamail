@@ -120,7 +120,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
 
     private func stepMoreMenuKeepsGmailsOrder(_ app: XCUIApplication) {
         element(app, "messageHeaderMore").click()
-        let expected = ["Reply", "Reply to all", "Forward", "Filter messages like this", "Print",
+        let expected = ["Reply", "Reply to all", "Forward", "Filter messages like this",
                         "Delete this message", "Block \"Marcus Bell\"", "Report spam",
                         "Show original", "Download message", "Mark unread from here"]
         let first = app.menuItems[expected[0]]
@@ -132,7 +132,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
             tops.append(item.frame.minY)
         }
         XCTAssertEqual(tops, tops.sorted(), "Gmail's order")
-        for gone in ["Report phishing", "Translate message"] {
+        for gone in ["Report phishing", "Translate message", "Print"] {
             XCTAssertFalse(app.menuItems[gone].exists, "\(gone) is left out, not disabled")
         }
         XCTAssertFalse(app.menuItems.matching(NSPredicate(format: "title CONTAINS 'Contacts'"))
@@ -141,11 +141,14 @@ final class MessageHeaderActionsUITests: XCTestCase {
     }
 
     /// Stars the oldest message of t2, then opens t2 again: it opens on
-    /// that message, expanded and in view, instead of the newest.
+    /// that message, expanded and in view; the newest stays open too (no
+    /// unread mail is newer than the star once t2 has been read).
     private func stepStarredMessageOpensTheConversation(_ app: XCUIApplication) {
         open(app, "t2")
         let rows = settled("messageRowFrame", in: app) { $0.count == 4 }
         guard rows.count == 4 else { return }
+        // Past the 1 s read-on-open dwell: t2 is read before the star.
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         let pane = readingPane(app)
         if pane.exists { pane.scroll(byDeltaX: 0, deltaY: 2000) }
         let oldest = app.buttons.matching(identifier: "messageRowExpand")
@@ -174,25 +177,37 @@ final class MessageHeaderActionsUITests: XCTestCase {
         guard reopened.count == 4 else { return }
         let heights = reopened.map(\.height)
         print("MessageHeaderActions: rows after reopening \(reopened.map { [$0.minY, $0.height] })")
-        XCTAssertGreaterThan(heights[0], heights[3] + 40, "the starred (oldest) message is open")
-        XCTAssertLessThan(heights[3], 100, "the newest is collapsed")
+        XCTAssertGreaterThan(heights[0], heights[1] + 40, "the starred (oldest) message is open")
+        XCTAssertLessThan(heights[1], 100, "a read message between them is collapsed")
+        XCTAssertLessThan(heights[2], 100)
+        XCTAssertGreaterThan(heights[3], heights[1] + 40, "the newest stays open")
         let paneFrame = readingPane(app).frame
         XCTAssertTrue(paneFrame.intersects(reopened[0]), "the starred message is in view")
         XCTAssertGreaterThanOrEqual(reopened[0].minY, paneFrame.minY - 0.5,
                                     "its header is not above the pane")
-        XCTAssertEqual(element(app, "messageHeaderStar").label, "Unstar this message")
+        let stars = app.descendants(matching: .any).matching(identifier: "messageHeaderStar")
+            .allElementsBoundByIndex.sorted { $0.frame.minY < $1.frame.minY }
+        XCTAssertEqual(stars.first?.label, "Unstar this message", "the top open message is the starred one")
     }
 
-    /// The open (starred, oldest) message of t2 goes to the Trash alone:
-    /// the conversation keeps its other three messages and its place in
-    /// the Inbox; Undo brings the message back.
+    /// One open message of t2 goes to the Trash alone: the conversation
+    /// keeps its other messages and its place in the Inbox; Undo brings
+    /// the message back. Independent of the other steps: it takes the top
+    /// open message, whichever the conversation opened on.
     private func stepDeleteThisMessage(_ app: XCUIApplication) {
-        element(app, "messageHeaderMore").click()
+        open(app, "t2")
+        let before = settled("messageRowFrame", in: app) { $0.count >= 2 }
+        let count = before.count
+        let more = app.descendants(matching: .any).matching(identifier: "messageHeaderMore")
+            .allElementsBoundByIndex.filter { !$0.frame.isEmpty }
+            .min { $0.frame.minY < $1.frame.minY }
+        XCTAssertNotNil(more, "an open message has More")
+        more?.click()
         let delete = app.menuItems["Delete this message"]
         XCTAssertTrue(delete.waitForExistence(timeout: 5))
         delete.click()
-        let left = settled("messageRowFrame", in: app) { $0.count == 3 }
-        XCTAssertEqual(left.count, 3, "only that message leaves the conversation")
+        let left = settled("messageRowFrame", in: app) { $0.count == count - 1 }
+        XCTAssertEqual(left.count, count - 1, "only that message leaves the conversation")
         XCTAssertTrue(element(app, "threadSubject").exists, "the conversation stays open")
 
         showList(app)
@@ -203,7 +218,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
         XCTAssertTrue(undo.waitForExistence(timeout: 5), "the delete offers Undo")
         undo.click()
         open(app, "t2")
-        let back = settled("messageRowFrame", in: app) { $0.count == 4 }
-        XCTAssertEqual(back.count, 4, "Undo brings the message back")
+        let back = settled("messageRowFrame", in: app) { $0.count == count }
+        XCTAssertEqual(back.count, count, "Undo brings the message back")
     }
 }

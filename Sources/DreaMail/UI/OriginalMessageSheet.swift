@@ -12,16 +12,17 @@ struct OriginalMessageSheet: View {
 
     private enum LoadState {
         case loading
-        case loaded(String)
+        /// The whole message, and what is shown of it (cut once, here).
+        case loaded(raw: Data, shown: String, truncated: Bool)
         case failed(String)
     }
 
     @State private var state: LoadState = .loading
 
-    /// Longest text shown: a message with large attachments is megabytes of
-    /// base64, which a text view lays out slowly. "Download original" and
-    /// "Copy to clipboard" always take all of it.
-    static let shownCharacterLimit = 262_144
+    /// Longest text shown, in bytes: a message with large attachments is
+    /// megabytes of base64, which a text view lays out slowly. "Download
+    /// original" and "Copy to clipboard" always take all of it.
+    static let shownByteLimit = 262_144
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -38,11 +39,18 @@ struct OriginalMessageSheet: View {
             Divider()
             content
             HStack {
-                Button("Download original") { store.downloadMessage(message) }
+                Button("Download original") {
+                    if case .loaded(let raw, _, _) = state {
+                        store.downloadMessage(message, original: raw)
+                    } else {
+                        store.downloadMessage(message)
+                    }
+                }
                 Button("Copy to clipboard") {
-                    if case .loaded(let raw) = state {
+                    if case .loaded(let raw, _, _) = state {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(raw, forType: .string)
+                        NSPasteboard.general.setString(String(decoding: raw, as: UTF8.self),
+                                                       forType: .string)
                     }
                 }
                 .disabled(!isLoaded)
@@ -71,15 +79,15 @@ struct OriginalMessageSheet: View {
             Label(reason, systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .loaded(let raw):
+        case .loaded(_, let shown, let truncated):
             VStack(alignment: .leading, spacing: 6) {
-                if raw.count > Self.shownCharacterLimit {
+                if truncated {
                     Text("Showing the beginning of the message. Download original for all of it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 ScrollView {
-                    Text(String(raw.prefix(Self.shownCharacterLimit)))
+                    Text(shown)
                         .font(.system(size: 11, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,7 +110,8 @@ struct OriginalMessageSheet: View {
         do {
             let data = try await store.originalMessage(message)
             guard !Task.isCancelled else { return }
-            state = .loaded(String(decoding: data, as: UTF8.self))
+            let preview = MessageActions.originalPreview(data, limit: Self.shownByteLimit)
+            state = .loaded(raw: data, shown: preview.text, truncated: preview.truncated)
         } catch {
             guard !Task.isCancelled else { return }
             state = .failed("Couldn't load the original: \(error.localizedDescription)")

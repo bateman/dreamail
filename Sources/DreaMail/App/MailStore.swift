@@ -1701,6 +1701,9 @@ struct ComposeRequest: Identifiable {
     /// action's bounded calls finish before the next bulk action's start.
     @ObservationIgnored
     var bulkRemoteTail: Task<Void, Never>?
+    /// Serial tail for the actions on one message (`MailStore+MessageActions`).
+    @ObservationIgnored
+    var messageActionTail: Task<Void, Never>?
     /// Rapid triage reconciles once after the user pauses instead of launching
     /// a full list/count query for every key press.
     @ObservationIgnored

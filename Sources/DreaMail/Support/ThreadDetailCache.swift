@@ -892,15 +892,13 @@ actor ThreadDetailRepository {
             ? TrashedMessages.inTrashView(messages, threadInTrash: threadInTrash)
             : TrashedMessages.shown(messages, threadInTrash: threadInTrash)
 
-        // First frame expands the newest sent message. Live draft cards also
-        // need their previews immediately, so hydrate exactly those bodies.
+        // First frame expands the newest sent message (and, in a starred
+        // conversation, the cards it opens on: `ThreadRefresh.hydratedOnOpen`).
+        // Live draft cards also need their previews immediately, so hydrate
+        // exactly those bodies.
         var hydrateIds = Set(
             messages.filter { Self.isLiveDraft($0.labelIds) }.map(\.id))
-        if let newestSent = messages.last(where: {
-            !Self.hasDraftLabel($0.labelIds)
-        }) {
-            hydrateIds.insert(newestSent.id)
-        }
+        hydrateIds.formUnion(ThreadRefresh.hydratedOnOpen(messages))
         if !hydrateIds.isEmpty {
             let bodies = try MessageBody
                 .filter(hydrateIds.contains(Column("messageId")))
@@ -998,10 +996,6 @@ actor ThreadDetailRepository {
             copy.bodyPrepByMessageId[message.id] = prep
         }
         return copy
-    }
-
-    private nonisolated static func hasDraftLabel(_ labelIds: String) -> Bool {
-        labelIds.split(whereSeparator: \.isWhitespace).contains { $0 == "DRAFT" }
     }
 
     private nonisolated static func isLiveDraft(_ labelIds: String) -> Bool {

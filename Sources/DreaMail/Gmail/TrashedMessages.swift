@@ -137,9 +137,12 @@ enum TrashedMessages {
     /// first written to the shown messages, then `applyRestore` relabels
     /// `ids` and derives the row again. Without this, starring a message
     /// right after opening an unread conversation showed it unread again.
-    /// Call inside one write.
-    static func applyMessageEdit(_ db: Database, thread: MailThread,
+    /// The thread row is read again here, inside the write: a reply a sync
+    /// stored since `thread` was read must not be marked read. `thread`
+    /// stands in only when the row is gone. Call inside one write.
+    static func applyMessageEdit(_ db: Database, thread captured: MailThread,
                                  ids: [String], add: [String], remove: [String]) throws {
+        let thread = try MailThread.fetchOne(db, key: captured.id) ?? captured
         let messages = try Message.filter(Column("threadId") == thread.id).fetchAll(db)
         let visible = Self.shown(messages, threadInTrash: thread.inTrash)
         for (label, flag) in [("UNREAD", thread.isUnread), ("STARRED", thread.isStarred),
