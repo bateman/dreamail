@@ -27,6 +27,11 @@ enum DemoSeed {
     }
 
     static let account = "you@example.com"
+    /// A second, empty account for UI tests of the multi-account rail
+    /// (`DREAMAIL_UI_TEST=1` with `DREAMAIL_DEMO_SECOND_ACCOUNT=1`).
+    static let secondAccount = "zoe@example.com"
+
+    static func owns(_ id: String) -> Bool { id == account || id == secondAccount }
 
     /// What the demo account's Gmail returns for its signature: imported at
     /// launch by the same code as a real account's (no network).
@@ -37,7 +42,7 @@ enum DemoSeed {
     static let vipSenders: Set<String> = ["dana@brightloop.io", "priya@example.edu"]
 
     static func canActivate(accountIDs: [String]) -> Bool {
-        accountIDs.isEmpty || accountIDs.allSatisfy { $0 == account }
+        accountIDs.allSatisfy(owns)
     }
 
     @discardableResult
@@ -77,7 +82,7 @@ enum DemoSeed {
             return false
         }
         if seed(db) { return true }
-        if existing == [account] {
+        if existing.contains(account), existing.allSatisfy(owns) {
             NSLog("DreaMail: using the previous demo fixture after reseed failure")
             return true
         }
@@ -103,6 +108,12 @@ enum DemoSeed {
                 let acct = Account(id: account, displayName: "Personal",
                                    historyId: nil, lastSyncAt: Date(), senderName: "Alex Rivera")
                 try acct.insert(database)
+                let env = ProcessInfo.processInfo.environment
+                if env["DREAMAIL_UI_TEST"] == "1", env["DREAMAIL_DEMO_SECOND_ACCOUNT"] == "1" {
+                    try Account(id: secondAccount, displayName: "Zoe",
+                                historyId: nil, lastSyncAt: Date(),
+                                senderName: "Zoe Example").insert(database)
+                }
                 // A signature made in the app; the account's Gmail one
                 // arrives through `gmailSignatures`, as for a real account.
                 try SignatureStore.insert(database, accountId: account, name: "Short",
@@ -174,9 +185,10 @@ enum DemoSeed {
                              arguments: ["\(account):%"])
         try database.execute(sql: "DELETE FROM scheduledSend WHERE accountId = ?",
                              arguments: [account])
-        try database.execute(sql: "DELETE FROM savedView WHERE accountId = ?",
-                             arguments: [account])
-        try database.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [account])
+        try database.execute(sql: "DELETE FROM savedView WHERE accountId IN (?, ?)",
+                             arguments: [account, secondAccount])
+        try database.execute(sql: "DELETE FROM account WHERE id IN (?, ?)",
+                             arguments: [account, secondAccount])
     }
 
     // MARK: - Fixture data
@@ -331,9 +343,10 @@ enum DemoSeed {
                  listUnsubscribe: String? = nil,
                  listUnsubscribePost: String? = nil,
                  to: String? = nil, deliveredTo: String? = nil,
-                 html: String? = nil, sent: Bool = false) {
-            // The user's own reply is in Sent, not the Inbox.
-            var labels = (sent ? ["SENT"] : ["INBOX"]) + extraLabels
+                 html: String? = nil, sent: Bool = false, trashed: Bool = false) {
+            // The user's own reply is in Sent, not the Inbox; a deleted
+            // message is in the Trash only.
+            var labels = (trashed ? ["TRASH"] : sent ? ["SENT"] : ["INBOX"]) + extraLabels
             if starred { labels.append("STARRED") }
             if unread { labels.append("UNREAD") }
             out.append(Message(
@@ -445,6 +458,26 @@ enum DemoSeed {
             snippet: "Good catch, the normalization was wrong. I am rerunning the analysis now and will send the revised figures tonight.",
             body: "Good catch, the normalization was wrong.\n\nI am rerunning the analysis now and will send the revised figures tonight.\n\nPriya",
             hoursAgo: 6, unread: false, extraLabels: ["Label_research"])
+
+        // A live conversation with one deleted message between two live
+        // ones: the reading pane's "1 deleted message in this
+        // conversation" line (DEC-081). The oldest in the Inbox, so the
+        // rows above keep their places.
+        add("t11", from: "Sam Taylor <sam@example.com>",
+            subject: "Garden plot rota",
+            snippet: "Here is the watering rota for the next four weeks. Swap with anyone you like, just tell the group.",
+            body: "Hi all,\n\nHere is the watering rota for the next four weeks. Swap with anyone you like, just tell the group.\n\nSam",
+            hoursAgo: 72, unread: false)
+        add("t11", from: "Sam Taylor <sam@example.com>",
+            subject: "Re: Garden plot rota",
+            snippet: "Small change: the tap by the shed is off until Friday, please use the one by the gate.",
+            body: "Small change: the tap by the shed is off until Friday, please use the one by the gate.\n\nSam",
+            hoursAgo: 68, unread: false, trashed: true)
+        add("t11", from: "Sam Taylor <sam@example.com>",
+            subject: "Re: Garden plot rota",
+            snippet: "Thanks everyone, the rota is settled. See you at the plot on Saturday morning.",
+            body: "Thanks everyone, the rota is settled.\n\nSee you at the plot on Saturday morning.\n\nSam",
+            hoursAgo: 64, unread: false)
 
         return out
     }

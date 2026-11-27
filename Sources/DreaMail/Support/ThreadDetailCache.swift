@@ -397,6 +397,10 @@ struct ThreadDetailPayload: Equatable {
     /// uses one only when its own decision allows remote images. Lives and
     /// dies with this payload's cache entry.
     var remoteInlineByMessageId: [String: RemoteInlinedBody] = [:]
+    /// Count and place of the deleted messages left out of `messages` (a
+    /// live conversation only): the pane's "N deleted messages" line. No
+    /// message of theirs is in this payload (`DeletedMessagesInConversation`).
+    var deletedSummary: DeletedMessagesSummary?
 
     func suppressingDrafts(_ suppressedIds: Set<String>) -> ThreadDetailPayload {
         guard !suppressedIds.isEmpty else { return self }
@@ -415,7 +419,8 @@ struct ThreadDetailPayload: Equatable {
             },
             remoteInlineByMessageId: remoteInlineByMessageId.filter {
                 visibleIds.contains($0.key)
-            })
+            },
+            deletedSummary: deletedSummary)
     }
 }
 
@@ -888,6 +893,9 @@ actor ThreadDetailRepository {
         // Deleted messages of a live conversation stay out of it (Gmail).
         let threadInTrash = try Bool.fetchOne(
             db, sql: "SELECT inTrash FROM thread WHERE id = ?", arguments: [threadId]) ?? false
+        // Only their count and date: the line in the pane, not the messages.
+        let deletedSummary = trashView
+            ? nil : DeletedMessagesInConversation.summary(messages, threadInTrash: threadInTrash)
         messages = trashView
             ? TrashedMessages.inTrashView(messages, threadInTrash: threadInTrash)
             : TrashedMessages.shown(messages, threadInTrash: threadInTrash)
@@ -928,7 +936,8 @@ actor ThreadDetailRepository {
         return ThreadDetailPayload(
             messages: messages,
             attachmentsByMessageId: Dictionary(grouping: attachments, by: \.messageId),
-            bodyPrepByMessageId: [:])
+            bodyPrepByMessageId: [:],
+            deletedSummary: deletedSummary)
     }
 
     /// Bodies rebuilt from persistently cached `cid:` images: the stored
