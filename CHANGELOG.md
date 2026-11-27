@@ -216,6 +216,24 @@ minor versions may still change behavior.
   the label is read again in full, since the list is not guaranteed to
   carry colours.
 
+- **Fixed: two colours behind the sidebar button in light appearance.**
+  With the sidebar reduced to the icon strip, the band at the top of the
+  window was grey above the account bar and the strip and white above the
+  message list, and the seam ran behind the sidebar button. In light
+  appearance, with the sidebar reduced, the band is now white like the
+  list, so the window buttons sit on white and the account bar starts below
+  the band. Dark appearance and the open sidebar are unchanged.
+
+- **The unified inbox can be switched off.** Settings → Appearance →
+  "Show unified inbox (All accounts)", on by default. Off, the "All
+  accounts" button leaves the account bar, ⌘1, ⌘2… select the accounts in
+  order, and the app opens on the first account instead of the unified
+  view. Saved views that cover all accounts are hidden while it is off and
+  come back when it is on again (a view created with the unified inbox on
+  covers all accounts, also when you had a single account); a view you
+  create while it is off belongs to the account on screen. Unread badges,
+  the Dock badge and notifications do not change.
+
 - **Fixed: mail in Gmail's Promotions and Social categories was missing
   from the Inbox.** The Inbox hid those two categories by default, so new
   mail that Gmail shows in the Inbox could be found only under "Social",

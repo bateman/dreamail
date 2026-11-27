@@ -1270,8 +1270,10 @@ struct AppearanceSettings: View {
                 Section {
                     Toggle("Show Add Account button in the account rail", isOn: $showAddAccountInRail)
                         .accessibilityIdentifier("settings.showAddAccountInRail")
+                    Toggle("Show unified inbox (All accounts)", isOn: Bindable(store).unifiedInboxEnabled)
+                        .accessibilityIdentifier("settings.showUnifiedInbox")
                 } footer: {
-                    Text("You can always add an account in Settings → Accounts.")
+                    Text("You can always add an account in Settings → Accounts. Without the unified inbox, DreaMail always shows one account; views saved for all accounts come back when you turn it on again.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
