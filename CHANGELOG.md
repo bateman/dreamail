@@ -251,6 +251,17 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **The label colour sheet also shows Gmail's colour preset.** Some labels
+  that have a colour in Gmail on the web arrive from Gmail with no colour,
+  or with a neutral grey, and were drawn uncoloured. The app now also reads
+  the "preset" Gmail may attach to a label, shows it in the "Current:"
+  line ("preset DARK_GREEN", "unknown preset", or "no preset (list and
+  get)" / "(list only)" when Gmail sent none), and draws the label with
+  that preset's colour when Gmail's own colour is missing or the neutral
+  grey. Such labels are read one by one, at most every six hours. Whether
+  Gmail really sends the preset to this app is not known yet: the missing
+  colours are not reported as fixed. Removing a colour that Gmail keeps as
+  a preset now says so instead of reporting success.
 - **The label colour sheet says what is stored.** "⋮" → Label color →
   Choose color now shows a line "Current: #rrggbb" (with the text colour,
   and "not in this palette" when the colour is not one of the swatches

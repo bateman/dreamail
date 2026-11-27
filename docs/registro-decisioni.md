@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.41
+Versione: 0.42
 Ultimo aggiornamento: 27 novembre 2026
 Stato: documento in evoluzione
 
@@ -98,6 +98,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-084 | **Inbox mostra tutta la posta con l'etichetta Inbox** | Come un Gmail senza schede per categoria: nessuna categoria (Promotions, Social, Updates, Forums) è nascosta da Inbox per impostazione predefinita, né su un'installazione nuova né su una esistente; conteggi, badge e notifiche seguono l'elenco. L'API di Gmail non dice se l'utente usa le schede, quindi non le si imita. Un filtro di categoria è una scelta esplicita dell'utente; dove un valore salvato non si distingue dal vecchio default, si mostra la posta. Le viste salvate restano com'erano (scelta del proprietario). Decisione dopo la segnalazione di posta nuova mancante in Inbox; PR #111. |
 | DEC-085 | **Inbox unificata disattivabile** | Richiesta del proprietario: un'impostazione globale (Settings → Appearance, attiva per impostazione predefinita) toglie la vista "All accounts" e ogni via per raggiungerla; l'app mostra allora il primo account. Gmail non ha una posta unificata: è una regola propria dell'app. Le viste salvate di tutti gli account restano nascoste finché l'opzione è spenta, senza essere modificate né cancellate (scelta del proprietario); badge, numero sul Dock e notifiche non dipendono dall'opzione. PR #114. |
 | DEC-086 | **Messaggi cancellati visibili a richiesta nella conversazione viva** | Come Gmail web: una conversazione con messaggi nel Cestino e altri no mostra la riga "N deleted messages in this conversation" con "View"; solo dopo il clic i messaggi cancellati compaiono sul posto, segnati "In Trash", con "Restore" e "Restore all". Precisa DEC-019 e DEC-081: "cancellato vuol dire sparito" resta vero per riga dell'elenco, ricerca, conteggi, citazioni, riassunto e MCP; la riga dice solo quanti sono. Più severo di Gmail: un messaggio cancellato aperto non carica immagini remote senza un clic e non avvia il controllo OpenPGP. PR #107. |
+| DEC-087 | **Etichette disegnate con il preset di colore di Gmail** | Gmail può dare a un'etichetta un "preset" di colore (`colorPreset`, 21 valori) che REST v1 non documenta: l'app lo legge se arriva, lo conserva così com'è e lo mostra nel foglio del colore. Il preset decide il disegno solo quando il colore di Gmail manca o è la coppia neutra `#eeeeee`/`#222222`; un colore vero di Gmail e un colore scelto solo su questo Mac vengono prima. L'app non scrive mai il preset: per toglierlo serve Gmail web, e una rimozione che lo lascia è un errore dichiarato, non un successo. Una nuova sottoetichetta eredita il colore con cui la madre è disegnata (precisa DEC-071), mai quello scelto solo su questo Mac. Il nome del preset è mostrato solo se ben formato, altrimenti "unknown preset". Prosegue DEC-083. PR #118. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -518,6 +519,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-27 | **0.39** | Aggiunta DEC-084 (Inbox mostra tutta la posta con l'etichetta Inbox, senza categorie nascoste). |
 | 2026-11-27 | **0.40** | Aggiunta DEC-085 (inbox unificata disattivabile). |
 | 2026-11-27 | **0.41** | Aggiunta DEC-086 (messaggi cancellati visibili a richiesta nella conversazione viva), che precisa DEC-019 e DEC-081. |
+| 2026-11-27 | **0.42** | Aggiunta DEC-087 (etichette disegnate con il preset di colore di Gmail), che prosegue DEC-083 e precisa DEC-071. |
 
 ---
 
