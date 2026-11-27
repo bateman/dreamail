@@ -239,8 +239,8 @@ struct ThreadDetailView: View {
     /// The first message the pane actually draws: a live draft hidden while
     /// its compose editor is open does not count, so no hairline sits on top
     /// of the first row.
-    private var firstRenderedMessageId: String? {
-        paneRows.first { row in
+    private func firstRenderedRowId(in rows: [DeletedMessagesInConversation.Row]) -> String? {
+        rows.first { row in
             guard case .message(let message, false) = row else { return true }
             return !(messageRoles.isLiveDraft(message.id)
               && ComposingDraftVisibility.hidesDraftCard(
@@ -335,7 +335,10 @@ struct ThreadDetailView: View {
                     // over the top edge of every row but the first. Rows stay
                     // direct children of this stack: they are the scroll
                     // position's targets.
-                    ForEach(paneRows) { row in
+                    // Built once per body pass, not once per row.
+                    let rows = paneRows
+                    let firstRenderedMessageId = firstRenderedRowId(in: rows)
+                    ForEach(rows) { row in
                         switch row {
                         case .line:
                             deletedMessagesLine
@@ -750,6 +753,9 @@ struct ThreadDetailView: View {
                     onReply: {},
                     onRestore: {
                         store.restoreDeletedMessages(gmailIds: [message.gmailId], inThread: thread.id)
+                    },
+                    onBlockSender: { email in
+                        blockTarget = BlockTarget(email: email, thread: nil)
                     })
     }
 
@@ -757,11 +763,7 @@ struct ThreadDetailView: View {
     /// them again.
     private func toggleDeletedMessages() {
         if showsDeleted {
-            deletedLoadTask?.cancel()
-            deletedLoadTask = nil
-            expandedMessageIds.subtract(deletedLoad.messages.map(\.id))
-            withAnimation(PMMotion.interactive) { showsDeleted = false }
-            deletedLoad = .empty
+            closeDeletedMessages()
         } else {
             loadDeletedMessages(reveal: true)
         }
@@ -786,16 +788,22 @@ struct ThreadDetailView: View {
     private func applyDeletedSummary(_ summary: DeletedMessagesSummary?) {
         let changed = summary != deletedSummary
         deletedSummary = summary
-        guard showsDeleted else { return }
+        // No line left: close, and drop a View still reading, so it cannot
+        // open them later by itself.
         if summary == nil {
-            deletedLoadTask?.cancel()
-            deletedLoadTask = nil
-            expandedMessageIds.subtract(deletedLoad.messages.map(\.id))
-            showsDeleted = false
-            deletedLoad = .empty
-        } else if changed {
+            closeDeletedMessages()
+        } else if showsDeleted, changed {
             loadDeletedMessages(reveal: false)
         }
+    }
+
+    /// "Hide", or no deleted message left.
+    private func closeDeletedMessages() {
+        deletedLoadTask?.cancel()
+        deletedLoadTask = nil
+        expandedMessageIds.subtract(deletedLoad.messages.map(\.id))
+        withAnimation(PMMotion.interactive) { showsDeleted = false }
+        deletedLoad = .empty
     }
 
     /// Only the inline reply's target needs height updates as its HTML settles.
@@ -984,9 +992,11 @@ struct ThreadDetailView: View {
                 // Drop ids that left the thread (send/discard renumber).
                 let live = Set(messageRoles.nonDraftIds)
                 let wasOpen = expandedMessageIds
+                // A shown deleted message stays open too.
                 expandedMessageIds = MessageExpandPolicy.reconciledAfterRefresh(
                     current: expandedMessageIds,
-                    nonDraftIds: messageRoles.nonDraftIds)
+                    nonDraftIds: messageRoles.nonDraftIds
+                        + (showsDeleted ? deletedLoad.messages.map(\.id) : []))
                 // A renumbered sole message (send, Gmail re-id) reopens.
                 for id in expandedMessageIds.subtracting(wasOpen) {
                     loadBodyIfNeeded(id: id)
