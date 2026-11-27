@@ -4,7 +4,9 @@ import XCTest
 /// of the view's title, not in the sidebar; and the reading pane's ">>" button
 /// is gone. Demo inbox.
 final class ListSearchFieldUITests: XCTestCase {
-    private func launch(paneHidden: Bool) -> XCUIApplication {
+    /// `paneHidden: nil` passes no `-readingPaneHidden`: a launch argument sits in
+    /// the defaults' argument domain and overrides what the toggle writes.
+    private func launch(paneHidden: Bool?) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["DREAMAIL_DEMO"] = "1"
         app.launchEnvironment["DREAMAIL_UI_TEST"] = "1"
@@ -12,8 +14,8 @@ final class ListSearchFieldUITests: XCTestCase {
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES",
                                 "-accentColor", "",
                                 "-NSQuitAlwaysKeepsWindows", "NO",
-                                "-readingPaneHidden", paneHidden ? "YES" : "NO",
                                 "-threadOpenStyle", "readingPane"]
+        if let paneHidden { app.launchArguments += ["-readingPaneHidden", paneHidden ? "YES" : "NO"] }
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
@@ -153,19 +155,25 @@ final class ListSearchFieldUITests: XCTestCase {
     }
 
     func testNoDoubleChevronAndPaneToggleStillWorks() {
-        let app = launch(paneHidden: false)
+        let app = launch(paneHidden: nil)
         let t3 = element(app, "threadRow.you@example.com:t3")
         XCTAssertTrue(t3.waitForExistence(timeout: 10))
         let hide = app.buttons.matching(NSPredicate(format: "label == 'Hide Reading Pane'"))
         let show = app.buttons.matching(NSPredicate(format: "label == 'Show Reading Pane'"))
-        // The toggle round trip, on the list.
+        // The toggle round trip on the list, from whichever state the defaults hold.
+        XCTAssertTrue(waitUntil { hide.firstMatch.exists || show.firstMatch.exists }, "the toggle exists")
+        let startedOpen = hide.firstMatch.exists
+        (startedOpen ? hide : show).firstMatch.click()
+        XCTAssertTrue((startedOpen ? show : hide).firstMatch.waitForExistence(timeout: 5),
+                      "the toggle flips the pane")
+        (startedOpen ? show : hide).firstMatch.click()
+        XCTAssertTrue((startedOpen ? hide : show).firstMatch.waitForExistence(timeout: 5),
+                      "the toggle flips it back")
+        // Make sure the pane is open, then open a conversation: the old ">>"
+        // lived in its toolbar. Exactly one "Hide Reading Pane" control
+        // remains: the window's toggle.
+        if show.firstMatch.exists { show.firstMatch.click() }
         XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5))
-        hide.firstMatch.click()
-        XCTAssertTrue(show.firstMatch.waitForExistence(timeout: 5), "the toggle hides the pane")
-        show.firstMatch.click()
-        XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5), "the toggle shows it again")
-        // A conversation open: the old ">>" lived in its toolbar. Exactly one
-        // "Hide Reading Pane" control remains: the window's toggle.
         t3.click()
         XCTAssertTrue(element(app, "threadSubject").waitForExistence(timeout: 5), "a conversation is open")
         XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5))
