@@ -445,6 +445,7 @@ extension MailStore {
         // above has no Spam move yet.
         let fresh = newMailNotifications.fresh(
             current: current, now: Date(), demoMode: demoMode,
+            hide: inboxBadgeHideCategories,
             isBlocked: { self.isBlocked($0) })
         guard !fresh.isEmpty else { return }
         let pool = db

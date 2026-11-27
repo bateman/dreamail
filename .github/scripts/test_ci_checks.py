@@ -31,6 +31,7 @@ check_test_skips = load("check-test-skips")
 check_package_pins = load("check-package-pins")
 needs_build = load("needs-build")
 integrate_openpgp = load("integrate-openpgp")
+ui_shards = load("ui-shards")
 
 
 class TempFiles(unittest.TestCase):
@@ -408,6 +409,116 @@ class NeedsBuildTests(TempFiles):
                           for m in pattern.finditer(text)]
         self.assertGreater(scanned, 0)
         self.assertEqual(offenders, [], "a test reads a path that needs-build.py skips")
+
+
+class UIShardsTests(TempFiles):
+    DURATIONS = {"Slow": 300, "Mid": 120, "Quick": 30}
+
+    def case(self, cls: str, status: str = "passed") -> str:
+        return f"Test Case '-[DreaMailUITests.{cls} testIt]' {status} (1.0 seconds).\n"
+
+    def test_finds_classes_and_ignores_helpers(self):
+        self.write("A.swift", """\
+            import XCTest
+            final class FooUITests: XCTestCase {}
+            class BarUITests : XCTestCase {
+                class Nested {}
+            }
+            @MainActor final class ActorUITests: XCTestCase {}
+            private final class HiddenUITests: XCTestCase {}
+            struct Helper {}
+            final class Page: NSObject {}
+            // class CommentedOut: XCTestCase is still prose
+            """)
+        (Path(self._dir.name) / "Sub").mkdir()
+        self.write("Sub/B.swift", "final class DeepUITests: XCTestCase {}\n")
+        self.assertEqual(ui_shards.find_classes(Path(self._dir.name)),
+                         ["ActorUITests", "BarUITests", "DeepUITests", "FooUITests", "HiddenUITests"])
+
+    def test_duplicate_duration_is_refused(self):
+        path = self.write("d.txt", "A 10\nB 20  # note\nA 30\n")
+        with self.assertRaisesRegex(ValueError, "A is listed twice"):
+            ui_shards.read_durations(path)
+        self.assertEqual(ui_shards.read_durations(self.write("ok.txt", "# c\nA 10\n")), {"A": 10.0})
+
+    def test_split_is_balanced_deterministic_and_complete(self):
+        classes = ["Quick", "Mid", "Slow", "NewA", "NewB"]
+        shards = ui_shards.split(classes, self.DURATIONS, 3)
+        self.assertEqual(shards, ui_shards.split(list(reversed(classes)), self.DURATIONS, 3))
+        self.assertEqual(sorted(n for shard in shards for n in shard), sorted(classes))
+        # Slow alone; unmeasured classes weigh DEFAULT_SECONDS.
+        self.assertEqual(shards[0], ["Slow"])
+
+    def test_last_shard_skips_the_others_so_an_unfound_class_still_runs(self):
+        shards = [["A"], ["B"], ["C", "D"]]
+        self.assertEqual(ui_shards.flags(shards, 0), ["-only-testing:DreaMailUITests/A"])
+        self.assertEqual(ui_shards.flags(shards, 2),
+                         ["-skip-testing:DreaMailUITests/A", "-skip-testing:DreaMailUITests/B"])
+
+    def test_one_shard_runs_everything(self):
+        self.assertEqual(ui_shards.flags(ui_shards.split(["A", "B"], {}, 1), 0), [])
+
+    def run_check(self, log: str, shards, index: int) -> tuple[int, str]:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            status = ui_shards.check(log, shards, index)
+        return status, out.getvalue()
+
+    def test_check_passes_when_every_assigned_class_ran(self):
+        log = self.case("A") + self.case("B", "failed")
+        self.assertEqual(self.run_check(log, [["A", "B"], ["C"]], 0)[0], 0)
+
+    def test_check_fails_when_an_assigned_class_ran_nothing(self):
+        status, out = self.run_check(self.case("A"), [["A", "B"], ["C"]], 0)
+        self.assertEqual(status, 1)
+        self.assertIn("B is assigned to UI shard 1 but ran no test", out)
+
+    def test_check_fails_when_another_shards_class_ran(self):
+        log = self.case("C") + self.case("A")
+        self.assertEqual(self.run_check(log, [["A"], ["C"]], 1)[0], 1)
+
+    def test_check_warns_on_an_unfound_class_in_the_last_shard(self):
+        status, out = self.run_check(self.case("C") + self.case("Hidden"), [["A"], ["C"]], 1)
+        self.assertEqual(status, 0)
+        self.assertIn("::warning::Hidden ran", out)
+
+    def test_bad_shard_numbers_are_refused(self):
+        for args in (("0", "3"), ("4", "3"), ("x", "3"), ("1", "")):
+            with self.assertRaises(ValueError):
+                ui_shards.shard_index(*args)
+
+    def test_repository_classes_and_durations(self):
+        # Every source file that subclasses XCTestCase yields a class: one
+        # the pattern misses would show here (it would still run, in the
+        # last shard, but outside the balance).
+        for path in sorted(ui_shards.SOURCES.rglob("*.swift")):
+            if re.search(r":\s*XCTestCase\b", path.read_text()):
+                self.assertTrue(ui_shards.CLASS.search(path.read_text()), path.name)
+        self.assertGreater(len(ui_shards.find_classes()), 1)
+        durations = ui_shards.read_durations()
+        self.assertTrue(durations)
+        self.assertTrue(all(seconds > 0 for seconds in durations.values()))
+
+    def test_workflow_matrix_is_one_consecutive_shard_list(self):
+        # UI_SHARDS is strategy.job-total and UI_SHARD is matrix.shard: they
+        # agree only while the matrix is exactly `shard: [1, ..., N]`. A
+        # second dimension or an include/exclude would leave shards that
+        # run nowhere while every job's check passes.
+        text = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+        job = re.search(r"^  ui-test:\n(?P<body>(?:^(?: {4}.*|\s*)\n)+)", text, re.M)
+        self.assertIsNotNone(job, "no ui-test job in ci.yml")
+        body = job["body"]
+        matrix = re.search(r"^      matrix:\n(?P<keys>(?:^ {8,}.*\n)+)", body, re.M)
+        self.assertIsNotNone(matrix, "ui-test has no strategy.matrix")
+        keys = [line.strip() for line in matrix["keys"].splitlines() if line.strip()]
+        self.assertEqual(len(keys), 1, f"the ui-test matrix must be `shard` alone: {keys}")
+        shards = re.fullmatch(r"shard: \[([\d, ]+)\]", keys[0])
+        self.assertIsNotNone(shards, keys[0])
+        values = [int(v) for v in shards[1].split(",")]
+        self.assertEqual(values, list(range(1, len(values) + 1)))
+        self.assertIn("UI_SHARD: ${{ matrix.shard }}", body)
+        self.assertIn("UI_SHARDS: ${{ strategy.job-total }}", body)
+        self.assertIn("ui-shards.py check", body)
 
 
 class IntegrateOpenPGPTests(unittest.TestCase):
