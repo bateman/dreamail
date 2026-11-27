@@ -210,6 +210,30 @@ Nessuna sessione di lavoro è attiva: tutte archiviate. Nessuna corsa in coda.
   `ThreadMessageRowsUITests`); togliere l'indice inutilizzato
   `thread_unread_primary_inbox` in una migrazione futura.
 
+### Da verificare a mano sul Mac del proprietario
+
+Tutto il lavoro del 27 novembre, su `main` a `2a88274` o successivo. Il
+testo completo di ogni prova è in `docs/piano-sviluppo.md` al numero
+indicato. Quando il proprietario riferisce un esito, spuntare la prova nel
+piano; se qualcosa non va, è quello il prossimo lavoro.
+
+| Prova | PR | Che cosa guardare |
+|---|---|---|
+| C-83 | #108 | Foglio "Label color": riga "Current:" con ciò che è in archivio; nel tema scuro un'etichetta molto scura si vede nella barra laterale. |
+| C-84 | #111 | La posta di Social e Promotions compare in Inbox, letta e non letta, ed è contata in Inbox, Dock e badge dell'account. |
+| C-85 | #114 | Settings → Appearance → "Show unified inbox (All accounts)": spenta, il pulsante sparisce dalla barra degli account e ⌘1 apre il primo account. |
+| C-86 | #109, #121 | Tema chiaro, barra laterale ridotta: tutta la riga in alto è grigia come la barra degli account, anche entrando in una conversazione a tutta finestra; leggibilità di titolo e icone sul grigio. |
+| C-87 | #107 | "N deleted messages in this conversation" con View, Restore, Restore all. |
+| C-88 | #118 | Etichetta colorata in Gmail web e senza colore qui: riferire per intero la riga "Current:" (decide come proseguire sui colori). |
+| C-89 | #116 | "Move to inbox" su una conversazione archiviata; menu del clic destro nell'ordine di Gmail; **le icone accanto alle voci non si vedono** (PR #124 in bozza). |
+| C-90 | #119 | Settings → Accounts → "Show Promotions and Social" per account; spento, spariscono le due righe e nessuna posta è nascosta. |
+| C-91 | #115 | Barra di selezione con icone al posto del testo. |
+| C-92 | #112, #125 | Una sola riga selezionata nella barra laterale, anche con la barra scorsa in basso e poi `g p` (caso non coperto dai test). |
+| C-93 | #110 | Su ogni messaggio aperto: stella, Reply, Reply all, "⋮"; "Delete this message" cestina solo quel messaggio; dire se nel menu "⋮" mancano le icone. |
+| C-94 | #113 | Campo di ricerca nella barra in alto: il proprietario lo ha già visto e non gli piace; farsi dire che cosa. Da guardare anche: tre pannelli a finestra larga, `/` su macOS 14 e 15. |
+| C-95 | #123 | Barra di selezione: Move to inbox, Report spam, Snooze, Move to…, Label as…; "Label as…" su più conversazioni con spunta o trattino e "Undo". |
+| — | #122 | Cestinare una mail e premere ⌘Z, poi di nuovo con il pulsante "Undo": la riga torna (provato in CI, non su account vero). |
+
 ### Punti aperti col proprietario
 
 - Prove manuali da fare sul suo Mac: C-83 … C-95 nel piano. Le più utili:
