@@ -1191,6 +1191,7 @@ extension MailStore {
                 vipThreadIds: vipThreadIds,
                 vipAlwaysPins: vipAlwaysPins,
                 hiddenCategories: effectiveCategoryHide,
+                categoryRowsOff: categoryRowsOff,
                 newerThan: PrioritySplit.cutoff(days: priorityWindowDays)
             ) {
                 return

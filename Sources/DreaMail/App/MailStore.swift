@@ -1954,7 +1954,7 @@ struct ComposeRequest: Identifiable {
         threads.removeAll { t in
             guard toDrop.contains(t.id) else { return false }
             return StarStickiness.leavesDueToCategoryHide(
-                hide: hide,
+                hide: CategoryRows.hide(hide, account: t.accountId, off: categoryRowsOff),
                 inPromotions: t.inPromotions,
                 inSocial: t.inSocial,
                 labelIds: t.labelIds,
@@ -3142,6 +3142,7 @@ struct ComposeRequest: Identifiable {
                    let candReq = PriorityCandidates.request(
                        base, mode: priorityMode,
                        hiddenCategories: priorityHiddenCategories,
+                       categoryRowsOff: categoryOff,
                        newerThan: PrioritySplit.cutoff(days: priorityWindowDays),
                        maxCount: priorityMaxCount,
                        inboundSort: inboundSort) {

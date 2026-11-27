@@ -117,14 +117,15 @@ final class CategoryRowsTests: XCTestCase {
     // MARK: - Mail is never hidden or counted differently
 
     /// a: Primary, Promotions, Social (all unread, in the Inbox); b: the same.
-    private func makeDB() throws -> DatabaseQueue {
+    private func makeDB(accounts: [String]? = nil, extra: [(String, String)] = [])
+        throws -> DatabaseQueue {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q)
         let kinds: [(String, String)] = [("primary", "INBOX UNREAD"),
                                          ("promo", "INBOX UNREAD CATEGORY_PROMOTIONS"),
-                                         ("social", "INBOX UNREAD CATEGORY_SOCIAL")]
+                                         ("social", "INBOX UNREAD CATEGORY_SOCIAL")] + extra
         try q.write { db in
-            for account in [self.a, self.b] {
+            for account in accounts ?? [self.a, self.b] {
                 try Account(id: account, displayName: "User", historyId: nil,
                             lastSyncAt: nil, senderName: "").insert(db)
                 for (n, kind) in kinds.enumerated() {
@@ -261,6 +262,119 @@ final class CategoryRowsTests: XCTestCase {
         let before = SidebarCounts.memberships(of: promoB, categoryRowsOff: [b])
         let after = SidebarCounts.memberships(of: read, categoryRowsOff: [b])
         XCTAssertEqual(before.subtracting(after), ["inbox"])
+    }
+
+    // MARK: - A show pick that mixes the two with another category
+
+    private let updates = [("updates", "INBOX UNREAD CATEGORY_UPDATES")]
+
+    /// "Show Promotions and Updates", B closed: B's rows are the same in
+    /// B's own scope (where the two are out of the pick) and in All accounts.
+    func testAMixedShowPickGivesTheSameRowsForAClosedAccountInEveryScope() throws {
+        let q = try makeDB(extra: updates)
+        let show: Set<String> = ["CATEGORY_PROMOTIONS", "CATEGORY_UPDATES"]
+        let off: Set<String> = [b]
+        let all = try ids(q, CategoryHide.applyShow(ThreadListQuery.inbox(), show: show,
+                                                    exemptAccounts: off))
+        // Scope B: the chips as the store holds them (the two taken out).
+        let scopedShow = CategoryRows.scoped(
+            CategoryFilter(exclude: false, show: show, hide: []), shown: false).show
+        let scopeB = try ids(q, CategoryHide.applyShow(ThreadListQuery.inbox(), show: scopedShow)
+            .filter(Column("accountId") == b))
+        let scopeA = try ids(q, CategoryHide.applyShow(ThreadListQuery.inbox(), show: show)
+            .filter(Column("accountId") == a))
+        XCTAssertEqual(scopeB, ["\(b):updates"])
+        XCTAssertEqual(scopeA, ["\(a):promo", "\(a):updates"])
+        XCTAssertEqual(all, scopeA.union(scopeB), "All accounts = A's rows + B's rows")
+    }
+
+    // MARK: - The three scopes, with a stored hide
+
+    /// What the store derives per scope for one stored hide and the accounts
+    /// that have the setting off: A (on), B (off) and All accounts.
+    func testAStoredHideAcrossTheThreeScopes() throws {
+        let q = try makeDB(extra: updates)
+        let off: Set<String> = [b]
+        let hide: Set<String> = ["CATEGORY_PROMOTIONS"]
+        func scope(_ account: String?) throws -> (list: Set<String>, inbox: Int) {
+            // The chips hold the pick without the two while the scope shows none.
+            let shown = CategoryRows.shown(accounts: [a, b], scope: account, off: off)
+            let chipHide = CategoryRows.scoped(
+                CategoryFilter(exclude: true, show: [], hide: hide), shown: shown).hide
+            var request = CategoryHide.apply(ThreadListQuery.inbox(), hide: chipHide,
+                                             exemptAccounts: off)
+            if let account { request = request.filter(Column("accountId") == account) }
+            let list = try ids(q, request)
+            let counts = try q.read {
+                try SidebarCounts.fetch(db: $0, activeAccount: account, badgeAccount: nil,
+                                        hideCategories: hide, categoryRowsOff: off).counts
+            }
+            return (list, counts["inbox"] ?? -1)
+        }
+        let scopeA = try scope(a), scopeB = try scope(b), all = try scope(nil)
+        XCTAssertEqual(scopeA.list, ["\(a):primary", "\(a):social", "\(a):updates"],
+                       "A hides its promotion")
+        XCTAssertEqual(scopeB.list, ["\(b):primary", "\(b):promo", "\(b):social", "\(b):updates"],
+                       "B lists everything")
+        XCTAssertEqual(all.list, scopeA.list.union(scopeB.list))
+        XCTAssertEqual([scopeA.inbox, scopeB.inbox, all.inbox], [3, 4, 7],
+                       "each Inbox count is its list, all unread")
+    }
+
+    /// Priority and the star pin-through follow the thread's own account.
+    func testPriorityAndStarPinFollowTheThreadsAccount() throws {
+        let q = try makeDB()
+        try q.write { try $0.execute(sql: "UPDATE thread SET labelIds = labelIds || ' IMPORTANT' WHERE id LIKE '%:promo'") }
+        let rows = try q.read { try MailThread.fetchAll($0) }
+        let promoA = try XCTUnwrap(rows.first { $0.id == "\(a):promo" })
+        let promoB = try XCTUnwrap(rows.first { $0.id == "\(b):promo" })
+        let hide: Set<String> = ["CATEGORY_PROMOTIONS"]
+        let off: Set<String> = [b]
+        func qualifies(_ t: MailThread) -> Bool {
+            PrioritySplit.qualifies(t, mode: .starredImportant, hiddenCategories: hide,
+                                    categoryRowsOff: off)
+        }
+        XCTAssertFalse(qualifies(promoA), "A hides promotions: no IMPORTANT-only hoist")
+        XCTAssertTrue(qualifies(promoB), "B does not")
+        // The candidate query says the same.
+        let request = try XCTUnwrap(PriorityCandidates.request(
+            ThreadListQuery.inbox(), mode: .starredImportant, hiddenCategories: hide,
+            categoryRowsOff: off))
+        XCTAssertEqual(try ids(q, request), ["\(b):promo"])
+        // The pin-through drop: B's promotion does not leave, A's does.
+        func leaves(_ t: MailThread) -> Bool {
+            StarStickiness.leavesDueToCategoryHide(
+                hide: CategoryRows.hide(hide, account: t.accountId, off: off),
+                inPromotions: t.inPromotions, inSocial: t.inSocial, labelIds: t.labelIds,
+                isStarred: false, isKept: false)
+        }
+        XCTAssertTrue(leaves(promoA))
+        XCTAssertFalse(leaves(promoB))
+    }
+
+    /// An account id with a quote reaches the SQL doubled, not broken.
+    func testAnAccountIdWithAQuoteIsSafeInTheSQL() throws {
+        let odd = "o'brien@example.com"
+        let q = try makeDB(accounts: [odd, a])
+        let hide: Set<String> = ["CATEGORY_PROMOTIONS"]
+        let off: Set<String> = [odd]
+        let (counts, _) = try q.read {
+            try SidebarCounts.fetch(db: $0, activeAccount: nil, badgeAccount: nil,
+                                    hideCategories: hide, categoryRowsOff: off)
+        }
+        XCTAssertEqual(counts["inbox"], 5, "the quoted account lists all 3, A hides its promotion")
+        let perAccount = try q.read {
+            try SidebarCounts.fetchUnreadByAccount(db: $0, hideCategories: hide,
+                                                   categoryRowsOff: off)
+        }
+        XCTAssertEqual(perAccount, [odd: 3, a: 2])
+        let list = try ids(q, CategoryHide.apply(ThreadListQuery.inbox(), hide: hide,
+                                                 exemptAccounts: off))
+        XCTAssertEqual(list.count, 5)
+        let show = try ids(q, CategoryHide.applyShow(
+            ThreadListQuery.inbox(), show: ["CATEGORY_PROMOTIONS"], exemptAccounts: off))
+        XCTAssertEqual(show, Set(["\(a):promo", "\(odd):primary", "\(odd):promo", "\(odd):social"]))
+        XCTAssertEqual(CategoryRows.sqlList(off), "'o''brien@example.com'")
     }
 
     // MARK: - Views left, chips offered

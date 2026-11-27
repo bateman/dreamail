@@ -190,6 +190,7 @@ struct ThreadListView: View {
         // Hidden-category set feeds Priority hoist suppression — recompute
         // even when threads identity is unchanged (star pin-through).
         var effectiveCategoryHide: Set<String>
+        var categoryRowsOff: Set<String>
         // labelSections orders its sections by the accounts list.
         var accounts: [Account]
     }
@@ -209,6 +210,7 @@ struct ThreadListView: View {
             labelsByAccount: store.labelsByAccount,
             suppressedDraftThreadIds: store.suppressedDraftThreadIds,
             effectiveCategoryHide: store.effectiveCategoryHide,
+            categoryRowsOff: store.categoryRowsOff,
             accounts: store.accounts)
     }
 
@@ -236,6 +238,7 @@ struct ThreadListView: View {
                 vipThreadIds: store.vipThreadIds,
                 vipAlwaysPins: vipAlwaysPins,
                 hiddenCategories: store.effectiveCategoryHide,
+                categoryRowsOff: store.categoryRowsOff,
                 newerThan: PrioritySplit.cutoff(days: priorityWindowDays),
                 maxCount: PrioritySplit.cap(priorityMaxCount))
             var out: [(String, [MailThread])] = []

@@ -23,20 +23,21 @@ enum CategoryHide {
         exemptAccounts: Set<String> = []
     ) -> QueryInterfaceRequest<MailThread> {
         var q = query
-        // Promotions and Social are never hidden for these accounts
-        // (`CategoryRows`: the setting is off).
-        let exempt = !exemptAccounts.isEmpty
-            ? exemptAccounts.contains(Column("accountId")) : Column("id") != Column("id")
+        // Promotions and Social are never hidden for the exempt accounts
+        // (`CategoryRows`: the setting is off). Built only when there are some.
+        func tabClear(_ flag: String) -> SQLExpression {
+            let clear: SQLExpression = Column(flag) == false
+            return exemptAccounts.isEmpty
+                ? clear : clear || exemptAccounts.contains(Column("accountId"))
+        }
         for cat in hide {
             switch cat {
             case "CATEGORY_PROMOTIONS":
-                q = q.filter(Column("inPromotions") == false
-                             || exempt
+                q = q.filter(tabClear("inPromotions")
                              || Column("isStarred") == true
                              || keepIds.contains(Column("id")))
             case "CATEGORY_SOCIAL":
-                q = q.filter(Column("inSocial") == false
-                             || exempt
+                q = q.filter(tabClear("inSocial")
                              || Column("isStarred") == true
                              || keepIds.contains(Column("id")))
             default:
@@ -51,8 +52,11 @@ enum CategoryHide {
     /// Keep the threads that contain any of the `show` categories. Denorm for
     /// promo/social; labelIds LIKE for Updates/Forums (no denorm columns yet).
     /// Spam is never a category tab: SPAM stays out of promo/social picks.
+    ///
     /// Accounts in `exemptAccounts` (the setting "Show Promotions and Social"
-    /// is off) are not narrowed by a pick of those two.
+    /// is off) ignore Promotions and Social in the pick, exactly as their own
+    /// scope does: the pick minus those two applies to them, and when nothing
+    /// is left it does not narrow them at all.
     static func applyShow(
         _ query: QueryInterfaceRequest<MailThread>,
         show: Set<String>,
@@ -60,32 +64,36 @@ enum CategoryHide {
     ) -> QueryInterfaceRequest<MailThread> {
         guard !show.isEmpty else { return query }
         var q = query
+        let offList = CategoryRows.sqlList(exemptAccounts)
+        let hasExempt = !offList.isEmpty && !show.isDisjoint(with: CategoryRows.categories)
+        let onlyTabs = show.isSubset(of: CategoryRows.categories)
+        let notExempt = "accountId NOT IN (\(offList))"
+        let exemptSQL = "accountId IN (\(offList))"
         var parts: [String] = []
         var args: [any DatabaseValueConvertible] = []
         var needsNotSpam = false
         for cat in show {
             switch cat {
-            case "CATEGORY_PROMOTIONS":
-                parts.append("inPromotions = 1")
-                needsNotSpam = true
-            case "CATEGORY_SOCIAL":
-                parts.append("inSocial = 1")
+            case "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL":
+                let flag = cat == "CATEGORY_PROMOTIONS" ? "inPromotions" : "inSocial"
+                // With other categories in the pick, an exempt account keeps
+                // only those: the two tabs match for the other accounts.
+                parts.append(hasExempt && !onlyTabs
+                             ? "(\(flag) = 1 AND \(notExempt))" : "\(flag) = 1")
                 needsNotSpam = true
             default:
                 parts.append("labelIds LIKE ?")
                 args.append("%\(cat)%")
             }
         }
-        let offList = show.isDisjoint(with: CategoryRows.categories)
-            ? "" : CategoryRows.sqlList(exemptAccounts)
-        let exemptSQL = offList.isEmpty ? "" : "accountId IN (\(offList))"
-        q = q.filter(sql: ([parts.joined(separator: " OR ")]
-                            + (exemptSQL.isEmpty ? [] : [exemptSQL])).joined(separator: " OR "),
+        // A pick of the two tabs alone does not narrow an exempt account.
+        let whole = hasExempt && onlyTabs
+        q = q.filter(sql: (parts.joined(separator: " OR ")) + (whole ? " OR \(exemptSQL)" : ""),
                      arguments: StatementArguments(args))
         if needsNotSpam {
-            q = exemptSQL.isEmpty
-                ? q.filter(Column("inSpam") == false)
-                : q.filter(sql: "inSpam = 0 OR \(exemptSQL)")
+            q = hasExempt
+                ? q.filter(sql: "inSpam = 0 OR \(exemptSQL)")
+                : q.filter(Column("inSpam") == false)
         }
         return q
     }
