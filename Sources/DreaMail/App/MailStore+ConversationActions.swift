@@ -18,7 +18,16 @@ extension MailStore {
     /// `m`: mute (unmute when every target is already muted). `thread`: the
     /// conversation toolbar's own thread instead of the key's targets.
     func toggleMuteTargets(_ thread: MailThread? = nil) {
-        let all = thread.map { [$0] } ?? actionTargets
+        toggleMute(thread.map { [$0] } ?? actionTargets, bulk: thread == nil && !checkedThreadIds.isEmpty)
+    }
+
+    /// The row menu over a checked set: the ids the menu was built for
+    /// (`ThreadRowMenu.liveTargets`), never the focused row as a fallback.
+    func toggleMuteTargets(ids: [String]) {
+        toggleMute(ThreadRowMenu.liveTargets(ids: ids, in: threads), bulk: true)
+    }
+
+    private func toggleMute(_ all: [MailThread], bulk: Bool) {
         guard !refusesPartlyTrashed(all) else { return }
         let targets = all.filter { !isPartlyTrashedRow($0) }
         guard !targets.isEmpty else { return }
@@ -26,7 +35,7 @@ extension MailStore {
         let n = targets.count
         let noun = n == 1 ? "Conversation" : "\(n) conversations"
         run(ConversationActionRun(action, targets: targets),
-            bulk: thread == nil && !checkedThreadIds.isEmpty,
+            bulk: bulk,
             autoAdvance: action == .mute ? "mute" : nil,
             undoLabel: action == .mute ? "\(noun) muted" : "\(noun) unmuted")
     }
@@ -54,6 +63,55 @@ extension MailStore {
                 : (n == 1 ? "Marked as not important" : "\(n) marked as not important"))
     }
 
+    // MARK: - Move to Inbox
+
+    /// Gmail's "Move to inbox" (toolbar, row, menu, palette, the
+    /// `moveToInbox` command) on the conversations that offer it
+    /// (`InboxMove.offered`). The rules, the per-conversation edit and the
+    /// undo are `InboxMove.Plan`. `thread`: the toolbar's or row's own
+    /// conversation instead of the key's targets.
+    func moveToInboxTargets(_ thread: MailThread? = nil) {
+        let all = thread.map { [$0] } ?? actionTargets
+        guard !refusesPartlyTrashed(all) else { return }
+        runInboxMove(InboxMove.Plan(all, isPartlyTrashed: isPartlyTrashedRow),
+                     bulk: thread == nil && !checkedThreadIds.isEmpty,
+                     undoLabel: InboxMove.undoLabel(count:))
+    }
+
+    /// The row menu over a checked set (see `toggleMuteTargets(ids:)`).
+    func moveToInboxTargets(ids: [String]) {
+        let all = ThreadRowMenu.liveTargets(ids: ids, in: threads)
+        guard !refusesPartlyTrashed(all) else { return }
+        runInboxMove(InboxMove.Plan(all, isPartlyTrashed: isPartlyTrashedRow),
+                     bulk: true, undoLabel: InboxMove.undoLabel(count:))
+    }
+
+    /// Writes an Inbox move: one bulk mutation with each conversation's own
+    /// Gmail change, the snoozes it ends kept for a refusal, and one undo.
+    private func runInboxMove(_ plan: InboxMove.Plan, bulk: Bool,
+                              undoLabel: (Int) -> String) {
+        guard !plan.targets.isEmpty else { return }
+        let focus = selectedThreadId
+        let acted = mutateThreads(plan.targets, autoAdvanceAction: "move-to-inbox",
+                                  remote: .modify(), remotes: plan.remotes,
+                                  local: { plan.apply(&$0) })
+        endedSnoozes.begin(plan)
+        if bulk { clearCheckedThreads() }
+        let ids = plan.targets.map(\.id)
+        offerUndo(undoLabel(plan.targets.count)) { [weak self] in
+            guard let self else { return }
+            self.pinReadStateKeep(ids)
+            self.endedSnoozes.undone(ids)
+            self.mutateThreads(acted, remote: .modify(), remotes: plan.undoRemotes,
+                               local: { plan.restore(&$0) })
+            self.restoreSelectionFocus(focus)
+        }
+    }
+
+    /// True when the key's targets (checked rows, else the focused one) get
+    /// "Move to inbox" in place of "Archive" (app menu, palette).
+    var targetsOfferMoveToInbox: Bool { InboxMove.offered(for: actionTargets) }
+
     // MARK: - Move to
 
     /// `v` (and the menu and palette): the label picker in "move" mode, over
@@ -67,10 +125,19 @@ extension MailStore {
         openLabelPicker(mode: .move, moveTargetIds: ids)
     }
 
-    /// The conversation whose account the picker lists labels for: in move
-    /// mode the first move target still in the list, else the focused row.
+    /// The row menu over a checked set (see `toggleMuteTargets(ids:)`).
+    func openMovePicker(ids: [String]) {
+        let live = ThreadRowMenu.liveTargets(ids: ids, in: threads).map(\.id)
+        guard !live.isEmpty else { return }
+        openLabelPicker(mode: .move, moveTargetIds: live)
+    }
+
+    /// The conversation the picker acts on and lists labels for: the first
+    /// target still in the list (move mode, or label mode opened from a
+    /// row's menu), else the focused row.
     var labelPickerThread: MailThread? {
-        if labelPicker.mode == .move {
+        // Label mode with a target: the row whose context menu opened it.
+        if labelPicker.mode == .move || !labelPicker.moveTargetIds.isEmpty {
             let ids = labelPicker.moveTargetIds
             return ids.lazy.compactMap { id in self.threads.first { $0.id == id } }.first
         }
@@ -98,7 +165,7 @@ extension MailStore {
                 if all.isEmpty {
                     // Only Trash copies: say what was done, as a move does.
                     // No undo: a restore has none.
-                    let name = labelName(labelId, account: accountId) ?? "label"
+                    let name = destinationName(labelId, account: accountId)
                     if !checkedThreadIds.isEmpty { clearCheckedThreads() }
                     showNotice(partial.count == 1 ? "Moved to \(name)"
                                                   : "Moved \(partial.count) to \(name)")
@@ -106,21 +173,42 @@ extension MailStore {
                 }
             }
         }
+        let labelViewId = currentLabelViewId(account: accountId)
+        if labelId == ConversationAction.inboxLabel {
+            // Inbox as a destination: each conversation's own edit (TRASH
+            // and MUTED go too, `InboxMove`); spam and lone drafts stay.
+            let plan = InboxMove.Plan(all, fromPicker: true, labelViewId: labelViewId,
+                                      account: accountId, isPartlyTrashed: isPartlyTrashedRow)
+            noticeSkippedAccounts(plan.skipped.count)
+            let name = destinationName(labelId, account: accountId)
+            runInboxMove(plan, bulk: plan.targets.count > 1 || !checkedThreadIds.isEmpty,
+                         undoLabel: { $0 == 1 ? "Moved to \(name)" : "Moved \($0) to \(name)" })
+            return
+        }
         let plan = ConversationActionRun(
             .moveTo(labelId: labelId, alsoRemove: MoveSource.alsoRemove(
-                labelViewId: currentLabelViewId(account: accountId),
+                labelViewId: labelViewId,
                 inTrashView: selectedView == .trash)),
             targets: all, account: accountId)
-        if !plan.skipped.isEmpty {
-            showNotice(plan.skipped.count == 1
-                       ? "1 conversation of another account was not moved: labels belong to one account"
-                       : "\(plan.skipped.count) conversations of other accounts were not moved: labels belong to one account")
-        }
+        noticeSkippedAccounts(plan.skipped.count)
         guard !plan.targets.isEmpty else { return }
         let n = plan.targets.count
-        let name = labelName(labelId, account: accountId) ?? "label"
+        let name = destinationName(labelId, account: accountId)
         run(plan, bulk: n > 1 || !checkedThreadIds.isEmpty, autoAdvance: "move",
             undoLabel: n == 1 ? "Moved to \(name)" : "Moved \(n) to \(name)")
+    }
+
+    private func noticeSkippedAccounts(_ n: Int) {
+        guard n > 0 else { return }
+        showNotice(n == 1
+                   ? "1 conversation of another account was not moved: labels belong to one account"
+                   : "\(n) conversations of other accounts were not moved: labels belong to one account")
+    }
+
+    /// A Move to destination's name for the toasts: the label's, or Inbox.
+    private func destinationName(_ labelId: String, account accountId: String) -> String {
+        labelId == ConversationAction.inboxLabel
+            ? LabelPickerInboxRow.name : (labelName(labelId, account: accountId) ?? "label")
     }
 
     /// The label of the label view the list shows, when it is `accountId`'s.
@@ -133,12 +221,17 @@ extension MailStore {
 
     /// The label picker's Return / click / Space on a label row.
     func labelPickerCommit(_ label: LabelRow, thread: MailThread) {
-        switch labelPicker.mode {
-        case .label:
-            toggleLabel(thread, labelId: label.gmailLabelId)
+        switch LabelPickerInboxRow.commit(moveMode: labelPicker.mode == .move,
+                                          labelId: label.gmailLabelId) {
+        case .moveToInbox:
+            // "Label as" → "Move to inbox": an action, not a label box.
+            mailboxOverlay = nil
+            moveToInboxTargets(thread)
+        case .toggleLabel(let labelId):
+            toggleLabel(thread, labelId: labelId)
             labelPicker.changed = true
-        case .move:
-            moveThreads(ids: labelPicker.moveTargetIds, toLabel: label.gmailLabelId,
+        case .move(let labelId):
+            moveThreads(ids: labelPicker.moveTargetIds, toLabel: labelId,
                         accountId: thread.accountId)
         }
     }
@@ -155,7 +248,8 @@ extension MailStore {
         if let label = labels[safe: idx] {
             let moveMode = labelPicker.mode == .move
             if closeAfterApply, !LabelPickerKeyRules.returnTogglesLabel(
-                moveMode: moveMode, changed: labelPicker.changed) {
+                moveMode: moveMode, changed: labelPicker.changed,
+                actionRow: label.gmailLabelId == ConversationAction.inboxLabel) {
                 mailboxOverlay = nil   // Return after a pick only closes
                 return
             }

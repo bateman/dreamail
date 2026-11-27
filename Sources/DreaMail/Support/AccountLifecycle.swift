@@ -313,7 +313,8 @@ enum AccountLifecycle {
                     SyncEngine.firstSyncHistoryKey(accountId: accountId),
                     SyncEngine.revivedTrashRepairKey(accountId: accountId),
                     MissingMessages.defaultsKey(accountId: accountId),
-                    "syncWindowDays.\(accountId)"]
+                    "syncWindowDays.\(accountId)",
+                    CategoryRows.defaultsKey(accountId: accountId)]
         // Which of its labels are open in the sidebar (label ids only).
         keys += SidebarDisclosure.keys(accountId: accountId)
         // `categoryFilter.label.<account>.<labelId>` (`MailboxView.prefsKey`).

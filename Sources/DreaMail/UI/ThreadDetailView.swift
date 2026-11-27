@@ -1605,7 +1605,9 @@ struct ThreadDetailView: View {
         for label in thread.labels {
             if label == "IMPORTANT" {
                 items.append((label, "Important", nil))
-            } else if label.hasPrefix("CATEGORY_"), label != "CATEGORY_PERSONAL" {
+            } else if label.hasPrefix("CATEGORY_"), label != "CATEGORY_PERSONAL",
+                      CategoryRows.showsChip(
+                        label: label, accountOn: store.showsPromotionsAndSocial(thread.accountId)) {
                 items.append((label, String(label.dropFirst("CATEGORY_".count)).capitalized, nil))
             }
         }

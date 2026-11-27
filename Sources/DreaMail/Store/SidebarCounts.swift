@@ -43,17 +43,23 @@ enum SidebarCounts {
     static func memberships(
         of thread: MailThread,
         now: Date = Date(),
-        hideCategories: Set<String> = []
+        hideCategories: Set<String> = [],
+        categoryRowsOff: Set<String> = []
     ) -> Set<String> {
         var result = Set<String>()
+        // An account with "Show Promotions and Social" off has no rows for
+        // them, and no stored hide of the two applies to its mail.
+        let closed = categoryRowsOff.contains(thread.accountId)
+        let hideCategories = CategoryRows.hide(
+            hideCategories, account: thread.accountId, off: categoryRowsOff)
         let sleeping = isActivelySnoozed(thread, now: now)
         // Unread tab badges track the visible lists — not while snoozed.
         if thread.isUnread && !thread.inTrash && !thread.inSpam && thread.inInbox
             && !sleeping {
-            if thread.inPromotions {
+            if thread.inPromotions && !closed {
                 result.insert("promotions")
             }
-            if thread.inSocial {
+            if thread.inSocial && !closed {
                 result.insert("social")
             }
             // Inbox badge: every conversation the Inbox lists, whatever its
@@ -150,12 +156,14 @@ enum SidebarCounts {
 
     /// SQL fragment (AND-joined) with the same rule as `CategoryHide.apply`
     /// for the categories in `hide`. Empty when none apply (the default).
-    static func inboxHideSQL(hide: Set<String>) -> String {
+    static func inboxHideSQL(hide: Set<String>, exempt: Set<String> = []) -> String {
         var parts: [String] = []
+        // Accounts with "Show Promotions and Social" off: never hidden.
+        let exemptSQL = exempt.isEmpty ? "" : " OR accountId IN (\(CategoryRows.sqlList(exempt)))"
         for cat in hide.sorted() where inboxHideableCategories.contains(cat) {
             switch cat {
-            case "CATEGORY_PROMOTIONS": parts.append("(inPromotions = 0 OR isStarred = 1)")
-            case "CATEGORY_SOCIAL": parts.append("(inSocial = 0 OR isStarred = 1)")
+            case "CATEGORY_PROMOTIONS": parts.append("(inPromotions = 0 OR isStarred = 1\(exemptSQL))")
+            case "CATEGORY_SOCIAL": parts.append("(inSocial = 0 OR isStarred = 1\(exemptSQL))")
             default:
                 // labelIds is space-separated; bound tokens are fixed Gmail
                 // ids (not user text), so interpolating is safe and matches
@@ -179,9 +187,10 @@ enum SidebarCounts {
         activeAccount: String?,
         badgeAccount: String?,
         now: Date = Date(),
-        hideCategories: Set<String> = []
+        hideCategories: Set<String> = [],
+        categoryRowsOff: Set<String> = []
     ) throws -> (counts: [String: Int], badge: Int) {
-        let hideSQL = inboxHideSQL(hide: hideCategories)
+        let hideSQL = inboxHideSQL(hide: hideCategories, exempt: categoryRowsOff)
         // Not actively snoozed — same gate as inbox list `notSnoozed`. A reply
         // on a sleeping thread used to keep UNREAD+INBOX while list-hidden,
         // inflating the badge with nothing visible under is:unread.
@@ -190,14 +199,21 @@ enum SidebarCounts {
         let inbox = try count(db, account: activeAccount,
                               where: inboxUnreadSQL(hideSQL: hideSQL),
                               arguments: [now])
+        // The all-accounts Promotions and Social rows count the accounts that
+        // show them (`CategoryRows`); one account's own count is unchanged.
+        let off = activeAccount == nil ? categoryRowsOff.sorted() : []
+        let offSQL = off.isEmpty
+            ? "" : " AND accountId NOT IN (\(off.map { _ in "?" }.joined(separator: ",")))"
+        var categoryArguments: [any DatabaseValueConvertible] = [now]
+        categoryArguments += off
         let promotions = try count(db, account: activeAccount, where: """
             isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-            AND inPromotions = 1\(awake)
-            """, arguments: [now])
+            AND inPromotions = 1\(awake)\(offSQL)
+            """, arguments: categoryArguments)
         let social = try count(db, account: activeAccount, where: """
             isUnread = 1 AND inTrash = 0 AND inSpam = 0 AND inInbox = 1
-            AND inSocial = 1\(awake)
-            """, arguments: [now])
+            AND inSocial = 1\(awake)\(offSQL)
+            """, arguments: categoryArguments)
         let reminders = try count(db, account: activeAccount, where: """
             reminderAt IS NOT NULL
             """)
@@ -262,9 +278,11 @@ enum SidebarCounts {
     static func fetchUnreadByAccount(
         db: Database,
         now: Date = Date(),
-        hideCategories: Set<String> = []
+        hideCategories: Set<String> = [],
+        categoryRowsOff: Set<String> = []
     ) throws -> [String: Int] {
-        let predicate = inboxUnreadSQL(hideSQL: inboxHideSQL(hide: hideCategories))
+        let predicate = inboxUnreadSQL(
+            hideSQL: inboxHideSQL(hide: hideCategories, exempt: categoryRowsOff))
         let rows = try Row.fetchAll(db, sql: """
             SELECT accountId, COUNT(*) AS n FROM thread
             WHERE (\(predicate)) GROUP BY accountId

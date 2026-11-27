@@ -135,6 +135,7 @@ extension MailStore {
         do {
             try await Self.perform(change, on: client, gmailThreadId: gmailThreadId)
             isOffline = false
+            endedSnoozes.succeeded(threadId: "\(accountId):\(gmailThreadId)", change: change)
         } catch {
             switch RemoteThreadSend.disposition(for: error) {
             case .queueOffline:
@@ -191,11 +192,16 @@ extension MailStore {
         // the refused or dropped edit over the messages again. Every revert
         // path (direct refusal, dropped queued edit) comes through here.
         LocalThreadEdits.shared.forget(threadId: threadId)
+        // A refused "Move to inbox" that ended a snooze gives the date back.
+        let snooze = endedSnoozes.refused(threadId: threadId, change: refused)
         let reverted = (try? await db.write { db -> Bool in
             let reverted = try refused.map {
                 try TrashedMessages.revertStoredRestores(db, accountId: accountId, change: $0)
             } ?? false
             try OptimisticThreadWrite.rederiveOrDelete(db, threadId: threadId, accountId: accountId)
+            if let snooze {
+                try InboxMove.restoreSnoozeAfterRefusal(db, threadId: threadId, until: snooze)
+            }
             return reverted
         }) ?? false
         if reverted { applyThreadContentChange(.threads([threadId])) }
@@ -250,6 +256,8 @@ extension MailStore {
                 try await Self.perform(change, on: gmail, gmailThreadId: row.gmailThreadId)
                 isOffline = false
                 shouldDelete = true
+                endedSnoozes.succeeded(threadId: "\(row.accountId):\(row.gmailThreadId)",
+                                       change: change)
             } catch {
                 switch ThreadOpReplay.replayDisposition(
                     error: error, accountIsKnown: isKnownAccount(row.accountId),
@@ -351,14 +359,16 @@ extension MailStore {
     /// accounts" badge also moves for an account the sidebar hides).
     private func dockBadgeDelta(from old: MailThread, to updated: MailThread) -> Int {
         DockBadge.delta(from: old, to: updated, badgeAccount: dockBadgeAccount,
-                        hideCategories: inboxBadgeHideCategories)
+                        hideCategories: inboxBadgeHideCategories,
+                        categoryRowsOff: categoryRowsOff)
     }
 
     /// Unread change for the thread's own account: the avatar badge counts
     /// by the Dock badge's rule, whatever scope the Dock badge has.
     private func accountUnreadDelta(from old: MailThread, to updated: MailThread) -> [String: Int] {
         [old.accountId: DockBadge.delta(from: old, to: updated, badgeAccount: old.accountId,
-                                        hideCategories: inboxBadgeHideCategories)]
+                                        hideCategories: inboxBadgeHideCategories,
+                                        categoryRowsOff: categoryRowsOff)]
     }
 
     private func applyOptimisticSidebarCountDelta(
@@ -367,8 +377,10 @@ extension MailStore {
         let now = Date()
         let hide = inboxBadgeHideCategories
         if let activeAccountId, old.accountId != activeAccountId { return }
-        let before = SidebarCounts.memberships(of: old, now: now, hideCategories: hide)
-        let after = SidebarCounts.memberships(of: updated, now: now, hideCategories: hide)
+        let before = SidebarCounts.memberships(of: old, now: now, hideCategories: hide,
+                                               categoryRowsOff: categoryRowsOff)
+        let after = SidebarCounts.memberships(of: updated, now: now, hideCategories: hide,
+                                              categoryRowsOff: categoryRowsOff)
         for key in before.subtracting(after) {
             unreadCounts[key] = max(0, (unreadCounts[key] ?? 0) - 1)
         }
@@ -754,7 +766,8 @@ extension MailStore {
             // Category-hide pin-through: unstarred hidden-category mail leaves
             // once the sticky keep is gone (leave-thread drop or never pinned).
             return StarStickiness.leavesDueToCategoryHide(
-                hide: chips.category.hide,
+                hide: CategoryRows.hide(chips.category.hide, account: t.accountId,
+                                        off: categoryRowsOff),
                 inPromotions: t.inPromotions,
                 inSocial: t.inSocial,
                 labelIds: t.labelIds,
@@ -1255,6 +1268,7 @@ extension MailStore {
                 vipThreadIds: vipThreadIds,
                 vipAlwaysPins: vipAlwaysPins,
                 hiddenCategories: effectiveCategoryHide,
+                categoryRowsOff: categoryRowsOff,
                 newerThan: PrioritySplit.cutoff(days: priorityWindowDays)
             ) {
                 return

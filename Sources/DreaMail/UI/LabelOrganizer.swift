@@ -175,7 +175,7 @@ struct LabelColorPalette: View {
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .disabled(saving || label.gmailBackgroundColor == nil)
+            .disabled(saving || !label.hasGmailColor)
             CurrentColorLine(text: LabelCurrentColor.gmail(label),
                              colors: LabelColors(background: label.gmailBackgroundColor,
                                                  text: label.gmailTextColor),
