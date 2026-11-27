@@ -1,22 +1,33 @@
 # Passaggio di consegne all'orchestratore
 
-Scritto il 27 novembre 2026 dall'orchestratore uscente
-(`session_019yj8YsaN8QRX7nBhjqZ187`) per la sessione che ne prende il posto.
+Scritto il 27 novembre 2026, sera, dal secondo orchestratore
+(`session_019yj8YuvMDEjw2we3q2P1ah`) per la sessione che ne prende il posto.
 Leggere prima `CLAUDE.md`: vale tutto, e qui non è ripetuto.
 
 ## Perché il passaggio
 
-La sessione uscente ha chiesto al proprietario l'autorizzazione a collegarsi al
-suo Mac. Da quel momento è legata in modo permanente ai suoi dispositivi
-fidati: le sessioni di lavoro non riescono più a scriverle (`send_message`
-rifiutato) e i promemoria programmati (`send_later`) non le arrivano. Una
-sessione nuova non ha questo limite.
+Lo ha deciso il proprietario, dopo una giornata che giudica inaccettabile:
+circa dieci ore e molta spesa per modifiche piccole all'interfaccia, con
+errori dell'orchestratore elencati più sotto. Il nuovo orchestratore lavora
+con il modello Opus; il proprietario non vuole più il modello precedente.
+Prima regola: **spendere poco e non aprire lavoro che lui non ha chiesto.**
+
+Il primo orchestratore (`session_019yj8YsaN8QRX7nBhjqZ187`) era stato
+sostituito perché aveva chiesto l'autorizzazione a collegarsi al Mac del
+proprietario: da quel momento le sessioni di lavoro non riuscivano più a
+scrivergli.
 
 **Non chiedere mai quell'autorizzazione** (`confirm_repository_trust`,
 collegamento a una cartella del Mac, messaggi a una sessione che gira sul Mac):
 è irreversibile e toglie i messaggi delle sessioni. Il Mac del proprietario non
-è comunque adatto come verifica: lingua italiana, tre monitor, permesso di
-registrazione dello schermo mancante; molti test falliscono lì anche su `main`.
+è comunque adatto come verifica automatica: lingua italiana, tre monitor,
+permesso di registrazione dello schermo mancante; molti test falliscono lì
+anche su `main`. Il proprietario invece prova a mano le build di `main` ed è
+l'unico che vede davvero l'interfaccia.
+
+I rapporti delle sessioni si leggono anche dalla trascrizione:
+`list_events` con `kinds: ["result"]`.
+
 
 ## Chi è il proprietario e cosa si aspetta
 
@@ -101,84 +112,111 @@ I rapporti delle sessioni si leggono anche dalla trascrizione:
   stata poi smentita dal codice. Formulare
   ipotesi come ipotesi e chiedere al proprietario il dato che decide.
 
+
+### Errori del secondo orchestratore (27 novembre), da non ripetere
+
+- **Ha lasciato costruire un progetto complicato per un compito semplice.** Il
+  campo di ricerca accanto al nome della vista (#113) è stato fatto tre volte:
+  disegnato sopra la fascia del titolo (non riceveva i clic), poi come
+  elemento SwiftUI della barra (non riceveva il cursore da `/`), infine attorno
+  a un `NSTextField`. Per una modifica d'interfaccia, pretendere prima la
+  soluzione più ovvia e una prova minima (clic, tasto) prima del resto.
+- **Ha dato per fatta una cosa vista solo nel codice.** Ha scritto al
+  proprietario che il menu del clic destro aveva le icone: nel codice ogni
+  voce ha un'icona, sul suo Mac non si vedono. Ciò che non è stato visto su un
+  Mac si dichiara "non verificato", sempre.
+- **Ha violato una regola appena data.** Dopo aver scritto "nessuna sessione
+  nuova finché queste non sono chiuse" ne ha aperta una. Il proprietario l'ha
+  fatta fermare.
+- **Ha tenuto nove PR aperte insieme.** Si sono pestate i piedi (conflitti
+  dopo ogni fusione, una build in più ogni volta) e hanno saturato la coda dei
+  runner macOS. Poche PR per volta, e fondere nell'ordine in cui toccano gli
+  stessi file.
+- **Ha fuso un test mai eseguito nella forma finale** (#112): `main` è andato
+  in rosso e c'è voluta la #125. Dopo aver cambiato un test UI, o si riesegue
+  o non si fonde.
+- **Ha aperto un'indagine su un difetto che non esisteva** (#122: ⌘Z dopo
+  "Trash"): era il test, per il toast scaduto e per il layout compatto. Sullo
+  schermo della CI (1024 pt) l'app è in layout compatto e una conversazione
+  aperta sostituisce l'elenco: molti test UI nuovi sbagliano per questo.
+- **Ha lasciato che una sessione allargasse il compito** ("Label as" su più
+  conversazioni nella #123, non richiesto): la revisione vi ha trovato due
+  difetti veri.
+- **Ha scritto al proprietario a ogni evento**, in una conversazione
+  lunghissima: ogni messaggio rilegge tutto il contesto e costa. Scrivere solo
+  a fusione avvenuta o quando serve una sua decisione.
+- Ha lanciato una corsa UI sopra quella di una sessione, annullandola: prima
+  di lanciare per conto di una sessione, controllare la corsa per id.
+
 ## Stato al momento del passaggio
 
-`main` è a `12e0db3` (codice `0e1bf63`, PR #106); CI completa verde, test UI
-compresi. Ultimi numeri usati: **C-82**, **DEC-082**, registro versione
-**0.37**, migrazione **v70**. I prossimi sono C-83, DEC-083, 0.38, v71.
+`main` è a `2a88274`; **CI completa verde su quel commit** (corsa
+46066576429: build, test unitari, tre shard UI). Ultimi numeri usati:
+**C-95**, **DEC-091**, registro versione **0.47**, migrazione **v71**. I
+prossimi sono C-96, DEC-092, 0.48, v72.
 
-Unite il 26-27 novembre (dettagli nel changelog e nel piano): #84, #85, #87-#94,
-#97-#106.
+Unite il 27 novembre da questo orchestratore (dettagli nel changelog e nel
+piano): #108, #109, #111, #114, #117, #118, #116, #119, #120, #115, #121,
+#112, #110, #113, #123, #122, #125. La #107 è del primo orchestratore.
+
+Nessuna sessione di lavoro è attiva: tutte archiviate. Nessuna corsa in coda.
 
 ### Lavori aperti
 
-| PR | Ramo | Sessione | Livello | Cosa | Stato |
-|---|---|---|---|---|---|
-| #108 | `fix/label-gmail-color-missing` | `session_019yj8YsiQKRQF3uC3vbUH5g` | Basso rischio | Colori delle etichette mancanti (vedi sotto) | **Passa al nuovo orchestratore.** In lavorazione, CI in corso |
-| #107 | `ux/deleted-messages-in-conversation` | archiviata | Standard | Riga "N deleted messages · View" nella conversazione viva | **Unita** (`e935e38`), documenti registrati (C-87, DEC-086). L'orchestratore uscente è archiviato |
-| nessuna | `fix/message-time-gmail-internal-date` | `session_019yj8YrFF9oGNYu2RPVyZst` | Basso rischio | Ora dei messaggi diversa da Gmail | **Ipotesi smentita, nessuna modifica**: il codice usa già `internalDate` (`MessageParsing.swift`); nessun punto legge l'intestazione `Date`. Causa ignota; servono dal proprietario, per 2-3 conversazioni, l'ora in Gmail e quella in DreaMail e se la conversazione ha un messaggio più recente in bozza, Cestino o Spam |
+- **PR #124** `fix/row-menu-icons-shown`, in bozza, sessione fermata dal
+  proprietario dopo un minuto (`session_019yj8YtFLRdmKKDtR8mPG9c`,
+  archiviata). Contiene poche righe per far comparire le icone nel menu del
+  clic destro (ipotesi non verificata: nei menu di macOS una `Label` mostra
+  solo il testo se non si chiede `.labelStyle(.titleAndIcon)`). **Non
+  toccarla senza che il proprietario lo chieda.** Lo stesso difetto può
+  riguardare il menu "⋮" dei messaggi (#110) e gli altri menu.
+- **Campo di ricerca (#113)**: il proprietario lo ha visto e lo giudica
+  brutto e non conforme a ciò che voleva ("non hai capito"). Non ha ancora
+  detto che cosa non va: chiederglielo con una domanda sola e precisa,
+  possibilmente partendo da una sua schermata, prima di cambiare qualsiasi
+  cosa. La sua richiesta era: campo accanto alla scritta della vista, che si
+  restringe quando si restringe la colonna dell'elenco.
+- **Colori delle etichette**: la #118 è una diagnostica, il difetto NON è
+  risolto. Serve dal proprietario la riga "Current:" di un'etichetta che in
+  Gmail web ha un colore e qui no (prova C-88): "preset NOME" vuol dire che
+  Gmail manda il preset; "no preset (list and get)" che non lo manda e serve
+  un'altra strada.
 
-L'orchestratore uscente chiude #107 e ne registra i documenti; il nuovo non li tocca, salvo diversa indicazione del proprietario.
-Per evitare due scritture concorrenti sui documenti: prima di ogni modifica a
-`CHANGELOG.md` e `docs/`, `git fetch` e ripartire da `origin/main`.
+### Rimandati, da non avviare senza richiesta
 
-### Compito assegnato: i colori delle etichette (#108)
-
-Difetto aperto da due PR (#100, #103) senza causa trovata. Sul conto del
-proprietario alcune etichette che in Gmail web hanno un colore (un grigio
-scuro su due etichette, un verde medio, un oliva, un rosso, un grigio-blu)
-sono disegnate senza colore nella barra laterale; le altre mostrano il colore
-di Gmail. Dopo #103 e una sincronizzazione il difetto resta.
-
-Cosa è già stato escluso o fatto:
-- ogni `#rrggbb` in `LabelRow.gmailBackgroundColor` è disegnato pieno
-  (`LabelPillStyle.resolve`); nessuna tabella di colori ammessi in lettura;
-- un'etichetta senza colore è disegnata col solo contorno;
-- per le etichette che `labels.list` restituisce senza colore si richiede
-  `labels.get` (`SyncEngine.completingColors`);
-- nessuna cache HTTP sulla richiesta delle etichette.
-
-Dato nuovo dal proprietario (tema scuro): nella finestra "Label color" nessun
-campione è spuntato né per un'etichetta difettosa né per una disegnata
-correttamente in azzurro; per un'altra corretta (oro) la spunta c'era. Quindi
-"nessuna spunta" non vuol dire "nessun colore": la griglia ha 64 colori, Gmail
-di più. La finestra non mostra cosa c'è in archivio.
-
-Piste date alla sessione: (1) riga "Current: #codice / none" nella finestra,
-che è anche la prova che manca; (2) i colori difettosi sono quasi tutti scuri o
-poco saturi: cercare una regola di disegno della barra laterale che li renda
-come "senza colore" nei due temi; (3) decodifica di `color` che fallisce per
-intero; (4) `completingColors` che non parte o non viene unito.
-
-Primo rapporto della sessione (PR #108, non ancora verificato da una review):
-- causa trovata **solo per i grigi scuri nel tema scuro**: il pallino della
-  barra laterale (`shape: .dot`) sotto una differenza minima di 25 dallo sfondo
-  (`minimumDotEdgeDifference`) riceve un contorno grigio su un riempimento quasi
-  invisibile, che si legge come "senza colore". La PR lo sostituisce con un
-  riempimento sempre visibile (`LabelPillStyle.visibleTagFill`);
-- verde, oliva, rosso e grigio-blu **restano senza causa**;
-- la griglia mostra 64 dei 102 colori documentati di Gmail: per gli altri 38
-  nessun campione è spuntato, e questo spiega l'azzurro senza spunta;
-- la PR aggiunge la riga "Current: #codice / none" nella finestra;
-- pista non chiusa: una voce di `labels.list` con `type` assente è esclusa da
-  `completingColors` ma salvata come etichetta utente.
-
-Cosa fare: seguire la sessione (leggerne il rapporto, che inizia con
-`REPORT FOR ORCHESTRATOR`; avvisarla con `send_message` che l'orchestratore è
-cambiato e dare il proprio identificativo), lanciare la review quando la run
-della PR è verde, non accettare "risolto" senza una causa dimostrata o senza
-che il proprietario lo confermi sul suo conto. Se la causa non emerge dal
-codice, unire la riga "Current:" e chiedere al proprietario di leggerla su una
-delle etichette difettose: quel valore decide tra "non in archivio" e "in
-archivio ma disegnato come assente".
+- "Print" nel menu del messaggio: il proprietario ha detto di aggiungere il
+  permesso di stampa (`com.apple.security.print`); livello standard.
+- "Find emails from" non è offerto per indirizzi con `_`, `%`, `*`: vanno
+  trattati come caratteri normali nella ricerca locale; nello stesso lavoro
+  unire i due controlli sugli indirizzi (`filterFromAddress` della #110 e
+  `strictAddress` della #116).
+- "Forward as attachment" e "Open in new window" mancano dal menu del clic
+  destro (mancano i mattoni nell'app).
+- Toast di annullamento di 3,5 s: forse pochi; non confrontato con Gmail.
+- Cestinare una riga solo evidenziata apre la conversazione successiva: da
+  confrontare con Gmail.
+- La stella nell'elenco stella tutti i messaggi della conversazione; Gmail
+  web solo l'ultimo.
+- "Delete" (menu di riga) contro "Trash" altrove: una parola sola, da
+  decidere col proprietario.
+- Libreria OpenPGP: rPGP 0.21.1 rifiuta circa una chiave Ed25519 su 256
+  (seme che comincia per 0x00) e rende instabili l'1,2 % delle corse di
+  `RPGPLinkedTests`. Correggerlo richiede il repository
+  `bateman/dreamail-openpgp` con permesso di scrittura; segnalarlo a rPGP è
+  un'azione pubblica e serve il sì del proprietario.
+- CI: compilare i test UI nella corsa della PR; capire quali avvisi sono
+  errori; altri test con la lettura al bordo dell'area visibile
+  (`SidebarLabelTreeUITests`, `SidebarLabelMenuUITests`,
+  `ThreadMessageRowsUITests`); togliere l'indice inutilizzato
+  `thread_unread_primary_inbox` in una migrazione futura.
 
 ### Punti aperti col proprietario
 
-- Colori delle etichette (sopra).
-- Selezione squadrata della barra laterale (#102): restano 8 pt di sfondo a
-  sinistra, margine di sistema della colonna; deve dire se va bene.
-- Visibilità di una sottoetichetta diversa tra Gmail e DreaMail: ora non ha più
-  effetto sulla barra laterale (famiglie intere, DEC-080); il proprietario ha
-  confermato che la sottoetichetta è visibile e l'ordine è quello di Gmail.
-- Prove manuali C-67 … C-82 sul suo Mac, in gran parte ancora da fare.
-- Se e come usare un Mac per compilare prima del push (oggi no: vedi sopra).
+- Prove manuali da fare sul suo Mac: C-83 … C-95 nel piano. Le più utili:
+  C-88 (riga "Current:"), le icone nei menu, C-86 (fascia grigia nel tema
+  chiaro), C-92 (una sola riga selezionata nella barra laterale), C-94
+  (ricerca).
+- Ha chiesto un rimborso ad Anthropic per il consumo del 27 novembre;
+  l'orchestratore non può concederlo né ha accesso alla fatturazione.
+- È molto arrabbiato per costi e tempi. Risposte brevi, in italiano, fatti
+  verificati distinti da quelli no, niente aggiornamenti intermedi.
