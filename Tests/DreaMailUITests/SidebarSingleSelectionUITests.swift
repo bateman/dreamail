@@ -66,7 +66,9 @@ final class SidebarSingleSelectionUITests: XCTestCase {
         }
         let ids = sidebarRows(in: main).map(\.id)
         let label = ids.filter { $0.hasPrefix("label.") && !$0.hasPrefix("label.menu.") }
-        for id in [label.first, label.dropFirst().first, ids.first { $0.hasPrefix("saved.") }].compactMap({ $0 }) {
+        let saved = ids.filter { $0.hasPrefix("saved.") }
+        let others: [String] = Array(label.prefix(2)) + Array(saved.prefix(1))
+        for id in others {
             row(id).click()
             expect(only: id, in: main, "click on \(id)")
         }
