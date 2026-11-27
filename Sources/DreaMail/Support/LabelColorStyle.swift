@@ -98,6 +98,10 @@ struct LabelColors: Equatable, Hashable, Sendable {
     var text: String?
 
     static let none = LabelColors(background: nil, text: nil)
+
+    /// Whether there is a background color to draw: any valid color means
+    /// the label has one; only its absence means "no color".
+    var isColored: Bool { LabelRGB(hexString: background) != nil }
 }
 
 /// How a label chip (or dot) is drawn: a solid fill, a text color that is

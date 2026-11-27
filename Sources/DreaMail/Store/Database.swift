@@ -658,13 +658,28 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// off the rows of the message list, as in Gmail.
     var messageListVisibility: String? = nil
 
+    /// Clears the stored order of an account's user labels (`sortOrder` back
+    /// to unsorted), so the sidebar and the organizer follow Gmail's order.
+    /// Returns how many rows changed.
+    @discardableResult
+    static func clearStoredOrder(_ db: Database, accountId: String) throws -> Int {
+        try LabelRow
+            .filter(Column("accountId") == accountId && Column("type") == "user"
+                    && Column("sortOrder") != unsorted)
+            .updateAll(db, Column("sortOrder").set(to: unsorted))
+    }
+
     /// Whether conversation rows show this label's chip.
     var showsInMessageList: Bool { messageListVisibility != "hide" }
 
     /// The colors a label is drawn with: the local pick when there is one
     /// (its text color is then chosen for contrast), else Gmail's pair.
     var displayColors: LabelColors {
-        if let color { return LabelColors(background: color, text: nil) }
+        // A local pick that is not a color (empty, malformed) is no pick: it
+        // must not hide Gmail's color.
+        if let color, LabelRGB.normalizedHex(color) != nil {
+            return LabelColors(background: color, text: nil)
+        }
         return LabelColors(background: gmailBackgroundColor, text: gmailTextColor)
     }
 }
@@ -2940,16 +2955,20 @@ final class AppDatabase: @unchecked Sendable {
             try db.alter(table: "scheduledSend") { t in t.add(column: "signatureStyle", .text) }
             try db.alter(table: "localDraft") { t in t.add(column: "signatureStyle", .text) }
         }
-        // v69: a label order that only repeats the names in code-point order
-        // was written for every label by an older organizer on any drag, and
-        // hid Gmail's order. Put those back to unsorted, once; from here on
-        // any stored order wins (`LabelOrganizerOrder.machineOrderedIds`).
-        m.registerMigration("v69") { db in
-            let rows = try LabelRow.filter(Column("type") == "user").fetchAll(db)
-            for id in LabelOrganizerOrder.machineOrderedIds(rows) {
-                try db.execute(sql: "UPDATE label SET sortOrder = ? WHERE id = ?",
-                               arguments: [LabelRow.unsorted, id])
-            }
+        // v69: once reset the orders that only repeated the names in
+        // code-point order. Empty now: v70 resets every user label, which
+        // covers it. The registration stays so the migration history of
+        // existing databases is unchanged.
+        m.registerMigration("v69") { _ in }
+        // v70: every user label back to unsorted, once. Until PR #100 any
+        // drag stored an order for every label of the account, so no stored
+        // order from before can be told from a deliberate one (v69's
+        // "exactly code-point order" test missed a list with one swapped
+        // pair). From now on a drag stores only the moved row's sibling
+        // group; "Use Gmail's Order" in Organize Labels clears it again.
+        m.registerMigration("v70") { db in
+            try db.execute(sql: "UPDATE label SET sortOrder = ? WHERE type = 'user'",
+                           arguments: [LabelRow.unsorted])
         }
         return m
     }

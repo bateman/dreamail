@@ -258,6 +258,26 @@ final class GmailLabelColorEditTests: XCTestCase {
         XCTAssertEqual(try gmailColors(q), blue.colors)
     }
 
+    /// A store that throws after the claim must release it: the label is not
+    /// "in flight" forever and a later edit can start.
+    func testFailedStoreReleasesTheClaim() async throws {
+        let q = try makeDB(gmail: yellow)
+        try await q.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER failStore BEFORE UPDATE OF gmailBackgroundColor ON label
+                BEGIN SELECT RAISE(ABORT, 'store failed'); END
+                """)
+        }
+        let pending = PendingLabelColorEdits()
+        do {
+            try await GmailLabelColorEdit.apply(blue, labelRowId: rowId, db: q, pending: pending) { _, _ in
+                XCTFail("Gmail is not called when the store failed"); return self.answer(nil)
+            }
+            XCTFail("the store failure is rethrown")
+        } catch {}
+        XCTAssertTrue(pending.begin(rowId, colors: blue.colors), "the claim was released")
+    }
+
     // MARK: - No bounce from a sync
 
     private func sync(_ q: DatabaseQueue, _ colors: LabelColors?, pending: PendingLabelColorEdits,

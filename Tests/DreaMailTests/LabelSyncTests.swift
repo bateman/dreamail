@@ -115,36 +115,99 @@ final class LabelSyncTests: XCTestCase {
         XCTAssertTrue(rows.allSatisfy { $0.sortOrder == LabelRow.unsorted })
     }
 
-    /// v69: a stored order that only repeats the names in code-point order is
-    /// put back to unsorted, per sibling group; a hand-made order stays;
-    /// running it again changes nothing.
-    func testMigrationV69ResetsMachineOrderOnly() throws {
+    private func orders(_ q: DatabaseQueue) throws -> [String: Int] {
+        try q.read { db in
+            Dictionary(uniqueKeysWithValues: try LabelRow.fetchAll(db).map { ($0.name, $0.sortOrder) })
+        }
+    }
+
+    /// The list may come without a color: labels in `ids` are read in full
+    /// and take that color; a failed read leaves the label as listed and
+    /// unchecked; the others are not read.
+    func testListWithoutColorIsCompletedFromTheFullLabel() async throws {
+        let listed = [label("L1", "a"), label("L2", "b"), label("L3", "c", color: "#fad165"),
+                      label("L4", "d")]
+        let calls = CallLog()
+        let out = try await SyncEngine.completingColors(listed, ids: ["L1", "L2", "L4"]) { id in
+            calls.add(id)
+            switch id {
+            case "L1": return GLabel(id: id, name: "a", type: "user",
+                                     color: .init(backgroundColor: "#434343", textColor: "#ffffff"))
+            case "L2": return GLabel(id: id, name: "b", type: "user", color: nil)
+            default: throw GmailError.http(500, "")
+            }
+        }
+        XCTAssertEqual(calls.ids, ["L1", "L2", "L4"])
+        XCTAssertEqual(out.checked, ["L1", "L2"], "the failed read is tried again next pass")
+        XCTAssertEqual(out.labels.map { $0.color?.backgroundColor }, ["#434343", nil, "#fad165", nil])
+        let q = try makeDB()
+        let account = self.account
+        let completed = out.labels
+        try await q.write { db in
+            try SyncEngine.applyLabels(db, accountId: account, labels: completed)
+        }
+        let stored = try await q.read { db in try LabelRow.fetchOne(db, key: "\(account):L1") }
+        XCTAssertEqual(stored?.gmailBackgroundColor, "#434343")
+        XCTAssertTrue(stored?.displayColors.isColored == true)
+    }
+
+    final class CallLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var seen: [String] = []
+        var ids: [String] { lock.withLock { seen.sorted() } }
+        func add(_ id: String) { lock.withLock { seen.append(id) } }
+    }
+
+    /// v70: every stored order of a user label goes, hand-made or not; system
+    /// labels are left alone; running again changes nothing; an order stored
+    /// after it (a drag) is kept.
+    func testMigrationV70ResetsEveryUserLabelOnce() throws {
         let q = try DatabaseQueue()
-        try AppDatabase.migrator.migrate(q, upTo: "v68")
+        try AppDatabase.migrator.migrate(q, upTo: "v69")
         try q.write { db in
             try Account(id: account, displayName: "P", historyId: nil,
                         lastSyncAt: nil, senderName: "").save(db)
-            func put(_ name: String, _ order: Int) throws {
+            for (name, type, order) in [("Zeta", "user", 0), ("alpha", "user", 2), ("p", "user", 1),
+                                        ("p/b", "user", 3), ("p/a", "user", 4), ("INBOX", "system", 7)] {
                 try LabelRow(id: "\(account):\(name)", accountId: account, gmailLabelId: name,
-                             name: name, type: "user", color: nil, sortOrder: order,
+                             name: name, type: type, color: nil, sortOrder: order,
                              listVisibility: nil).save(db)
-            }
-            // Top level: code-point order (Zeta, alpha) as an old drag froze it.
-            try put("Zeta", 0); try put("alpha", 1); try put("p", 2)
-            // p's sublabels: arranged by hand (b before a: not code-point order).
-            try put("p/b", 3); try put("p/a", 4)
-        }
-        func orders() throws -> [String: Int] {
-            try q.read { db in
-                Dictionary(uniqueKeysWithValues: try LabelRow.fetchAll(db).map { ($0.name, $0.sortOrder) })
             }
         }
         try AppDatabase.migrator.migrate(q)
         let u = LabelRow.unsorted
-        XCTAssertEqual(try orders(), ["Zeta": u, "alpha": u, "p": u, "p/b": 3, "p/a": 4])
-        // Idempotent: migrating again (nothing left to apply) changes nothing.
+        let expected = ["Zeta": u, "alpha": u, "p": u, "p/b": u, "p/a": u, "INBOX": 7]
+        XCTAssertEqual(try orders(q), expected)
         try AppDatabase.migrator.migrate(q)
-        XCTAssertEqual(try orders(), ["Zeta": u, "alpha": u, "p": u, "p/b": 3, "p/a": 4])
+        XCTAssertEqual(try orders(q), expected, "idempotent")
+        // A drag made afterwards is kept by later launches.
+        try q.write { db in
+            _ = try LabelRow.filter(Column("id") == "\(account):p/b")
+                .updateAll(db, Column("sortOrder").set(to: 0))
+        }
+        try AppDatabase.migrator.migrate(q)
+        XCTAssertEqual(try orders(q)["p/b"], 0)
+    }
+
+    /// "Use Gmail's Order": clears the shown account's stored order only.
+    func testClearStoredOrderTouchesOneAccountsUserLabels() throws {
+        let q = try makeDB()
+        try q.write { db in
+            for (acc, name, type, order) in [(account, "x", "user", 1), (account, "y", "user", 0),
+                                             (account, "INBOX", "system", 5), (other, "x", "user", 2)] {
+                try LabelRow(id: "\(acc):\(name)", accountId: acc, gmailLabelId: name,
+                             name: name, type: type, color: nil, sortOrder: order,
+                             listVisibility: nil).save(db)
+            }
+            XCTAssertEqual(try LabelRow.clearStoredOrder(db, accountId: account), 2)
+            XCTAssertEqual(try LabelRow.clearStoredOrder(db, accountId: account), 0, "idempotent")
+        }
+        let u = LabelRow.unsorted
+        let all = try q.read { db in
+            Dictionary(uniqueKeysWithValues: try LabelRow.fetchAll(db).map { ($0.id, $0.sortOrder) })
+        }
+        XCTAssertEqual(all, ["\(account):x": u, "\(account):y": u, "\(account):INBOX": 5,
+                             "\(other):x": 2])
     }
 
     /// Both visibility fields follow Gmail on every sync: a change made in

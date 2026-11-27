@@ -460,6 +460,13 @@ actor GmailClient {
         return list.labels ?? []
     }
 
+    /// One label in full (`labels.get`): the list is documented to carry
+    /// id, name, type and the two visibilities, and the color is not
+    /// guaranteed there, so a label the list shows without one is read again.
+    func label(_ id: String) async throws -> GLabel {
+        try await request("GET", "/labels/\(Self.pathSegment(id))")
+    }
+
     /// Creates a user label (409 if the name already exists), with a Gmail
     /// color when one is given (a sublabel takes its parent's).
     func createLabel(name: String, color: GmailLabelColor? = nil) async throws -> GLabel {

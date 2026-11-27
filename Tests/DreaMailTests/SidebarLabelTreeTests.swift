@@ -101,7 +101,7 @@ final class SidebarLabelTreeTests: XCTestCase {
 
     /// A stored order always wins, even when it happens to equal the names in
     /// code-point order: the user dragged `Zeta` above `alpha`. (An old
-    /// machine-written order is repaired once, by migration v69.)
+    /// machine-written order is reset once, by migration v70.)
     func testExplicitDragWinsEvenWhenItEqualsCodePointOrder() {
         let tree = SidebarLabelTree.build([
             row("L1", "Zeta", order: 0), row("L2", "alpha", order: 1),
@@ -121,6 +121,39 @@ final class SidebarLabelTreeTests: XCTestCase {
         XCTAssertEqual(shape(parts.listed), ["home"])
         XCTAssertEqual(shape(parts.more), ["leisure [books, cinema, trips, tv]"])
         assertNothingTwice(parts)
+    }
+
+    /// Gmail's two sequences from unsorted rows, with character classes of
+    /// the owner's account (neutral names): emoji with a variation selector,
+    /// `$`, letters in any case above "More"; a symbol, upper-case and
+    /// accented letters below. Each section has a parent with children.
+    func testGmailOrderForSymbolsCurrencyAndLettersInBothSections() {
+        let above = ["\u{2709}\u{FE0F} post", "$", "alpha", "Beta", "gamma & co", "Zeta", "\u{00C9}cho"]
+        let below = ["\u{266B} tunes", "delta", "LIMA", "Gamma", "notes", "omega"]
+        let rows = (above + below).enumerated().map { i, name in
+            row("L\(i)", name, visibility: below.contains(name) ? "labelHide" : nil)
+        } + [row("P1", "alpha/\u{266B} child"), row("P2", "alpha/beta"), row("P3", "alpha/$"),
+             row("P4", "LIMA/zed"), row("P5", "LIMA/Alpha")]
+        let parts = SidebarLabelTree.split(SidebarLabelTree.build(rows.shuffled())) { _ in 0 }
+        XCTAssertEqual(shape(parts.listed),
+                       ["\u{2709}\u{FE0F} post", "$", "alpha [\u{266B} child, $, beta]", "Beta", "\u{00C9}cho",
+                        "gamma & co", "Zeta"])
+        XCTAssertEqual(shape(parts.more),
+                       ["\u{266B} tunes", "delta", "Gamma", "LIMA [Alpha, zed]", "notes", "omega"])
+    }
+
+    /// Invisible scalars (variation selector, zero-width) never change the
+    /// comparison; the emoji and the plain glyph are the same name.
+    func testInvisibleScalarsDoNotChangeTheComparison() {
+        let c = SidebarLabelTree.compareNames
+        XCTAssertEqual(c("\u{2709}\u{FE0F} post", "\u{2709} post"), .orderedSame)
+        XCTAssertEqual(c("a\u{200B}b", "ab"), .orderedSame)
+        XCTAssertEqual(c("\u{2709}\u{FE0F} post", "$"), .orderedAscending)
+        XCTAssertEqual(c("\u{2709} post", "apple"), .orderedAscending)
+        XCTAssertEqual(c("$", "apple"), .orderedAscending)
+        XCTAssertEqual(c("1 x", "a"), .orderedAscending)
+        XCTAssertEqual(c("Gamma", "delta"), .orderedDescending)
+        XCTAssertEqual(c("Gamma", "omega"), .orderedAscending)
     }
 
     func testColorsAreTheDisplayColors() {

@@ -81,7 +81,7 @@ enum SidebarLabelTree {
                 id: row.id, accountId: row.accountId, gmailLabelId: row.gmailLabelId,
                 fullName: row.name, displayName: display, colors: row.displayColors,
                 visibility: .init(raw: row.listVisibility),
-                children: sorted(childrenOf[row.id] ?? []).map(node))
+                children: sorted(childrenOf[row.id] ?? [], under: row.name).map(node))
         }
         return sorted(roots).map(node)
     }
@@ -101,10 +101,16 @@ enum SidebarLabelTree {
     /// Siblings in the organizer's order (`sortOrder`, written only by a drag
     /// in Organize Labels, and only for the siblings of the moved row) when
     /// there is one, else in Gmail's (`compareNames`).
-    static func sorted(_ rows: [LabelRow]) -> [LabelRow] {
-        rows.sorted { a, b in
+    static func sorted(_ rows: [LabelRow], under parent: String? = nil) -> [LabelRow] {
+        // Siblings compare by the name the sidebar shows (`b` for `a/b`), so
+        // top level and sublabels follow one rule.
+        func leaf(_ name: String) -> String {
+            guard let parent, name.hasPrefix(parent + "/"), name.count > parent.count + 1 else { return name }
+            return String(name.dropFirst(parent.count + 1))
+        }
+        return rows.sorted { a, b in
             if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
-            switch compareNames(a.name, b.name) {
+            switch compareNames(leaf(a.name), leaf(b.name)) {
             case .orderedAscending: return true
             case .orderedDescending: return false
             case .orderedSame: return a.id < b.id
@@ -116,9 +122,18 @@ enum SidebarLabelTree {
     /// compared as numbers, symbols and emoji first, then digits, then
     /// letters (`Gamma` sits between `delta` and `omega`). A fixed locale, so
     /// the sidebar reads the same on every Mac whatever its language.
+    /// Invisible scalars (the emoji variation selector `U+FE0F`, zero-width
+    /// marks) are left out: `✉️ mail` and `✉ mail` are the same name.
     static func compareNames(_ a: String, _ b: String) -> ComparisonResult {
-        a.compare(b, options: [.caseInsensitive, .diacriticInsensitive, .numeric, .widthInsensitive],
-                  range: nil, locale: Locale(identifier: "en"))
+        visible(a).compare(visible(b),
+                           options: [.caseInsensitive, .diacriticInsensitive, .numeric, .widthInsensitive],
+                           range: nil, locale: Locale(identifier: "en"))
+    }
+
+    private static func visible(_ name: String) -> String {
+        String(String.UnicodeScalarView(name.unicodeScalars.filter {
+            !$0.properties.isDefaultIgnorableCodePoint
+        }))
     }
 
     /// Gmail's two lists: labels shown in the list, and those behind the

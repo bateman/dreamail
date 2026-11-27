@@ -66,6 +66,12 @@ struct LabelOrganizer: View {
 
             Divider()
             HStack {
+                Button("Use Gmail's Order") {
+                    if let account { store.resetLabelOrder(account: account) }
+                }
+                .disabled(!labels.contains { $0.sortOrder != LabelRow.unsorted })
+                .help("Forget the order set here for this account's labels and list them as Gmail does.")
+                .accessibilityIdentifier("labelOrganizer.useGmailOrder")
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -109,6 +115,7 @@ private struct LabelOrganizerRow: View {
             Text(entry.displayName).font(.system(size: 13))
                 .help(label.name)
                 .accessibilityLabel(label.name)
+                .accessibilityIdentifier("labelOrganizer.name.\(label.id)")
             Spacer()
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 12)).foregroundStyle(.tertiary)
@@ -171,7 +178,7 @@ struct LabelColorPalette: View {
             .disabled(saving || label.gmailBackgroundColor == nil)
             if saving {
                 Text("Saving to Gmail…").font(.system(size: 11)).foregroundStyle(.secondary)
-            } else if label.color != nil {
+            } else if LabelRGB.normalizedHex(label.color) != nil {
                 Text("A color only on this Mac is set and is shown instead.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }

@@ -109,30 +109,4 @@ enum LabelOrganizerOrder {
         }
         return writes
     }
-
-    /// Rows whose stored `sortOrder` only repeats the names in code-point
-    /// order, within their sibling group. A version that listed labels in the
-    /// database's binary order wrote that for every label on any drag, and it
-    /// hid Gmail's order for good. Used once, by migration v69, to put them
-    /// back to unsorted; afterwards any stored order wins.
-    static func machineOrderedIds(_ rows: [LabelRow]) -> [String] {
-        var ids: [String] = []
-        let byAccount = Dictionary(grouping: rows, by: \.accountId)
-        for (_, accountRows) in byAccount {
-            var byName: [String: LabelRow] = [:]
-            for row in accountRows where byName[row.name] == nil { byName[row.name] = row }
-            var siblings: [String: [LabelRow]] = [:]
-            for row in accountRows {
-                let parent = SidebarLabelTree.parent(of: row.name, among: byName)
-                siblings[parent.flatMap { $0.id == row.id ? nil : $0.id } ?? "", default: []].append(row)
-            }
-            for (_, group) in siblings {
-                let stored = group.filter { $0.sortOrder != LabelRow.unsorted }
-                let byStored = stored.sorted { ($0.sortOrder, $0.id) < ($1.sortOrder, $1.id) }
-                let byName = stored.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
-                if byStored.map(\.id) == byName.map(\.id) { ids += stored.map(\.id) }
-            }
-        }
-        return ids
-    }
 }

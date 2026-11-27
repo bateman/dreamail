@@ -402,6 +402,68 @@ final class LabelColorStyleTests: XCTestCase {
         XCTAssertEqual(style.text, LabelPillStyle.neutralText(.light))
     }
 
+    /// Every label Gmail gives a color is stored with that background,
+    /// whatever the value: the whole documented palette, and odd case or
+    /// spacing or a missing `#`.
+    func testEveryGmailColorIsStoredAndDrawnWithItsBackground() throws {
+        let q = try makeDB()
+        let odd: [(String, String)] = [(" #16A766 ", "#16a766"), ("594C05", "#594c05")]
+        let cases = Self.gmailPalette.map { ($0, $0) } + odd
+        try q.write { db in
+            let labels = cases.enumerated().map { i, c in
+                GLabel(id: "Label_\(i)", name: "l\(i)", type: "user",
+                       color: GLabel.GColor(backgroundColor: c.0, textColor: "#ffffff"))
+            }
+            try SyncEngine.applyLabels(db, accountId: "a@x.com", labels: labels)
+        }
+        for (i, c) in cases.enumerated() {
+            let row = try XCTUnwrap(try q.read { db in try LabelRow.fetchOne(db, key: "a@x.com:Label_\(i)") })
+            XCTAssertEqual(row.gmailBackgroundColor, c.1, c.0)
+            for appearance in LabelPillStyle.Appearance.allCases {
+                let style = LabelPillStyle.resolve(row.displayColors, appearance: appearance, shape: .dot)
+                XCTAssertEqual(style.fill, LabelRGB(hexString: c.1), "\(c.0) \(appearance): the fill is its own")
+                XCTAssertNotEqual(style.fill, LabelPillStyle.neutralFill(appearance), c.0)
+            }
+        }
+    }
+
+    /// Only a valid background means "has a color": the sidebar draws any
+    /// other label as an outline alone, so a fill is never "no color".
+    func testOnlyAValidBackgroundIsColored() {
+        XCTAssertFalse(LabelColors.none.isColored)
+        XCTAssertFalse(LabelColors(background: nil, text: "#ffffff").isColored)
+        XCTAssertFalse(LabelColors(background: "", text: nil).isColored)
+        XCTAssertFalse(LabelColors(background: "oops", text: nil).isColored)
+        for hex in Self.gmailPalette {
+            XCTAssertTrue(LabelColors(background: hex, text: nil).isColored, hex)
+        }
+    }
+
+    /// The sidebar tag keeps a very dark or very light color and gives it an
+    /// outline where it would vanish on the surface (dark grey on dark).
+    func testDarkAndLightColorsKeepTheFillAndGetAnOutline() {
+        let darkGrey = LabelPillStyle.resolve(LabelColors(background: "#434343", text: "#ffffff"),
+                                              appearance: .dark, shape: .dot)
+        XCTAssertEqual(darkGrey.fill, LabelRGB(hexString: "#434343"))
+        XCTAssertTrue(darkGrey.needsBorder)
+        let white = LabelPillStyle.resolve(LabelColors(background: "#ffffff", text: "#000000"),
+                                           appearance: .light, shape: .dot)
+        XCTAssertEqual(white.fill, .white)
+        XCTAssertTrue(white.needsBorder)
+    }
+
+    /// A Mac-only pick that is not a color (empty, malformed) does not hide
+    /// Gmail's color; a valid one still wins.
+    func testInvalidLocalPickDoesNotHideGmailsColor() {
+        var row = LabelRow(id: "a:1", accountId: "a", gmailLabelId: "1", name: "x", type: "user",
+                           color: "", gmailBackgroundColor: "#16a766", gmailTextColor: "#ffffff")
+        XCTAssertEqual(row.displayColors.background, "#16a766")
+        row.color = "oops"
+        XCTAssertEqual(row.displayColors.background, "#16a766")
+        row.color = "#EB5757"
+        XCTAssertEqual(row.displayColors.background, "#EB5757")
+    }
+
     /// A label whose color was removed in Gmail goes back to neutral grey.
     func testColorRemovedInGmailFallsBackToNone() throws {
         let q = try makeDB()

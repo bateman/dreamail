@@ -320,10 +320,68 @@ actor SyncEngine {
     }
 
     private func syncLabels() async throws {
-        let labels = try await client.labels()
+        let listed = try await client.labels()
+        // A user label the list shows without a color is read in full, at
+        // most once per `colorRecheck` each: the list is not documented to
+        // carry `color`, and storing "none" for a label that has one would
+        // leave it uncolored until the next change. Costs one `labels.get`
+        // per uncolored user label, per launch and then per interval.
+        let now = Date()
+        let due = Set(listed.filter {
+            $0.type == "user" && $0.color?.backgroundColor == nil
+                && now.timeIntervalSince(colorCheckedAt[$0.id] ?? .distantPast) >= Self.colorRecheck
+        }.map(\.id))
+        var completed = listed
+        if !due.isEmpty {
+            let client = self.client
+            let result = try await Self.completingColors(listed, ids: due) { id in
+                try await client.label(id)
+            }
+            completed = result.labels
+            for id in result.checked { colorCheckedAt[id] = now }
+        }
+        let labels = completed
         try await db.write { [accountId] db in
             try Self.applyLabels(db, accountId: accountId, labels: labels)
         }
+    }
+
+    /// How long a label read in full without a color is trusted.
+    static let colorRecheck: TimeInterval = 6 * 3600
+    private var colorCheckedAt: [String: Date] = [:]
+
+    /// `labels` with the color (and a missing visibility) of the labels in
+    /// `ids` taken from `fetch`, at most `maxInFlight` calls at a time. A
+    /// call that fails leaves its label as listed and is not reported as
+    /// checked, so the next pass tries again; cancellation is rethrown.
+    static func completingColors(_ labels: [GLabel], ids: Set<String>,
+                                 maxInFlight: Int = 6,
+                                 fetch: @escaping @Sendable (String) async throws -> GLabel)
+        async throws -> (labels: [GLabel], checked: Set<String>) {
+        var full: [String: GLabel] = [:]
+        let order = labels.map(\.id).filter(ids.contains)
+        var index = 0
+        while index < order.count {
+            let chunk = Array(order[index..<min(index + maxInFlight, order.count)])
+            index += chunk.count
+            try await withThrowingTaskGroup(of: (String, GLabel?).self) { group in
+                for id in chunk {
+                    group.addTask {
+                        do { return (id, try await fetch(id)) }
+                        catch is CancellationError { throw CancellationError() }
+                        catch { return (id, nil) }
+                    }
+                }
+                for try await (id, label) in group { if let label { full[id] = label } }
+            }
+        }
+        let merged = labels.map { l -> GLabel in
+            guard let got = full[l.id] else { return l }
+            return GLabel(id: l.id, name: l.name, type: l.type, color: got.color,
+                          labelListVisibility: l.labelListVisibility ?? got.labelListVisibility,
+                          messageListVisibility: l.messageListVisibility ?? got.messageListVisibility)
+        }
+        return (merged, Set(full.keys))
     }
 
     /// Makes this account's label rows match Gmail's label list: inserts
