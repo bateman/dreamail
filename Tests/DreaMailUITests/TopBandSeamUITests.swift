@@ -5,8 +5,8 @@ import AppKit
 /// background only, along the title-bar row, so it does not depend on where
 /// the system toggle is (it sits just right of the window buttons, around
 /// x = 95...130, and the old seam ran through it at x = 104).
-/// Light, collapsed: no sample from x = 84 to 200 is the rail grey.
-/// Dark, collapsed: unchanged, the rail colour up to the band edge.
+/// Light, collapsed: the background left of the old seam equals the one right
+/// of it. Dark, collapsed: unchanged, the same colour as the expanded band.
 /// Expanded: the row is only logged.
 final class TopBandSeamUITests: XCTestCase {
     func testLight() throws { try run(dark: false) }
@@ -43,22 +43,34 @@ final class TopBandSeamUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "composeButton").waitForExistence(timeout: 5), "expanded")
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
-        _ = try row(window, "expanded")
+        let expanded = try row(window, "expanded")
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
 
-        let rail = dark ? [0x1A, 0x1D, 0x23] : [0xE4, 0xE5, 0xE8]
-        func isRail(_ p: [Int]) -> Bool { zip(p, rail).allSatisfy { abs($0 - $1) <= 2 } }
+        func rgb(_ rows: [(x: Int, rgb: [Int])], _ xs: [Int]) -> [[Int]] {
+            xs.compactMap { x in rows.first { $0.x == x }?.rgb }
+        }
+        func same(_ a: [Int], _ b: [Int]) -> Bool { zip(a, b).allSatisfy { abs($0 - $1) <= 2 } }
         let desc = "collapsed row: " + collapsed.map { "\($0.x):\($0.rgb)" }.joined(separator: " ")
+        // Background samples right of the window buttons (to x=100, left of the
+        // old seam at 104) and clear of the toggle glyph (x=124...152, right
+        // of the seam).
+        let left = rgb(collapsed, [84, 88, 92, 96, 100])
+        XCTAssertEqual(left.count, 5)
         if dark {
-            // Unchanged: the band is the rail colour right of the window buttons.
-            for s in collapsed where s.x >= 84 && s.x <= 90 {
-                XCTAssertTrue(isRail(s.rgb), "x=\(s.x) \(s.rgb) is not the rail colour; \(desc)")
+            // Unchanged: the band is the same colour as the rail's band in the
+            // expanded layout.
+            let reference = rgb(expanded, [84, 88, 92, 96, 100])
+            for (a, b) in zip(left, reference) {
+                XCTAssertTrue(same(a, b), "dark band \(a) differs from the expanded band \(b); \(desc)")
             }
         } else {
-            // One colour across the old seam: the rail grey does not appear.
-            let railSamples = collapsed.filter { $0.x >= 84 && $0.x <= 200 && isRail($0.rgb) }
-            XCTAssertTrue(railSamples.isEmpty,
-                          "rail grey at x=\(railSamples.map { $0.x}) (the old seam was at 104); \(desc)")
+            // One colour across the old seam: left of it equals right of it.
+            let right = rgb(collapsed, [128, 132, 136, 140, 144, 148, 152])
+            XCTAssertEqual(right.count, 7)
+            let first = right[0]
+            for c in left + right {
+                XCTAssertTrue(same(c, first), "background \(c) differs from \(first) across the old seam at x=104; \(desc)")
+            }
         }
     }
 
