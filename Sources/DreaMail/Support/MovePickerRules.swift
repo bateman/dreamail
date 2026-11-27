@@ -32,8 +32,10 @@ enum LabelPickerKeyRules {
 
     /// Whether Return toggles the highlighted label. Once a box was changed in
     /// this opening (label mode), Return only closes: it must not undo the pick.
-    static func returnTogglesLabel(moveMode: Bool, changed: Bool) -> Bool {
-        moveMode || !changed
+    /// An action row (Label as's "Move to inbox") always runs.
+    static func returnTogglesLabel(moveMode: Bool, changed: Bool,
+                                   actionRow: Bool = false) -> Bool {
+        moveMode || actionRow || !changed
     }
 
     /// The footer's key hints for the highlighted row.
@@ -47,27 +49,29 @@ enum LabelPickerKeyRules {
 
 /// The picker's Inbox row and its "Create" row, as Gmail's pickers have
 /// them. Pure; `MailStore.labelPickerLabels` / `labelPickerCreateName` use it.
-/// - "Move to" lists Inbox first as a destination for a conversation that is
-///   not in the Inbox (not for spam: that leaves Spam with Not spam).
+/// - "Move to" lists Inbox first as a destination for a conversation that
+///   can move there (`InboxMove.movable`: not in the Inbox, not spam, not a
+///   lone draft; a trashed one leaves the Trash).
 /// - "Label as" never lists Inbox on its own: typing a name that matches it
-///   offers "Move to Inbox", after the matching labels, when the
-///   conversation is not in the Inbox (`InboxMove.offered`).
+///   offers "Move to inbox", after the matching labels, when the
+///   conversation offers it (`InboxMove.offered`).
 /// - No "Create" row for a name Gmail reserves (`ReservedLabelNames`).
 enum LabelPickerInboxRow {
     enum Placement: Equatable { case first, last }
 
-    /// The name the row shows and matches against.
+    /// The name the row shows in "Move to" and matches against; "Label as"
+    /// shows it as `InboxMove.title`.
     static let name = "Inbox"
-    static let labelModeTitle = InboxMove.title
 
-    static func placement(moveMode: Bool, inInbox: Bool, inSpam: Bool, inTrash: Bool,
-                          query: String) -> Placement? {
+    static func placement(moveMode: Bool, thread: MailThread, query: String) -> Placement? {
         let q = query.trimmingCharacters(in: .whitespaces)
         if moveMode {
-            guard !inInbox, !inSpam, q.isEmpty || LabelSearch.matches(name, query: q) else { return nil }
+            guard InboxMove.movable(thread), q.isEmpty || LabelSearch.matches(name, query: q)
+            else { return nil }
             return .first
         }
-        guard !inInbox, !inSpam, !inTrash, !q.isEmpty, LabelSearch.matches(name, query: q) else { return nil }
+        guard InboxMove.offered(for: thread), !q.isEmpty, LabelSearch.matches(name, query: q)
+        else { return nil }
         return .last
     }
 
@@ -80,5 +84,20 @@ enum LabelPickerInboxRow {
             $0.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
         }
         return exists ? nil : name
+    }
+
+    /// What a pick on a row does. The Inbox row is a move in both modes.
+    enum Commit: Equatable {
+        case toggleLabel(String)
+        /// `moveThreads` to this label (Move to), Inbox included.
+        case move(String)
+        /// Label as's "Move to inbox": the explicit action on the row's
+        /// conversation.
+        case moveToInbox
+    }
+
+    static func commit(moveMode: Bool, labelId: String) -> Commit {
+        if moveMode { return .move(labelId) }
+        return labelId == ConversationAction.inboxLabel ? .moveToInbox : .toggleLabel(labelId)
     }
 }

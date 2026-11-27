@@ -1709,6 +1709,11 @@ struct ComposeRequest: Identifiable {
     /// action's bounded calls finish before the next bulk action's start.
     @ObservationIgnored
     var bulkRemoteTail: Task<Void, Never>?
+    /// Snooze dates a "Move to inbox" ended, by thread id, until Gmail
+    /// takes the move: a refusal re-derives the row from its messages, and
+    /// the date (local only) is put back (`InboxMove.restoreSnoozeAfterRefusal`).
+    @ObservationIgnored
+    var endedSnoozes: [String: Date] = [:]
     /// Rapid triage reconciles once after the user pauses instead of launching
     /// a full list/count query for every key press.
     @ObservationIgnored
@@ -4211,8 +4216,7 @@ struct ComposeRequest: Identifiable {
         let labels = userLabels(forAccount: thread.accountId)
             .filter { LabelSearch.matches($0.name, query: labelPicker.query) }
         switch LabelPickerInboxRow.placement(
-            moveMode: labelPicker.mode == .move, inInbox: thread.inInbox,
-            inSpam: thread.inSpam, inTrash: thread.inTrash, query: labelPicker.query) {
+            moveMode: labelPicker.mode == .move, thread: thread, query: labelPicker.query) {
         case .first: return [Self.inboxPickerRow(thread.accountId)] + labels
         case .last: return labels + [Self.inboxPickerRow(thread.accountId)]
         case nil: return labels

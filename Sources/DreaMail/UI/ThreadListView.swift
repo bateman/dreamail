@@ -742,22 +742,25 @@ private struct ThreadListSections: View, Equatable {
             Divider()
         }
         // Gmail web's right-click menu, in its groups and order
-        // (`ThreadRowMenu`), then the app's own items. Acts on this row.
+        // (`ThreadRowMenu`), then the app's own items. On one of several
+        // checked rows it acts on the checked set, as Gmail does.
         // `fromEmail` is the denormalized newest-sender address; the menu
         // builder runs for every visible row on each body pass, so it must
-        // not query the database per row.
+        // not query the database per row (the checked set is read only for
+        // a checked row of a multi-selection).
+        let bulk = store.checkedThreadIds.count > 1 && store.checkedThreadIds.contains(thread.id)
+        let targets = bulk ? store.checkedThreadsInOrder : [thread]
+        let address = SenderSearch.strictAddress(thread.fromEmail)
         let vipAction = thread.fromEmail.contains("@")
             ? ParticipantMenuVIP.action(email: thread.fromEmail, vipEmails: store.vipEmails,
                                         ownEmails: store.ownEmailAddresses)
             : nil
         let state = ThreadRowMenu.State(
-            offersMoveToInbox: InboxMove.offered(for: thread),
-            isUnread: thread.isUnread, isMuted: thread.isMuted, isStarred: thread.isStarred,
-            inTrash: thread.inTrash,
+            threads: targets,
             // A Trash row of an otherwise live conversation takes no
             // thread-wide action (`MailStore.isPartlyTrashedRow`).
-            partlyTrashed: store.isPartlyTrashedRow(thread),
-            hasSenderAddress: thread.fromEmail.contains("@"),
+            isPartlyTrashed: { store.isPartlyTrashedRow($0) },
+            senderAddress: address,
             senderIsVIP: vipAction.map { action -> Bool in
                 if case .remove = action { return true }
                 return false
@@ -766,36 +769,45 @@ private struct ThreadListSections: View, Equatable {
         ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
             if index > 0 { Divider() }
             ForEach(group, id: \.self) { item in
-                threadMenuItem(item, thread: thread, vipAction: vipAction)
+                threadMenuItem(item, thread: thread, bulk: bulk, address: address,
+                               vipAction: vipAction)
                     .disabled(ThreadRowMenu.isDisabled(item, state))
                     .accessibilityIdentifier("rowMenu.\(item.rawValue)")
             }
         }
     }
 
+    /// One item of the row menu. `bulk`: act on the checked set through the
+    /// keys' own bulk paths.
     @ViewBuilder
-    private func threadMenuItem(_ item: ThreadRowMenuItem, thread: MailThread,
+    private func threadMenuItem(_ item: ThreadRowMenuItem, thread: MailThread, bulk: Bool,
+                                address: String?,
                                 vipAction: ParticipantMenuVIP.Action?) -> some View {
-        let label = Label(item.title(sender: thread.fromDisplay), systemImage: item.symbol)
+        let sender = SenderSearch.displayName(thread.fromDisplay, address: address ?? "")
+        let label = Label(item.title(sender: sender), systemImage: item.symbol)
         switch item {
         case .reply, .replyAll, .forward:
             // As the keys: the newest *sent* message, never a draft.
             Button {
                 guard let msg = store.newestSentMessage(inThread: thread.id) else { return }
                 store.openCompose(.init(replyTo: msg, replyAll: item == .replyAll,
-                                                 forward: item == .forward))
+                                        forward: item == .forward))
             } label: { label }
         case .moveToInbox:
-            Button { store.moveToInboxTargets(thread) } label: { label }
+            Button { store.moveToInboxTargets(bulk ? nil : thread) } label: { label }
         case .archive:
-            Button { store.archive(thread) } label: { label }
+            Button { if bulk { store.archiveChecked() } else { store.archive(thread) } } label: { label }
         case .delete:
-            Button(role: .destructive) { store.trash(thread) } label: { label }
+            Button(role: .destructive) {
+                if bulk { store.trashChecked() } else { store.trash(thread) }
+            } label: { label }
         case .markUnread, .markRead:
-            Button { store.setRead(thread, read: thread.isUnread) } label: { label }
+            Button {
+                if bulk { store.toggleReadChecked() } else { store.setRead(thread, read: thread.isUnread) }
+            } label: { label }
         case .snooze:
             Menu {
-                if thread.gmailSnoozed {
+                if !bulk && thread.gmailSnoozed {
                     // No wake-up time is readable from Gmail, and Gmail wakes it:
                     // a date picked here would never be used.
                     Text("Snoozed in Gmail: Gmail brings it back")
@@ -803,23 +815,29 @@ private struct ThreadListSections: View, Equatable {
                     // Its own view so the presets (daypart math + one date format
                     // per preset) are computed when the submenu is materialized,
                     // not for every row whenever the section body runs.
-                    SnoozePresetMenuItems(thread: thread)
-                    Button("Pick date & time…") { store.mailboxOverlay = .snoozeThread(thread) }
-                    if thread.snoozeUntil != nil {
+                    SnoozePresetMenuItems(thread: bulk ? nil : thread)
+                    Button("Pick date & time…") {
+                        store.mailboxOverlay = bulk ? .snoozeChecked : .snoozeThread(thread)
+                    }
+                    if !bulk, thread.snoozeUntil != nil {
                         Button("Unsnooze") { store.snooze(thread, until: nil) }
                     }
                 }
             } label: { label }
         case .moveTo:
-            Button { store.openMovePicker(thread: thread) } label: { label }
+            Button { store.openMovePicker(thread: bulk ? nil : thread) } label: { label }
         case .labelAs:
             Button { store.openLabelPicker(for: thread) } label: { label }
         case .mute, .unmute:
-            Button { store.toggleMuteTargets(thread) } label: { label }
+            Button { store.toggleMuteTargets(bulk ? nil : thread) } label: { label }
         case .findFromSender:
-            Button { store.commitSearch("from:\(thread.fromEmail)") } label: { label }
+            if let address {
+                Button { store.commitSearch(SenderSearch.query(address)) } label: { label }
+            }
         case .star, .unstar:
-            Button { store.toggleStar(thread) } label: { label }
+            Button {
+                if bulk { store.toggleStarChecked() } else { store.toggleStar(thread) }
+            } label: { label }
         case .remindMe:
             Menu {
                 Button("Tomorrow") { store.setReminder(thread, after: 1) }
@@ -852,7 +870,8 @@ private struct ThreadListSections: View, Equatable {
 /// row on every list body pass.
 private struct SnoozePresetMenuItems: View {
     @Environment(MailStore.self) private var store
-    let thread: MailThread
+    /// nil: the checked set (`snoozeChecked`).
+    let thread: MailThread?
 
     var body: some View {
         // Same daypart-aware list as the snooze sheet (includes "This
@@ -861,7 +880,8 @@ private struct SnoozePresetMenuItems: View {
         // This weekend") and dates are unique after SnoozePresets.dedup.
         ForEach(SnoozePresets.presets(), id: \.date) { preset in
             Button("\(preset.title) (\(SnoozeDateParser.format(preset.date)))") {
-                store.snooze(thread, until: preset.date)
+                if let thread { store.snooze(thread, until: preset.date) }
+                else { store.snoozeChecked(until: preset.date) }
             }
         }
     }

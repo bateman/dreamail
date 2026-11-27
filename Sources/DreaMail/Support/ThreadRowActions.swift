@@ -14,7 +14,7 @@ enum ThreadRowHoverAction: String, CaseIterable {
     /// conversation not in the Inbox (`InboxMove.offered`).
     func symbol(isUnread: Bool, movesToInbox: Bool = false) -> String {
         switch self {
-        case .archive: return movesToInbox ? InboxMove.symbol : "archivebox"
+        case .archive: return movesToInbox ? "tray.and.arrow.down" : "archivebox"
         case .trash: return "trash"
         case .toggleRead: return isUnread ? "envelope.open" : "envelope.badge"
         case .snooze: return "clock"

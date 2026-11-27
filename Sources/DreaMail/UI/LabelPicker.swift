@@ -87,7 +87,7 @@ struct LabelPicker: View {
                                     // action, not a label: no box, no color dot.
                                     let isInbox = label.gmailLabelId == ConversationAction.inboxLabel
                                     let shownName = isInbox && picker.mode == .label
-                                        ? LabelPickerInboxRow.labelModeTitle : label.name
+                                        ? InboxMove.title : label.name
                                     HStack(spacing: 8) {
                                         if isInbox {
                                             Image(systemName: InboxMove.symbol)
