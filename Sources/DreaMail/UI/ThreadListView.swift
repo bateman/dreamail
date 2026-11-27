@@ -463,52 +463,93 @@ struct ThreadListView: View {
         // Undo toast and notice toast (both bottom-leading) live in ContentView.
     }
 
+    /// Compact bulk-action strip when one or more checkboxes are on.
+    private var multiSelectBar: some View { SelectionBar() }
+}
+
+/// The bulk bar above the list while rows are checked: "N selected", "esc to
+/// clear", the actions (`SelectionBarState.actions`, Gmail's order) and the
+/// close button. When the column is too narrow the hint goes first, then the
+/// trailing actions move under More (⋮), as in Gmail (`SelectionBarLayout.fit`).
+/// Every action acts on the checked rows still in the list.
+private struct SelectionBar: View {
+    @Environment(MailStore.self) private var store
+    @AppStorage("fontScale") private var fontScale = 1.0
+    @State private var barWidth = 0.0
+    @State private var countWidth = 0.0
+    @State private var hintWidth = 0.0
+    @State private var closeWidth = 0.0
+
     /// The key bound to the action's command, if any: no shortcut, no hint.
     private func shortcut(for action: SelectionBarAction) -> String? {
+        let command: ShortcutCommand
         switch action {
-        case .archive: return store.keyBindings.key(for: .archive)
-        case .trash: return store.keyBindings.key(for: .trash)
-        case .star: return store.keyBindings.key(for: .toggleStar)
-        case .toggleRead: return store.keyBindings.key(for: .toggleRead)
+        case .archive: command = .archive
+        case .moveToInbox: command = .moveToInbox
+        case .reportSpam, .notSpam: command = .markSpam
+        case .trash: command = .trash
+        case .toggleRead: command = .toggleRead
+        case .snooze: command = .snooze
+        case .moveTo: command = .moveTo
+        case .labelAs: command = .label
+        case .star: command = .toggleStar
         }
+        return store.keyBindings.key(for: command)
     }
+
+    /// The checked rows still in the list, in list order.
+    private var checkedIds: [String] { store.checkedThreadsInOrder.map(\.id) }
 
     private func perform(_ action: SelectionBarAction) {
         switch action {
         case .archive: store.archiveChecked()
+        case .moveToInbox: store.moveToInboxTargets(ids: checkedIds)
+        // Both through the `!` key's bulk path: Gmail's Report spam, or Not
+        // spam when every row is spam already.
+        case .reportSpam, .notSpam: store.markSpamChecked()
         case .trash: store.trashChecked()
-        case .star: store.toggleStarChecked()
         case .toggleRead: store.toggleReadChecked()
+        case .snooze: store.mailboxOverlay = .snoozeChecked
+        case .moveTo: store.openMovePicker(ids: checkedIds)
+        case .labelAs: store.openLabelPicker(ids: checkedIds)
+        case .star: store.toggleStarChecked()
         }
     }
 
-    /// Compact bulk-action strip when one or more checkboxes are on.
-    private var multiSelectBar: some View {
-        HStack(spacing: 10) {
+    var body: some View {
+        let checked = store.checkedThreadsInOrder
+        // `actionableCheckedThreads`, without reading the checked set twice.
+        let state = SelectionBarState(actionable: checked.filter { !store.isPartlyTrashedRow($0) },
+                                      checked: checked)
+        let actions = state.actions
+        let side = SelectionBarLayout.side(fontScale: fontScale)
+        let fit = SelectionBarLayout.fit(actions: actions.count, barWidth: barWidth,
+                                         countWidth: countWidth, hintWidth: hintWidth,
+                                         closeWidth: closeWidth, side: side)
+        HStack(spacing: SelectionBarLayout.itemSpacing) {
             Text("\(store.checkedThreadIds.count) selected")
                 .font(.system(size: 12 * fontScale, weight: .semibold))
                 .monospacedDigit()
                 .fixedSize()
+                .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { countWidth = $0 }
+                // The hint's natural width, measured even while it is left
+                // out (a background takes no room), so it comes back once
+                // there is room again.
+                .background(alignment: .leading) {
+                    hint.hidden().accessibilityHidden(true)
+                        .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { hintWidth = $0 }
+                }
                 .accessibilityIdentifier("selectionBar.count")
-            Text("esc to clear")
-                .font(.system(size: 11 * fontScale))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .accessibilityIdentifier("selectionBar.hint")
-            Spacer(minLength: 8)
-            let state = SelectionBarState(actionable: store.actionableCheckedThreads)
+            if fit.showsHint {
+                hint.accessibilityIdentifier("selectionBar.hint")
+            }
+            Spacer(minLength: SelectionBarLayout.minSpacer)
             HStack(spacing: SelectionBarLayout.spacing) {
-                ForEach(SelectionBarAction.allCases, id: \.self) { action in
-                    let flag = state.flag(for: action)
-                    SelectionBarIconButton(
-                        action: action,
-                        symbol: action.symbol(flag: flag),
-                        title: action.title(flag: flag),
-                        tooltip: action.tooltip(flag: flag, shortcut: shortcut(for: action)),
-                        side: SelectionBarLayout.side(fontScale: fontScale),
-                        fontScale: fontScale
-                    ) { perform(action) }
-                    .disabled(!state.isEnabled(action))
+                ForEach(actions.prefix(fit.visible), id: \.self) { action in
+                    button(action, state: state, side: side)
+                }
+                if fit.showsMore {
+                    moreMenu(Array(actions.dropFirst(fit.visible)), state: state, side: side)
                 }
             }
             Button {
@@ -518,43 +559,102 @@ struct ThreadListView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { closeWidth = $0 }
             .help("Clear selection (Esc)")
             .accessibilityLabel("Clear selection")
             .accessibilityIdentifier("selectionBar.close")
         }
         .font(.system(size: 12 * fontScale))
-        .padding(.horizontal, 12).padding(.vertical, 6)
+        .padding(.horizontal, SelectionBarLayout.padding).padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { barWidth = $0 }
         .background(.accentFill.opacity(0.08))
+    }
+
+    private var hint: some View {
+        Text("esc to clear")
+            .font(.system(size: 11 * fontScale))
+            .foregroundStyle(.secondary)
+            .fixedSize()
+    }
+
+    @ViewBuilder
+    private func button(_ action: SelectionBarAction, state: SelectionBarState, side: Double) -> some View {
+        let flag = state.flag(for: action)
+        let look = SelectionBarIcon(symbol: action.symbol(flag: flag), side: side, fontScale: fontScale)
+        Group {
+            if action == .snooze {
+                // The row menu's snooze presets, over the checked set.
+                Menu {
+                    SnoozePresetMenuItems(thread: nil)
+                    Button("Pick date & time…") { perform(.snooze) }
+                } label: { look }
+                // `.button` + plain keeps the custom square label (a
+                // borderless menu draws only the glyph).
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            } else {
+                Button { perform(action) } label: { look }
+                    .buttonStyle(PressScaleButtonStyle())
+            }
+        }
+        .help(action.tooltip(flag: flag, shortcut: shortcut(for: action)))
+        .accessibilityLabel(action.title(flag: flag))
+        .accessibilityIdentifier("selectionBar.\(action.rawValue)")
+        .disabled(!state.isEnabled(action))
+    }
+
+    /// Gmail's More (⋮): the actions that did not fit, in the same order.
+    private func moreMenu(_ rest: [SelectionBarAction], state: SelectionBarState, side: Double) -> some View {
+        Menu {
+            ForEach(rest, id: \.self) { action in
+                let flag = state.flag(for: action)
+                let label = Label(action.title(flag: flag), systemImage: action.symbol(flag: flag))
+                Group {
+                    if action == .snooze {
+                        Menu {
+                            SnoozePresetMenuItems(thread: nil)
+                            Button("Pick date & time…") { perform(.snooze) }
+                        } label: { label }
+                    } else {
+                        Button { perform(action) } label: { label }
+                    }
+                }
+                .disabled(!state.isEnabled(action))
+                .accessibilityIdentifier("selectionBar.more.\(action.rawValue)")
+            }
+        } label: {
+            SelectionBarIcon(symbol: "ellipsis", side: side, fontScale: fontScale)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More")
+        .accessibilityLabel("More")
+        .accessibilityIdentifier("selectionBar.more")
     }
 }
 
 /// One icon of the bulk bar: the row hover actions' glyph size in a fixed
 /// square target, with a faint hover wash.
-private struct SelectionBarIconButton: View {
-    let action: SelectionBarAction
+private struct SelectionBarIcon: View {
     let symbol: String
-    let title: String
-    let tooltip: String
     let side: Double
     let fontScale: Double
-    let onTap: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        Button(action: onTap) {
-            Image(systemName: symbol)
-                .font(.system(size: ThreadRowActionLayout.iconSize * fontScale))
-                .foregroundStyle(.secondary)
-                .frame(width: side, height: side)
-                .background(hovering ? Color.primary.opacity(0.08) : .clear,
-                            in: RoundedRectangle(cornerRadius: PMRadius.sm))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(PressScaleButtonStyle())
-        .onHover { hovering = $0 }
-        .help(tooltip)
-        .accessibilityLabel(title)
-        .accessibilityIdentifier("selectionBar.\(action.rawValue)")
+        Image(systemName: symbol)
+            .font(.system(size: ThreadRowActionLayout.iconSize * fontScale))
+            .foregroundStyle(.secondary)
+            .frame(width: side, height: side)
+            .background(hovering ? Color.primary.opacity(0.08) : .clear,
+                        in: RoundedRectangle(cornerRadius: PMRadius.sm))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
     }
 }
 

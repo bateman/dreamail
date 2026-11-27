@@ -1,10 +1,12 @@
 import XCTest
 
 /// With two rows checked, the bar above the list shows "2 selected", "esc to
-/// clear", four icon-only buttons (archive, trash, star, read/unread) and the
-/// close button, in that order, and each button acts on the checked rows.
+/// clear" (while there is room), Gmail's actions as icon-only buttons
+/// (archive or move to inbox, report spam, trash, read/unread, snooze, move
+/// to, label as, then star) and the close button, in that order; the ones
+/// that do not fit are under More (⋮). Each acts on the checked rows.
 final class SelectionBarIconsUITests: XCTestCase {
-    private let order = ["archive", "trash", "star", "toggleRead"]
+    private let order = ["archive", "reportSpam", "trash", "toggleRead", "snooze", "moveTo", "labelAs", "star"]
 
     private func launch() -> XCUIApplication {
         let app = XCUIApplication()
@@ -69,14 +71,37 @@ final class SelectionBarIconsUITests: XCTestCase {
         let steps: [(String, (XCUIApplication) -> Void)] = [
             ("The actions are icons, in order, in fixed square targets, and the bar fits", stepIconsInOrder),
             ("A mixed selection shows what the click will do", stepMixedLabels),
+            ("Snooze opens the snooze menu", stepSnoozeMenuOpens),
+            ("Label as and Move to open the pickers for the checked rows", stepPickersOpen),
             ("Read/unread acts on the checked rows", stepReadActs),
             ("Star acts on the checked rows", stepStarActs),
             ("Archive acts on the checked rows", stepArchiveActs),
             ("Trash acts on the checked rows", stepTrashActs),
+            ("Archived rows get Move to inbox", stepMoveToInboxActs),
         ]
         for (name, step) in steps {
             XCTContext.runActivity(named: name) { _ in step(app) }
         }
+    }
+
+    /// The bar's buttons in order: the ones shown, then (when the column is
+    /// narrow) the ones under More.
+    private func shown(_ app: XCUIApplication, _ ids: [String]) -> (bar: [XCUIElement], more: [String]) {
+        let buttons = ids.map { bar(app, $0) }
+        let visible = buttons.prefix { $0.waitForExistence(timeout: 2) }
+        return (Array(visible), Array(ids.dropFirst(visible.count)))
+    }
+
+    /// Clicks the bar's button, or its item under More.
+    private func tap(_ app: XCUIApplication, _ id: String) {
+        let button = bar(app, id)
+        if button.waitForExistence(timeout: 2) { button.click(); return }
+        let more = bar(app, "more")
+        XCTAssertTrue(more.exists, "\(id) is a button or under More")
+        more.click()
+        let item = app.menuItems.matching(identifier: "selectionBar.more.\(id)").firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), id)
+        item.click()
     }
 
     private func stepIconsInOrder(_ app: XCUIApplication) {
@@ -84,14 +109,15 @@ final class SelectionBarIconsUITests: XCTestCase {
         XCTAssertTrue(count.waitForExistence(timeout: 5), "the bar shows once rows are checked")
         XCTAssertEqual((count.value as? String) ?? count.label, "2 selected")
         let hint = bar(app, "hint"), close = bar(app, "close")
-        XCTAssertTrue(hint.exists && close.exists)
-        XCTAssertLessThanOrEqual(count.frame.maxX, hint.frame.minX, "the count is not cut off by the hint")
+        XCTAssertTrue(close.exists)
         XCTAssertGreaterThan(count.frame.width, 40, "the count has its full width")
 
-        let buttons = order.map { bar(app, $0) }
+        let (visible, under) = shown(app, order)
+        let more = bar(app, "more")
+        XCTAssertEqual(more.exists, !under.isEmpty, "More holds exactly the actions that did not fit")
+        XCTAssertGreaterThanOrEqual(visible.count, 1)
+        let buttons = visible + (more.exists ? [more] : [])
         for b in buttons {
-            XCTAssertTrue(b.waitForExistence(timeout: 5))
-            XCTAssertEqual(b.elementType, .button)
             XCTAssertEqual(b.descendants(matching: .staticText).count, 0,
                            "an icon-only button has no text: \(b.identifier)")
             XCTAssertGreaterThanOrEqual(b.frame.width, 24, "target at least 24 pt: \(b.identifier)")
@@ -99,35 +125,75 @@ final class SelectionBarIconsUITests: XCTestCase {
             XCTAssertEqual(b.frame.width, b.frame.height, accuracy: 0.5, "square: \(b.identifier)")
             XCTAssertEqual(b.frame.width, buttons[0].frame.width, accuracy: 0.5, "same size for every glyph")
         }
-        let xs = buttons.map(\.frame.minX)
-        XCTAssertEqual(xs, xs.sorted(), "archive, trash, star, read/unread, left to right")
-        for (l, r) in zip(buttons, buttons.dropFirst()) {
-            XCTAssertEqual(r.frame.minX - l.frame.maxX, buttons[1].frame.minX - buttons[0].frame.maxX,
-                           accuracy: 0.5, "even spacing")
+        for b in visible where b.identifier != "selectionBar.snooze" {
+            XCTAssertEqual(b.elementType, .button, b.identifier)
         }
-        XCTAssertGreaterThanOrEqual(buttons[0].frame.minX, hint.frame.maxX)
-        XCTAssertLessThanOrEqual(buttons[3].frame.maxX, close.frame.minX)
+        XCTAssertFalse(bar(app, "moveToInbox").exists, "Inbox rows: Archive, not Move to inbox")
+        XCTAssertFalse(bar(app, "notSpam").exists)
+        let xs = buttons.map(\.frame.minX)
+        XCTAssertEqual(xs, xs.sorted(), "Gmail's order, left to right")
+        let gap = buttons.count > 1 ? buttons[1].frame.minX - buttons[0].frame.maxX : 6
+        for (l, r) in zip(buttons, buttons.dropFirst()) {
+            XCTAssertEqual(r.frame.minX - l.frame.maxX, gap, accuracy: 0.5, "even spacing")
+        }
+        if hint.exists {
+            XCTAssertLessThanOrEqual(count.frame.maxX, hint.frame.minX, "the count is not cut off by the hint")
+        }
+        XCTAssertGreaterThanOrEqual(buttons[0].frame.minX, hint.exists ? hint.frame.maxX : count.frame.maxX,
+                                    "nothing covers the count or the hint")
+        XCTAssertLessThanOrEqual(buttons.last!.frame.maxX, close.frame.minX)
         let y = buttons.map(\.frame.midY)
         XCTAssertEqual(y.max()! - y.min()!, 0, accuracy: 1, "one line")
 
-        // The narrowest list column is 420 pt. What the bar needs: its items,
-        // four 10 pt gaps, the 8 pt minimum spacer and 12 pt padding each side.
-        let needed = count.frame.width + hint.frame.width
-            + (buttons[3].frame.maxX - buttons[0].frame.minX) + close.frame.width + 4 * 10 + 8 + 24
-        XCTAssertLessThanOrEqual(needed, 420, "the bar fits the narrowest list column")
+        // The narrowest list column is 420 pt. What all eight buttons need
+        // there, from the measured sizes: the count, the buttons, the close
+        // button, three 10 pt gaps, the 8 pt minimum spacer and 12 pt padding
+        // each side ("esc to clear" is the first to go when space is short).
+        let side = buttons[0].frame.width
+        let strip = 8 * side + 7 * gap
+        let needed = count.frame.width + strip + close.frame.width + 3 * 10 + 8 + 24
+        XCTAssertLessThanOrEqual(needed, 420, "every action fits the narrowest list column")
     }
 
     private func stepMixedLabels(_ app: XCUIApplication) {
-        XCTAssertEqual(bar(app, "archive").label, "Archive")
-        XCTAssertEqual(bar(app, "trash").label, "Trash")
-        XCTAssertEqual(bar(app, "star").label, "Star", "one row is not starred: the click stars")
-        XCTAssertEqual(bar(app, "toggleRead").label, "Mark as read", "one row is unread: the click marks read")
+        let expected: [(String, String)] = [
+            ("archive", "Archive"), ("reportSpam", "Report spam"), ("trash", "Trash"),
+            ("toggleRead", "Mark as read"), ("snooze", "Snooze"), ("moveTo", "Move to"),
+            ("labelAs", "Label as"), ("star", "Star"),
+        ]
+        // Star: one row is not starred, the click stars. Read: one row is
+        // unread, the click marks read. (Under More, the item says the same.)
+        for (id, label) in expected where bar(app, id).exists {
+            XCTAssertEqual(bar(app, id).label, label, id)
+        }
+    }
+
+    private func stepSnoozeMenuOpens(_ app: XCUIApplication) {
+        tap(app, "snooze")
+        let pick = app.menuItems["Pick date & time…"]
+        XCTAssertTrue(pick.waitForExistence(timeout: 5), "the snooze menu is open")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(UITestWait.until { !pick.exists }, "Esc closes the menu")
+        XCTAssertTrue(bar(app, "count").exists, "closing the menu keeps the selection")
+    }
+
+    private func stepPickersOpen(_ app: XCUIApplication) {
+        let search = app.descendants(matching: .any).matching(identifier: "labelPicker.search").firstMatch
+        for (id, placeholder) in [("labelAs", "Label 2 conversations…"),
+                                  ("moveTo", "Move 2 conversations to…")] {
+            tap(app, id)
+            XCTAssertTrue(search.waitForExistence(timeout: 5), "\(id) opens the picker")
+            XCTAssertEqual(search.placeholderValue, placeholder, "for both checked rows")
+            app.typeKey(.escape, modifierFlags: [])
+            XCTAssertTrue(UITestWait.until { !search.exists }, "Esc closes the picker")
+            XCTAssertEqual((bar(app, "count").value as? String) ?? bar(app, "count").label, "2 selected")
+        }
     }
 
     private func stepReadActs(_ app: XCUIApplication) {
         let t3 = row(app, "t3"), t4 = row(app, "t4")
         XCTAssertTrue(t3.label.hasPrefix("Unread") && t4.label.hasPrefix("Read"), "\(t3.label) / \(t4.label)")
-        bar(app, "toggleRead").click()
+        tap(app, "toggleRead")
         XCTAssertTrue(UITestWait.until { t3.label.hasPrefix("Read") && t4.label.hasPrefix("Read") },
                       "both checked rows are read: \(t3.label) / \(t4.label)")
         XCTAssertEqual(bar(app, "toggleRead").label, "Mark as unread", "the icon follows the click")
@@ -135,16 +201,15 @@ final class SelectionBarIconsUITests: XCTestCase {
 
     private func stepStarActs(_ app: XCUIApplication) {
         XCTAssertEqual(rowButton(app, "t4", "rowStar").label, "Star")
-        bar(app, "star").click()
+        tap(app, "star")
         for id in ["t3", "t4"] {
             XCTAssertTrue(UITestWait.until { rowButton(app, id, "rowStar").label == "Unstar" }, "\(id) is starred")
         }
-        XCTAssertEqual(bar(app, "star").label, "Unstar")
+        if bar(app, "star").exists { XCTAssertEqual(bar(app, "star").label, "Unstar") }
     }
 
     private func stepArchiveActs(_ app: XCUIApplication) {
-        XCTAssertTrue(bar(app, "archive").waitForExistence(timeout: 5))
-        bar(app, "archive").click()
+        tap(app, "archive")
         XCTAssertTrue(row(app, "t3").waitForNonExistence(timeout: 10))
         XCTAssertTrue(row(app, "t4").waitForNonExistence(timeout: 10))
         XCTAssertFalse(bar(app, "count").exists, "archiving clears the selection")
@@ -155,9 +220,28 @@ final class SelectionBarIconsUITests: XCTestCase {
         check(app, "t1")
         check(app, "t2")
         XCTAssertEqual((bar(app, "count").value as? String) ?? bar(app, "count").label, "2 selected")
-        bar(app, "trash").click()
+        tap(app, "trash")
         XCTAssertTrue(row(app, "t1").waitForNonExistence(timeout: 10))
         XCTAssertTrue(row(app, "t2").waitForNonExistence(timeout: 10))
         XCTAssertFalse(bar(app, "count").exists, "trashing clears the selection")
+    }
+
+    /// The archived t3 and t4, checked in All Mail: the archive slot is Move
+    /// to inbox, and it moves both back (Gmail keeps them in All Mail).
+    private func stepMoveToInboxActs(_ app: XCUIApplication) {
+        app.typeKey("g", modifierFlags: [])
+        app.typeKey("a", modifierFlags: [])
+        check(app, "t3")
+        check(app, "t4")
+        XCTAssertTrue(bar(app, "moveToInbox").waitForExistence(timeout: 5), "archived rows: Move to inbox")
+        XCTAssertFalse(bar(app, "archive").exists)
+        XCTAssertEqual(bar(app, "moveToInbox").label, "Move to inbox")
+        tap(app, "moveToInbox")
+        XCTAssertTrue(UITestWait.until { !bar(app, "count").exists }, "the move clears the selection")
+        for id in ["t3", "t4"] {
+            row(app, id).hover()
+            XCTAssertTrue(rowButton(app, id, "rowAction.archive").waitForExistence(timeout: 5),
+                          "\(id) is back in the Inbox: its row offers Archive")
+        }
     }
 }

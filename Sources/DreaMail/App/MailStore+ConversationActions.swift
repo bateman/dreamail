@@ -132,6 +132,49 @@ extension MailStore {
         openLabelPicker(mode: .move, moveTargetIds: live)
     }
 
+    /// "Label as" from the selection bar (and `l` over checked rows): the
+    /// picker in label mode over the ids it was opened for, still in the list.
+    func openLabelPicker(ids: [String]) {
+        let live = ThreadRowMenu.liveTargets(ids: ids, in: threads).map(\.id)
+        guard !live.isEmpty else { return }
+        openLabelPicker(mode: .label, moveTargetIds: live)
+    }
+
+    /// Label mode over several conversations: the picker's targets still in
+    /// the list, on `accountId` (labels belong to one account). Empty for a
+    /// one-conversation picker.
+    func labelPickerBulkTargets(accountId: String) -> [MailThread] {
+        guard labelPicker.mode == .label, labelPicker.moveTargetIds.count > 1 else { return [] }
+        return ThreadRowMenu.liveTargets(ids: labelPicker.moveTargetIds, in: threads)
+            .filter { $0.accountId == accountId }
+    }
+
+    /// One label over several conversations, as Gmail's Label as: added to
+    /// all when some lack it, else removed from all (`BulkLabel`). Trash
+    /// copies of live conversations are left out (refused, with the notice,
+    /// when nothing else is left), as are other accounts' conversations. No
+    /// undo, as the single toggle. Clears the selection, as the bar's other
+    /// actions do; the picker keeps its own targets.
+    func toggleLabel(ids: [String], labelId: String, accountId: String) {
+        let all = ThreadRowMenu.liveTargets(ids: ids, in: threads)
+        guard !refusesPartlyTrashed(all) else { return }
+        let skipped = all.filter { $0.accountId != accountId }.count
+        if skipped > 0 {
+            showNotice(skipped == 1
+                       ? "1 conversation of another account was not labelled: labels belong to one account"
+                       : "\(skipped) conversations of other accounts were not labelled: labels belong to one account")
+        }
+        let targets = all.filter { $0.accountId == accountId && !isPartlyTrashedRow($0) }
+        guard !targets.isEmpty else { return }
+        let adds = BulkLabel.adds(labelId, to: targets)
+        let changing = targets.filter { $0.labels.contains(labelId) != adds }
+        mutateThreads(changing, remote: .modify(add: adds ? [labelId] : [],
+                                                remove: adds ? [] : [labelId])) { t in
+            if adds { t.applyLabelMutation(add: [labelId]) } else { t.applyLabelMutation(remove: [labelId]) }
+        }
+        if !checkedThreadIds.isEmpty { clearCheckedThreads() }
+    }
+
     /// The conversation the picker acts on and lists labels for: the first
     /// target still in the list (move mode, or label mode opened from a
     /// row's menu), else the focused row.
@@ -226,9 +269,18 @@ extension MailStore {
         case .moveToInbox:
             // "Label as" → "Move to inbox": an action, not a label box.
             mailboxOverlay = nil
-            moveToInboxTargets(thread)
+            if labelPicker.moveTargetIds.count > 1 {
+                moveToInboxTargets(ids: labelPicker.moveTargetIds)
+            } else {
+                moveToInboxTargets(thread)
+            }
         case .toggleLabel(let labelId):
-            toggleLabel(thread, labelId: labelId)
+            if labelPicker.moveTargetIds.count > 1 {
+                toggleLabel(ids: labelPicker.moveTargetIds, labelId: labelId,
+                            accountId: thread.accountId)
+            } else {
+                toggleLabel(thread, labelId: labelId)
+            }
             labelPicker.changed = true
         case .move(let labelId):
             moveThreads(ids: labelPicker.moveTargetIds, toLabel: labelId,

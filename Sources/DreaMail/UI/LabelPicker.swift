@@ -45,6 +45,9 @@ struct LabelPicker: View {
                 let createName = store.labelPickerCreateName(for: thread)
                 let rowCount = labels.count + (createName != nil ? 1 : 0)
                 let highlighted = min(picker.highlight, max(rowCount - 1, 0))
+                // Label mode over several conversations: each box says on
+                // how many of them the label is (`BulkLabel`).
+                let bulk = store.labelPickerBulkTargets(accountId: thread.accountId)
                 VStack(spacing: 0) {
                     // Gmail's header: a title, then the filter field with a
                     // magnifier and an accent underline.
@@ -82,7 +85,10 @@ struct LabelPicker: View {
                             // empty even when the filter matched.
                             VStack(spacing: 0) {
                                 ForEach(Array(labels.enumerated()), id: \.element.id) { idx, label in
-                                    let applied = thread.labels.contains(label.gmailLabelId)
+                                    let boxState: BulkLabel.State = bulk.isEmpty
+                                        ? (thread.labels.contains(label.gmailLabelId) ? .all : .none)
+                                        : BulkLabel.state(label.gmailLabelId, in: bulk)
+                                    let applied = boxState != .none
                                     // The Inbox row (`LabelPickerInboxRow`) is an
                                     // action, not a label: no box, no color dot.
                                     let isInbox = label.gmailLabelId == ConversationAction.inboxLabel
@@ -94,7 +100,8 @@ struct LabelPicker: View {
                                                 .foregroundStyle(.secondary)
                                         } else {
                                             if picker.mode == .label {
-                                                Image(systemName: applied ? "checkmark.square.fill" : "square")
+                                                Image(systemName: boxState == .all ? "checkmark.square.fill"
+                                                      : boxState == .some ? "minus.square.fill" : "square")
                                                     .foregroundStyle(applied ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
                                             }
                                             LabelDot(colors: store.labelColors(label.name, account: label.accountId),
@@ -112,7 +119,8 @@ struct LabelPicker: View {
                                     .id(label.id)
                                     .accessibilityElement(children: .ignore)
                                     .accessibilityLabel(shownName)
-                                    .accessibilityValue(picker.mode == .label && !isInbox ? (applied ? "on" : "off") : "")
+                                    .accessibilityValue(picker.mode == .label && !isInbox
+                                        ? (boxState == .all ? "on" : boxState == .some ? "mixed" : "off") : "")
                                     .accessibilityHint(isInbox ? "Moves the conversation to the Inbox."
                                         : picker.mode == .label
                                         ? "Click to toggle. Return applies and closes; Space toggles."
@@ -225,8 +233,8 @@ struct LabelPicker: View {
 
     /// "Move 5 conversations to…" when the move covers several.
     private var placeholder: String {
-        guard picker.mode == .move else { return "" }
         let n = picker.moveTargetIds.count
+        guard picker.mode == .move else { return n > 1 ? "Label \(n) conversations…" : "" }
         return n > 1 ? "Move \(n) conversations to…" : "Move to…"
     }
 

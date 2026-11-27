@@ -107,3 +107,20 @@ enum LabelPickerInboxRow {
         return labelId == ConversationAction.inboxLabel ? .moveToInbox : .toggleLabel(labelId)
     }
 }
+
+/// "Label as" over several conversations, after Gmail's label menu: a label
+/// on every target shows checked, on some a dash, on none empty; a click
+/// adds it to all unless all have it, then removes it from all.
+enum BulkLabel {
+    enum State: Equatable { case all, some, none }
+
+    static func state(_ labelId: String, in targets: [MailThread]) -> State {
+        let n = targets.filter { $0.labels.contains(labelId) }.count
+        if n == 0 { return .none }
+        return n == targets.count ? .all : .some
+    }
+
+    static func adds(_ labelId: String, to targets: [MailThread]) -> Bool {
+        state(labelId, in: targets) != .all
+    }
+}

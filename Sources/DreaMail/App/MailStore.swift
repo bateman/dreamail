@@ -4341,7 +4341,10 @@ struct ComposeRequest: Identifiable {
                            openCompose(ComposeRequest(
                                replyTo: msg, forward: true))
                        }
-        case .label: if selectedThread != nil { openLabelPicker() }
+        case .label:
+            // Over checked rows, all of them, as Gmail's `l` (and the bar).
+            if !checkedThreadIds.isEmpty { openLabelPicker(ids: checkedThreadsInOrder.map(\.id)) }
+            else if selectedThread != nil { openLabelPicker() }
         case .undo: if let undo = undoAction { undo.undo() }
         case .compose: openCompose(ComposeRequest(replyTo: nil))
         case .mute: toggleMuteTargets()
@@ -4432,7 +4435,14 @@ struct ComposeRequest: Identifiable {
                         self.labelPicker.highlight = idx
                     }
                     switch mode {
-                    case .label: self.toggleLabel(thread, labelId: l.id)
+                    case .label:
+                        if moveIds.count > 1 {
+                            // Same session rule as a move: never a later picker's.
+                            guard self.showLabelPicker, self.labelPicker.session == session else { return }
+                            self.toggleLabel(ids: moveIds, labelId: l.id, accountId: accountId)
+                        } else {
+                            self.toggleLabel(thread, labelId: l.id)
+                        }
                     case .move:
                         guard MovePickerRules.appliesCreatedLabel(
                             pickerOpen: self.showLabelPicker,
