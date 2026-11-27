@@ -47,6 +47,7 @@ enum PrioritySplit {
                           vipThreadIds: Set<String> = [],
                           vipAlwaysPins: Bool = true,
                           hiddenCategories: Set<String> = [],
+                          categoryRowsOff: Set<String> = [],
                           newerThan: Date? = nil) -> Bool {
         let isVIP = vipThreadIds.contains(thread.id)
         switch mode {
@@ -63,7 +64,10 @@ enum PrioritySplit {
                 return isWithinWindow(thread, newerThan: newerThan)
             }
             guard thread.labels.contains("IMPORTANT") else { return false }
-            guard !isInHiddenCategory(thread, hide: hiddenCategories) else { return false }
+            // Promotions and Social count only for an account that shows them.
+            let hide = CategoryRows.hide(hiddenCategories, account: thread.accountId,
+                                         off: categoryRowsOff)
+            guard !isInHiddenCategory(thread, hide: hide) else { return false }
             return isWithinWindow(thread, newerThan: newerThan)
         }
     }
@@ -77,6 +81,7 @@ enum PrioritySplit {
                           vipThreadIds: Set<String> = [],
                           vipAlwaysPins: Bool = true,
                           hiddenCategories: Set<String> = [],
+                          categoryRowsOff: Set<String> = [],
                           newerThan: Date? = nil,
                           maxCount: Int? = nil) -> (priority: [MailThread], rest: [MailThread]) {
         guard mode != .off else { return ([], threads) }
@@ -87,6 +92,7 @@ enum PrioritySplit {
             if qualifies(thread, mode: mode, vipThreadIds: vipThreadIds,
                          vipAlwaysPins: vipAlwaysPins,
                          hiddenCategories: hiddenCategories,
+                         categoryRowsOff: categoryRowsOff,
                          newerThan: newerThan) {
                 let isVIPExempt = vipAlwaysPins && vipThreadIds.contains(thread.id)
                 let underCap = limit.map { priority.count < $0 } ?? true

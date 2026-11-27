@@ -36,6 +36,9 @@ struct SidebarSystemRows {
         switch id {
         case "outbox": return !store.localDrafts.isEmpty || store.selectedView == .outbox
         case "scheduled": return !store.scheduledSends.isEmpty || store.selectedView == .scheduled
+        // Promotions and Social: per account (`CategoryRows`); the stored
+        // order keeps their slot while they are closed.
+        case "promotions", "social": return store.categoryRowsShown
         default: return true
         }
     }

@@ -261,7 +261,10 @@ final class MailStore {
     /// same-view go-to used to no-op and leave focus stuck).
     /// View changes rely on ContentView's `selectedView` onChange to reload;
     /// same-view go-to reloads here after clearing search.
-    func goTo(_ view: MailboxView) {
+    func goTo(_ requested: MailboxView) {
+        // Every way in (sidebar, Go, palette, `g` keys) ends here: the two
+        // category views are not reachable while no account in scope shows them.
+        let view = CategoryRows.view(requested, shown: categoryRowsShown)
         let plan = GoToMailbox.plan(
             destinationIsCurrent: selectedView == view,
             searchText: searchText,
@@ -322,7 +325,11 @@ final class MailStore {
         // UserDefaults as if the user had chosen them.
         didSet {
             if !suppressChipPersistence, chips.category != oldValue.category {
-                FilterChips.saveCategory(chips.category, for: selectedView)
+                // Promotions and Social closed: a stored pick for them stays.
+                let category = CategoryRows.restoring(
+                    chips.category, from: FilterChips.savedCategory(for: selectedView),
+                    shown: categoryRowsShown)
+                FilterChips.saveCategory(category, for: selectedView)
             }
         }
     }
@@ -334,7 +341,66 @@ final class MailStore {
     func resetChips() {
         suppressChipPersistence = true
         chips = FilterChips.initial(for: selectedView)
+        chips.category = storedCategory(for: selectedView)
         suppressChipPersistence = false
+    }
+
+    // MARK: Show Promotions and Social (per account, `CategoryRows`)
+
+    /// Accounts whose "Show Promotions and Social" is off.
+    private(set) var categoryRowsOff: Set<String> = []
+    @ObservationIgnored
+    private var categoryRowsApplied = false
+
+    /// Whether the Promotions and Social views exist for what is on screen:
+    /// the account in scope, or (all accounts) any account that has them on.
+    var categoryRowsShown: Bool {
+        CategoryRows.shown(accounts: accounts.map(\.id), scope: activeAccountId,
+                           off: categoryRowsOff)
+    }
+
+    /// The setting of one account (a conversation's chip asks for its own).
+    func showsPromotionsAndSocial(_ accountId: String) -> Bool {
+        !categoryRowsOff.contains(accountId)
+    }
+
+    func setShowsPromotionsAndSocial(_ accountId: String, _ on: Bool) {
+        // A toggle still on screen for a removed account writes nothing (DEC-019).
+        guard isKnownAccount(accountId) else { return }
+        CategoryRows.setOn(on, accountId: accountId)
+        if on { categoryRowsOff.remove(accountId) } else { categoryRowsOff.insert(accountId) }
+        categoryScopeChanged()
+    }
+
+    /// The category part of the chips for the scope on screen: the stored
+    /// pick, without Promotions and Social while they are closed. Not a user
+    /// edit, so nothing is persisted.
+    private func refreshCategoryChips() {
+        // A view with no stored pick (a saved view) keeps the chips it has.
+        guard selectedView.prefsKey != nil else { return }
+        suppressChipPersistence = true
+        chips.category = storedCategory(for: selectedView)
+        suppressChipPersistence = false
+    }
+
+    /// The stored category pick of `view` as the scope on screen applies it:
+    /// without Promotions and Social while they are closed.
+    private func storedCategory(for view: MailboxView) -> CategoryFilter {
+        CategoryRows.scoped(FilterChips.initial(for: view).category, shown: categoryRowsShown)
+    }
+
+    /// The scope's category setting changed: leave a closed view for the
+    /// Inbox, re-read the stored category pick and reload list and counts.
+    private func categoryScopeChanged() {
+        let next = CategoryRows.view(selectedView, shown: categoryRowsShown)
+        if next != selectedView {
+            // The view change reloads (ContentView's `selectedView` onChange).
+            clearSelection()
+            selectedView = next
+            return
+        }
+        refreshCategoryChips()
+        reloadThreads()
     }
     var activeAccountId: String?   // nil = all accounts (unified)
     var mailProgress = MailProgress()
@@ -461,9 +527,17 @@ final class MailStore {
         labelPicker.navigated = false
         labelPicker.changed = false
         labelPicker.mode = mode
-        labelPicker.moveTargetIds = mode == .move ? moveTargetIds : []
+        // Label mode: empty for the focused conversation, or the one
+        // conversation a row's context menu opened it for.
+        labelPicker.moveTargetIds = moveTargetIds
         labelPicker.session = UUID()
         mailboxOverlay = .labels
+    }
+
+    /// "Label as…" from a list row's context menu: the picker for that row,
+    /// focused or not.
+    func openLabelPicker(for thread: MailThread) {
+        openLabelPicker(mode: .label, moveTargetIds: [thread.id])
     }
     var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
 
@@ -1633,8 +1707,11 @@ struct ComposeRequest: Identifiable {
         activeAccountId = id
         // A label belongs to one account: switching to another leaves it
         // for that account's Inbox, as Gmail does.
-        let next = viewAfterUnifiedSetting(SidebarScope.view(selectedView, afterSwitchingTo: id))
+        let next = CategoryRows.view(
+            viewAfterUnifiedSetting(SidebarScope.view(selectedView, afterSwitchingTo: id)),
+            shown: categoryRowsShown)
         if next != selectedView { selectedView = next }
+        refreshCategoryChips()
         clearSelection()
         clearCheckedThreads()
         readStateKeepIds.removeAll()
@@ -1754,6 +1831,11 @@ struct ComposeRequest: Identifiable {
     /// action's bounded calls finish before the next bulk action's start.
     @ObservationIgnored
     var bulkRemoteTail: Task<Void, Never>?
+    /// Snooze dates a "Move to inbox" ended, by thread id, until Gmail
+    /// takes the move: a refusal re-derives the row from its messages, and
+    /// the date (local only) is put back (`InboxMove.restoreSnoozeAfterRefusal`).
+    @ObservationIgnored
+    var endedSnoozes = InboxMove.EndedSnoozes()
     /// Rapid triage reconciles once after the user pauses instead of launching
     /// a full list/count query for every key press.
     @ObservationIgnored
@@ -1887,7 +1969,7 @@ struct ComposeRequest: Identifiable {
         threads.removeAll { t in
             guard toDrop.contains(t.id) else { return false }
             return StarStickiness.leavesDueToCategoryHide(
-                hide: hide,
+                hide: CategoryRows.hide(hide, account: t.accountId, off: categoryRowsOff),
                 inPromotions: t.inPromotions,
                 inSocial: t.inSocial,
                 labelIds: t.labelIds,
@@ -2857,6 +2939,13 @@ struct ComposeRequest: Identifiable {
         if nextAccounts != accounts {
             accounts = nextAccounts
         }
+        let nextOff = CategoryRows.off(accounts: nextAccounts.map(\.id))
+        if nextOff != categoryRowsOff {
+            categoryRowsOff = nextOff
+            // At launch (init) there is nothing on screen to reload yet.
+            if categoryRowsApplied { categoryScopeChanged() } else { refreshCategoryChips() }
+        }
+        categoryRowsApplied = true
         if Set(nextAccounts.map(\.id)) != loadedPhotoAccountIds {
             loadedPhotoAccountIds = Set(nextAccounts.map(\.id))
             scheduleAccountPhotoLoad()
@@ -2874,7 +2963,11 @@ struct ComposeRequest: Identifiable {
         // takes the scope the unified view would have had.
         let scopeBefore = activeAccountId
         enforceUnifiedScope(reload: false)
-        if activeAccountId != scopeBefore { reloadThreadsDebounced() }
+        if activeAccountId != scopeBefore {
+            // The scope moved to one account: its category setting applies.
+            refreshCategoryChips()
+            reloadThreadsDebounced()
+        }
     }
 
     func reloadSavedViews() {
@@ -2946,6 +3039,7 @@ struct ComposeRequest: Identifiable {
         let search = committedSearch.trimmingCharacters(in: .whitespaces)
         let chips = chips
         let activeAccount = activeAccountId
+        let categoryOff = categoryRowsOff
         if !readStateFilterActive { readStateKeepIds.removeAll() }
         if !starStateFilterActive { starStateKeepIds.removeAll() }
         let keepIds = Array(readStateKeepIds)
@@ -3036,8 +3130,11 @@ struct ComposeRequest: Identifiable {
                             // Widen from inbox-only before layering the other chips.
                             q = MailStore.widen(q, for: view, archived: chips.showArchived, sent: chips.showSent)
                         }
-                        q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds)
+                        q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds,
+                                                 categoryRowsOff: categoryOff)
                         if let activeAccount { q = q.filter(Column("accountId") == activeAccount) }
+                        q = CategoryRows.restrict(q, view: view, activeAccount: activeAccount,
+                                                  off: categoryOff)
                         let inbound = MailStore.usesInboundSort(for: view)
                         inboundSort = inbound
                         listRequest = q
@@ -3060,6 +3157,7 @@ struct ComposeRequest: Identifiable {
                    let candReq = PriorityCandidates.request(
                        base, mode: priorityMode,
                        hiddenCategories: priorityHiddenCategories,
+                       categoryRowsOff: categoryOff,
                        newerThan: PrioritySplit.cutoff(days: priorityWindowDays),
                        maxCount: priorityMaxCount,
                        inboundSort: inboundSort) {
@@ -3084,9 +3182,10 @@ struct ComposeRequest: Identifiable {
                     () throws -> (counts: [String: Int], badge: Int, accountUnread: [String: Int]) in
                     let sidebar = try MailStore.fetchSidebarCounts(
                         db: db, activeAccount: activeAccount, badgeAccount: badgeAccount,
-                        hideCategories: inboxHideCategories)
+                        hideCategories: inboxHideCategories, categoryRowsOff: categoryOff)
                     let perAccount = try SidebarCounts.fetchUnreadByAccount(
-                        db: db, hideCategories: inboxHideCategories)
+                        db: db, hideCategories: inboxHideCategories,
+                        categoryRowsOff: categoryOff)
                     return (sidebar.counts, sidebar.badge, perAccount)
                 }
                 let (counts, badge, accountUnread) = fetched
@@ -3239,6 +3338,7 @@ struct ComposeRequest: Identifiable {
         let view = selectedView
         let chips = chips
         let activeAccount = activeAccountId
+        let categoryOff = categoryRowsOff
         let keepIds = Array(readStateKeepIds)
         let starKeepIds = Array(starStateKeepIds)
         let savedViewsSnapshot = savedViews
@@ -3261,8 +3361,11 @@ struct ComposeRequest: Identifiable {
                     if chips.showArchived || chips.showSent {
                         q = MailStore.widen(q, for: view, archived: chips.showArchived, sent: chips.showSent)
                     }
-                    q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds)
+                    q = MailStore.applyChips(q, chips, keepIds: keepIds, starKeepIds: starKeepIds,
+                                             categoryRowsOff: categoryOff)
                     if let activeAccount { q = q.filter(Column("accountId") == activeAccount) }
+                    q = CategoryRows.restrict(q, view: view, activeAccount: activeAccount,
+                                              off: categoryOff)
                     let inbound = MailStore.usesInboundSort(for: view)
                     q = q.filter(sql: ThreadListPaging.olderThanSQL(inboundSort: inbound),
                                  arguments: [cursor.sortDate, cursor.sortDate, cursor.id])
@@ -3400,34 +3503,15 @@ struct ComposeRequest: Identifiable {
     // nonisolated: pure query builder — safe to call from DatabasePool.read.
     nonisolated static func applyChips(_ query: QueryInterfaceRequest<MailThread>, _ chips: FilterChips,
                            keepIds: [String] = [],
-                           starKeepIds: [String] = []) -> QueryInterfaceRequest<MailThread> {
+                           starKeepIds: [String] = [],
+                           categoryRowsOff: Set<String> = []) -> QueryInterfaceRequest<MailThread> {
         var q = query
         // Category-tab hide; starred (+ sticky keep) pins through (see CategoryHide).
-        q = CategoryHide.apply(q, hide: chips.category.hide, keepIds: starKeepIds)
-        if !chips.category.show.isEmpty {
-            // Contains any of the selected categories. Denorm for promo/social;
-            // labelIds LIKE for Updates/Forums (no denorm columns yet).
-            // Spam is never a category tab — keep SPAM out of promo/social chips.
-            var parts: [String] = []
-            var args: [any DatabaseValueConvertible] = []
-            var needsNotSpam = false
-            for cat in chips.category.show {
-                switch cat {
-                case "CATEGORY_PROMOTIONS":
-                    parts.append("inPromotions = 1")
-                    needsNotSpam = true
-                case "CATEGORY_SOCIAL":
-                    parts.append("inSocial = 1")
-                    needsNotSpam = true
-                default:
-                    parts.append("labelIds LIKE ?")
-                    args.append("%\(cat)%")
-                }
-            }
-            q = q.filter(sql: parts.joined(separator: " OR "),
-                         arguments: StatementArguments(args))
-            if needsNotSpam { q = q.filter(Column("inSpam") == false) }
-        }
+        // Accounts with "Show Promotions and Social" off are exempt from the
+        // two categories, hide and show alike.
+        q = CategoryHide.apply(q, hide: chips.category.hide, keepIds: starKeepIds,
+                               exemptAccounts: categoryRowsOff)
+        q = CategoryHide.applyShow(q, show: chips.category.show, exemptAccounts: categoryRowsOff)
         if chips.unreadOnly { q = q.filter(Column("isUnread") == true || keepIds.contains(Column("id"))) }
         if chips.readOnly { q = q.filter(Column("isUnread") == false || keepIds.contains(Column("id"))) }
         if let labelId = chips.labelId {
@@ -3689,6 +3773,7 @@ struct ComposeRequest: Identifiable {
         let badgeTicket = dockBadgeTicket(account: badgeAccount)
         let accountUnreadEpoch = self.accountUnreadEpoch
         let hideCategories = inboxBadgeHideCategories
+        let categoryOff = categoryRowsOff
         // Off-main: the aggregate is ~8 COUNTs, and on SQLCipher every page
         // miss is an AES decrypt + HMAC. Kept as separate per-predicate
         // COUNTs in one read (not a single SUM(CASE…)) so each still hits its
@@ -3704,8 +3789,10 @@ struct ComposeRequest: Identifiable {
             guard let read = try? await pool.read({ db in
                 (try MailStore.fetchSidebarCounts(db: db, activeAccount: activeAccount,
                                                   badgeAccount: badgeAccount,
-                                                  hideCategories: hideCategories),
-                 try SidebarCounts.fetchUnreadByAccount(db: db, hideCategories: hideCategories))
+                                                  hideCategories: hideCategories,
+                                                  categoryRowsOff: categoryOff),
+                 try SidebarCounts.fetchUnreadByAccount(db: db, hideCategories: hideCategories,
+                                                        categoryRowsOff: categoryOff))
             }) else { return }
             let result = read.0
             guard let self, !self.isShuttingDown,
@@ -3809,11 +3896,13 @@ struct ComposeRequest: Identifiable {
         activeAccount: String?,
         badgeAccount: String?,
         now: Date = Date(),
-        hideCategories: Set<String> = []
+        hideCategories: Set<String> = [],
+        categoryRowsOff: Set<String> = []
     ) throws -> (counts: [String: Int], badge: Int) {
         try SidebarCounts.fetch(db: db, activeAccount: activeAccount,
                                 badgeAccount: badgeAccount, now: now,
-                                hideCategories: hideCategories)
+                                hideCategories: hideCategories,
+                                categoryRowsOff: categoryRowsOff)
     }
 
     /// Inbox category hide used for the Inbox unread / dock badge.
@@ -3822,7 +3911,11 @@ struct ComposeRequest: Identifiable {
     var inboxBadgeHideCategories: Set<String> {
         switch selectedView {
         case .inbox, .account:
-            return chips.category.hide
+            // The pick as stored, closed categories included: each account
+            // applies it (or not) by its own setting (`CategoryRows.hide`).
+            return CategoryRows.restoring(
+                chips.category, from: FilterChips.savedCategory(for: selectedView),
+                shown: categoryRowsShown).hide
         default:
             return FilterChips.initial(for: .inbox).category.hide
         }
@@ -3867,6 +3960,26 @@ struct ComposeRequest: Identifiable {
             revision: revision, current: contentRevisions.revision(of: threadId),
             suppressing: suppressed)
         return load
+    }
+
+    /// The deleted messages of a live conversation, for "View" in the
+    /// reading pane only. Read from the local rows each time (no request,
+    /// nothing marked read) and kept out of the repository cache and the
+    /// mirror, so no other reader of a payload (quoting, summary, export,
+    /// MCP) ever gets them. Empty for a row opened from the Trash view.
+    func deletedMessagesForReadingPane(threadId: String) async -> DeletedMessagesLoad {
+        guard !opensTrashReader(threadId: threadId) else { return .empty }
+        let pool = db
+        let fontScale = Self.readingPaneFontScale()
+        guard let loaded = try? await pool.read({ db in
+            try DeletedMessagesInConversation.load(db, threadId: threadId)
+        }) else { return .empty }
+        let messages = loaded.messages
+        let prep = await Task.detached(priority: .userInitiated) {
+            ThreadDetailRepository.buildBodyPrep(messages: messages, fontScale: fontScale)
+        }.value
+        return DeletedMessagesLoad(messages: messages, attachmentsByMessageId: loaded.attachments,
+                                   bodyPrepByMessageId: prep)
     }
 
     /// Payloads the repository already produced, held on the main actor.
@@ -4237,6 +4350,7 @@ struct ComposeRequest: Identifiable {
         case .markImportant: setImportantTargets(true)
         case .markNotImportant: setImportantTargets(false)
         case .moveTo: openMovePicker()
+        case .moveToInbox: moveToInboxTargets()
         case .open, .backToList, .archiveNext, .archivePrevious,
              .nextMessage, .previousMessage, .expandAll, .collapseAll:
             viewCommandHandler?(command)
@@ -4280,18 +4394,33 @@ struct ComposeRequest: Identifiable {
     /// which label is highlighted. Matching is per whitespace token, using
     /// locale-aware case/diacritic-insensitive comparison.
     func labelPickerLabels(for thread: MailThread) -> [LabelRow] {
-        userLabels(forAccount: thread.accountId)
+        let labels = userLabels(forAccount: thread.accountId)
             .filter { LabelSearch.matches($0.name, query: labelPicker.query) }
+        let moveMode = labelPicker.mode == .move
+        let moveTargets = moveMode
+            ? labelPicker.moveTargetIds.compactMap { id in threads.first { $0.id == id } } : []
+        switch LabelPickerInboxRow.placement(
+            moveMode: moveMode, thread: thread, moveTargets: moveTargets, query: labelPicker.query) {
+        case .first: return [Self.inboxPickerRow(thread.accountId)] + labels
+        case .last: return labels + [Self.inboxPickerRow(thread.accountId)]
+        case nil: return labels
+        }
+    }
+
+    /// The picker's Inbox row (`LabelPickerInboxRow`): not a stored label.
+    static func inboxPickerRow(_ accountId: String) -> LabelRow {
+        LabelRow(id: "\(accountId):\(ConversationAction.inboxLabel)", accountId: accountId,
+                 gmailLabelId: ConversationAction.inboxLabel,
+                 name: LabelPickerInboxRow.name, type: "system", color: nil)
     }
 
     /// The "Create <query>" row's label name: the trimmed query, when it
-    /// wouldn't duplicate an existing label on the thread's account.
+    /// wouldn't duplicate an existing label on the thread's account and is
+    /// not a name Gmail reserves (`LabelPickerInboxRow.createName`).
     func labelPickerCreateName(for thread: MailThread) -> String? {
-        let name = labelPicker.query.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return nil }
-        let exists = userLabels(forAccount: thread.accountId)
-            .contains { $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
-        return exists ? nil : name
+        LabelPickerInboxRow.createName(
+            query: labelPicker.query,
+            existing: userLabels(forAccount: thread.accountId).map(\.name))
     }
 
     /// Creates the label on the thread's account, then applies it. The new
