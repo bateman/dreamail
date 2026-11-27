@@ -97,20 +97,27 @@ final class SettingsWindowUITests: XCTestCase {
             .min()
     }
 
-    /// "Add view" sits below the fold: scroll to it, read its text height,
-    /// scroll back to the top.
+    /// "Add view" is the last row of the sidebar: scroll to the end (the
+    /// scroll clamps there, it cannot overshoot, and the row is then fully in
+    /// view whatever the window's height), read its text height once it holds
+    /// still, scroll back to the top.
+    ///
+    /// Not "scroll only while there is no frame": a row at the viewport's edge
+    /// reports a frame and, 0.2 s later, none (CI run 45999668426: no scroll,
+    /// then nil), so a first non-nil read proves nothing.
     private func addViewHeight(_ app: XCUIApplication) -> CGFloat? {
         let sidebar = app.outlines.firstMatch
-        var tries = 0
-        while titleHeight("Add view", in: app) == nil, tries < 15 {
-            sidebar.scroll(byDeltaX: 0, deltaY: -300)
-            tries += 1
+        for _ in 0..<4 { sidebar.scroll(byDeltaX: 0, deltaY: -300) }
+        // The same height on three reads in a row.
+        var last: CGFloat?, same = 0
+        _ = waitUntil(timeout: 10) {
+            let now = self.titleHeight("Add view", in: app)
+            same = (now != nil && now == last) ? same + 1 : 0
+            last = now
+            return same >= 2
         }
-        // The row can come into view after the last read: wait until its
-        // title has a frame, which is what is read below.
-        _ = waitUntil { self.titleHeight("Add view", in: app) != nil }
-        let height = titleHeight("Add view", in: app)
-        tries = 0
+        let height = same >= 2 ? last : nil
+        var tries = 0
         while !element("sidebar.inbox", in: app).isHittable, tries < 15 {
             sidebar.scroll(byDeltaX: 0, deltaY: 300)
             tries += 1
