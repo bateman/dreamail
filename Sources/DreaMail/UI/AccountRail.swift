@@ -226,15 +226,24 @@ struct AccountRailTopBand: View {
             let top = proxy.safeAreaInsets.top
             // Always the rail colour. Sidebar collapsed, in light, the content's top
             // bar is white against the rail's grey, which cut the sidebar
-            // toggle in half; there the band spans the whole window instead,
-            // so no seam crosses the toggle, the view icon or the title. Dark
-            // keeps its short band: the content colour is nearly the rail's.
-            AccountRailPalette.background
-                .frame(width: spansWindow ? proxy.size.width : width, height: top)
-                .offset(y: -top)
-                // Only the UI test looks the band up, by frame.
-                .accessibilityElement(children: .ignore)
-                .accessibilityIdentifier("accountRail.topBand")
+            // toggle in half; there the colour also runs under the rest of the
+            // title-bar row, so no seam crosses the toggle, the view icon or
+            // the title. Dark keeps its short band: the content colour is
+            // nearly the rail's. The band itself (the element the UI tests
+            // measure) keeps its `bandWidth`; the rest is a separate fill.
+            ZStack(alignment: .topLeading) {
+                if spansWindow {
+                    AccountRailPalette.background
+                        .frame(width: proxy.size.width, height: top)
+                        .accessibilityHidden(true)
+                }
+                AccountRailPalette.background
+                    .frame(width: width, height: top)
+                    // Only the UI test looks the band up, by frame.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityIdentifier("accountRail.topBand")
+            }
+            .offset(y: -top)
         }
         .allowsHitTesting(false)
     }
