@@ -206,6 +206,8 @@ final class ListSearchFieldUITests: XCTestCase {
         // remains: the window's toggle.
         if show.firstMatch.exists { show.firstMatch.click() }
         XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5))
+        // The layout was rebuilt by the toggles: wait for the row again.
+        XCTAssertTrue(t3.waitForExistence(timeout: 10), "the list is back after the toggles")
         t3.click()
         XCTAssertTrue(element(app, "threadSubject").waitForExistence(timeout: 5), "a conversation is open")
         XCTAssertTrue(hide.firstMatch.waitForExistence(timeout: 5))
