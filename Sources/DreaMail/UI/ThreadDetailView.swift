@@ -69,7 +69,7 @@ struct ThreadDetailView: View {
         // Every mutation (assign, subscript write, animated merge) lands here,
         // so the draft/sent split below can never go stale.
         didSet {
-            messageRoles = ThreadMessageRoles(messages: messages)
+            messageRoles = ThreadMessageRoles(messages: messages, threadUnread: thread.isUnread)
             toolbarModel.publish(threadId: thread.id, messages: messages)
             summaryFingerprint = ThreadSummaryPolicy.fingerprint(subject: thread.subject, messages: messages)
             summaryEligible = ThreadSummaryPolicy.isWorthSummarizing(messages)
@@ -179,6 +179,9 @@ struct ThreadDetailView: View {
     @State private var blockTarget: BlockTarget?
     /// Message ids we already tried to backfill List-Unsubscribe for.
     @State private var unsubscribeRefreshAttempted: Set<String> = []
+    /// "Mark unread from here" during the read-on-open dwell: the dwell
+    /// must not mark the conversation read again.
+    @State private var markedUnreadSinceOpen = false
 
     /// `.id(thread.id)` remounts this view for every conversation, so `@State`
     /// starts empty and `.task` cannot run until *after* the first body
@@ -202,7 +205,8 @@ struct ThreadDetailView: View {
         self.onReply = onReply
         guard let initialPayload else { return }
         _messages = State(initialValue: initialPayload.messages)
-        let initialRoles = ThreadMessageRoles(messages: initialPayload.messages)
+        let initialRoles = ThreadMessageRoles(messages: initialPayload.messages,
+                                             threadUnread: thread.isUnread)
         _messageRoles = State(initialValue: initialRoles)
         // Open the default card set in the first frame too. Without it the
         // seeded conversation painted every card collapsed — a one-message
@@ -212,7 +216,8 @@ struct ThreadDetailView: View {
             initialValue: MessageExpandPolicy.initialExpandedIds(
                 policy: splitMode ? .multiple : .single,
                 nonDraftIds: initialRoles.nonDraftIds,
-                lastNonDraftId: initialRoles.lastNonDraftId))
+                lastNonDraftId: initialRoles.lastNonDraftId,
+                openIds: initialRoles.openExpandedIds))
         _summaryFingerprint = State(initialValue: ThreadSummaryPolicy.fingerprint(
             subject: thread.subject, messages: initialPayload.messages))
         _summaryEligible = State(initialValue: ThreadSummaryPolicy.isWorthSummarizing(initialPayload.messages))
@@ -226,10 +231,10 @@ struct ThreadDetailView: View {
         _scrollAnchor = State(
             initialValue: ThreadScrollAnchor(
                 id: ThreadRefresh.initialScrolledMessageId(
-                    in: initialPayload.messages)))
+                    in: initialPayload.messages, threadUnread: thread.isUnread)))
         _bodyLoadAttempted = State(
             initialValue: Set(ThreadRefresh.initialBodyLoadSeedIds(
-                in: initialPayload.messages)))
+                in: initialPayload.messages, threadUnread: thread.isUnread)))
     }
 
     /// Space below each block above the messages (subject, chips, summary,
@@ -370,7 +375,9 @@ struct ThreadDetailView: View {
                                 }
                             } else {
                                 messageCard(for: message,
-                                            lastNonDraftId: messageRoles.lastNonDraftId)
+                                            lastNonDraftId: messageRoles.lastNonDraftId,
+                                            scrollTargetId: messageRoles.scrollTargetId,
+                                            starredTargetId: messageRoles.starredTargetId)
                                     .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
                                     .id(message.id)
                                     .background { pinnedHeightReader(id: message.id, proxy: proxy) }
@@ -423,6 +430,7 @@ struct ThreadDetailView: View {
                 unsubscribeTarget = nil
                 blockTarget = nil
                 unsubscribeRefreshAttempted = []
+                markedUnreadSinceOpen = false
                 // Cancel any in-flight neighbor paints from the previous open.
                 HTMLBodyNeighborPrerender.cancel()
                 // Did `init` already seed from the mirror? When this is 1 the
@@ -475,7 +483,8 @@ struct ThreadDetailView: View {
                 guard MarkReadOnOpen.shouldMarkRead(
                     selectedId: store.selectedThreadId,
                     threadId: thread.id,
-                    liveIsUnread: liveThread?.isUnread),
+                    liveIsUnread: liveThread?.isUnread,
+                    userMarkedUnread: markedUnreadSinceOpen),
                       let liveThread else { return }
                 store.setRead(liveThread, read: true)
             }
@@ -654,9 +663,10 @@ struct ThreadDetailView: View {
 
     /// Split out of `body`: the full MessageCard initializer inside the
     /// thread ForEach is too much for the type checker in one expression.
-    private func messageCard(for message: Message, lastNonDraftId: String?) -> some View {
+    private func messageCard(for message: Message, lastNonDraftId: String?,
+                             scrollTargetId: String?, starredTargetId: String?) -> some View {
         MessageCard(message: message,
-                    isLast: message.id == lastNonDraftId,
+                    isLast: message.id == scrollTargetId,
                     attachments: attachmentsByMessageId[message.id] ?? [],
                     bodyPrep: bodyPrepByMessageId[message.id],
                     cidInlinedHTML: cidInlinedHTMLById[message.id],
@@ -671,7 +681,8 @@ struct ThreadDetailView: View {
                         id: message.id,
                         policy: messageExpandPolicy,
                         expanded: expandedMessageIds,
-                        lastNonDraftId: lastNonDraftId)
+                        lastNonDraftId: lastNonDraftId,
+                        scrollTargetId: starredTargetId)
                         ? paneViewportHeight : nil,
                     loadImagesForThread: $loadRemoteImagesForThread,
                     threadInSpam: thread.inSpam,
@@ -688,6 +699,10 @@ struct ThreadDetailView: View {
                     onUnsubscribe: { unsubscribeTarget = message },
                     onNeedUnsubscribeHeaders: {
                         Task { await refreshUnsubscribeHeaders(message) }
+                    },
+                    onMarkUnreadFromHere: {
+                        markedUnreadSinceOpen = true
+                        store.markUnreadFromHere(message, shown: messages)
                     })
     }
 
@@ -981,9 +996,9 @@ struct ThreadDetailView: View {
             backfillUnsubscribeHeaders()
             if wasEmpty {
                 bodyLoadAttempted.formUnion(
-                    ThreadRefresh.initialBodyLoadSeedIds(in: merged))
+                    ThreadRefresh.initialBodyLoadSeedIds(in: merged, threadUnread: thread.isUnread))
                 applyScrollAnchor(
-                    ThreadRefresh.initialScrolledMessageId(in: merged),
+                    ThreadRefresh.initialScrolledMessageId(in: merged, threadUnread: thread.isUnread),
                     proxy: proxy)
                 // First population via refresh (initial .task was superseded):
                 // open the policy default set, same as applyDetailPayload.
@@ -1070,7 +1085,8 @@ struct ThreadDetailView: View {
             current: expandedMessageIds,
             policy: messageExpandPolicy,
             nonDraftIds: messageRoles.nonDraftIds,
-            lastNonDraftId: messageRoles.lastNonDraftId)
+            lastNonDraftId: messageRoles.lastNonDraftId,
+            openIds: messageRoles.openExpandedIds)
         for id in expandedMessageIds {
             loadBodyIfNeeded(id: id)
         }
@@ -1393,7 +1409,7 @@ struct ThreadDetailView: View {
         let loaded = payload.messages
         // Newest sent + draft cards arrive hydrated; seed so we don't
         // re-query. Shared with refreshMessages' empty→full path.
-        bodyLoadAttempted.formUnion(ThreadRefresh.initialBodyLoadSeedIds(in: loaded))
+        bodyLoadAttempted.formUnion(ThreadRefresh.initialBodyLoadSeedIds(in: loaded, threadUnread: thread.isUnread))
         messages = loaded
         attachmentsByMessageId = payload.attachmentsByMessageId
         bodyPrepByMessageId = payload.bodyPrepByMessageId
@@ -1421,7 +1437,7 @@ struct ThreadDetailView: View {
         // Anchor on newest sent when multi-message; draft-only falls back to
         // the last row so a pure-draft pane still positions.
         applyScrollAnchor(
-            ThreadRefresh.initialScrolledMessageId(in: messages),
+            ThreadRefresh.initialScrolledMessageId(in: messages, threadUnread: thread.isUnread),
             proxy: proxy)
         if inlineComposeActive {
             beginInlineComposeScroll(proxy: proxy)
@@ -2076,6 +2092,21 @@ struct MessageCard: View {
     let onUnsubscribe: () -> Void
     /// Parent fills List-Unsubscribe on pre-v37 rows (nil).
     let onNeedUnsubscribeHeaders: () -> Void
+    /// "Mark unread from here": the parent knows the later messages.
+    let onMarkUnreadFromHere: () -> Void
+    /// The sheet a "More" item opened: the filter editor ("Filter messages
+    /// like this", from this sender) or "Show original".
+    private enum MenuSheet: Identifiable {
+        case filter(GmailFilterEditTarget)
+        case original
+        var id: String {
+            switch self {
+            case .filter(let target): return target.id.uuidString
+            case .original: return "original"
+            }
+        }
+    }
+    @State private var menuSheet: MenuSheet?
     // Full FROM/TO/CC rows ("Show more"); compact by default.
     @State private var recipientsExpanded = false
     /// Last height the HTML body reported for this card; nil until the
@@ -2183,7 +2214,8 @@ struct MessageCard: View {
          onRemoteImagesDecision: @escaping (Bool, Bool) -> Void = { _, _ in },
          onBodySettled: @escaping () -> Void = {},
          onUnsubscribe: @escaping () -> Void = {},
-         onNeedUnsubscribeHeaders: @escaping () -> Void = {}) {
+         onNeedUnsubscribeHeaders: @escaping () -> Void = {},
+         onMarkUnreadFromHere: @escaping () -> Void = {}) {
         self.message = message
         self.isLast = isLast
         self.attachments = attachments
@@ -2207,6 +2239,7 @@ struct MessageCard: View {
         self.onBodySettled = onBodySettled
         self.onUnsubscribe = onUnsubscribe
         self.onNeedUnsubscribeHeaders = onNeedUnsubscribeHeaders
+        self.onMarkUnreadFromHere = onMarkUnreadFromHere
         let hasBody = !ThreadDetailView.needsBodyLoad(message)
         // CID-inlined HTML already embeds image bytes; prefer its prep over
         // the repository prep (which still has unresolved `cid:`). The parent
@@ -2357,9 +2390,11 @@ struct MessageCard: View {
     /// The name line's date: full, absolute or compact by the row's width
     /// (`MessageRowDateStyle`). Absolute until the row has been measured.
     private func dateText(now: Date) -> String {
+        // An open message's controls share the line with the date.
+        let controls = expanded && !inTrash ? metrics.headerControlsWidth(count: headerControlCount) : 0
         let style = rowWidth.map {
             MessageRowDateStyle.forTextColumn(
-                width: metrics.textColumnWidth(rowWidth: $0), fontScale: fontScale)
+                width: metrics.textColumnWidth(rowWidth: $0) - controls, fontScale: fontScale)
         } ?? .absolute
         return MessageRowDate.text(message.date, style: style, now: now)
     }
@@ -2393,9 +2428,10 @@ struct MessageCard: View {
     }
 
     /// Avatar, then the name line (bold sender, date on the right) and one
-    /// line below it: the snippet when collapsed, the recipients and the
-    /// message's actions when open. The name line is the same view in both
-    /// states, so opening a message does not move its header.
+    /// line below it: the snippet when collapsed, the recipients when open.
+    /// An open message has its controls after the date (`headerControls`).
+    /// The name line is the same view in both states, so opening a message
+    /// does not move its header.
     private var header: some View {
         HStack(alignment: .top, spacing: metrics.avatarGap) {
             senderAvatar
@@ -2428,15 +2464,26 @@ struct MessageCard: View {
                             .fixedSize()
                             .accessibilityIdentifier("messageInTrashTag")
                     }
-                    // Redrawn every minute so "(12 hours ago)" stays true.
-                    TimelineView(.everyMinute) { context in
-                        Text(dateText(now: context.date))
-                            .font(.system(size: metrics.dateFontSize).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .help(message.date.formatted(date: .complete, time: .shortened))
+                    if expanded, isCollapsible {
+                        // An open message collapses from a real button (the
+                        // date), so Full Keyboard Access and VoiceOver reach
+                        // it; a click elsewhere on the header does the same.
+                        Button {
+                            toggleExpanded()
+                        } label: {
+                            headerDate
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Collapse")
+                        .accessibilityIdentifier("messageHeaderDate")
+                    } else {
+                        headerDate
                             .accessibilityIdentifier("messageHeaderDate")
+                    }
+                    // A deleted message shown through "View" has Restore as
+                    // its only action (#107): no star, reply or "More".
+                    if expanded, !inTrash {
+                        headerControls
                     }
                 }
                 if expanded {
@@ -2583,48 +2630,147 @@ struct MessageCard: View {
                 .fixedSize()
                 .help("Move this message out of the Trash, back to this conversation")
                 .accessibilityIdentifier("messageActionRestore")
-            } else {
+            }
+        }
+    }
+
+    /// The name line's date, redrawn every minute so "(12 hours ago)"
+    /// stays true.
+    private var headerDate: some View {
+        TimelineView(.everyMinute) { context in
+            Text(dateText(now: context.date))
+                .font(.system(size: metrics.dateFontSize).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+                .help(message.date.formatted(date: .complete, time: .shortened))
+        }
+    }
+
+    private var canReplyAll: Bool {
+        ReplyComposer.hasAdditionalReplyAllRecipients(message, ownAddresses: store.ownEmailAddresses)
+    }
+
+    private var isStarred: Bool { MessageActions.isStarred(message) }
+
+    /// Star (not on a draft), reply, reply all (when it differs from
+    /// reply, as in Gmail) and "More".
+    private var headerControlCount: Int {
+        (TrashedMessages.isDraft(message) ? 0 : 1) + 1 + (canReplyAll ? 1 : 0) + 1
+    }
+
+    /// After the open message's date, as in Gmail on the web: star, reply,
+    /// reply all, then "More" (⋮). Fixed width: the sender's name is the
+    /// line's only flexible child and gives way first.
+    private var headerControls: some View {
+        HStack(spacing: metrics.headerControlSpacing) {
+            if !TrashedMessages.isDraft(message) {
                 Button {
+                    store.toggleMessageStar(message)
+                } label: {
+                    Image(systemName: isStarred ? "star.fill" : "star")
+                        .foregroundStyle(isStarred ? Color.yellow : Color.secondary)
+                        .frame(width: metrics.headerControlSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isStarred ? "Starred" : "Not starred")
+                .accessibilityLabel(isStarred ? "Unstar this message" : "Star this message")
+                .accessibilityIdentifier("messageHeaderStar")
+            }
+            Button {
+                store.openCompose(.init(replyTo: message))
+            } label: {
+                Image(systemName: "arrowshape.turn.up.left")
+                    .frame(width: metrics.headerControlSize)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
+            .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
+            .accessibilityLabel("Reply")
+            .accessibilityIdentifier("messageHeaderReply")
+            if canReplyAll {
+                Button {
+                    store.openCompose(.init(replyTo: message, replyAll: true))
+                } label: {
+                    Image(systemName: "arrowshape.turn.up.left.2")
+                        .frame(width: metrics.headerControlSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
+                .accessibilityLabel("Reply all")
+                .accessibilityIdentifier("messageHeaderReplyAll")
+            }
+            Menu {
+                moreMenuItems
+            } label: {
+                Image(systemName: "ellipsis")
+                    .rotationEffect(.degrees(90))
+                    .frame(width: metrics.headerControlSize)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .foregroundStyle(.secondary)
+            .frame(width: metrics.headerControlSize)
+            .help("More")
+            .accessibilityLabel("More")
+            .accessibilityIdentifier("messageHeaderMore")
+        }
+        .font(.system(size: 13 * fontScale))
+        .fixedSize()
+    }
+
+    private var menuContext: MessageActions.Context {
+        let email = MessageParser.emailAddress(message.fromHeader)
+        return MessageActions.Context(
+            canReplyAll: canReplyAll,
+            fromSelf: store.ownEmailAddresses.contains(email.lowercased()),
+            senderBlocked: store.isBlocked(email),
+            threadInSpam: threadInSpam,
+            isTrashed: TrashedMessages.isTrashed(message))
+    }
+
+    /// Gmail web's per-message menu, in its order (`MessageActions`).
+    @ViewBuilder
+    private var moreMenuItems: some View {
+        let email = MessageParser.emailAddress(message.fromHeader)
+        ForEach(MessageActions.menuItems(menuContext), id: \.self) { item in
+            Button(MessageActions.title(item, senderName: senderName),
+                   role: item == .deleteMessage || item == .blockSender ? .destructive : nil) {
+                switch item {
+                case .reply:
                     store.openCompose(.init(replyTo: message))
-                } label: {
-                    Image(systemName: "arrowshape.turn.up.left")
-                        .font(.system(size: 12 * fontScale))
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
-                .accessibilityLabel("Reply")
-                if ReplyComposer.hasAdditionalReplyAllRecipients(
-                    message, ownAddresses: store.ownEmailAddresses) {
-                    Button {
-                        store.openCompose(.init(replyTo: message, replyAll: true))
-                    } label: {
-                        Image(systemName: "arrowshape.turn.up.left.2")
-                            .font(.system(size: 12 * fontScale))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
-                    .accessibilityLabel("Reply all")
-                }
-                Button {
+                case .replyAll:
+                    store.openCompose(.init(replyTo: message, replyAll: true))
+                case .forward:
                     store.openCompose(.init(replyTo: message, forward: true))
-                } label: {
-                    Image(systemName: "arrowshape.turn.up.right")
-                        .font(.system(size: 12 * fontScale))
+                case .filterLikeThis:
+                    var draft = GmailFilterDraft()
+                    draft.from = MessageActions.filterFromAddress(message.fromHeader)
+                    menuSheet = .filter(GmailFilterEditTarget(
+                        accountId: message.accountId, original: nil, prefill: draft))
+                case .deleteMessage:
+                    store.trashMessage(message)
+                case .blockSender:
+                    onBlockSender(email)
+                case .unblockSender:
+                    store.unblockSender(email)
+                case .reportSpam:
+                    store.reportSpam(message, spam: true)
+                case .reportNotSpam:
+                    store.reportSpam(message, spam: false)
+                case .showOriginal:
+                    menuSheet = .original
+                case .downloadMessage:
+                    store.downloadMessage(message)
+                case .markUnreadFromHere:
+                    onMarkUnreadFromHere()
                 }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help("Forward this message (\(store.keyBindings.displayKey(for: .forward))) · starts a new conversation")
-                .accessibilityLabel("Forward this message")
             }
-            if isCollapsible {
-                Button {
-                    toggleExpanded()
-                } label: {
-                    Image(systemName: "chevron.up")
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help("Collapse")
-                .accessibilityLabel("Collapse")
-            }
+            .accessibilityIdentifier("messageMenu.\(item)")
         }
     }
 
@@ -2661,6 +2807,12 @@ struct MessageCard: View {
             }
         }
         .coordinateSpace(.named(Self.cardSpace))
+        .sheet(item: $menuSheet) { sheet in
+            switch sheet {
+            case .filter(let target): GmailFilterEditorSheet(target: target)
+            case .original: OriginalMessageSheet(message: message)
+            }
+        }
         // A collapsed row is all header, and its header is a button.
         .onAppear {
             // Parent seeds the open set on payload apply. Cards that land

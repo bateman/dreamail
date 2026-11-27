@@ -12,7 +12,7 @@ enum ComposeEscIntent: Equatable {
     case dismissSlashPicker
     /// Close the command palette; keep compose and placement.
     case closeCommandPalette
-    /// Blur the sidebar search field and drop its results panel; keep the draft.
+    /// Blur the search field and drop its results panel; keep the draft.
     case dismissSearchFocus
     /// Leave side-by-side; draft stays open at the preferred placement.
     case exitSplit

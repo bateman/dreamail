@@ -70,9 +70,12 @@ enum ThreadRefresh {
 
     /// Initial reading-pane scroll id: newest sent when multi-message; nil for
     /// a single card (default top). Draft-only multi falls back to last row.
-    static func initialScrolledMessageId(in messages: [Message]) -> String? {
+    /// With starred messages, `ConversationOpenTarget`'s scroll target.
+    static func initialScrolledMessageId(in messages: [Message],
+                                         threadUnread: Bool = true) -> String? {
         guard messages.count > 1 else { return nil }
-        return ForwardComposer.newestSentMessage(in: messages)?.id
+        return ConversationOpenTarget.target(in: messages, threadUnread: threadUnread)?.scroll
+            ?? ForwardComposer.newestSentMessage(in: messages)?.id
             ?? messages.last?.id
     }
 
@@ -90,17 +93,42 @@ enum ThreadRefresh {
     }
 
     /// Message ids that arrive hydrated on open and must not re-trigger a body
-    /// fetch (newest sent + any draft cards).
-    static func initialBodyLoadSeedIds(in messages: [Message]) -> [String] {
-        var ids: [String] = []
-        if let sentId = ForwardComposer.newestSentMessage(in: messages)?.id {
-            ids.append(sentId)
+    /// fetch (newest sent, the cards a starred conversation opens on, and
+    /// any draft cards). `ThreadDetailRepository.fetchPayload` hydrates
+    /// exactly `hydratedOnOpen`.
+    static func initialBodyLoadSeedIds(in messages: [Message],
+                                       threadUnread: Bool = true) -> [String] {
+        // The newest sent as before; the starred conversation's other cards
+        // only when the payload did bring their body (the pane and the
+        // payload can read the thread's unread state at different times).
+        let newest = ForwardComposer.newestSentMessage(in: messages)?.id
+        let byId = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var ids = hydratedOnOpen(messages, threadUnread: threadUnread).filter { id in
+            guard id != newest else { return true }
+            guard let message = byId[id] else { return false }
+            return !needsBodyLoad(message)
         }
-        for draft in messages where ForwardComposer.isLiveDraft(draft.labelIds) {
+        for draft in messages where ForwardComposer.isLiveDraft(draft.labelIds)
+            && !ids.contains(draft.id) {
             ids.append(draft.id)
         }
         return ids
     }
+
+    /// Sent messages whose body the payload carries: the newest, and the
+    /// cards a starred conversation opens on.
+    static func hydratedOnOpen(_ messages: [Message], threadUnread: Bool = true) -> [String] {
+        var ids: [String] = []
+        if let sentId = ForwardComposer.newestSentMessage(in: messages)?.id {
+            ids.append(sentId)
+        }
+        for id in ConversationOpenTarget.target(in: messages, threadUnread: threadUnread)?.expanded ?? []
+            where !ids.contains(id) {
+            ids.append(id)
+        }
+        return ids
+    }
+
 }
 
 /// Draft vs sent split of an open thread's messages, computed once per
@@ -113,11 +141,20 @@ struct ThreadMessageRoles: Equatable {
     /// Everything else (sent mail + discarded DRAFT+TRASH rows), in display
     /// order — these render as `MessageCard`.
     let nonDraftIds: [String]
-    /// Newest message without a DRAFT label — the default expanded card.
+    /// Newest message without a DRAFT label.
     let lastNonDraftId: String?
+    /// The cards a conversation opens expanded on in the reading pane
+    /// (`ConversationOpenTarget`), else only `lastNonDraftId`.
+    let openExpandedIds: Set<String>
+    /// The card the pane opens scrolled to.
+    let scrollTargetId: String?
+    /// The same, only for a starred conversation (nil otherwise): the one
+    /// card that fills the pane while several are open.
+    let starredTargetId: String?
     private let liveDraftIdSet: Set<String>
 
-    init(messages: [Message]) {
+    /// `threadUnread`: the thread row's state (`ConversationOpenTarget`).
+    init(messages: [Message], threadUnread: Bool = true) {
         var live: [String] = []
         var nonDraft: [String] = []
         for message in messages {
@@ -131,6 +168,10 @@ struct ThreadMessageRoles: Equatable {
         nonDraftIds = nonDraft
         liveDraftIdSet = Set(live)
         lastNonDraftId = ForwardComposer.newestSentMessage(in: messages)?.id
+        let target = ConversationOpenTarget.target(in: messages, threadUnread: threadUnread)
+        starredTargetId = target?.scroll
+        openExpandedIds = target.map { Set($0.expanded) } ?? Set([lastNonDraftId].compactMap { $0 })
+        scrollTargetId = target?.scroll ?? lastNonDraftId
     }
 
     func isLiveDraft(_ id: String) -> Bool {

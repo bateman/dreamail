@@ -6,6 +6,8 @@ struct GmailFilterEditTarget: Identifiable {
     let id = UUID()
     let accountId: String
     let original: GFilter?
+    /// A new filter's criteria to start from ("Filter messages like this").
+    var prefill: GmailFilterDraft? = nil
 }
 
 /// Gmail Web's filter dialog: criteria, a live preview over local mail, then
@@ -32,7 +34,8 @@ struct GmailFilterEditorSheet: View {
 
     init(target: GmailFilterEditTarget) {
         self.target = target
-        _draft = State(initialValue: target.original.map(GmailFilterDraft.init) ?? GmailFilterDraft())
+        _draft = State(initialValue: target.original.map(GmailFilterDraft.init)
+            ?? target.prefill ?? GmailFilterDraft())
     }
 
     /// Compared as drafts: Gmail's label order and empty fields differ from

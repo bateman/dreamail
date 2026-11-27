@@ -36,6 +36,35 @@ final class MessageExpandPolicyTests: XCTestCase {
         XCTAssertEqual(policy.applyingExpand(id: "a", currently: next), ["a", "b"])
     }
 
+    /// A starred conversation opens several cards in the reading pane: a
+    /// click closes or opens only the card clicked.
+    func testSingleWithSeveralOpenTogglesOnlyTheClickedCard() {
+        let open: Set<String> = ["a", "c", "d"]
+        XCTAssertEqual(MessageExpandPolicy.single.applyingToggle(id: "d", currently: open), ["a", "c"])
+        XCTAssertEqual(MessageExpandPolicy.single.applyingToggle(id: "b", currently: open),
+                       ["a", "b", "c", "d"], "opening one does not close the others")
+        XCTAssertEqual(MessageExpandPolicy.single.applyingExpand(id: "b", currently: open),
+                       ["a", "b", "c", "d"])
+        // Back to one open card: the usual single behaviour.
+        XCTAssertEqual(MessageExpandPolicy.single.applyingToggle(id: "a", currently: ["a"]), [])
+        XCTAssertEqual(MessageExpandPolicy.single.applyingToggle(id: "b", currently: ["a"]), ["b"])
+        XCTAssertEqual(MessageExpandPolicy.single.applyingExpand(id: "b", currently: ["a"]), ["b"])
+    }
+
+    /// Without a starred message every open card fills the pane while it
+    /// loads, as before; with one, only the scroll target.
+    func testFillsPaneWithSeveralOpenCards() {
+        let open: Set<String> = ["m1", "m2"]
+        for id in open {
+            XCTAssertTrue(MessageExpandPolicy.fillsPane(
+                id: id, policy: .single, expanded: open, lastNonDraftId: "m2"), id)
+        }
+        XCTAssertTrue(MessageExpandPolicy.fillsPane(
+            id: "m1", policy: .single, expanded: open, lastNonDraftId: "m2", scrollTargetId: "m1"))
+        XCTAssertFalse(MessageExpandPolicy.fillsPane(
+            id: "m2", policy: .single, expanded: open, lastNonDraftId: "m2", scrollTargetId: "m1"))
+    }
+
     func testInitialExpandedIdsSingleUsesLastOnly() {
         let ids = MessageExpandPolicy.initialExpandedIds(
             policy: .single,

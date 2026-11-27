@@ -46,8 +46,8 @@ final class SidebarIconStripUITests: XCTestCase {
             stepClickingAnIconOpensTheView(app) }
         XCTContext.runActivity(named: "More shows and hides the icons under it") { _ in
             stepMoreShowsAndHidesItsIcons(app) }
-        XCTContext.runActivity(named: "Search expands the sidebar with the field focused") { _ in
-            stepSearchExpandsTheSidebarAndFocusesTheField(app) }
+        XCTContext.runActivity(named: "Search focuses the top-bar field, strip stays") { _ in
+            stepSearchFocusesTheTopBarFieldAndKeepsTheStrip(app) }
         XCTContext.runActivity(named: "Toggling restores the full sidebar at its width") { _ in
             stepTogglingRestoresTheFullSidebarAtItsWidth(app) }
     }
@@ -132,19 +132,22 @@ final class SidebarIconStripUITests: XCTestCase {
         XCTAssertTrue(waitUntil { !spam.exists }, "closing More hides Spam again")
     }
 
-    private func stepSearchExpandsTheSidebarAndFocusesTheField(_ app: XCUIApplication) {
+    private func stepSearchFocusesTheTopBarFieldAndKeepsTheStrip(_ app: XCUIApplication) {
         element(app, "sidebarStrip.search").click()
-        XCTAssertTrue(element(app, "composeButton").waitForExistence(timeout: 5), "the sidebar expands")
-        XCTAssertTrue(waitUntil { !self.element(app, "sidebarStrip").exists }, "the strip is gone")
-        let field = app.textFields.matching(NSPredicate(format: "placeholderValue == 'Search'")).firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitUntil { (field.value(forKey: "hasKeyboardFocus") as? Bool) ?? false },
+        let field = element(app, "listSearchBox")
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "the field is in the list's top bar")
+        let text = app.textFields.matching(NSPredicate(format: "placeholderValue == 'Search'")).firstMatch
+        XCTAssertTrue(waitUntil { (text.value(forKey: "hasKeyboardFocus") as? Bool) ?? false },
                       "the search field has the focus")
-        // Esc leaves the field; ← collapses again.
+        XCTAssertTrue(element(app, "sidebarStrip").exists, "the sidebar stays collapsed")
+        XCTAssertFalse(element(app, "composeButton").exists, "the sidebar did not expand")
+        // Esc leaves the field; the sidebar is still collapsed.
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil { !((text.value(forKey: "hasKeyboardFocus") as? Bool) ?? false) },
+                      "Esc took the focus out of the field")
+        XCTAssertTrue(element(app, "sidebarStrip").exists, "the sidebar is still collapsed")
+        XCTAssertFalse(element(app, "composeButton").exists, "no sidebar header")
     }
 
     private func stepTogglingRestoresTheFullSidebarAtItsWidth(_ app: XCUIApplication) {

@@ -27,7 +27,7 @@ final class TextFocusTests: XCTestCase {
     }
 
     func testEditableFieldStillCountsAsEditing() {
-        // Sidebar search / label-picker query / compose headers.
+        // Search field / label-picker query / compose headers.
         let field = NSTextField(string: "")
         XCTAssertTrue(field.isEditable, "precondition: a plain field is editable")
         XCTAssertTrue(TextFocus.isEditing(field))

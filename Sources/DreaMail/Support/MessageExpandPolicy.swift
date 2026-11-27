@@ -17,12 +17,15 @@ enum MessageExpandPolicy: Equatable {
     case multiple
 
     /// Toggle `id` open/closed under this policy. Callers skip the toggle for
-    /// a card that is not `isCollapsible`.
+    /// a card that is not `isCollapsible`. In the reading pane, with several
+    /// cards open (a starred conversation opens on them,
+    /// `ConversationOpenTarget`), a toggle closes or opens only `id`.
     func applyingToggle(id: String, currently: Set<String>) -> Set<String> {
         let isOpen = currently.contains(id)
         switch self {
         case .single:
-            return isOpen ? [] : [id]
+            if isOpen { return currently.subtracting([id]) }
+            return currently.count > 1 ? currently.union([id]) : [id]
         case .multiple:
             var next = currently
             if isOpen { next.remove(id) } else { next.insert(id) }
@@ -30,11 +33,12 @@ enum MessageExpandPolicy: Equatable {
         }
     }
 
-    /// Force-open `id` without collapsing siblings when multiple is allowed.
+    /// Force-open `id` without collapsing siblings when multiple is allowed,
+    /// nor in the reading pane while several cards are open.
     func applyingExpand(id: String, currently: Set<String>) -> Set<String> {
         switch self {
         case .single:
-            return [id]
+            return currently.count > 1 ? currently.union([id]) : [id]
         case .multiple:
             var next = currently
             next.insert(id)
@@ -43,16 +47,18 @@ enum MessageExpandPolicy: Equatable {
     }
 
     /// Default open set when a conversation first paints.
-    /// - single: newest sent message only
+    /// - single: `openIds` when given (a starred conversation,
+    ///   `ConversationOpenTarget`), else the newest sent message only
     /// - multiple: every non-draft message id (drafts use `DraftMessageCard`)
     static func initialExpandedIds(
         policy: MessageExpandPolicy,
         nonDraftIds: [String],
-        lastNonDraftId: String?
+        lastNonDraftId: String?,
+        openIds: Set<String>? = nil
     ) -> Set<String> {
         switch policy {
         case .single:
-            return lastNonDraftId.map { [$0] } ?? []
+            return openIds ?? lastNonDraftId.map { [$0] } ?? []
         case .multiple:
             return Set(nonDraftIds)
         }
@@ -112,10 +118,12 @@ enum MessageExpandPolicy: Equatable {
         current: Set<String>,
         policy: MessageExpandPolicy,
         nonDraftIds: [String],
-        lastNonDraftId: String?
+        lastNonDraftId: String?,
+        openIds: Set<String>? = nil
     ) -> Set<String> {
         let seed = initialExpandedIds(
-            policy: policy, nonDraftIds: nonDraftIds, lastNonDraftId: lastNonDraftId)
+            policy: policy, nonDraftIds: nonDraftIds, lastNonDraftId: lastNonDraftId,
+            openIds: openIds)
         switch policy {
         case .multiple:
             return seed
@@ -126,17 +134,22 @@ enum MessageExpandPolicy: Equatable {
     }
 
     /// The card that fills the pane while its body loads: the open card of
-    /// the reading pane, or the newest card in side-by-side (where every
-    /// card is open and only the newest should claim the viewport).
+    /// the reading pane (with several open, as a starred conversation opens,
+    /// only `scrollTargetId`), or the newest card in side-by-side (where
+    /// every card is open and only the newest should claim the viewport).
     static func fillsPane(
         id: String,
         policy: MessageExpandPolicy,
         expanded: Set<String>,
-        lastNonDraftId: String?
+        lastNonDraftId: String?,
+        scrollTargetId: String? = nil
     ) -> Bool {
         switch policy {
         case .single:
-            return expanded.contains(id)
+            // Without a scroll target (no starred message) as before: every
+            // open card.
+            guard let scrollTargetId, expanded.count > 1 else { return expanded.contains(id) }
+            return id == scrollTargetId && expanded.contains(id)
         case .multiple:
             return id == lastNonDraftId
         }

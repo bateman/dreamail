@@ -993,74 +993,13 @@ extension MailStore {
                 try TrashedMessages.restoreTargets(db, threadIds: ids)
             }) ?? []
             guard let self, !self.isShuttingDown, !loaded.isEmpty else { return }
-            let add = move.addLabels
-            let remove = move.removeLabels
-            var remotes: [String: RemoteThreadChange] = [:]
-            for target in loaded {
-                remotes[target.row.id] = .modifyMessages(ids: target.trashedIds, add: add, remove: remove)
-            }
-            let rows = loaded.map(\.row)
-            let rowIds = Set(rows.map(\.id))
+            let rowIds = Set(loaded.map(\.row.id))
             self.advanceForRemoval(rowIds, action: "move")
             self.threads.removeAll { rowIds.contains($0.id) }
             self.trashViewProjectedIds.subtract(rowIds)
-            for row in rows where self.isKnownAccount(row.accountId) {
-                LocalThreadEdits.shared.record(threadIds: [row.id], change: remotes[row.id] ?? .modify())
-            }
-            let restores = loaded.map {
-                MessageRestore(accountId: $0.row.accountId, threadId: $0.row.id, ids: $0.trashedIds,
-                               add: add, remove: remove)
-            }
-            self.commitMessageRestores(restores, remotes: remotes, rows: rows)
-        }
-    }
-
-    /// One restore of named messages, as `commitMessageRestores` stores it.
-    private struct MessageRestore: Sendable {
-        var accountId: String
-        var threadId: String
-        var ids: [String]
-        var add: [String]
-        var remove: [String]
-    }
-
-    /// The shared tail of a per-message restore: the message rows and the
-    /// thread rows derived from them, in one write
-    /// (`TrashedMessages.applyRestore`), then the requests on the chained
-    /// bulk tail. A refusal is undone on the same messages
-    /// (`rederiveThreadFromMessages(refused:)`).
-    private func commitMessageRestores(_ restores: [MessageRestore],
-                                       remotes: [String: RemoteThreadChange],
-                                       rows: [MailThread]) {
-        let pool = db
-        let rowIds = Set(rows.map(\.id))
-        let written = Task {
-            try await pool.write { db in
-                for r in restores {
-                    try TrashedMessages.applyRestore(db, accountId: r.accountId, threadId: r.threadId,
-                                                     ids: r.ids, add: r.add, remove: r.remove)
-                }
-            }
-        }
-        let isDemo = demoMode
-        let predecessor = bulkRemoteTail
-        bulkRemoteTail = Task {
-            _ = await predecessor?.value
-            let result = await written.result
-            await MainActor.run {
-                // Message rows changed: the reader cache and mirror
-                // must not open the live conversation without them.
-                if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
-                self.scheduleThreadMutationReconciliation()
-            }
-            if case .failure(let error) = result {
-                await MainActor.run {
-                    self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
-                }
-                return
-            }
-            guard !isDemo, !self.isShuttingDown else { return }
-            await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
+            self.editMessageLabels(loaded.map { (row: $0.row, ids: $0.trashedIds) },
+                                   add: move.addLabels, remove: move.removeLabels,
+                                   foldThreadFlags: false)
         }
     }
 
@@ -1089,14 +1028,85 @@ extension MailStore {
             let change = DeletedMessagesInConversation.restoreChange(
                 gmailIds: loaded.trashedIds, conversationInInbox: inInbox)
             guard case .modifyMessages(let ids, let add, let remove) = change else { return }
-            if self.isKnownAccount(row.accountId) {
-                LocalThreadEdits.shared.record(threadIds: [row.id], change: change)
-            }
-            self.commitMessageRestores(
-                [MessageRestore(accountId: row.accountId, threadId: row.id, ids: ids,
-                                add: add, remove: remove)],
-                remotes: [row.id: change], rows: [row])
+            // The one per-message path (`editMessageLabels`), as "Delete
+            // this message" and its undo: the thread row's pending edits
+            // (read on open, archive) reach the messages first.
+            self.editMessageLabels([(row: row, ids: ids)], add: add, remove: remove,
+                                   foldThreadFlags: true)
         }
+    }
+
+    /// Labels added or removed on exactly these messages of each
+    /// conversation (`messages.batchModify`, labels only: never a delete).
+    /// Shared by the Trash view's restore, the Restore of a deleted message
+    /// shown in a live conversation (`restoreDeletedMessages`) and the
+    /// actions on one message of an open conversation
+    /// (`MailStore+MessageActions`). Local state first,
+    /// in one transaction: the message rows and the thread row derived from
+    /// them, so the list, the open conversation and a relaunch offline all
+    /// agree before Gmail answers. The request then goes out on the chained
+    /// bulk tail, with the offline queue, the folding and the revert of
+    /// every thread edit (`applyRemoteThreadChange`).
+    /// - `foldThreadFlags`: write the thread row's pending thread-level
+    ///   edits to its messages first (`TrashedMessages.applyMessageEdit`).
+    /// Returns the local write and its refresh, for a caller that orders
+    /// its next read after them (`MailStore+MessageActions`).
+    @discardableResult
+    func editMessageLabels(_ edits: [(row: MailThread, ids: [String])],
+                           add: [String], remove: [String],
+                           foldThreadFlags: Bool) -> Task<Void, Never>? {
+        let edits = edits.filter { !$0.ids.isEmpty }
+        guard !isShuttingDown, !edits.isEmpty, !(add.isEmpty && remove.isEmpty) else { return nil }
+        var remotes: [String: RemoteThreadChange] = [:]
+        for edit in edits {
+            remotes[edit.row.id] = .modifyMessages(ids: edit.ids, add: add, remove: remove)
+        }
+        let rows = edits.map(\.row)
+        let rowIds = Set(rows.map(\.id))
+        for row in rows where isKnownAccount(row.accountId) {
+            LocalThreadEdits.shared.record(threadIds: [row.id], change: remotes[row.id] ?? .modify())
+        }
+        let pool = db
+        // After the thread edits already on their way to the database: the
+        // derive below must start from them.
+        let persisted = threadMutationPersistenceTask
+        let written = Task {
+            _ = await persisted?.value
+            try await pool.write { db in
+                for edit in edits {
+                    if foldThreadFlags {
+                        try TrashedMessages.applyMessageEdit(db, thread: edit.row, ids: edit.ids,
+                                                             add: add, remove: remove)
+                    } else {
+                        try TrashedMessages.applyRestore(db, accountId: edit.row.accountId,
+                                                         threadId: edit.row.id,
+                                                         ids: edit.ids, add: add, remove: remove)
+                    }
+                }
+            }
+        }
+        // The list and the open conversation follow the local write at once,
+        // not after earlier bulk Gmail work.
+        let refreshed = Task { @MainActor () -> Bool in
+            let result = await written.result
+            // Message rows changed: the reader cache and mirror must not
+            // open the live conversation without them.
+            if case .success = result { self.applyThreadContentChange(.threads(rowIds)) }
+            self.scheduleThreadMutationReconciliation()
+            if case .failure(let error) = result {
+                self.lastError = "Couldn't save the local change: \(error.localizedDescription)"
+                return false
+            }
+            return true
+        }
+        let isDemo = demoMode
+        let predecessor = bulkRemoteTail
+        bulkRemoteTail = Task {
+            _ = await predecessor?.value
+            guard await refreshed.value, !isDemo, !self.isShuttingDown else { return }
+            await self.applyRemoteBulkThreadChange(.modify(), remotes: remotes, threads: rows)
+        }
+        return Task { _ = await refreshed.value }
     }
 
     func trash(_ thread: MailThread) {

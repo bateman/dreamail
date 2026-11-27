@@ -170,6 +170,7 @@ struct SearchField: View {
                         .pmHitTarget(extra: compact ? 6 : 8)
                 }
                 .buttonStyle(PressScaleButtonStyle())
+                .accessibilityLabel("Clear")
                 .help("Clear")
             }
         }
