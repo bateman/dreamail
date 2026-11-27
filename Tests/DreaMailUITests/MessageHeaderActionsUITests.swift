@@ -118,24 +118,30 @@ final class MessageHeaderActionsUITests: XCTestCase {
                        "the starred demo message shows its star")
     }
 
+    /// The open "More" menu: the menu holding an item only it has, so the
+    /// menu bar's own Reply / Forward items never match.
+    private func moreMenu(_ app: XCUIApplication) -> XCUIElement {
+        app.menus.containing(NSPredicate(format: "title == 'Mark unread from here'")).firstMatch
+    }
+
     private func stepMoreMenuKeepsGmailsOrder(_ app: XCUIApplication) {
         element(app, "messageHeaderMore").click()
         let expected = ["Reply", "Reply to all", "Forward", "Filter messages like this",
                         "Delete this message", "Block \"Marcus Bell\"", "Report spam",
                         "Show original", "Download message", "Mark unread from here"]
-        let first = app.menuItems[expected[0]]
-        XCTAssertTrue(first.waitForExistence(timeout: 5), "the menu opens")
+        let menu = moreMenu(app)
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), "the menu opens")
         var tops: [CGFloat] = []
         for title in expected {
-            let item = app.menuItems[title]
+            let item = menu.menuItems[title]
             XCTAssertTrue(item.exists, "\(title) is in the menu")
             tops.append(item.frame.minY)
         }
         XCTAssertEqual(tops, tops.sorted(), "Gmail's order")
         for gone in ["Report phishing", "Translate message", "Print"] {
-            XCTAssertFalse(app.menuItems[gone].exists, "\(gone) is left out, not disabled")
+            XCTAssertFalse(menu.menuItems[gone].exists, "\(gone) is left out, not disabled")
         }
-        XCTAssertFalse(app.menuItems.matching(NSPredicate(format: "title CONTAINS 'Contacts'"))
+        XCTAssertFalse(menu.menuItems.matching(NSPredicate(format: "title CONTAINS 'Contacts'"))
             .firstMatch.exists)
         app.typeKey(.escape, modifierFlags: [])
     }
@@ -203,7 +209,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
             .min { $0.frame.minY < $1.frame.minY }
         XCTAssertNotNil(more, "an open message has More")
         more?.click()
-        let delete = app.menuItems["Delete this message"]
+        let delete = moreMenu(app).menuItems["Delete this message"]
         XCTAssertTrue(delete.waitForExistence(timeout: 5))
         delete.click()
         let left = settled("messageRowFrame", in: app) { $0.count == count - 1 }
