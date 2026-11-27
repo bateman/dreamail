@@ -132,6 +132,56 @@ extension MailStore {
         openLabelPicker(mode: .move, moveTargetIds: live)
     }
 
+    /// "Label as" from the selection bar, the row menu over a checked set
+    /// and `l` over checked rows: the picker in label mode over the ids it
+    /// was opened for, still in the list. Labels belong to one account (the
+    /// first conversation's): the others are named once, here.
+    func openLabelPicker(ids: [String]) {
+        let live = ThreadRowMenu.liveTargets(ids: ids, in: threads)
+        guard let first = live.first else { return }
+        let others = BulkLabel.otherAccountCount(ids: ids, in: threads, accountId: first.accountId)
+        if others > 0 {
+            showNotice(others == 1
+                       ? "1 conversation of another account will not be labelled: labels belong to one account"
+                       : "\(others) conversations of other accounts will not be labelled: labels belong to one account")
+        }
+        openLabelPicker(mode: .label, moveTargetIds: live.map(\.id))
+    }
+
+    /// Label mode over several conversations: what the boxes count and a
+    /// click acts on (`BulkLabel.targets`). Empty for a one-conversation picker.
+    func labelPickerBulkTargets(accountId: String) -> [MailThread] {
+        guard labelPicker.mode == .label, labelPicker.moveTargetIds.count > 1 else { return [] }
+        return BulkLabel.targets(ids: labelPicker.moveTargetIds, in: threads,
+                                 accountId: accountId, isPartlyTrashed: isPartlyTrashedRow)
+    }
+
+    /// One label over several conversations, as Gmail's Label as: added to
+    /// all when some lack it, else removed from all (`BulkLabel.Plan`), on
+    /// the same targets the boxes count. Only the conversations whose state
+    /// changes are written and sent; the undo gives exactly those back.
+    /// Every target a Trash copy of a live conversation: refused, with the
+    /// notice. Clears the selection, as the bar's other actions do; the
+    /// picker keeps its own targets.
+    func toggleLabel(ids: [String], labelId: String, accountId: String) {
+        guard !refusesPartlyTrashed(ThreadRowMenu.liveTargets(ids: ids, in: threads)) else { return }
+        let targets = BulkLabel.targets(ids: ids, in: threads, accountId: accountId,
+                                        isPartlyTrashed: isPartlyTrashedRow)
+        guard !targets.isEmpty else { return }
+        let plan = BulkLabel.Plan(labelId: labelId, targets: targets)
+        guard !plan.changing.isEmpty else { return }
+        let focus = selectedThreadId
+        let acted = mutateThreads(plan.changing, remote: plan.remote, local: { plan.apply(&$0) })
+        if !checkedThreadIds.isEmpty { clearCheckedThreads() }
+        let changedIds = plan.changing.map(\.id)
+        offerUndo(plan.undoLabel()) { [weak self] in
+            guard let self else { return }
+            self.pinReadStateKeep(changedIds)
+            self.mutateThreads(acted, remote: plan.undoRemote, local: { plan.restore(&$0) })
+            self.restoreSelectionFocus(focus)
+        }
+    }
+
     /// The conversation the picker acts on and lists labels for: the first
     /// target still in the list (move mode, or label mode opened from a
     /// row's menu), else the focused row.
@@ -226,9 +276,18 @@ extension MailStore {
         case .moveToInbox:
             // "Label as" → "Move to inbox": an action, not a label box.
             mailboxOverlay = nil
-            moveToInboxTargets(thread)
+            if labelPicker.moveTargetIds.count > 1 {
+                moveToInboxTargets(ids: labelPicker.moveTargetIds)
+            } else {
+                moveToInboxTargets(thread)
+            }
         case .toggleLabel(let labelId):
-            toggleLabel(thread, labelId: labelId)
+            if labelPicker.moveTargetIds.count > 1 {
+                toggleLabel(ids: labelPicker.moveTargetIds, labelId: labelId,
+                            accountId: thread.accountId)
+            } else {
+                toggleLabel(thread, labelId: labelId)
+            }
             labelPicker.changed = true
         case .move(let labelId):
             moveThreads(ids: labelPicker.moveTargetIds, toLabel: labelId,

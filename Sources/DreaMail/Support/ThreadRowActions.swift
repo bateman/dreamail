@@ -38,43 +38,65 @@ enum ThreadRowHoverAction: String, CaseIterable {
     }
 }
 
-/// The icon buttons of the bulk bar above the list (several rows checked), in
-/// order: archive, trash, star, read/unread. The glyphs are the ones the row
-/// hover actions and the conversation toolbar already use. `flag` is the state
-/// the click acts on (see `SelectionBarState`). The raw value is the UI-test id.
-/// New actions (move to inbox, spam, snooze, labels) are new cases here.
+/// The icon buttons of the bulk bar above the list (several rows checked),
+/// in Gmail web's toolbar order: archive (or move to inbox), report spam (or
+/// not spam), trash; read/unread, snooze; move to, label as; then the app's
+/// own star (Gmail keeps "Add star" under More). `SelectionBarState.actions`
+/// picks one of each pair. The glyphs are `ThreadRowMenuItem`'s (one action,
+/// one glyph, DEC-088); spam has no menu item and keeps the conversation
+/// toolbar's glyphs. `flag` is the state the click acts on (see
+/// `SelectionBarState`). The raw value is the UI-test id.
 enum SelectionBarAction: String, CaseIterable {
-    case archive, trash, star, toggleRead
+    case archive, moveToInbox, reportSpam, notSpam, trash, toggleRead, snooze, moveTo, labelAs, star
+
+    /// The conversation toolbar's spam glyphs (`ThreadDetailToolbar`).
+    static let reportSpamSymbol = "exclamationmark.octagon"
+    static let notSpamSymbol = "tray"
 
     func symbol(flag: Bool) -> String {
         switch self {
-        case .archive: return ThreadRowHoverAction.archive.symbol(isUnread: flag)
-        case .trash: return ThreadRowHoverAction.trash.symbol(isUnread: flag)
-        case .star: return flag ? "star" : "star.fill"
-        case .toggleRead: return ThreadRowHoverAction.toggleRead.symbol(isUnread: flag)
+        case .archive: return ThreadRowMenuItem.archive.symbol
+        case .moveToInbox: return ThreadRowMenuItem.moveToInbox.symbol
+        case .reportSpam: return Self.reportSpamSymbol
+        case .notSpam: return Self.notSpamSymbol
+        case .trash: return ThreadRowMenuItem.delete.symbol
+        case .toggleRead: return (flag ? ThreadRowMenuItem.markRead : .markUnread).symbol
+        case .snooze: return ThreadRowMenuItem.snooze.symbol
+        case .moveTo: return ThreadRowMenuItem.moveTo.symbol
+        case .labelAs: return ThreadRowMenuItem.labelAs.symbol
+        case .star: return (flag ? ThreadRowMenuItem.star : .unstar).symbol
         }
     }
 
-    /// Tooltip (before the shortcut) and VoiceOver label.
+    /// Tooltip (before the shortcut), VoiceOver label and More menu item.
     func title(flag: Bool) -> String {
         switch self {
         case .archive: return "Archive"
+        case .moveToInbox: return InboxMove.title
+        case .reportSpam: return "Report spam"
+        case .notSpam: return "Not spam"
         case .trash: return "Trash"
-        case .star: return flag ? "Star" : "Unstar"
         case .toggleRead: return ThreadRowHoverAction.toggleRead.title(isUnread: flag)
+        case .snooze: return "Snooze"
+        // They open a picker: the ellipsis, as in the row menu.
+        case .moveTo: return ThreadRowMenuItem.moveTo.title()
+        case .labelAs: return ThreadRowMenuItem.labelAs.title()
+        case .star: return flag ? "Star" : "Unstar"
         }
     }
 
-    /// `.help` text: the name, "selected" (not for the read toggle: "Mark as
-    /// read" says it), and the shortcut when there is one.
+    /// `.help` text: the name, "selected" for archive, trash and star (the
+    /// other names read as commands already), and the shortcut when bound.
     func tooltip(flag: Bool, shortcut: String?) -> String {
-        let base = self == .toggleRead ? title(flag: flag) : "\(title(flag: flag)) selected"
+        let selected: Set<SelectionBarAction> = [.archive, .trash, .star]
+        let base = selected.contains(self) ? "\(title(flag: flag)) selected" : title(flag: flag)
         return shortcut.map { "\(base) (\($0))" } ?? base
     }
 }
 
 /// What the bar's buttons act on, computed once per body from the checked
-/// rows the store would act on (`actionableCheckedThreads`).
+/// rows still in the list (`checked`) and those the store would act on
+/// (`actionable`: without Trash copies of live conversations, DEC-081).
 struct SelectionBarState: Equatable {
     /// Star clicks star (some row is unstarred) rather than unstar.
     let starring: Bool
@@ -85,31 +107,109 @@ struct SelectionBarState: Equatable {
     let canAct: Bool
     /// Some checked row is not in the Trash yet (`trashChecked` skips the rest).
     let canTrash: Bool
+    /// The archive slot is "Move to inbox" (`InboxMove.offered`: every row
+    /// offers it; a mix keeps Archive, as the palette and the keys do).
+    let movesToInbox: Bool
+    /// Every row is spam: the spam slot is "Not spam" (`markSpamChecked`).
+    let allSpam: Bool
+    /// Some row is more than a lone draft: archive, spam and snooze have
+    /// mail to act on.
+    let hasMail: Bool
+    /// Some row is not snoozed in Gmail (`snoozeChecked` leaves those to Gmail).
+    let canSnooze: Bool
+    /// Some checked row is still in the list: Move to also restores Trash
+    /// copies (`moveThreads`).
+    let canMove: Bool
 
-    init(actionable: [MailThread]) {
+    init(actionable: [MailThread], checked: [MailThread]? = nil) {
         starring = actionable.isEmpty || actionable.contains { !$0.isStarred }
         anyUnread = actionable.contains { $0.isUnread }
         canAct = !actionable.isEmpty
         canTrash = actionable.contains { !$0.inTrash }
+        movesToInbox = InboxMove.offered(for: actionable)
+        allSpam = !actionable.isEmpty && actionable.allSatisfy(\.inSpam)
+        hasMail = actionable.contains { !InboxMove.isDraftOnly($0) }
+        canSnooze = actionable.contains { !$0.gmailSnoozed && !InboxMove.isDraftOnly($0) }
+        canMove = !(checked ?? actionable).isEmpty
+    }
+
+    /// The buttons, in order: one of each pair.
+    var actions: [SelectionBarAction] {
+        SelectionBarAction.allCases.filter { action in
+            switch action {
+            case .archive: return !movesToInbox
+            case .moveToInbox: return movesToInbox
+            case .reportSpam: return !allSpam
+            case .notSpam: return allSpam
+            default: return true
+            }
+        }
     }
 
     func flag(for action: SelectionBarAction) -> Bool {
         action == .star ? starring : anyUnread
     }
 
+    /// Off when the click would do nothing, or only show a notice.
     func isEnabled(_ action: SelectionBarAction) -> Bool {
-        action == .trash ? canTrash : canAct
+        switch action {
+        case .trash: return canTrash
+        case .archive, .moveToInbox, .reportSpam, .notSpam: return canAct && hasMail
+        case .snooze: return canSnooze
+        case .moveTo: return canMove
+        case .toggleRead, .labelAs, .star: return canAct
+        }
     }
 }
 
-/// Size of the bar's buttons: a square hit target, wider than the row's tight
-/// hover buttons, the same for every glyph.
+/// Size of the bar's buttons (a square hit target, wider than the row's tight
+/// hover buttons, the same for every glyph) and how many of them fit.
 enum SelectionBarLayout {
     static let minSide = 24.0
     static let spacing = 6.0
+    /// The bar's own layout: 12 pt padding each side, 10 pt between its
+    /// items (count, hint, spacer, buttons, close), the spacer at least 8 pt.
+    static let padding = 12.0
+    static let itemSpacing = 10.0
+    static let minSpacer = 8.0
 
     static func side(fontScale: Double) -> Double {
         max(minSide, ThreadRowActionLayout.iconSize * fontScale + 10)
+    }
+
+    /// Width of `n` buttons in a row.
+    static func stripWidth(_ n: Int, side: Double) -> Double {
+        n <= 0 ? 0 : Double(n) * side + Double(n - 1) * spacing
+    }
+
+    struct Fit: Equatable {
+        /// The first `visible` actions are buttons; the rest go under More.
+        let visible: Int
+        let showsMore: Bool
+        let showsHint: Bool
+    }
+
+    /// Gmail's rule when space is short: the trailing actions move under a
+    /// More (⋮) menu. "esc to clear" goes first, the count never: it keeps
+    /// its full width. `barWidth` 0 (not measured yet): everything shows.
+    static func fit(actions n: Int, barWidth: Double, countWidth: Double,
+                    hintWidth: Double, closeWidth: Double, side: Double) -> Fit {
+        func needed(buttons: Int, hint: Bool) -> Double {
+            let items = hint ? 5.0 : 4.0
+            return 2 * padding + countWidth + (hint ? hintWidth : 0) + minSpacer
+                + stripWidth(buttons, side: side) + closeWidth + (items - 1) * itemSpacing
+        }
+        guard barWidth > 0 else { return Fit(visible: n, showsMore: false, showsHint: true) }
+        if needed(buttons: n, hint: true) <= barWidth {
+            return Fit(visible: n, showsMore: false, showsHint: true)
+        }
+        if needed(buttons: n, hint: false) <= barWidth {
+            return Fit(visible: n, showsMore: false, showsHint: false)
+        }
+        // k buttons and the More button.
+        var k = n - 1
+        while k > 0 && needed(buttons: k + 1, hint: false) > barWidth { k -= 1 }
+        return Fit(visible: k, showsMore: true, showsHint: false)
     }
 }
 

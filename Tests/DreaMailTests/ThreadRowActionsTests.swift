@@ -69,9 +69,41 @@ final class ThreadRowActionsTests: XCTestCase {
 }
 
 final class SelectionBarActionTests: XCTestCase {
-    func testActionsKeepTheOldOrderAndIds() {
+    /// Gmail's toolbar order; the old ids are kept. Star, the app's own
+    /// (Gmail has it under More), comes last.
+    func testActionsFollowGmailsOrderAndKeepTheOldIds() {
         XCTAssertEqual(SelectionBarAction.allCases.map(\.rawValue),
-                       ["archive", "trash", "star", "toggleRead"])
+                       ["archive", "moveToInbox", "reportSpam", "notSpam", "trash",
+                        "toggleRead", "snooze", "moveTo", "labelAs", "star"])
+    }
+
+    func testEveryGlyphIsTheRowMenusOwn() {
+        let menu: [SelectionBarAction: ThreadRowMenuItem] = [
+            .archive: .archive, .moveToInbox: .moveToInbox, .trash: .delete,
+            .snooze: .snooze, .moveTo: .moveTo, .labelAs: .labelAs,
+        ]
+        for (action, item) in menu {
+            XCTAssertEqual(action.symbol(flag: false), item.symbol, "\(action)")
+        }
+        XCTAssertEqual(SelectionBarAction.toggleRead.symbol(flag: true), ThreadRowMenuItem.markRead.symbol)
+        XCTAssertEqual(SelectionBarAction.toggleRead.symbol(flag: false), ThreadRowMenuItem.markUnread.symbol)
+        XCTAssertEqual(SelectionBarAction.star.symbol(flag: true), ThreadRowMenuItem.star.symbol)
+        XCTAssertEqual(SelectionBarAction.star.symbol(flag: false), ThreadRowMenuItem.unstar.symbol)
+        // Spam has no row menu item: the conversation toolbar's glyphs.
+        XCTAssertEqual(SelectionBarAction.reportSpam.symbol(flag: false), "exclamationmark.octagon")
+        XCTAssertEqual(SelectionBarAction.notSpam.symbol(flag: false), "tray")
+        let glyphs = SelectionBarAction.allCases.filter { $0 != .toggleRead && $0 != .star }
+            .map { $0.symbol(flag: false) }
+        XCTAssertEqual(Set(glyphs).count, glyphs.count, "one glyph per action")
+    }
+
+    func testNewTitlesAreGmails() {
+        XCTAssertEqual(SelectionBarAction.moveToInbox.title(flag: false), "Move to inbox")
+        XCTAssertEqual(SelectionBarAction.reportSpam.title(flag: false), "Report spam")
+        XCTAssertEqual(SelectionBarAction.notSpam.title(flag: false), "Not spam")
+        XCTAssertEqual(SelectionBarAction.snooze.title(flag: false), "Snooze")
+        XCTAssertEqual(SelectionBarAction.moveTo.title(flag: false), "Move to…", "opens a picker")
+        XCTAssertEqual(SelectionBarAction.labelAs.title(flag: false), "Label as…", "opens a picker")
     }
 
     func testGlyphsAreTheOnesTheRowsAndToolbarAlreadyUse() {
@@ -99,19 +131,97 @@ final class SelectionBarTooltipTests: XCTestCase {
         XCTAssertEqual(SelectionBarAction.trash.tooltip(flag: false, shortcut: "#"), "Trash selected (#)")
         XCTAssertEqual(SelectionBarAction.star.tooltip(flag: true, shortcut: "s"), "Star selected (s)")
         XCTAssertEqual(SelectionBarAction.toggleRead.tooltip(flag: true, shortcut: nil), "Mark as read")
+        XCTAssertEqual(SelectionBarAction.reportSpam.tooltip(flag: false, shortcut: "!"), "Report spam (!)")
+        XCTAssertEqual(SelectionBarAction.labelAs.tooltip(flag: false, shortcut: "l"), "Label as… (l)")
+        XCTAssertEqual(SelectionBarAction.moveToInbox.tooltip(flag: false, shortcut: nil), "Move to inbox")
     }
 }
 
 final class SelectionBarStateTests: XCTestCase {
     private func thread(_ id: String, unread: Bool = false, starred: Bool = false,
-                        trash: Bool = false) -> MailThread {
-        MailThread(
+                        trash: Bool = false, inbox: Bool? = nil, spam: Bool = false,
+                        draftOnly: Bool = false, gmailSnoozed: Bool = false) -> MailThread {
+        var t = MailThread(
             id: "a@x.com:\(id)", accountId: "a@x.com", gmailThreadId: id,
             subject: "S", snippet: "sn", fromDisplay: "F",
             lastDate: Date(), isUnread: unread, isStarred: starred,
-            inInbox: !trash, inTrash: trash,
+            inInbox: inbox ?? (!trash && !spam && !draftOnly), inTrash: trash,
             labelIds: "INBOX", snoozeUntil: nil, participants: "F",
             messageCount: 1, hasAttachment: false, reminderAt: nil)
+        t.inSpam = spam
+        t.inDrafts = draftOnly
+        t.gmailSnoozed = gmailSnoozed
+        return t
+    }
+
+    func testInboxSelectionShowsGmailsBar() {
+        let s = SelectionBarState(actionable: [thread("a"), thread("b")])
+        XCTAssertEqual(s.actions, [.archive, .reportSpam, .trash, .toggleRead, .snooze,
+                                   .moveTo, .labelAs, .star])
+        for action in s.actions { XCTAssertTrue(s.isEnabled(action), "\(action)") }
+    }
+
+    func testArchivedSelectionOffersMoveToInbox() {
+        let s = SelectionBarState(actionable: [thread("a", inbox: false), thread("b", inbox: false)])
+        XCTAssertEqual(s.actions.first, .moveToInbox)
+        XCTAssertFalse(s.actions.contains(.archive))
+        XCTAssertTrue(s.isEnabled(.moveToInbox))
+    }
+
+    func testMixedInboxAndArchivedKeepsArchiveAsThePaletteDoes() {
+        let s = SelectionBarState(actionable: [thread("a"), thread("b", inbox: false)])
+        XCTAssertEqual(s.actions.first, .archive)
+        XCTAssertFalse(s.actions.contains(.moveToInbox))
+    }
+
+    func testSpamViewShowsNotSpam() {
+        let s = SelectionBarState(actionable: [thread("a", spam: true), thread("b", spam: true)])
+        XCTAssertEqual(s.actions, [.archive, .notSpam, .trash, .toggleRead, .snooze,
+                                   .moveTo, .labelAs, .star],
+                       "spam is not offered Move to inbox (Not spam is its way out)")
+        XCTAssertTrue(s.isEnabled(.notSpam))
+        let mixed = SelectionBarState(actionable: [thread("a", spam: true), thread("b")])
+        XCTAssertTrue(mixed.actions.contains(.reportSpam), "a mix reports all as spam, as `!` does")
+        XCTAssertFalse(mixed.actions.contains(.notSpam))
+    }
+
+    func testTrashViewKeepsArchiveAndDisablesTrash() {
+        let s = SelectionBarState(actionable: [thread("a", trash: true), thread("b", trash: true)])
+        XCTAssertEqual(s.actions.first, .archive, "Trash rows are not offered Move to inbox")
+        XCTAssertFalse(s.isEnabled(.trash))
+        XCTAssertTrue(s.isEnabled(.moveTo))
+        XCTAssertTrue(s.isEnabled(.reportSpam))
+    }
+
+    func testTrashCopiesOfLiveConversationsLeaveOnlyMoveTo() {
+        // Every checked row is such a copy: nothing is actionable, but Move
+        // to restores their trashed messages (DEC-081).
+        let copies = [thread("a", trash: true), thread("b", trash: true)]
+        let s = SelectionBarState(actionable: [], checked: copies)
+        for action in s.actions where action != .moveTo {
+            XCTAssertFalse(s.isEnabled(action), "\(action) would only show a notice")
+        }
+        XCTAssertTrue(s.isEnabled(.moveTo))
+    }
+
+    func testLoneDraftsHaveNoMailToArchiveSpamOrSnooze() {
+        let s = SelectionBarState(actionable: [thread("a", draftOnly: true), thread("b", draftOnly: true)])
+        XCTAssertEqual(s.actions.first, .archive, "a lone draft is not offered Move to inbox")
+        for action in [SelectionBarAction.archive, .reportSpam, .snooze] {
+            XCTAssertFalse(s.isEnabled(action), "\(action)")
+        }
+        for action in [SelectionBarAction.trash, .toggleRead, .moveTo, .labelAs, .star] {
+            XCTAssertTrue(s.isEnabled(action), "\(action)")
+        }
+        let mixed = SelectionBarState(actionable: [thread("a", draftOnly: true), thread("b")])
+        XCTAssertTrue(mixed.isEnabled(.reportSpam) && mixed.isEnabled(.snooze))
+    }
+
+    func testSnoozeIsOffWhenGmailOwnsEverySnooze() {
+        let s = SelectionBarState(actionable: [thread("a", inbox: false, gmailSnoozed: true)])
+        XCTAssertFalse(s.isEnabled(.snooze), "snoozeChecked leaves Gmail's snoozes to Gmail")
+        let mixed = SelectionBarState(actionable: [thread("a", inbox: false, gmailSnoozed: true), thread("b")])
+        XCTAssertTrue(mixed.isEnabled(.snooze))
     }
 
     func testMixedSelectionActsOnTheUnstarredAndTheUnread() {
@@ -152,10 +262,192 @@ final class SelectionBarStateTests: XCTestCase {
         XCTAssertTrue(SelectionBarState(actionable: [thread("a", trash: true), thread("b")]).isEnabled(.trash))
     }
 
+    func testEveryStateShowsOneOfEachPair() {
+        let rows = [thread("a"), thread("b", inbox: false), thread("c", spam: true),
+                    thread("d", trash: true), thread("e", draftOnly: true)]
+        for a in rows { for b in rows {
+            let actions = SelectionBarState(actionable: [a, b]).actions
+            XCTAssertEqual(actions.count, 8)
+            XCTAssertEqual(actions.filter { $0 == .archive || $0 == .moveToInbox }.count, 1)
+            XCTAssertEqual(actions.filter { $0 == .reportSpam || $0 == .notSpam }.count, 1)
+            XCTAssertEqual(actions, SelectionBarAction.allCases.filter(actions.contains), "Gmail's order")
+        } }
+    }
+
     func testTargetsAreAtLeast24PointsAndSquareAtEveryScale() {
         for scale in [0.8, 1.0, 1.25, 1.5, 2.0] {
             XCTAssertGreaterThanOrEqual(SelectionBarLayout.side(fontScale: scale), 24)
         }
         XCTAssertGreaterThan(SelectionBarLayout.spacing, ThreadRowActionLayout.spacing)
+    }
+}
+
+final class SelectionBarLayoutTests: XCTestCase {
+    private typealias L = SelectionBarLayout
+    // Widths of the demo bar at scale 1, rounded up: "2 selected",
+    // "esc to clear", the close button.
+    private let count = 66.0, hint = 66.0, close = 16.0
+
+    private func fit(_ width: Double, actions: Int = 8, scale: Double = 1, count: Double? = nil) -> L.Fit {
+        L.fit(actions: actions, barWidth: width, countWidth: count ?? self.count, hintWidth: hint,
+              closeWidth: close, side: L.side(fontScale: scale))
+    }
+
+    /// What `fit` reserves, spelled out as the UI test measures it.
+    private func needed(_ f: L.Fit, scale: Double = 1, count: Double? = nil) -> Double {
+        let buttons = f.visible + (f.showsMore ? 1 : 0)
+        let items = f.showsHint ? 5.0 : 4.0
+        return 24 + (count ?? self.count) + (f.showsHint ? hint : 0) + 8
+            + L.stripWidth(buttons, side: L.side(fontScale: scale)) + close + (items - 1) * 10
+    }
+
+    func testAWideColumnShowsEverything() {
+        XCTAssertEqual(fit(800), L.Fit(visible: 8, showsMore: false, showsHint: true))
+    }
+
+    func testTheHintGoesBeforeAnyAction() {
+        let f = fit(420)
+        XCTAssertEqual(f, L.Fit(visible: 8, showsMore: false, showsHint: false),
+                       "at the 420 pt minimum every action still fits, without the hint")
+        XCTAssertLessThanOrEqual(needed(f), 420)
+    }
+
+    func testNarrowerOrLargerTextPutsTheTrailingActionsUnderMore() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for width in stride(from: 200.0, through: 420, by: 10) {
+                let f = fit(width, scale: scale)
+                XCTAssertLessThanOrEqual(f.visible, 8)
+                XCTAssertEqual(f.showsMore, f.visible < 8, "More only holds what did not fit")
+                if f.visible > 0 || !f.showsMore {
+                    XCTAssertLessThanOrEqual(needed(f, scale: scale), width, "\(width) pt at \(scale)×")
+                }
+                // The largest count that fits: one more button would not.
+                if f.showsMore && f.visible < 7 {
+                    let more = L.Fit(visible: f.visible + 1, showsMore: true, showsHint: false)
+                    XCTAssertGreaterThan(needed(more, scale: scale), width)
+                }
+            }
+        }
+        let big = fit(420, scale: 1.5, count: 99)
+        XCTAssertTrue(big.showsMore && !big.showsHint && big.visible > 0)
+        XCTAssertLessThanOrEqual(needed(big, scale: 1.5, count: 99), 420,
+                                 "the count keeps its full width at the minimum column")
+    }
+
+    func testMoreGrowsMonotonically() {
+        var last = 0
+        for width in stride(from: 200.0, through: 800, by: 5) {
+            let f = fit(width)
+            XCTAssertGreaterThanOrEqual(f.visible, last)
+            last = f.visible
+        }
+    }
+
+    func testUnmeasuredBarShowsEverything() {
+        XCTAssertEqual(fit(0), L.Fit(visible: 8, showsMore: false, showsHint: true))
+    }
+}
+
+/// Bulk "Label as". The hostless unit target does not compile `MailStore`,
+/// so these run the pure parts it is made of: `toggleLabel(ids:labelId:
+/// accountId:)` is `BulkLabel.targets` → `BulkLabel.Plan` → `mutateThreads(
+/// plan.changing, remote: plan.remote, local: plan.apply)`, its undo is
+/// `plan.undoRemote` / `plan.restore` on the same rows, and the picker's
+/// boxes are `BulkLabel.state` over the same `targets`.
+final class BulkLabelTests: XCTestCase {
+    private func thread(_ id: String, labels: String, account: String = "a@x.com",
+                        trash: Bool = false) -> MailThread {
+        MailThread(
+            id: "\(account):\(id)", accountId: account, gmailThreadId: id,
+            subject: "S", snippet: "sn", fromDisplay: "F",
+            lastDate: Date(), isUnread: false, isStarred: false,
+            inInbox: !trash, inTrash: trash,
+            labelIds: labels, snoozeUntil: nil, participants: "F",
+            messageCount: 1, hasAttachment: false, reminderAt: nil)
+    }
+
+    func testStateAndClickFollowGmailsLabelMenu() {
+        let both = [thread("a", labels: "INBOX L1"), thread("b", labels: "INBOX L1")]
+        let one = [thread("a", labels: "INBOX L1"), thread("b", labels: "INBOX")]
+        let none = [thread("a", labels: "INBOX"), thread("b", labels: "INBOX")]
+        XCTAssertEqual(BulkLabel.state("L1", in: both), .all)
+        XCTAssertEqual(BulkLabel.state("L1", in: one), .some)
+        XCTAssertEqual(BulkLabel.state("L1", in: none), .none)
+        XCTAssertFalse(BulkLabel.adds("L1", to: both), "on all: the click removes it from all")
+        XCTAssertTrue(BulkLabel.adds("L1", to: one), "on some: the click adds it to the rest")
+        XCTAssertTrue(BulkLabel.adds("L1", to: none))
+    }
+
+    /// Review finding: in the Trash, A (trashed, has X) and B (a Trash copy
+    /// of a live conversation, without X). The box and the click read the
+    /// same targets, B left out: the box says "all", and the click removes X
+    /// from A, as the box promised — never "mixed" with a remove.
+    func testBoxesAndClickShareTheTargetsWithoutTrashCopies() {
+        let a = thread("a", labels: "TRASH X", trash: true)
+        let b = thread("b", labels: "TRASH", trash: true)
+        let targets = BulkLabel.targets(ids: [a.id, b.id], in: [a, b], accountId: "a@x.com",
+                                        isPartlyTrashed: { $0.id == b.id })
+        XCTAssertEqual(targets.map(\.id), [a.id])
+        XCTAssertEqual(BulkLabel.state("X", in: targets), .all, "the box shows what the click acts on")
+        let plan = BulkLabel.Plan(labelId: "X", targets: targets)
+        XCTAssertFalse(plan.adds)
+        XCTAssertEqual(plan.changing.map(\.id), [a.id], "B is never written")
+    }
+
+    func testOnlyTheConversationsThatChangeAreSentAddOnly() {
+        let a = thread("a", labels: "INBOX X"), b = thread("b", labels: "INBOX"), c = thread("c", labels: "INBOX")
+        let plan = BulkLabel.Plan(labelId: "X", targets: [a, b, c])
+        XCTAssertTrue(plan.adds)
+        XCTAssertEqual(plan.changing.map(\.id), [b.id, c.id], "A already has it: not sent")
+        XCTAssertEqual(plan.remote, .modify(add: ["X"]), "add only, nothing removed")
+        XCTAssertEqual(plan.undoRemote, .modify(remove: ["X"]))
+    }
+
+    func testRemoveOnlyWhenAllHaveIt() {
+        let a = thread("a", labels: "INBOX X"), b = thread("b", labels: "INBOX X")
+        let plan = BulkLabel.Plan(labelId: "X", targets: [a, b])
+        XCTAssertFalse(plan.adds)
+        XCTAssertEqual(plan.changing.map(\.id), [a.id, b.id])
+        XCTAssertEqual(plan.remote, .modify(remove: ["X"]), "remove only, nothing added")
+        XCTAssertEqual(plan.undoRemote, .modify(add: ["X"]))
+    }
+
+    func testOtherAccountsAndRowsNoLongerListedAreLeftOut() {
+        let a = thread("a", labels: "INBOX"), b = thread("b", labels: "INBOX", account: "b@x.com")
+        let gone = thread("g", labels: "INBOX")
+        let ids = [a.id, b.id, gone.id]
+        let targets = BulkLabel.targets(ids: ids, in: [a, b], accountId: "a@x.com", isPartlyTrashed: { _ in false })
+        XCTAssertEqual(targets.map(\.id), [a.id], "another account's row and a row out of the list are left out")
+        XCTAssertEqual(BulkLabel.otherAccountCount(ids: ids, in: [a, b], accountId: "a@x.com"), 1)
+    }
+
+    /// The undo gives back the split as it was: the rows that had the label
+    /// keep it, the others lose it again.
+    func testUndoRestoresTheOriginalSplit() {
+        let a = thread("a", labels: "INBOX X"), b = thread("b", labels: "INBOX")
+        let plan = BulkLabel.Plan(labelId: "X", targets: [a, b])
+        var acted = plan.changing
+        for i in acted.indices { plan.apply(&acted[i]) }
+        XCTAssertTrue(acted.allSatisfy { $0.labels.contains("X") })
+        for i in acted.indices { plan.restore(&acted[i]) }
+        XCTAssertEqual(acted.map { $0.labels.contains("X") }, [false], "b loses it again")
+        XCTAssertTrue(a.labels.contains("X"), "a, never written, keeps it")
+
+        let all = [thread("a", labels: "INBOX X"), thread("b", labels: "INBOX X")]
+        let remove = BulkLabel.Plan(labelId: "X", targets: all)
+        var removed = remove.changing
+        for i in removed.indices { remove.apply(&removed[i]) }
+        XCTAssertFalse(removed.contains { $0.labels.contains("X") })
+        for i in removed.indices { remove.restore(&removed[i]) }
+        XCTAssertTrue(removed.allSatisfy { $0.labels.contains("X") })
+        XCTAssertEqual(remove.undoLabel(), "Label removed from 2 conversations")
+        XCTAssertEqual(plan.undoLabel(), "Label added to 1 conversation")
+    }
+
+    /// `l` over ticked rows opens the bulk picker on all of them (Gmail);
+    /// with none ticked, the focused conversation's picker.
+    func testLabelKeyOverTickedRows() {
+        XCTAssertEqual(BulkLabel.keyTargets(checkedInOrder: ["a", "b"]), ["a", "b"])
+        XCTAssertNil(BulkLabel.keyTargets(checkedInOrder: []))
     }
 }

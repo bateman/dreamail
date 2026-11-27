@@ -78,15 +78,15 @@ final class ThreadRowMenuTests: XCTestCase {
         XCTAssertEqual(groups.first, [.archive, .delete, .markUnread, .snooze])
     }
 
-    /// Several checked rows: only the items with a bulk form, titled by the
-    /// keys' bulk rules.
+    /// Several checked rows: only the items with a bulk form (Label as has
+    /// one now, `BulkLabel`), titled by the keys' bulk rules.
     func testCheckedSetShowsOnlyBulkItems() {
         let groups = ThreadRowMenu.groups(S(offersMoveToInbox: true, isUnread: true,
                                             hasSenderAddress: true, senderIsVIP: false,
                                             bulk: true))
         XCTAssertEqual(groups, [
             [.moveToInbox, .delete, .markRead, .snooze],
-            [.moveTo, .mute],
+            [.moveTo, .labelAs, .mute],
             [.star],
         ])
     }
