@@ -82,11 +82,11 @@ extension MailStore {
         mailboxOverlay = nil
         let byId = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var all = ids.compactMap { byId[$0] }
-        // Trash view: a conversation that is otherwise live gives back only
-        // its trashed messages; the rest of it is not touched.
-        if selectedView == .trash {
+        // A Trash row of a conversation that is otherwise live gives back
+        // only its trashed messages; the rest of it is not touched.
+        do {
             let partial = all.filter {
-                trashViewProjectedIds.contains($0.id) && $0.accountId == accountId
+                isPartlyTrashedRow($0.id) && $0.accountId == accountId
             }
             if !partial.isEmpty {
                 restoreTrashedMessages(partial, toLabel: labelId)

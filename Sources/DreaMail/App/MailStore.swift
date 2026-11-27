@@ -2993,7 +2993,8 @@ struct ComposeRequest: Identifiable {
                         page: page, candidates: candidates, inboundSort: inboundSort)
                 }
                 var projected = Set<String>()
-                if search.isEmpty, view == .trash {
+                if search.isEmpty ? view == .trash
+                    : SearchQuery.parse(search).location == .trash {
                     let shown = try TrashedMessages.projectTrashView(listPage, db: db)
                     listPage = shown.rows
                     projected = shown.projected
@@ -3802,23 +3803,22 @@ struct ComposeRequest: Identifiable {
         db.releaseMemoryEventually()
     }
 
+    /// Whether opening `threadId` shows only its trashed messages: a row of
+    /// the Trash view or an `in:trash` result whose conversation is
+    /// otherwise live. Keyed on the row (`trashViewProjectedIds`, replaced by
+    /// every list reload): any other open shows the conversation as it is
+    /// live, and a conversation entirely in the trash keeps the normal,
+    /// cached reader.
+    func opensTrashReader(threadId: String) -> Bool {
+        trashViewProjectedIds.contains(threadId)
+    }
+
     /// Synchronous reading-pane payload, or nil when the caller must await.
     ///
     /// The reading pane paints from this on the advance path. Going to the
     /// repository instead costs a MainActor → actor → MainActor round-trip
     /// whose return hop waits on the very SwiftUI work the delete just queued
     /// — measured at 176–209 ms, and identical for cache hits and misses.
-    /// Whether opening `threadId` shows only its trashed messages: a row
-    /// of the Trash list (no committed search) whose conversation is
-    /// otherwise live. Every other open (a search result, a notification,
-    /// a link, the palette) shows the conversation as it is live, unless
-    /// it is that same Trash row.
-    func opensTrashReader(threadId: String) -> Bool {
-        selectedView == .trash
-            && committedSearch.trimmingCharacters(in: .whitespaces).isEmpty
-            && trashViewProjectedIds.contains(threadId)
-    }
-
     func warmThreadDetail(threadId: String) -> ThreadDetailPayload? {
         // The Trash reader never paints from the cache (`threadDetailPayload`).
         guard !opensTrashReader(threadId: threadId) else { return nil }

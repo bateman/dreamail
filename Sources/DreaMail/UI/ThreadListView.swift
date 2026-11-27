@@ -724,11 +724,17 @@ private struct ThreadListSections: View, Equatable {
             }
             Divider()
         }
+        // A Trash row of an otherwise live conversation takes no
+        // thread-wide action (`MailStore.isPartlyTrashedRow`).
+        let partlyTrashed = store.isPartlyTrashedRow(thread.id)
         Button("Archive") { store.archive(thread) }
+            .disabled(partlyTrashed)
         Button(thread.isStarred ? "Unstar" : "Star") { store.toggleStar(thread) }
+            .disabled(partlyTrashed)
         Button(thread.isUnread ? "Mark Read" : "Mark Unread") {
             store.setRead(thread, read: thread.isUnread)
         }
+        .disabled(partlyTrashed)
         Menu("Snooze") {
             if thread.gmailSnoozed {
                 // No wake-up time is readable from Gmail, and Gmail wakes it:
@@ -745,6 +751,7 @@ private struct ThreadListSections: View, Equatable {
                 }
             }
         }
+        .disabled(partlyTrashed)
         Menu("Remind me") {
             Button("Tomorrow") { store.setReminder(thread, after: 1) }
             Button("In 3 days") { store.setReminder(thread, after: 3) }
@@ -772,7 +779,9 @@ private struct ThreadListSections: View, Equatable {
         Divider()
         Button("Copy Gmail Link") { store.copyThreadLink(thread) }
         Divider()
+        // Already in the Trash: nothing to move there.
         Button("Trash", role: .destructive) { store.trash(thread) }
+            .disabled(thread.inTrash || partlyTrashed)
     }
 }
 

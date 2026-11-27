@@ -426,10 +426,16 @@ enum RemoteThreadChange: Codable, Equatable, Sendable {
         case (.trash, .sequence(let steps)):
             // A trash not sent yet, then its undo (`ThreadUndo.undoTrashRemote`:
             // un-trash, then re-trash what was trashed before): the trash
-            // folds into the un-trash, so it is never sent.
+            // folds into the un-trash and is never sent; the re-trash is
+            // dropped, Gmail never saw those messages leave the trash.
             guard let first = steps.first, case .modify(_, let remove) = first,
-                  remove.contains("TRASH") else { return Self.ordered([self, next]) }
-            return Self.ordered([RemoteThreadChange.trash.merged(with: first)] + steps.dropFirst())
+                  remove.contains("TRASH"),
+                  steps.dropFirst().allSatisfy({ step in
+                      if case .modifyMessages(_, let add, _) = step { return add == ["TRASH"] }
+                      return false
+                  })
+            else { return Self.ordered([self, next]) }
+            return RemoteThreadChange.trash.merged(with: first)
         case (.trash, .modifyMessages(let ids, let add, let remove)) where remove.contains("TRASH"):
             // Restoring messages of a thread whose trash was never sent:
             // only the restore goes out.

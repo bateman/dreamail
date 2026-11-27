@@ -167,6 +167,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Label("Archive", systemImage: "archivebox")
                     }
                     .help("Archive (\(store.keyBindings.displayKey(for: .archive)))")
+                    .disabled(store.isPartlyTrashedRow(thread.id))
                     Button { store.toggleStar(thread) } label: {
                         Label(thread.isStarred ? "Unstar" : "Star",
                               systemImage: thread.isStarred ? "star.fill" : "star")
@@ -175,6 +176,7 @@ struct ThreadDetailToolbar: ViewModifier {
                     .help(thread.isStarred
                           ? "Unstar (\(store.keyBindings.displayKey(for: .toggleStar)))"
                           : "Star (\(store.keyBindings.displayKey(for: .toggleStar)))")
+                    .disabled(store.isPartlyTrashedRow(thread.id))
                     Button { store.openLabelPicker() } label: {
                         Label("Label", systemImage: "tag")
                     }
@@ -183,6 +185,7 @@ struct ThreadDetailToolbar: ViewModifier {
                         Label("Trash", systemImage: "trash")
                     }
                     .help("Move to Trash (\(store.keyBindings.displayKey(for: .trash)))")
+                    .disabled(thread.inTrash || store.isPartlyTrashedRow(thread.id))
                     // Reply/forward target the newest *sent* message — never a draft
                     // (shared ForwardComposer.newestSentMessage; drafts open via
                     // Continue / editDraft, not Reply).

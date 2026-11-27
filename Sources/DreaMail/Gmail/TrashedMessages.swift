@@ -23,7 +23,8 @@ enum TrashedMessages {
     /// shows all; a live one with trashed messages shows only those.
     static func inTrashView(_ messages: [Message], threadInTrash: Bool) -> [Message] {
         guard !threadInTrash else { return messages }
-        let trashed = messages.filter(isTrashed)
+        // As counted and restored (`trashedIds`): no discarded drafts.
+        let trashed = messages.filter { isTrashed($0) && !isDraft($0) }
         return trashed.isEmpty ? messages : trashed
     }
 
@@ -64,9 +65,50 @@ enum TrashedMessages {
         return (out, projected)
     }
 
+    static func isDraft(_ message: Message) -> Bool {
+        SyncEngine.labelIdsContain(message.labelIds, "DRAFT")
+    }
+
     /// Gmail ids of `messages` outside the trash (what a trash reaches).
+    /// Drafts are left out: a draft's message id changes on every save, and
+    /// one unknown id can fail a whole `messages.batchModify`.
     static func liveIds(_ messages: [Message]) -> [String] {
-        messages.filter { !isTrashed($0) }.map(\.gmailId)
+        messages.filter { !isTrashed($0) && !isDraft($0) }.map(\.gmailId)
+    }
+
+    /// Per thread, its messages split for `ThreadUndo.undoTrashRemote`:
+    /// one query for every thread (in chunks), drafts left out.
+    static func trashStates(_ db: Database, threadIds: [String]) throws
+        -> [String: ThreadUndo.TrashState] {
+        var byThread: [String: [Message]] = [:]
+        for start in stride(from: 0, to: threadIds.count, by: 500) {
+            let chunk = Array(threadIds[start..<min(start + 500, threadIds.count)])
+            for message in try Message.filter(chunk.contains(Column("threadId"))).fetchAll(db) {
+                byThread[message.threadId, default: []].append(message)
+            }
+        }
+        var out: [String: ThreadUndo.TrashState] = [:]
+        for id in threadIds {
+            let messages = byThread[id] ?? []
+            out[id] = ThreadUndo.TrashState(liveIds: liveIds(messages),
+                                            trashedIds: trashedIds(messages))
+        }
+        return out
+    }
+
+    /// A Trash view restore: the stored (live) row and the ids to restore.
+    struct RestoreTarget: Sendable {
+        var row: MailThread
+        var trashedIds: [String]
+    }
+
+    /// The stored rows of `threadIds` that still have trashed messages.
+    static func restoreTargets(_ db: Database, threadIds: [String]) throws -> [RestoreTarget] {
+        try threadIds.compactMap { id in
+            guard let row = try MailThread.fetchOne(db, key: id) else { return nil }
+            let ids = trashedIds(try Message.filter(Column("threadId") == id).fetchAll(db))
+            return ids.isEmpty ? nil : RestoreTarget(row: row, trashedIds: ids)
+        }
     }
 
     /// Gmail ids of the trashed non-draft messages (what "Move out of

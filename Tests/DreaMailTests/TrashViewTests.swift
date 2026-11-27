@@ -135,13 +135,45 @@ final class TrashViewTests: XCTestCase {
                        .modify(add: [], remove: ["TRASH"]))
     }
 
-    /// F5: a trash that reached nothing (all already trashed, e.g. `#` in
-    /// the Trash view) has nothing to undo: nothing is sent, nothing
-    /// deleted earlier comes back.
-    func testUndoOfATrashThatReachedNothingSendsNothing() async throws {
-        let undo = ThreadUndo.undoTrashRemote(
-            wasInInbox: false, before: .init(liveIds: [], trashedIds: ["a", "b"]))
-        XCTAssertTrue(undo.isEmpty)
+    /// Whatever the undo restores, the messages deleted before the action
+    /// go back in the trash: nothing deleted earlier comes back. (A
+    /// conversation entirely in the trash is never trashed again, so its
+    /// undo never arises: `MailStore.trash`.)
+    func testUndoAlwaysPutsEarlierDeletionsBack() {
+        XCTAssertEqual(ThreadUndo.undoTrashRemote(
+            wasInInbox: false, before: .init(liveIds: [], trashedIds: ["a", "b"])),
+                       .sequence([.modify(add: [], remove: ["TRASH"]),
+                                  .modifyMessages(ids: ["a", "b"], add: ["TRASH"], remove: [])]))
+    }
+
+    /// Drafts are never named (a draft's id changes on every save) and the
+    /// states of several threads come from one query.
+    func testTrashStatesLeaveDraftsOut() throws {
+        let q = try makeDB(["t1": [msg("a", minutesAgo: 60, labels: "TRASH"),
+                                   msg("d", minutesAgo: 50, labels: "DRAFT TRASH"),
+                                   msg("b", minutesAgo: 30, labels: "INBOX"),
+                                   msg("e", minutesAgo: 20, labels: "DRAFT")],
+                            "t2": [msg("c", thread: "t2", minutesAgo: 10, labels: "INBOX")]])
+        let states = try q.read { db in
+            try TrashedMessages.trashStates(
+                db, threadIds: ["\(self.account):t1", "\(self.account):t2", "\(self.account):none"])
+        }
+        XCTAssertEqual(states["\(account):t1"], .init(liveIds: ["b"], trashedIds: ["a"]))
+        XCTAssertEqual(states["\(account):t2"], .init(liveIds: ["c"], trashedIds: []))
+        XCTAssertEqual(states["\(account):none"], .init(liveIds: [], trashedIds: []))
+    }
+
+    /// "Move to" from the Trash view works on the stored live row and the
+    /// trashed ids; a conversation with nothing left to restore is skipped.
+    func testRestoreTargetsAreTheStoredRows() throws {
+        let q = try makeDB(mailbox)
+        let targets = try q.read { db in
+            try TrashedMessages.restoreTargets(
+                db, threadIds: ["\(self.account):partly", "\(self.account):live"])
+        }
+        XCTAssertEqual(targets.map(\.row.gmailThreadId), ["partly"])
+        XCTAssertEqual(targets.first?.trashedIds, ["p1"])
+        XCTAssertEqual(targets.first?.row.inTrash, false, "the live row, not the Trash copy")
     }
 
     /// The local edit a running pass lays over the messages: only the named ones.
@@ -155,9 +187,9 @@ final class TrashViewTests: XCTestCase {
 
     // MARK: - Offline queue folding
 
-    /// F3: a trash queued offline, then its undo. The trash is never sent:
-    /// a reply arriving before the replay is not trashed. The re-trash of
-    /// the earlier deletions only repeats what Gmail already holds.
+    /// A trash queued offline, then its undo. The trash is never sent, so
+    /// a reply arriving before the replay is not trashed; the re-trash is
+    /// dropped too (those messages never left the trash in Gmail).
     func testQueuedTrashThenUndoNeverSendsTheTrash() async throws {
         let undo = ThreadUndo.undoTrashRemote(
             wasInInbox: true, before: .init(liveIds: ["b"], trashedIds: ["a"]))
@@ -166,8 +198,7 @@ final class TrashViewTests: XCTestCase {
         try await RemoteThreadSend.send(merged, via: stub, gmailThreadId: "t1")
         let calls = await stub.calls
         XCTAssertFalse(calls.contains(.trash(id: "t1")))
-        XCTAssertEqual(calls, [.modify(id: "t1", add: ["INBOX"], remove: ["TRASH"]),
-                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: ["INBOX"])])
+        XCTAssertEqual(calls, [.modify(id: "t1", add: ["INBOX"], remove: ["TRASH"])])
         // Without earlier deletions, as on main: one modify, no trash.
         XCTAssertEqual(RemoteThreadChange.trash.merged(
             with: ThreadUndo.undoTrashRemote(wasInInbox: true,
@@ -215,5 +246,63 @@ final class TrashViewTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(RemoteThreadChange.self, from: data), change)
         XCTAssertFalse(change.isEmpty)
         XCTAssertTrue(RemoteThreadChange.modifyMessages(ids: [], add: ["INBOX"]).isEmpty)
+    }
+
+    // MARK: - Queue payloads and replay
+
+    /// Payloads queued by builds before this change still decode.
+    func testOlderQueuedPayloadsDecode() throws {
+        let decoder = JSONDecoder()
+        XCTAssertEqual(try decoder.decode(RemoteThreadChange.self, from: Data(#"{"trash":{}}"#.utf8)),
+                       .trash)
+        XCTAssertEqual(try decoder.decode(
+            RemoteThreadChange.self,
+            from: Data(#"{"modify":{"add":["STARRED"],"remove":[]}}"#.utf8)),
+                       .modify(add: ["STARRED"], remove: []))
+    }
+
+    /// A sequence that fails at its second step is queued whole and
+    /// replayed from the start: every step is a label change, so sending
+    /// the first again is harmless, and the second goes out on the replay.
+    func testASequenceFailingAtStepTwoIsReplayedWhole() async throws {
+        let change = RemoteThreadChange.sequence([
+            .modify(add: [], remove: ["TRASH"]),
+            .modifyMessages(ids: ["a"], add: ["TRASH"], remove: [])])
+        let stub = FailingOnceThreadEditing(failAtCall: 2)
+        do {
+            try await RemoteThreadSend.send(change, via: stub, gmailThreadId: "t1")
+            XCTFail("the second step fails")
+        } catch {}
+        try await RemoteThreadSend.send(change, via: stub, gmailThreadId: "t1")
+        let calls = await stub.calls
+        XCTAssertEqual(calls, [.modify(id: "t1", add: [], remove: ["TRASH"]),
+                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: []),
+                               .modify(id: "t1", add: [], remove: ["TRASH"]),
+                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: [])])
+    }
+}
+
+/// Records every call; the call numbered `failAtCall` (1-based) throws once.
+actor FailingOnceThreadEditing: GmailThreadEditing {
+    private(set) var calls: [StubThreadEditing.Call] = []
+    private let failAtCall: Int
+
+    init(failAtCall: Int) { self.failAtCall = failAtCall }
+
+    private func record(_ call: StubThreadEditing.Call) throws {
+        calls.append(call)
+        if calls.count == failAtCall { throw URLError(.badServerResponse) }
+    }
+
+    func modifyThread(id: String, add: [String], remove: [String]) async throws {
+        try record(.modify(id: id, add: add, remove: remove))
+    }
+
+    func trashThread(id: String) async throws {
+        try record(.trash(id: id))
+    }
+
+    func modifyMessages(ids: [String], add: [String], remove: [String]) async throws {
+        try record(.modifyMessages(ids: ids, add: add, remove: remove))
     }
 }
