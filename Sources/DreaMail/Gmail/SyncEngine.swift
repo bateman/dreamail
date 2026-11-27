@@ -379,7 +379,8 @@ actor SyncEngine {
             guard let got = full[l.id] else { return l }
             return GLabel(id: l.id, name: l.name, type: l.type, color: got.color,
                           labelListVisibility: l.labelListVisibility ?? got.labelListVisibility,
-                          messageListVisibility: l.messageListVisibility ?? got.messageListVisibility)
+                          messageListVisibility: l.messageListVisibility ?? got.messageListVisibility,
+                          colorPreset: got.colorPreset ?? l.colorPreset)
         }
         return (merged, Set(full.keys))
     }
@@ -413,7 +414,8 @@ actor SyncEngine {
                                gmailBackgroundColor: gmailColors.background,
                                gmailTextColor: gmailColors.text,
                                listVisibility: l.labelListVisibility,
-                               messageListVisibility: l.messageListVisibility)
+                               messageListVisibility: l.messageListVisibility,
+                               gmailColorPreset: l.colorPreset)
             // Runs every pass, and labels almost never change between
             // passes — write only rows that differ from the stored one.
             if row != existing { try row.save(db) }

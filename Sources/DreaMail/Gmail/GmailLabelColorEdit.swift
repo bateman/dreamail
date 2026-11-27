@@ -195,9 +195,18 @@ enum GmailLabelColorEdit {
             throw error
         }
         let confirmed = colors(of: answer)
-        try? await db.write { db in try store(db, confirmed, id: id) }
+        try? await db.write { db in
+            try store(db, confirmed, id: id)
+            try storePreset(db, answer.colorPreset, id: id)
+        }
         pending.confirm(id, colors: confirmed, now: now())
         if confirmed != wanted { throw Failure.notApplied }
+    }
+
+    /// The preset Gmail's answer carries (nil when it carries none), so a
+    /// write never leaves an older preset stored.
+    static func storePreset(_ db: Database, _ preset: String?, id: String) throws {
+        try db.execute(sql: "UPDATE label SET gmailColorPreset = ? WHERE id = ?", arguments: [preset, id])
     }
 
     static func store(_ db: Database, _ colors: LabelColors, id: String) throws {

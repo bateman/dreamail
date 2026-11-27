@@ -618,6 +618,7 @@ extension GmailLabelColorEdit {
                 for (i, claim) in claims.enumerated() {
                     if let colors = confirmed[i] {
                         try store(db, colors, id: claim.id)
+                        try GmailLabelColorEdit.storePreset(db, got[claim.id]?.colorPreset, id: claim.id)
                     } else {
                         // Only over our own writes: a sync may have stored newer colors.
                         try db.execute(sql: """

@@ -707,6 +707,9 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// label sync (v66). nil reads as `show`. A hidden label's chip is left
     /// off the rows of the message list, as in Gmail.
     var messageListVisibility: String? = nil
+    /// Gmail's `colorPreset` (e.g. `LABEL_COLOR_PRESET_DARK_GREEN`), raw,
+    /// refreshed on every label sync (v71); nil when Gmail sends none.
+    var gmailColorPreset: String? = nil
 
     /// Clears the stored order of an account's user labels (`sortOrder` back
     /// to unsorted), so the sidebar and the organizer follow Gmail's order.
@@ -730,7 +733,8 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
         if let color, LabelRGB.normalizedHex(color) != nil {
             return LabelColors(background: color, text: nil)
         }
-        return LabelColors(background: gmailBackgroundColor, text: gmailTextColor)
+        let gmail = LabelColors(background: gmailBackgroundColor, text: gmailTextColor)
+        return GmailLabelColorPreset.drawnColors(gmail, preset: gmailColorPreset)
     }
 }
 
@@ -3019,6 +3023,10 @@ final class AppDatabase: @unchecked Sendable {
         m.registerMigration("v70") { db in
             try db.execute(sql: "UPDATE label SET sortOrder = ? WHERE type = 'user'",
                            arguments: [LabelRow.unsorted])
+        }
+        // v71: Gmail's label color preset, next to the two colors.
+        m.registerMigration("v71") { db in
+            try db.alter(table: "label") { t in t.add(column: "gmailColorPreset", .text) }
         }
         return m
     }
