@@ -278,6 +278,16 @@ minor versions may still change behavior.
   view (for example from a row under "More", or with a keyboard jump), the
   sidebar could show the highlight on two rows, the new view and the one
   left behind. Only the row of the view on screen is highlighted now.
+- **More actions in the selection bar.** With several conversations
+  ticked, the bar now also offers, in Gmail's order: Archive or Move to
+  inbox, Report spam (Not spam in the Spam view), Trash, Read/Unread,
+  Snooze, Move to…, Label as… and Star. In a narrow list the last ones
+  move under a "More" (⋮) button.
+- **"Label as…" works on several conversations.** Opened from the bar,
+  from the right-click menu on ticked rows or with `l`, it shows a tick for
+  a label all of them have and a dash for a label only some have; a click
+  adds the label to all, or removes it when all had it. The change can be
+  undone. Conversations of another account are left out, with a notice.
 - **The selection bar shows icons.** With several conversations ticked,
   the bar above the list now has icon buttons for Archive, Trash, Star and
   Read/Unread, as in Gmail, instead of text. Each has a tooltip with its
