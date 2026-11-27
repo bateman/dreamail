@@ -75,8 +75,9 @@ final class SidebarSingleSelectionUITests: XCTestCase {
 
         // Collapse and expand the sidebar: the selection survives.
         main.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
         main.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(row("inbox").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForHittable(row("inbox")), "the sidebar rows are back after the expand")
         row("inbox").click()
         expect(only: "inbox", in: main, "after collapse and expand")
 
@@ -96,6 +97,12 @@ final class SidebarSingleSelectionUITests: XCTestCase {
         let gone = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [gone], timeout: 5) == .completed
+    }
+
+    private func waitForHittable(_ element: XCUIElement) -> Bool {
+        let hittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND isHittable == true"), object: element)
+        return XCTWaiter().wait(for: [hittable], timeout: 8) == .completed
     }
 
     private struct SidebarRow { let id: String; let frame: CGRect }
