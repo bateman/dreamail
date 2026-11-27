@@ -220,8 +220,17 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
         let sidebar = window.descendants(matching: .any)
             .matching(identifier: "sidebarSelectionBand").firstMatch.frame
         let trailing = sidebar.maxX
-        let threadMinX = window.scrollViews.allElementsBoundByIndex
-            .map { $0.frame.minX }.filter { $0 > sidebar.minX + 100 }.min() ?? trailing
+        // The thread list's scroll view: the nearest one to the right of the
+        // sidebar. Each element is checked with `exists` first: with the About
+        // panel open the tree changes while it is enumerated.
+        var threadMinX = trailing
+        var found = false
+        for i in 0..<window.scrollViews.count {
+            let scroll = window.scrollViews.element(boundBy: i)
+            guard scroll.exists else { continue }
+            let x = scroll.frame.minX
+            if x > sidebar.minX + 100, !found || x < threadMinX { threadMinX = x; found = true }
+        }
         let width = cg.width, height = cg.height
         var data = [UInt8](repeating: 0, count: width * height * 4)
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
