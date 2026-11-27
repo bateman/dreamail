@@ -16,9 +16,27 @@ struct SyncHealth: Equatable {
         failedAccounts.remove(account)
     }
 
+    /// Per account, messages sync could not download yet
+    /// (`MissingMessages`); absent means none.
+    private(set) var undownloaded: [String: Int] = [:]
+
+    /// Returns whether anything changed (callers republish only then).
+    @discardableResult
+    mutating func setUndownloaded(account: String, count: Int) -> Bool {
+        let next = count > 0 ? count : nil
+        guard undownloaded[account] != next else { return false }
+        undownloaded[account] = next
+        return true
+    }
+
+    func undownloadedCount(accounts: [String]) -> Int {
+        accounts.reduce(0) { $0 + (undownloaded[$1] ?? 0) }
+    }
+
     /// An account the app no longer has (removed while a pass ran).
     mutating func forget(account: String) {
         failedAccounts.remove(account)
+        undownloaded.removeValue(forKey: account)
     }
 
     /// The account's latest pass did not complete, or Google refuses its
@@ -41,21 +59,40 @@ struct SyncHealth: Equatable {
     /// The sync control's label: when the oldest account last synced, and
     /// that the last pass failed when it did. nil: nothing to say (never
     /// synced, no failure).
-    static func toolbarText(lastSuccess: Date?, failed: Bool, now: Date,
-                            locale: Locale = .current) -> String? {
+    static func toolbarText(lastSuccess: Date?, failed: Bool, undownloaded: Int = 0,
+                            now: Date, locale: Locale = .current) -> String? {
         let when = lastSuccess.map { relative($0, now: now, locale: locale) }
-        guard failed else { return when }
-        guard let when else { return "Sync failed" }
-        return "Sync failed · last synced \(when)"
+        let base: String?
+        if failed {
+            base = when.map { "Sync failed · last synced \($0)" } ?? "Sync failed"
+        } else {
+            base = when
+        }
+        guard let missing = undownloadedText(undownloaded) else { return base }
+        return base.map { "\($0) · \(missing)" } ?? missing
+    }
+
+    /// "1 message could not be downloaded"; nil for none. A count only.
+    static func undownloadedText(_ count: Int) -> String? {
+        switch count {
+        case ..<1: return nil
+        case 1: return "1 message could not be downloaded"
+        default: return "\(count) messages could not be downloaded"
+        }
     }
 
     /// The line under an account in Settings → Accounts.
-    static func settingsText(lastSuccess: Date?, failed: Bool, now: Date,
-                             locale: Locale = .current) -> String? {
+    static func settingsText(lastSuccess: Date?, failed: Bool, undownloaded: Int = 0,
+                             now: Date, locale: Locale = .current) -> String? {
         let when = lastSuccess.map { relative($0, now: now, locale: locale) }
-        guard failed else { return when.map { "Last sync \($0)" } }
-        guard let when else { return "Last sync failed" }
-        return "Last sync failed · last successful sync \(when)"
+        let base: String?
+        if failed {
+            base = when.map { "Last sync failed · last successful sync \($0)" } ?? "Last sync failed"
+        } else {
+            base = when.map { "Last sync \($0)" }
+        }
+        guard let missing = undownloadedText(undownloaded) else { return base }
+        return base.map { "\($0) · \(missing)" } ?? missing
     }
 
     /// "now", "3 minutes ago", "3 hours ago". A future date (a clock

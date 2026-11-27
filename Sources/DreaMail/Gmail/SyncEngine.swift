@@ -174,6 +174,7 @@ actor SyncEngine {
         // After the history read: a conversation trashed here and already
         // sent to Gmail has its messages marked TRASH by now.
         try await repairRevivedTrashThreadsOnce()
+        await retryMissingMessages()
 
         // When the configured window changed: backfill anything newly inside
         // it, and remove local copies of mail that fell outside it (starred
@@ -502,6 +503,84 @@ actor SyncEngine {
         }
         try await deriveThreads(for: keys)
         UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// Records ids a catch-up could not download (see `MissingMessages`).
+    private func noteMissedMessages(notFound: [String], skipped: [String]) {
+        guard !notFound.isEmpty || !skipped.isEmpty else { return }
+        var missing = MissingMessages.load(accountId: accountId)
+        let now = Date()
+        missing.noteMissed(notFound, notFound: true, now: now)
+        missing.noteMissed(skipped, notFound: false, now: now)
+        missing.save(accountId: accountId)
+    }
+
+    /// Gmail reported these deleted: no retry, no count.
+    private func forgetMissedMessages(_ ids: Set<String>) {
+        var missing = MissingMessages.load(accountId: accountId)
+        guard !missing.isEmpty else { return }
+        missing.forget(ids)
+        missing.save(accountId: accountId)
+    }
+
+    /// Retries the due ids of `MissingMessages`. Never fails the pass: an
+    /// error leaves the ids for a later one.
+    private func retryMissingMessages() async {
+        let missing = MissingMessages.load(accountId: accountId)
+        let client = self.client
+        do {
+            let result = try await Self.retryMissingMessages(
+                missing, accountId: accountId, db: db, now: Date()) { ids in
+                    try await client.getMessages(ids: ids, format: "full")
+                }
+            touchedThreadIds.formUnion(result.touched)
+            result.missing.save(accountId: accountId)
+        } catch {
+            // Offline, quota, cancelled: the ids wait for a later pass.
+        }
+    }
+
+    /// The retry itself, with the download passed in (tests use a fake):
+    /// stores what comes back, re-derives its threads from Gmail's state
+    /// (as a history catch-up does) and returns the updated list and the
+    /// threads it touched.
+    static func retryMissingMessages(
+        _ missing: MissingMessages, accountId: String, db: some DatabaseWriter, now: Date,
+        fetch: @Sendable ([String]) async throws -> MessageFetchReport
+    ) async throws -> (missing: MissingMessages, touched: Set<String>) {
+        var missing = missing
+        let due = missing.due(now: now)
+        guard !due.isEmpty else {
+            missing.expire(now: now)
+            return (missing, [])
+        }
+        let localIds = due.map { "\(accountId):\($0)" }
+        let stored = try await db.read { db in
+            try Self.existingMessageIds(db, localIds: localIds)
+        }
+        let alreadyStored = due.filter { stored.contains("\(accountId):\($0)") }
+        let toFetch = due.filter { !stored.contains("\(accountId):\($0)") }
+        var report = MessageFetchReport()
+        var touched = Set<String>()
+        if !toFetch.isEmpty {
+            report = try await fetch(toFetch)
+            let parsed = await MessageParser.parseConcurrently(
+                report.messages, accountId: accountId)
+            let items = parsed.map {
+                PendingUpsert(message: $0.0, attachments: $0.1, headersOnly: false)
+            }
+            if !items.isEmpty {
+                touched = try await db.write { db in
+                    let keys = try Self.upsertPending(db, items: items)
+                    try Self.deriveThreads(db, for: keys, accountId: accountId)
+                    return keys
+                }
+            }
+        }
+        missing.resolve(stored: alreadyStored + report.messages.map(\.id),
+                        notFound: report.notFoundIds,
+                        failed: report.skippedIds + report.retryExhaustedIds, now: now)
+        return (missing, touched)
     }
 
     /// UserDefaults key of that one-time repair (removed with the account).
@@ -989,6 +1068,7 @@ actor SyncEngine {
                 cap.record(listed: listedIds.count, missing: missingGmailIds.count)
                 // Batch HTTP when enabled; retry-exhausted ids retry next window pass.
                 let report = try await client.getMessages(ids: missingGmailIds)
+                noteMissedMessages(notFound: report.notFoundIds, skipped: report.skippedIds)
                 // Parse off this actor, in parallel, one slice at a time; the
                 // loop then only buffers and flushes, in fetch order. Slicing
                 // bounds how many parsed bodies (HTML plus inlined CID images)
@@ -1323,6 +1403,7 @@ actor SyncEngine {
                 try Self.deleteMessages(db, localIds: ids)
             }
             touchedKeys.formUnion(keys)
+            forgetMissedMessages(deleted)
         }
 
         // Label-only history: patch labelIds/isUnread in place when the
@@ -1399,6 +1480,9 @@ actor SyncEngine {
             if !needFull.isEmpty {
                 let report = try await client.getMessages(ids: needFull, format: "full")
                 retryExhausted += report.retryExhaustedIds.count
+                // History moves past these: keep them for later passes
+                // (`MissingMessages`) instead of losing them for good.
+                noteMissedMessages(notFound: report.notFoundIds, skipped: report.skippedIds)
                 for range in Self.parseSliceRanges(count: report.messages.count) {
                     let slice = Array(report.messages[range])
                     let parsedSlice = await MessageParser.parseConcurrently(
