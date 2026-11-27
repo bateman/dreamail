@@ -188,26 +188,31 @@ final class TrashViewTests: XCTestCase {
     // MARK: - Offline queue folding
 
     /// A trash queued offline, then its undo. The trash is never sent, so
-    /// a reply arriving before the replay is not trashed; the re-trash is
-    /// dropped too (those messages never left the trash in Gmail).
+    /// a reply arriving before the replay is not trashed. The undo goes out
+    /// whole: its un-trash reaches every message of the thread, so the
+    /// earlier deletions must be put back (also right when the trash did
+    /// reach Gmail and only its response was lost).
     func testQueuedTrashThenUndoNeverSendsTheTrash() async throws {
         let undo = ThreadUndo.undoTrashRemote(
             wasInInbox: true, before: .init(liveIds: ["b"], trashedIds: ["a"]))
         let merged = RemoteThreadChange.trash.merged(with: undo)
+        XCTAssertEqual(merged, undo)
         let stub = StubThreadEditing()
         try await RemoteThreadSend.send(merged, via: stub, gmailThreadId: "t1")
         let calls = await stub.calls
         XCTAssertFalse(calls.contains(.trash(id: "t1")))
-        XCTAssertEqual(calls, [.modify(id: "t1", add: ["INBOX"], remove: ["TRASH"])])
+        XCTAssertEqual(calls, [.modify(id: "t1", add: ["INBOX"], remove: ["TRASH"]),
+                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: ["INBOX"])])
         // Without earlier deletions, as on main: one modify, no trash.
         XCTAssertEqual(RemoteThreadChange.trash.merged(
             with: ThreadUndo.undoTrashRemote(wasInInbox: true,
                                              before: .init(liveIds: ["b"], trashedIds: []))),
                        .modify(add: ["INBOX"], remove: ["TRASH"]))
-        // A restore of a thread whose trash was never sent: only the restore.
+        // A restore after a queued trash: both, in order (the trash may
+        // already have reached Gmail).
         let restore = RemoteThreadChange.modifyMessages(ids: ["a"], add: ["Label_1"],
                                                         remove: ["INBOX", "TRASH"])
-        XCTAssertEqual(RemoteThreadChange.trash.merged(with: restore), restore)
+        XCTAssertEqual(RemoteThreadChange.trash.merged(with: restore), .sequence([.trash, restore]))
     }
 
     /// A trash flushed (sent) before the undo: the undo is queued alone and
@@ -306,3 +311,78 @@ actor FailingOnceThreadEditing: GmailThreadEditing {
         try record(.modifyMessages(ids: ids, add: add, remove: remove))
     }
 }
+
+/// L3 and L4: undo after a restore, and a batch Gmail refuses for one id.
+final class TrashUndoEdgeTests: XCTestCase {
+    /// A message restored from the Trash but not yet seen by a sync still
+    /// reads TRASH in its row: a later trash and undo must not re-trash it.
+    func testUndoAfterARestoreDoesNotReTrashTheRestoredMessage() {
+        let stored = ThreadUndo.TrashState(liveIds: ["b"], trashedIds: ["m1", "m2"])
+        let state = stored.restoring(["m1"])
+        XCTAssertEqual(state, .init(liveIds: ["b", "m1"], trashedIds: ["m2"]))
+        XCTAssertEqual(ThreadUndo.undoTrashRemote(wasInInbox: false, before: state),
+                       .sequence([.modify(add: [], remove: ["TRASH"]),
+                                  .modifyMessages(ids: ["m2"], add: ["TRASH"], remove: [])]))
+        XCTAssertEqual(stored.restoring([]), stored)
+    }
+
+    /// One earlier-trashed id Gmail no longer has fails the whole batch:
+    /// the others are re-trashed one by one, the missing one skipped.
+    func testARefusedBatchIsRetriedPerIdSkippingMissingOnes() async throws {
+        let client = ScriptedThreadEditing { call in
+            if case .modifyMessages(let ids, _, _) = call {
+                if ids.count > 1 { throw GmailError.http(400, "invalid id") }
+                if ids == ["gone"] { throw GmailError.http(404, "not found") }
+            }
+        }
+        let change = RemoteThreadChange.modifyMessages(ids: ["a", "gone", "b"],
+                                                       add: ["TRASH"], remove: [])
+        try await RemoteThreadSend.send(change, via: client, gmailThreadId: "t1")
+        let calls = await client.calls
+        XCTAssertEqual(calls, [.modifyMessages(ids: ["a", "gone", "b"], add: ["TRASH"], remove: []),
+                               .modifyMessages(ids: ["a"], add: ["TRASH"], remove: []),
+                               .modifyMessages(ids: ["gone"], add: ["TRASH"], remove: []),
+                               .modifyMessages(ids: ["b"], add: ["TRASH"], remove: [])])
+    }
+
+    /// An error that is not about the ids (quota, server) is not split up:
+    /// it goes to the caller, which queues the change.
+    func testOtherFailuresAreNotSplit() async throws {
+        let client = ScriptedThreadEditing { _ in throw GmailError.http(503, "busy") }
+        do {
+            try await RemoteThreadSend.send(
+                .modifyMessages(ids: ["a", "b"], add: ["TRASH"]), via: client, gmailThreadId: "t1")
+            XCTFail("the failure reaches the caller")
+        } catch {}
+        let calls = await client.calls
+        XCTAssertEqual(calls.count, 1)
+    }
+}
+
+/// Records every call and lets the test decide, per call, whether it throws.
+actor ScriptedThreadEditing: GmailThreadEditing {
+    private(set) var calls: [StubThreadEditing.Call] = []
+    private let script: @Sendable (StubThreadEditing.Call) throws -> Void
+
+    init(_ script: @escaping @Sendable (StubThreadEditing.Call) throws -> Void) {
+        self.script = script
+    }
+
+    private func record(_ call: StubThreadEditing.Call) throws {
+        calls.append(call)
+        try script(call)
+    }
+
+    func modifyThread(id: String, add: [String], remove: [String]) async throws {
+        try record(.modify(id: id, add: add, remove: remove))
+    }
+
+    func trashThread(id: String) async throws {
+        try record(.trash(id: id))
+    }
+
+    func modifyMessages(ids: [String], add: [String], remove: [String]) async throws {
+        try record(.modifyMessages(ids: ids, add: add, remove: remove))
+    }
+}
+

@@ -161,21 +161,27 @@ extension MailStore {
 
     private func run(_ plan: ConversationActionRun, bulk: Bool,
                      autoAdvance: String?, undoLabel: String?) {
-        guard !plan.targets.isEmpty else { return }
+        // A Trash row of an otherwise live conversation takes no thread-wide
+        // action: say so, and offer no undo for what was not done.
+        let targets = plan.targets.filter { !isPartlyTrashedRow($0.id) }
+        guard !targets.isEmpty else {
+            if !plan.targets.isEmpty { showNotice(Self.partlyTrashedNotice) }
+            return
+        }
         let action = plan.action
         let focus = selectedThreadId
         let acted: [MailThread]
         if bulk {
-            acted = mutateThreads(plan.targets, autoAdvanceAction: autoAdvance,
+            acted = mutateThreads(targets, autoAdvanceAction: autoAdvance,
                                   remote: action.remote, local: { action.apply(&$0) })
             clearCheckedThreads()
         } else {
-            acted = [mutateThread(plan.targets[0], autoAdvanceAction: autoAdvance,
+            acted = [mutateThread(targets[0], autoAdvanceAction: autoAdvance,
                                   remote: action.remote) { action.apply(&$0) }]
         }
         guard let undoLabel else { return }
-        let ids = plan.targets.map(\.id)
-        let groups = action.undoGroups(acted: acted, originals: plan.targets)
+        let ids = targets.map(\.id)
+        let groups = action.undoGroups(acted: acted, originals: targets)
         offerUndo(undoLabel) { [weak self] in
             guard let self else { return }
             self.pinReadStateKeep(ids)

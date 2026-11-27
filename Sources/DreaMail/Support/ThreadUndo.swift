@@ -99,6 +99,16 @@ enum ThreadUndo {
     struct TrashState: Equatable, Sendable {
         var liveIds: [String]
         var trashedIds: [String]
+
+        /// Message rows change only when a sync brings Gmail's state back.
+        /// Messages restored from the Trash since then are live, whatever
+        /// their stored row still says: an undo must not re-trash them.
+        func restoring(_ restored: Set<String>) -> TrashState {
+            guard !restored.isEmpty else { return self }
+            let back = trashedIds.filter { restored.contains($0) }
+            return TrashState(liveIds: liveIds + back,
+                              trashedIds: trashedIds.filter { !restored.contains($0) })
+        }
     }
 
     /// Undo of a trash. `threads.trash` reaches every message Gmail holds,

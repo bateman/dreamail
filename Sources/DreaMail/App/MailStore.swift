@@ -2636,6 +2636,19 @@ struct ComposeRequest: Identifiable {
     /// All Mail (which used to race ContentView's `selectedView` onChange
     /// and clear `selectedThreadId` right after we set it).
     func openThread(_ thread: MailThread) {
+        var thread = thread
+        // A link, a search result or Ask AI opens the conversation as it
+        // is live: a Trash copy of it in the list gives way to the stored
+        // row, and the pane loads the live reader.
+        if trashViewProjectedIds.contains(thread.id) {
+            trashViewProjectedIds.remove(thread.id)
+            if let stored = try? db.read({ try MailThread.fetchOne($0, key: thread.id) }) {
+                thread = stored
+            }
+            if let index = threads.firstIndex(where: { $0.id == thread.id }) {
+                threads[index] = thread
+            }
+        }
         threads = OpenFromSearch.ensuringVisible(opening: thread, in: threads)
         selectThread(thread.id, intent: .explicitOpen)
         // Bind pin to the current reload epoch (commitSearch already bumped
@@ -3036,6 +3049,14 @@ struct ComposeRequest: Identifiable {
                     completedGeneration: generation,
                     currentSelectedId: self.selectedThreadId
                 ) {
+                case .apply(let threadId)
+                    where self.trashViewProjectedIds.contains(threadId)
+                        && !payload.trashProjected.contains(threadId):
+                    // A Trash copy of a live conversation is never pinned
+                    // into another list: the reloaded list decides.
+                    self.preserveOpenThreadId = nil
+                    self.preserveOpenThreadGeneration = nil
+                    list = payload.threads
                 case .apply(let threadId):
                     self.preserveOpenThreadId = nil
                     self.preserveOpenThreadGeneration = nil
@@ -3055,7 +3076,9 @@ struct ComposeRequest: Identifiable {
                 // poll that changed nothing would otherwise re-run the list's
                 // layout pass, the sidebar badges and the paging footer.
                 if list != self.threads { self.threads = list }
-                self.trashViewProjectedIds = payload.trashProjected
+                if payload.trashProjected != self.trashViewProjectedIds {
+                    self.trashViewProjectedIds = payload.trashProjected
+                }
                 // Drop multi-select checks for rows that left the list.
                 if !self.checkedThreadIds.isEmpty {
                     let visible = Set(list.map(\.id))
@@ -3221,7 +3244,9 @@ struct ComposeRequest: Identifiable {
                 let existing = Set(self.threads.map(\.id))
                 let fresh = shownRows.filter { !existing.contains($0.id) }
                 self.threads.append(contentsOf: fresh)
-                self.trashViewProjectedIds.formUnion(shownProjected)
+                if !shownProjected.isSubset(of: self.trashViewProjectedIds) {
+                    self.trashViewProjectedIds.formUnion(shownProjected)
+                }
                 self.vipThreadIds.formUnion(vipHits)
                 self.listWindowLimit = max(self.listWindowLimit, self.threads.count)
                 // Cursor from this fetched page only — not self.threads, which
@@ -4014,7 +4039,14 @@ struct ComposeRequest: Identifiable {
     @ObservationIgnored var lastSyncAttemptedAt: Date?
     /// Trash view rows shown from their trashed messages only: their stored
     /// row is a live conversation (`TrashedMessages.projectTrashView`).
-    @ObservationIgnored var trashViewProjectedIds: Set<String> = []
+    /// Observed: the reading pane remounts when the open thread enters or
+    /// leaves this set, so the reader mode, the summary and every action
+    /// gate always describe what is on screen. Assign only on a change.
+    var trashViewProjectedIds: Set<String> = []
+    /// Per thread, Gmail ids restored from the Trash and not yet seen by a
+    /// sync (their stored rows still say TRASH): an undo of a later trash
+    /// must not re-trash them. Cleared per account by a completed pass.
+    @ObservationIgnored var restoredSinceSync: [String: Set<String>] = [:]
 
 
     /// In-flight `syncAll` only; tracked so termination can await pool access,

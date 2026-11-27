@@ -963,6 +963,7 @@ struct ContentView: View {
             inlineReserve: inlineComposeReserveHeight,
             // Read here because DetailPaneHost is deliberately store-free.
             // Non-mutating, so evaluating it in `body` has no side effects.
+            trashReader: store.openedThreadId.map { store.opensTrashReader(threadId: $0) } ?? false,
             initialPayload: store.openedThreadId.flatMap {
                 store.warmThreadDetail(threadId: $0)
             },
@@ -1033,6 +1034,10 @@ private struct DetailPaneHost: View, Equatable {
     let focusMode: Bool
     let paneHidden: Bool
     let inlineReserve: CGFloat
+    /// The open thread is shown from its trashed messages only
+    /// (`MailStore.opensTrashReader`). Part of the pane's identity: when it
+    /// changes, the pane remounts and loads the other reader.
+    let trashReader: Bool
     /// Seeds a remounted `ThreadDetailView` so its first frame already shows
     /// the conversation. Excluded from `==` (below) and safe to go stale: it
     /// is only consumed when `.id(thread.id)` builds a new pane, which cannot
@@ -1054,6 +1059,7 @@ private struct DetailPaneHost: View, Equatable {
             && lhs.focusMode == rhs.focusMode
             && lhs.paneHidden == rhs.paneHidden
             && lhs.inlineReserve == rhs.inlineReserve
+            && lhs.trashReader == rhs.trashReader
     }
 
     var body: some View {
@@ -1074,7 +1080,7 @@ private struct DetailPaneHost: View, Equatable {
                         toolbarModel: toolbarModel,
                         onBack: onBack,
                         onReply: onReply)
-                        .id(thread.id)
+                        .id(trashReader ? "\(thread.id)#trash" : thread.id)
                 }
                 .modifier(ThreadDetailToolbar(
                     thread: thread,

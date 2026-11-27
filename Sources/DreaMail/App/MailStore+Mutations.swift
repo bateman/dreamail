@@ -934,8 +934,17 @@ extension MailStore {
     /// change until the next sync applies the trash.
     func loadTrashStates(_ ids: [String]) -> Task<[String: ThreadUndo.TrashState], Never> {
         let pool = db
+        // Restores not yet seen by a sync count as live (`restoredSinceSync`).
+        let restored = restoredSinceSync.filter { ids.contains($0.key) }
         return Task {
-            (try? await pool.read { db in try TrashedMessages.trashStates(db, threadIds: ids) }) ?? [:]
+            let stored = (try? await pool.read { db in
+                try TrashedMessages.trashStates(db, threadIds: ids)
+            }) ?? [:]
+            var states = stored
+            for (id, state) in stored {
+                states[id] = state.restoring(restored[id] ?? [])
+            }
+            return states
         }
     }
 
@@ -961,6 +970,10 @@ extension MailStore {
                     ids: target.trashedIds, add: move.addLabels, remove: move.removeLabels)
             }
             let rows = loaded.map(\.row)
+            for target in loaded {
+                self.restoredSinceSync[target.row.id, default: []]
+                    .formUnion(target.trashedIds)
+            }
             self.mutateThreads(rows, autoAdvanceAction: "move", remote: .modify(),
                                remotes: remotes, allowPartlyTrashed: true, alwaysChained: true,
                                local: { $0.applyLabelMutation(add: [labelId]) })
@@ -982,10 +995,11 @@ extension MailStore {
         // search filters on inTrash and any labelIds-based UI agree.
         let wasInInbox = thread.inInbox
         let statesBefore = loadTrashStates([thread.id])
-        let acted = mutateThread(thread, autoAdvanceAction: "trash",
-                                 remote: ThreadUndo.remote(.trash)) {
-            ThreadUndo.apply(.trash, &$0)
-        }
+        // Chained, like its undo below: a trash retried after a backoff can
+        // never reach Gmail after the undo that cancels it.
+        let acted = mutateThreads([thread], autoAdvanceAction: "trash",
+                                  remote: ThreadUndo.remote(.trash), alwaysChained: true,
+                                  local: { ThreadUndo.apply(.trash, &$0) }).first ?? thread
         offerUndo("Moved to Trash") { [weak self] in
             guard let self else { return }
             // Pin before mutate so reloadThreads snapshots keepIds (opened-
@@ -995,12 +1009,12 @@ extension MailStore {
             Task { @MainActor [weak self] in
                 let states = await statesBefore.value
                 guard let self else { return }
-                self.mutateThread(
-                    acted, remote: ThreadUndo.undoTrashRemote(
-                        wasInInbox: wasInInbox, before: states[thread.id])
-                ) {
-                    ThreadUndo.restore(.trash, wasInInbox: wasInInbox, &$0)
-                }
+                self.mutateThreads(
+                    [acted],
+                    remote: ThreadUndo.undoTrashRemote(
+                        wasInInbox: wasInInbox, before: states[thread.id]),
+                    alwaysChained: true,
+                    local: { ThreadUndo.restore(.trash, wasInInbox: wasInInbox, &$0) })
                 self.restoreSelectionFocus(priorFocus)
             }
         }
