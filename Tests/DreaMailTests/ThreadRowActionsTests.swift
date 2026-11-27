@@ -67,3 +67,37 @@ final class ThreadRowActionsTests: XCTestCase {
                        "a hard slot width clips long dates")
     }
 }
+
+final class SelectionBarActionTests: XCTestCase {
+    func testActionsKeepTheOldOrderAndIds() {
+        XCTAssertEqual(SelectionBarAction.allCases.map(\.rawValue),
+                       ["archive", "trash", "star", "toggleRead"])
+    }
+
+    func testGlyphsAreTheOnesTheRowsAndToolbarAlreadyUse() {
+        XCTAssertEqual(SelectionBarAction.archive.symbol(flag: false), "archivebox")
+        XCTAssertEqual(SelectionBarAction.trash.symbol(flag: false), "trash")
+        XCTAssertEqual(SelectionBarAction.star.symbol(flag: true), "star")
+        XCTAssertEqual(SelectionBarAction.star.symbol(flag: false), "star.fill")
+        XCTAssertEqual(SelectionBarAction.toggleRead.symbol(flag: true), "envelope.open")
+        XCTAssertEqual(SelectionBarAction.toggleRead.symbol(flag: false), "envelope.badge")
+    }
+
+    func testLabelsFollowWhatTheClickDoes() {
+        XCTAssertEqual(SelectionBarAction.archive.title(flag: true), "Archive")
+        XCTAssertEqual(SelectionBarAction.trash.title(flag: false), "Trash")
+        XCTAssertEqual(SelectionBarAction.star.title(flag: true), "Star")
+        XCTAssertEqual(SelectionBarAction.star.title(flag: false), "Unstar")
+        XCTAssertEqual(SelectionBarAction.toggleRead.title(flag: true), "Mark as read")
+        XCTAssertEqual(SelectionBarAction.toggleRead.title(flag: false), "Mark as unread")
+    }
+}
+
+final class SelectionBarTooltipTests: XCTestCase {
+    func testTooltipKeepsTheShortcutWhenThereIsOne() {
+        XCTAssertEqual(SelectionBarAction.archive.tooltip(flag: false, shortcut: "e"), "Archive selected (e)")
+        XCTAssertEqual(SelectionBarAction.trash.tooltip(flag: false, shortcut: "#"), "Trash selected (#)")
+        XCTAssertEqual(SelectionBarAction.star.tooltip(flag: true, shortcut: "s"), "Star selected (s)")
+        XCTAssertEqual(SelectionBarAction.toggleRead.tooltip(flag: true, shortcut: nil), "Mark as read")
+    }
+}
