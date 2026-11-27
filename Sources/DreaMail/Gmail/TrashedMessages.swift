@@ -210,7 +210,8 @@ enum TrashedMessages {
     static func revertStoredRestores(_ db: Database, accountId: String,
                                      change: RemoteThreadChange) throws -> Bool {
         let restores = storedRestores(in: change)
-        for r in restores {
+        // Newest first: each step is undone on the state the next one left.
+        for r in restores.reversed() {
             try relabel(db, accountId: accountId, ids: r.ids, add: r.remove, remove: r.add)
         }
         return !restores.isEmpty

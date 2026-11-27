@@ -120,6 +120,40 @@ final class MessageHeaderActionsUITests: XCTestCase {
         }
         XCTAssertEqual(element(app, "messageHeaderStar").label, "Unstar this message",
                        "the starred demo message shows its star")
+
+        // Reply answers the sender only; Reply all keeps the demo Cc.
+        let ccChip = NSPredicate(format: "label CONTAINS[c] 'sarah' OR value CONTAINS[c] 'sarah'")
+        element(app, "messageHeaderReply").click()
+        var compose = openedCompose(app)
+        XCTAssertFalse(compose.descendants(matching: .any).matching(identifier: "addressField.Cc")
+            .firstMatch.exists, "Reply has no Cc")
+        XCTAssertFalse(compose.staticTexts.matching(ccChip).firstMatch.exists, "Reply leaves the Cc out")
+        closeCompose(app)
+        element(app, "messageHeaderReplyAll").click()
+        compose = openedCompose(app)
+        XCTAssertTrue(compose.descendants(matching: .any).matching(identifier: "addressField.Cc")
+            .firstMatch.waitForExistence(timeout: 5), "Reply all opens with a Cc")
+        XCTAssertTrue(compose.staticTexts.matching(ccChip).firstMatch.waitForExistence(timeout: 5),
+                      "Reply all keeps the demo Cc recipient")
+        closeCompose(app)
+    }
+
+    private func openedCompose(_ app: XCUIApplication) -> XCUIElement {
+        let compose = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier IN {'composeCard', 'composeInline'}")).firstMatch
+        XCTAssertTrue(compose.waitForExistence(timeout: 5), "the compose opens")
+        return compose
+    }
+
+    /// Esc closes an untouched reply (as `ComposeTabFocusUITests`).
+    private func closeCompose(_ app: XCUIApplication) {
+        let compose = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier IN {'composeCard', 'composeInline'}")).firstMatch
+        for _ in 0..<3 where compose.exists {
+            app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+            _ = compose.waitForNonExistence(timeout: 2)
+        }
+        XCTAssertFalse(compose.exists, "Esc closes the compose")
     }
 
     /// The open "More" menu: the menu holding an item only it has, so the

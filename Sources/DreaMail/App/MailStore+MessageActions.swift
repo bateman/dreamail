@@ -37,7 +37,8 @@ extension MailStore {
                 let written = self.editMessageLabels([(row: state.row, ids: edit.ids)], add: edit.add,
                                                      remove: edit.remove, foldThreadFlags: true)
                 self.offerUndo("Message moved to Trash") { [weak self] in
-                    self?.runMessageAction(message) { state in
+                    guard let self else { return }
+                    self.runMessageAction(message) { [weak self] state in
                         self?.editMessageLabels([(row: state.row, ids: undo.ids)], add: undo.add,
                                                 remove: undo.remove, foldThreadFlags: true)
                     }

@@ -698,4 +698,28 @@ final class MessageActionsTests: XCTestCase {
             XCTAssertFalse(items.contains(gone), "\(gone)")
         }
     }
+
+    func testARefusedDeleteThenRestoreAllIsRevertedNewestFirst() throws {
+        // Offline: "Delete this message" on b, then #107's "Restore all"
+        // on b and c (different ids: two queued steps, not folded). Gmail
+        // refuses the whole queued change: b was never trashed there.
+        let q = try makeDB([msg("a", minutesAgo: 60, labels: "INBOX"),
+                            msg("b", minutesAgo: 30, labels: "INBOX"),
+                            msg("c", minutesAgo: 10, labels: "TRASH")])
+        let delete = RemoteThreadChange.modifyMessages(ids: ["b"], add: ["TRASH"])
+        let restoreAll = DeletedMessagesInConversation.restoreChange(gmailIds: ["b", "c"],
+                                                                     conversationInInbox: true)
+        try apply(q, .init(ids: ["b"], add: ["TRASH"]))
+        try apply(q, .init(ids: ["b", "c"], add: ["INBOX"], remove: ["TRASH"]))
+        let refused = delete.merged(with: restoreAll)
+        XCTAssertEqual(TrashedMessages.storedRestores(in: refused).count, 2, "two steps")
+        try q.write { db in
+            XCTAssertTrue(try TrashedMessages.revertStoredRestores(db, accountId: self.account,
+                                                                   change: refused))
+            try OptimisticThreadWrite.rederiveOrDelete(db, threadId: self.threadId, accountId: self.account)
+        }
+        XCTAssertFalse(SyncEngine.labelIdsContain(try labels(q, "b"), "TRASH"),
+                       "newest first: the delete's revert runs last, b is not left in the Trash")
+        XCTAssertTrue(SyncEngine.labelIdsContain(try labels(q, "c"), "TRASH"), "c is deleted again")
+    }
 }

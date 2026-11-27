@@ -2689,7 +2689,7 @@ struct MessageCard: View {
             .accessibilityIdentifier("messageHeaderReply")
             if canReplyAll {
                 Button {
-                    store.openCompose(.init(replyTo: message))
+                    store.openCompose(.init(replyTo: message, replyAll: true))
                 } label: {
                     Image(systemName: "arrowshape.turn.up.left.2")
                         .frame(width: metrics.headerControlSize)
