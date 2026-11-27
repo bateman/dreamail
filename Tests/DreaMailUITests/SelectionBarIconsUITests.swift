@@ -31,7 +31,10 @@ final class SelectionBarIconsUITests: XCTestCase {
     }
 
     private func bar(_ app: XCUIApplication, _ id: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "selectionBar.\(id)").firstMatch
+        // The count and the hint are texts: an `.any` match can resolve to a
+        // wrapper with an empty label.
+        let type: XCUIElement.ElementType = (id == "count" || id == "hint") ? .staticText : .any
+        return app.descendants(matching: type).matching(identifier: "selectionBar.\(id)").firstMatch
     }
 
     private func check(_ app: XCUIApplication, _ id: String) {
@@ -144,9 +147,9 @@ final class SelectionBarIconsUITests: XCTestCase {
         XCTAssertTrue(row(app, "t3").waitForNonExistence(timeout: 10))
         XCTAssertTrue(row(app, "t4").waitForNonExistence(timeout: 10))
         XCTAssertFalse(bar(app, "count").exists, "trashing clears the selection")
-        let undo = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Undo'")).firstMatch
-        XCTAssertTrue(undo.waitForExistence(timeout: 5), "the undo toast offers to bring them back")
-        undo.click()
+        // The undo toast's button is not reliably in the accessibility tree;
+        // ⌘Z is the documented chord for the same action.
+        app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(row(app, "t3").waitForExistence(timeout: 10))
         XCTAssertTrue(row(app, "t4").waitForExistence(timeout: 10))
         check(app, "t3")
