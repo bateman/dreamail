@@ -91,20 +91,20 @@ final class LabelSidebarTagTests: XCTestCase {
 
     func testCurrentLineForAColorOnTheGrid() {
         XCTAssertEqual(LabelCurrentColor.gmail(row(gmail: "#16a766", text: "#ffffff")),
-                       "Current: #16a766, text #ffffff")
+                       "Current: #16a766, text #ffffff, no preset (list only)")
     }
 
     func testCurrentLineForAColorOffTheGrid() {
         // In Gmail's 102, not among the 64 swatches.
         XCTAssertFalse(grid.contains("#4986e7"))
         XCTAssertEqual(LabelCurrentColor.gmail(row(gmail: "#4986E7", text: "#000000")),
-                       "Current: #4986e7, text #000000 (not in this palette)")
+                       "Current: #4986e7, text #000000 (not in this palette), no preset (list only)")
         XCTAssertEqual(LabelCurrentColor.gmail(row(gmail: "#4986e7")),
-                       "Current: #4986e7 (not in this palette)")
+                       "Current: #4986e7 (not in this palette), no preset (list only)")
     }
 
     func testCurrentLineWithoutAColor() {
-        XCTAssertEqual(LabelCurrentColor.gmail(row()), "Current: none")
+        XCTAssertEqual(LabelCurrentColor.gmail(row()), "Current: no color, no preset (list only)")
         XCTAssertEqual(LabelCurrentColor.local(row(), palette: ["#EB5757"]), "Current: none")
     }
 

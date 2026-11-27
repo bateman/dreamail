@@ -80,6 +80,16 @@ struct ThreadDetailView: View {
     /// the banner, and the expand seed all read it).
     @State private var messageRoles = ThreadMessageRoles(messages: [])
     @State private var attachmentsByMessageId: [String: [AttachmentRow]] = [:]
+    /// Gmail's "N deleted messages in this conversation" line: its count
+    /// and place, from the payload (no message of theirs is in it).
+    @State private var deletedSummary: DeletedMessagesSummary?
+    /// "View" pressed: the deleted messages are shown inline. Per open
+    /// conversation, never remembered (`.id(thread.id)` remounts this view).
+    @State private var showsDeleted = false
+    /// What "View" loaded, apart from `messages` (which the toolbar, export,
+    /// the summary and the keyboard read): never in the cache or mirror.
+    @State private var deletedLoad = DeletedMessagesLoad.empty
+    @State private var deletedLoadTask: Task<Void, Never>?
     /// Off-main quote-trail + assembled HTML from `ThreadDetailRepository`.
     @State private var bodyPrepByMessageId: [String: MessageHTMLPrep] = [:]
     @State private var threadAttachments: [(message: Message, attachment: AttachmentRow)] = []
@@ -208,6 +218,7 @@ struct ThreadDetailView: View {
         _summaryEligible = State(initialValue: ThreadSummaryPolicy.isWorthSummarizing(initialPayload.messages))
         _attachmentsByMessageId = State(
             initialValue: initialPayload.attachmentsByMessageId)
+        _deletedSummary = State(initialValue: initialPayload.deletedSummary)
         _bodyPrepByMessageId = State(
             initialValue: initialPayload.bodyPrepByMessageId)
         _threadAttachments = State(
@@ -228,13 +239,23 @@ struct ThreadDetailView: View {
     /// The first message the pane actually draws: a live draft hidden while
     /// its compose editor is open does not count, so no hairline sits on top
     /// of the first row.
-    private var firstRenderedMessageId: String? {
-        messages.first { message in
-            !(messageRoles.isLiveDraft(message.id)
+    private func firstRenderedRowId(in rows: [DeletedMessagesInConversation.Row]) -> String? {
+        rows.first { row in
+            guard case .message(let message, false) = row else { return true }
+            return !(messageRoles.isLiveDraft(message.id)
               && ComposingDraftVisibility.hidesDraftCard(
                   messageId: message.id,
                   composingDraftIds: store.composingDraftMessageIds))
         }?.id
+    }
+
+    /// The pane's rows: the live messages, the deleted-messages line where
+    /// the first deleted message is, and, after "View", the deleted
+    /// messages in date order (`DeletedMessagesInConversation.rows`).
+    private var paneRows: [DeletedMessagesInConversation.Row] {
+        DeletedMessagesInConversation.rows(
+            live: messages, deleted: deletedLoad.messages,
+            summary: deletedSummary, showing: showsDeleted)
     }
 
     var body: some View {
@@ -314,31 +335,46 @@ struct ThreadDetailView: View {
                     // over the top edge of every row but the first. Rows stay
                     // direct children of this stack: they are the scroll
                     // position's targets.
-                    ForEach(messages) { message in
-                        if messageRoles.isLiveDraft(message.id) {
-                            // Live unsent drafts only — DRAFT+TRASH (discarded)
-                            // keeps ordinary MessageCard chrome so Trash still
-                            // shows content for discarded-compose threads.
-                            // The card steps aside while its own compose editor
-                            // is open, and returns when compose closes.
-                            if !ComposingDraftVisibility.hidesDraftCard(
-                                messageId: message.id,
-                                composingDraftIds: store.composingDraftMessageIds) {
-                                DraftMessageCard(
-                                    message: message,
-                                    onNeedBody: { loadBodyIfNeeded(id: message.id) })
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 12)
+                    // Built once per body pass, not once per row.
+                    let rows = paneRows
+                    let firstRenderedMessageId = firstRenderedRowId(in: rows)
+                    ForEach(rows) { row in
+                        switch row {
+                        case .line:
+                            deletedMessagesLine
+                                .messageRowSeparator(
+                                    isFirst: DeletedMessagesInConversation.lineId == firstRenderedMessageId)
+                                .id(DeletedMessagesInConversation.lineId)
+                        case .message(let message, true):
+                            deletedMessageCard(for: message)
+                                .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
+                                .id(message.id)
+                        case .message(let message, false):
+                            if messageRoles.isLiveDraft(message.id) {
+                                // Live unsent drafts only — DRAFT+TRASH (discarded)
+                                // keeps ordinary MessageCard chrome so Trash still
+                                // shows content for discarded-compose threads.
+                                // The card steps aside while its own compose editor
+                                // is open, and returns when compose closes.
+                                if !ComposingDraftVisibility.hidesDraftCard(
+                                    messageId: message.id,
+                                    composingDraftIds: store.composingDraftMessageIds) {
+                                    DraftMessageCard(
+                                        message: message,
+                                        onNeedBody: { loadBodyIfNeeded(id: message.id) })
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
+                                        .id(message.id)
+                                        .background { pinnedHeightReader(id: message.id, proxy: proxy) }
+                                }
+                            } else {
+                                messageCard(for: message,
+                                            lastNonDraftId: messageRoles.lastNonDraftId)
                                     .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
                                     .id(message.id)
                                     .background { pinnedHeightReader(id: message.id, proxy: proxy) }
                             }
-                        } else {
-                            messageCard(for: message,
-                                        lastNonDraftId: messageRoles.lastNonDraftId)
-                                .messageRowSeparator(isFirst: message.id == firstRenderedMessageId)
-                                .id(message.id)
-                                .background { pinnedHeightReader(id: message.id, proxy: proxy) }
                         }
                     }
 
@@ -506,6 +542,8 @@ struct ThreadDetailView: View {
                 detailLoadGeneration &+= 1
                 refreshTask?.cancel()
                 refreshTask = nil
+                deletedLoadTask?.cancel()
+                deletedLoadTask = nil
                 neighborPrerenderArmed = false
                 HTMLBodyNeighborPrerender.cancel()
             }
@@ -651,6 +689,121 @@ struct ThreadDetailView: View {
                     onNeedUnsubscribeHeaders: {
                         Task { await refreshUnsubscribeHeaders(message) }
                     })
+    }
+
+    /// Gmail web's line where the deleted messages of a live conversation
+    /// were: the count, then "View" (or "Hide" and "Restore all" while they
+    /// are shown). No mail content.
+    private var deletedMessagesLine: some View {
+        let label = DeletedMessagesInConversation.label(count: deletedSummary?.count ?? 0)
+        return HStack(spacing: 10) {
+            Image(systemName: "trash")
+                .font(.system(size: 11 * fontScale))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(label)
+                .font(.system(size: 12.5 * fontScale))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Button(showsDeleted ? "Hide" : "View") { toggleDeletedMessages() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12.5 * fontScale, weight: .medium))
+                .foregroundStyle(.accentText)
+                .fixedSize()
+                .help(showsDeleted ? "Hide the deleted messages" : "Show the deleted messages")
+                .accessibilityIdentifier(showsDeleted
+                    ? "thread.deletedMessages.hide" : "thread.deletedMessages.view")
+            if showsDeleted, !deletedLoad.messages.isEmpty {
+                Button("Restore all") {
+                    store.restoreDeletedMessages(gmailIds: deletedLoad.messages.map(\.gmailId),
+                                                 inThread: thread.id)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12.5 * fontScale, weight: .medium))
+                .foregroundStyle(.accentText)
+                .fixedSize()
+                .help("Move the deleted messages back to this conversation")
+                .accessibilityIdentifier("thread.deletedMessages.restoreAll")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier("thread.deletedMessages")
+    }
+
+    /// A deleted message shown after "View": marked "In Trash", muted, and
+    /// with "Restore" as its only action (no reply, forward or unsubscribe).
+    /// Its body is the stored one, already loaded: expanding it sends no
+    /// request and marks nothing read.
+    private func deletedMessageCard(for message: Message) -> some View {
+        MessageCard(message: message,
+                    isLast: false,
+                    attachments: deletedLoad.attachmentsByMessageId[message.id] ?? [],
+                    bodyPrep: deletedLoad.bodyPrepByMessageId[message.id],
+                    expandPolicy: messageExpandPolicy,
+                    expandedMessageIds: $expandedMessageIds,
+                    loadImagesForThread: $loadRemoteImagesForThread,
+                    threadInSpam: thread.inSpam,
+                    inTrash: true,
+                    onReply: {},
+                    onRestore: {
+                        store.restoreDeletedMessages(gmailIds: [message.gmailId], inThread: thread.id)
+                    },
+                    onBlockSender: { email in
+                        blockTarget = BlockTarget(email: email, thread: nil)
+                    })
+    }
+
+    /// "View" reads the deleted messages (local rows only); "Hide" closes
+    /// them again.
+    private func toggleDeletedMessages() {
+        if showsDeleted {
+            closeDeletedMessages()
+        } else {
+            loadDeletedMessages(reveal: true)
+        }
+    }
+
+    private func loadDeletedMessages(reveal: Bool) {
+        deletedLoadTask?.cancel()
+        let threadId = thread.id
+        deletedLoadTask = Task {
+            let load = await store.deletedMessagesForReadingPane(threadId: threadId)
+            guard !Task.isCancelled, splitMode || store.openedThreadId == threadId else { return }
+            withAnimation(PMMotion.interactive) {
+                deletedLoad = load
+                if reveal { showsDeleted = true }
+            }
+        }
+    }
+
+    /// A payload's line facts. While the deleted messages are shown, a
+    /// changed count (a restore, a sync) reads them again; no line left
+    /// closes them.
+    private func applyDeletedSummary(_ summary: DeletedMessagesSummary?) {
+        let changed = summary != deletedSummary
+        deletedSummary = summary
+        // No line left: close, and drop a View still reading, so it cannot
+        // open them later by itself.
+        if summary == nil {
+            closeDeletedMessages()
+        } else if showsDeleted, changed {
+            loadDeletedMessages(reveal: false)
+        }
+    }
+
+    /// "Hide", or no deleted message left.
+    private func closeDeletedMessages() {
+        deletedLoadTask?.cancel()
+        deletedLoadTask = nil
+        expandedMessageIds.subtract(deletedLoad.messages.map(\.id))
+        withAnimation(PMMotion.interactive) { showsDeleted = false }
+        deletedLoad = .empty
     }
 
     /// Only the inline reply's target needs height updates as its HTML settles.
@@ -806,6 +959,7 @@ struct ThreadDetailView: View {
             let merged = ThreadRefresh.merge(
                 current: messages, fresh: load.payload.messages)
             attachmentsByMessageId = load.payload.attachmentsByMessageId
+            applyDeletedSummary(load.payload.deletedSummary)
             // Keep prep for bodies we already hydrated that the fresh payload
             // may have as header-only; overlay with any newly computed prep.
             var mergedPrep = bodyPrepByMessageId
@@ -838,9 +992,11 @@ struct ThreadDetailView: View {
                 // Drop ids that left the thread (send/discard renumber).
                 let live = Set(messageRoles.nonDraftIds)
                 let wasOpen = expandedMessageIds
+                // A shown deleted message stays open too.
                 expandedMessageIds = MessageExpandPolicy.reconciledAfterRefresh(
                     current: expandedMessageIds,
-                    nonDraftIds: messageRoles.nonDraftIds)
+                    nonDraftIds: messageRoles.nonDraftIds
+                        + (showsDeleted ? deletedLoad.messages.map(\.id) : []))
                 // A renumbered sole message (send, Gmail re-id) reopens.
                 for id in expandedMessageIds.subtracting(wasOpen) {
                     loadBodyIfNeeded(id: id)
@@ -1241,6 +1397,7 @@ struct ThreadDetailView: View {
         messages = loaded
         attachmentsByMessageId = payload.attachmentsByMessageId
         bodyPrepByMessageId = payload.bodyPrepByMessageId
+        applyDeletedSummary(payload.deletedSummary)
         // `cid:` images this session already resolved: paint them in the
         // first frame and mark them attempted, so the open makes no
         // attachment request and does not load the body a second time.
@@ -1899,7 +2056,11 @@ struct MessageCard: View {
     /// The thread row's Spam flag: written optimistically when the user
     /// marks spam, before this message's own labels catch up.
     let threadInSpam: Bool
+    /// A deleted message of a live conversation, shown after "View": tagged
+    /// "In Trash" and muted; "Restore" (`onRestore`) is its only action.
+    let inTrash: Bool
     let onReply: () -> Void
+    let onRestore: () -> Void
     /// Parent owns the confirmation dialog for sender blocking.
     let onBlockSender: (String) -> Void
     /// Parent loads the body when a collapsed header-only card expands.
@@ -2014,7 +2175,9 @@ struct MessageCard: View {
          fillsPaneHeight: CGFloat? = nil,
          loadImagesForThread: Binding<Bool> = .constant(false),
          threadInSpam: Bool = false,
+         inTrash: Bool = false,
          onReply: @escaping () -> Void,
+         onRestore: @escaping () -> Void = {},
          onBlockSender: @escaping (String) -> Void = { _ in },
          onNeedBody: @escaping () -> Void = {},
          onRemoteImagesDecision: @escaping (Bool, Bool) -> Void = { _, _ in },
@@ -2035,7 +2198,9 @@ struct MessageCard: View {
         self.fillsPaneHeight = fillsPaneHeight
         self._loadImagesForThread = loadImagesForThread
         self.threadInSpam = threadInSpam
+        self.inTrash = inTrash
         self.onReply = onReply
+        self.onRestore = onRestore
         self.onBlockSender = onBlockSender
         self.onNeedBody = onNeedBody
         self.onRemoteImagesDecision = onRemoteImagesDecision
@@ -2155,6 +2320,9 @@ struct MessageCard: View {
         // OpenPGP: blocked until the message is checked, and for anything
         // encrypted (EFAIL), whatever the policy or an opt-in says.
         if store.openPGP.blocksRemoteContent(message, candidate: pgpCandidate) { return false }
+        // A deleted message loads nothing by itself: only its own
+        // "Load images" click (never the policy or the conversation's).
+        if inTrash, !loadRemoteImages { return false }
         return RemoteImagePolicy.autoLoads(
             message: message,
             threadInSpam: threadInSpam,
@@ -2250,6 +2418,16 @@ struct MessageCard: View {
                     }
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("messageSender")
+                    if inTrash {
+                        Text("In Trash")
+                            .font(.system(size: metrics.dateFontSize, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                            .fixedSize()
+                            .accessibilityIdentifier("messageInTrashTag")
+                    }
                     // Redrawn every minute so "(12 hours ago)" stays true.
                     TimelineView(.everyMinute) { context in
                         Text(dateText(now: context.date))
@@ -2275,6 +2453,7 @@ struct MessageCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .opacity(inTrash ? 0.6 : 1)
         .padding(.leading, metrics.leadingInset)
         .padding(.trailing, metrics.trailingInset)
         .padding(.top, metrics.verticalPadding)
@@ -2299,7 +2478,9 @@ struct MessageCard: View {
                     Color.clear.contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open message from \(senderName)")
+                .accessibilityLabel(inTrash
+                    ? "Open deleted message from \(senderName)"
+                    : "Open message from \(senderName)")
                 .accessibilityIdentifier("messageRowExpand")
             }
         }
@@ -2330,7 +2511,9 @@ struct MessageCard: View {
     /// May carry OpenPGP: scanned once per message by `PGPCenter`, never in
     /// `init`. Always false with the build switch off.
     private var pgpCandidate: Bool {
-        PGPFeatures.isEnabled && store.openPGP.isCandidate(message, attachments: attachments)
+        // A deleted message is not checked: the check fetches the raw
+        // message from Gmail and keeps its plaintext in memory.
+        !inTrash && PGPFeatures.isEnabled && store.openPGP.isCandidate(message, attachments: attachments)
     }
 
     /// The engine's verdict on this message, once checked (`PGPCenter`).
@@ -2390,36 +2573,48 @@ struct MessageCard: View {
                 .fixedSize()
                 .help("Remote images can track opens. Click for this message; menu for the whole conversation (Spam messages still need their own click). The image policy is in Settings → Appearance.")
             }
-            Button {
-                store.openCompose(.init(replyTo: message))
-            } label: {
-                Image(systemName: "arrowshape.turn.up.left")
-                    .font(.system(size: 12 * fontScale))
-            }
-            .buttonStyle(.plain).foregroundStyle(.secondary)
-            .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
-            .accessibilityLabel("Reply")
-            if ReplyComposer.hasAdditionalReplyAllRecipients(
-                message, ownAddresses: store.ownEmailAddresses) {
+            if inTrash {
+                // Deleted: no reply, reply all or forward; only restore.
+                Button(action: onRestore) {
+                    Label("Restore", systemImage: "arrow.uturn.backward")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .fixedSize()
+                .help("Move this message out of the Trash, back to this conversation")
+                .accessibilityIdentifier("messageActionRestore")
+            } else {
                 Button {
-                    store.openCompose(.init(replyTo: message, replyAll: true))
+                    store.openCompose(.init(replyTo: message))
                 } label: {
-                    Image(systemName: "arrowshape.turn.up.left.2")
+                    Image(systemName: "arrowshape.turn.up.left")
                         .font(.system(size: 12 * fontScale))
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
-                .accessibilityLabel("Reply all")
+                .help("Reply (\(store.keyBindings.displayKey(for: .reply)))")
+                .accessibilityLabel("Reply")
+                if ReplyComposer.hasAdditionalReplyAllRecipients(
+                    message, ownAddresses: store.ownEmailAddresses) {
+                    Button {
+                        store.openCompose(.init(replyTo: message, replyAll: true))
+                    } label: {
+                        Image(systemName: "arrowshape.turn.up.left.2")
+                            .font(.system(size: 12 * fontScale))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
+                    .accessibilityLabel("Reply all")
+                }
+                Button {
+                    store.openCompose(.init(replyTo: message, forward: true))
+                } label: {
+                    Image(systemName: "arrowshape.turn.up.right")
+                        .font(.system(size: 12 * fontScale))
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Forward this message (\(store.keyBindings.displayKey(for: .forward))) · starts a new conversation")
+                .accessibilityLabel("Forward this message")
             }
-            Button {
-                store.openCompose(.init(replyTo: message, forward: true))
-            } label: {
-                Image(systemName: "arrowshape.turn.up.right")
-                    .font(.system(size: 12 * fontScale))
-            }
-            .buttonStyle(.plain).foregroundStyle(.secondary)
-            .help("Forward this message (\(store.keyBindings.displayKey(for: .forward))) · starts a new conversation")
-            .accessibilityLabel("Forward this message")
             if isCollapsible {
                 Button {
                     toggleExpanded()
@@ -2690,11 +2885,12 @@ struct MessageCard: View {
         // collapses Google's text/calendar + application/ics pair
         // (and already-synced duplicate rows) to one card.
         let calendarAtts = CalendarInvite.uniqueCalendarAttachments(attachments)
-        let fileAtts = attachments.filter {
+        // A deleted message's invite is a plain file: no reply card.
+        let fileAtts = inTrash ? attachments : attachments.filter {
             !CalendarInvite.isCalendarAttachment(
                 mimeType: $0.mimeType, filename: $0.filename)
         }
-        if !calendarAtts.isEmpty {
+        if !inTrash, !calendarAtts.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(calendarAtts, id: \.displayIdentity) { att in
                     CalendarInviteCard(message: message, attachment: att,
@@ -2742,42 +2938,46 @@ struct MessageCard: View {
                 .padding(.vertical, 2)
             }
         }
-        // Action bar on every message.
-        HStack(spacing: 8) {
-            Button {
-                store.openCompose(.init(replyTo: message))
-            } label: {
-                Label("Reply", systemImage: "arrowshape.turn.up.left")
-                    .font(.system(size: 12.5 * fontScale))
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("messageActionReply")
-            if ReplyComposer.hasAdditionalReplyAllRecipients(
-                message, ownAddresses: store.ownEmailAddresses) {
+        // A deleted message has no actions but "Restore" (in its header),
+        // and loads nothing more (filters come from Gmail).
+        if !inTrash {
+            // Action bar on every message.
+            HStack(spacing: 8) {
                 Button {
-                    store.openCompose(.init(replyTo: message, replyAll: true))
+                    store.openCompose(.init(replyTo: message))
                 } label: {
-                    Label("Reply all", systemImage: "arrowshape.turn.up.left.2")
+                    Label("Reply", systemImage: "arrowshape.turn.up.left")
                         .font(.system(size: 12.5 * fontScale))
                 }
                 .buttonStyle(.bordered)
-                .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
+                .accessibilityIdentifier("messageActionReply")
+                if ReplyComposer.hasAdditionalReplyAllRecipients(
+                    message, ownAddresses: store.ownEmailAddresses) {
+                    Button {
+                        store.openCompose(.init(replyTo: message, replyAll: true))
+                    } label: {
+                        Label("Reply all", systemImage: "arrowshape.turn.up.left.2")
+                            .font(.system(size: 12.5 * fontScale))
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Reply all (\(store.keyBindings.displayKey(for: .replyAll)))")
+                }
+                Button {
+                    store.openCompose(.init(replyTo: message, forward: true))
+                } label: {
+                    Label("Forward", systemImage: "arrowshape.turn.up.right")
+                        .font(.system(size: 12.5 * fontScale))
+                }
+                .buttonStyle(.bordered)
+                .help("Forward this message · starts a new conversation")
             }
-            Button {
-                store.openCompose(.init(replyTo: message, forward: true))
-            } label: {
-                Label("Forward", systemImage: "arrowshape.turn.up.right")
-                    .font(.system(size: 12.5 * fontScale))
-            }
-            .buttonStyle(.bordered)
-            .help("Forward this message · starts a new conversation")
-        }
-        .padding(.top, 4)
+            .padding(.top, 4)
 
-        // Which of your Gmail filters match this message — collapsed
-        // by default; toggle the header to expand. Hidden until the
-        // account's filters have loaded and at least one hits.
-        MatchingFiltersSection(message: message, fontScale: fontScale)
+            // Which of your Gmail filters match this message — collapsed
+            // by default; toggle the header to expand. Hidden until the
+            // account's filters have loaded and at least one hits.
+            MatchingFiltersSection(message: message, fontScale: fontScale)
+        }
     }
 
     private func oversizedHTMLPlaceholder(byteCount: Int) -> some View {
@@ -2933,7 +3133,7 @@ struct MessageCard: View {
 
     @ViewBuilder
     private var unsubscribeButton: some View {
-        if ListUnsubscribe.offer(from: message) != nil {
+        if !inTrash, ListUnsubscribe.offer(from: message) != nil {
             Button("Unsubscribe", action: onUnsubscribe)
                 .buttonStyle(.plain)
                 .font(.system(size: 12 * fontScale))

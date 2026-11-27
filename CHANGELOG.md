@@ -216,6 +216,14 @@ minor versions may still change behavior.
   the label is read again in full, since the list is not guaranteed to
   carry colours.
 
+- **Fixed: two colours behind the sidebar button in light appearance.**
+  With the sidebar reduced to the icon strip, the band at the top of the
+  window was grey above the account bar and the strip and white above the
+  message list, and the seam ran behind the sidebar button. In light
+  appearance, with the sidebar reduced, the band is now white like the
+  list, so the window buttons sit on white and the account bar starts below
+  the band. Dark appearance and the open sidebar are unchanged.
+
 - **The unified inbox can be switched off.** Settings → Appearance →
   "Show unified inbox (All accounts)", on by default. Off, the "All
   accounts" button leaves the account bar, ⌘1, ⌘2… select the accounts in
@@ -243,6 +251,35 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **Move to inbox.** A conversation that is not in the Inbox (archived,
+  or reached from a label, All Mail or a search) can be moved back, as in
+  Gmail: "Move to inbox" takes the place of Archive in the conversation
+  toolbar, on the row (hover button, swipe, right-click menu), in the
+  Message menu and in the command palette. "Move to…" lists Inbox first,
+  and typing "inbox" in "Label as…" offers the move instead of creating a
+  label with that name. The move ends a snooze, unmutes the conversation
+  and can be undone. There is no default key, as in Gmail; one can be set
+  in Settings.
+- **The right-click menu on a conversation follows Gmail's.** Same order,
+  groups and wording, with an icon on every item: Reply, Reply all,
+  Forward; Move to inbox or Archive, Delete, Mark as unread or read,
+  Snooze; Move to…, Label as…, Mute or Unmute; Find emails from the
+  sender. The app's own items (Star, Remind me, VIPs, Copy Gmail link)
+  come after. Right-clicking one of several ticked conversations acts on
+  all of them. Not included: Forward as attachment, Add to Tasks, Open in
+  new window. "Find emails from" is not offered when the sender's address
+  contains `_`, `%` or `*`.
+- **The label colour sheet also shows Gmail's colour preset.** Some labels
+  that have a colour in Gmail on the web arrive from Gmail with no colour,
+  or with a neutral grey, and were drawn uncoloured. The app now also reads
+  the "preset" Gmail may attach to a label, shows it in the "Current:"
+  line ("preset DARK_GREEN", "unknown preset", or "no preset (list and
+  get)" / "(list only)" when Gmail sent none), and draws the label with
+  that preset's colour when Gmail's own colour is missing or the neutral
+  grey. Such labels are read one by one, at most every six hours. Whether
+  Gmail really sends the preset to this app is not known yet: the missing
+  colours are not reported as fixed. Removing a colour that Gmail keeps as
+  a preset now says so instead of reporting success.
 - **The label colour sheet says what is stored.** "⋮" → Label color →
   Choose color now shows a line "Current: #rrggbb" (with the text colour,
   and "not in this palette" when the colour is not one of the swatches
@@ -605,6 +642,16 @@ minor versions may still change behavior.
   a reply draft's conversation dropped out of Drafts on the next list refresh.
   Autosave now stores the saved draft from Gmail and drops the old one in one
   step, so the row and the open conversation stay in place.
+- **A conversation shows that it has deleted messages, as Gmail does.**
+  When some messages of a conversation are in the Trash and others are
+  not, the reading pane shows the line "N deleted messages in this
+  conversation" with "View". "View" shows them in place, dimmed and marked
+  "In Trash"; "Hide" puts them away again. Each has "Restore", and the line
+  has "Restore all": they take the messages out of the Trash on Gmail and
+  back into the conversation. A deleted message shown this way loads no
+  remote images until you ask, and is not checked for OpenPGP. Deleted
+  messages stay out of the list row, search, counts, quoted replies and
+  the assistant.
 
 ## [0.7.0] - 2026-11-13
 
