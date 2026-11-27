@@ -251,6 +251,12 @@ minor versions may still change behavior.
   hides the two categories until you save it again. Expect more
   notifications: promotional mail in the Inbox now notifies too.
 
+- **The selection bar shows icons.** With several conversations ticked,
+  the bar above the list now has icon buttons for Archive, Trash, Star and
+  Read/Unread, as in Gmail, instead of text. Each has a tooltip with its
+  name and shortcut. The Star and Read icons show what the click will do
+  for the ticked conversations, and a button that would do nothing is
+  greyed out. The Trash icon is no longer red.
 - **Promotions and Social can be turned off per account.** Settings →
   Accounts has a new switch for each account, "Show Promotions and
   Social", on by default. Off, that account has no Promotions and Social
