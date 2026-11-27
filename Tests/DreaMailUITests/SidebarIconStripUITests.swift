@@ -141,10 +141,13 @@ final class SidebarIconStripUITests: XCTestCase {
                       "the search field has the focus")
         XCTAssertTrue(element(app, "sidebarStrip").exists, "the sidebar stays collapsed")
         XCTAssertFalse(element(app, "composeButton").exists, "the sidebar did not expand")
-        // Esc leaves the field.
+        // Esc leaves the field; the sidebar is still collapsed.
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil { !((text.value(forKey: "hasKeyboardFocus") as? Bool) ?? false) },
+                      "Esc took the focus out of the field")
+        XCTAssertTrue(element(app, "sidebarStrip").exists, "the sidebar is still collapsed")
+        XCTAssertFalse(element(app, "composeButton").exists, "no sidebar header")
     }
 
     private func stepTogglingRestoresTheFullSidebarAtItsWidth(_ app: XCUIApplication) {

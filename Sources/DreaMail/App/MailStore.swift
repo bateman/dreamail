@@ -213,7 +213,7 @@ final class MailStore {
     /// is committed (Enter / View all results / picking a suggestion).
     var committedSearch: String = ""
     /// Bumped by `/` (Gmail-style) to move keyboard focus into the sidebar
-    /// search field. The list column's field watches this and drives its `@FocusState`.
+    /// search field. The list column's top-bar field watches this and drives its `@FocusState`.
     var searchFocusToken = 0
     /// A focus request the field has not yet honoured (see `focusSearch`).
     var searchFocusPending = false
@@ -4251,10 +4251,21 @@ struct ComposeRequest: Identifiable {
         // list column is not mounted (compact layout) lands when it appears.
         searchFocusPending = true
         searchFocusToken &+= 1
+        let token = searchFocusToken
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            self?.searchFocusPending = false
+            // Only this request's timer: a newer request has its own.
+            guard let self, self.searchFocusToken == token else { return }
+            self.searchFocusPending = false
         }
+    }
+
+    /// Whether a pending `focusSearch` should still land when the field
+    /// mounts: not once a sheet, the compose window or another text field has
+    /// taken the keyboard.
+    var searchFocusStillWanted: Bool {
+        composeRequest == nil && !showCommandPalette && !showLabelPicker
+            && !TextFocus.isEditing(NSApp.keyWindow?.firstResponder)
     }
 
     // MARK: - Labels on threads

@@ -1,23 +1,9 @@
 import SwiftUI
 
-/// Size rules of the search field in the list column's top bar.
+/// Where the results panel sits (the row's own sizes are in `ListHeaderLayout`).
 enum ListSearchMetrics {
-    /// Narrowest the field gets: it shrinks to this before the title truncates.
-    static let minWidth: CGFloat = 150
-    static let maxWidth: CGFloat = 380
     /// Side padding of the bar; the results panel uses the same trailing edge.
     static let sidePadding: CGFloat = 10
-    /// Room left for the window's toolbar buttons when the list is the window's
-    /// last column: macOS puts them at that column's leading edge (CI: toggle
-    /// at x 316-361, 45 pt wide, the column starting at ~312), where this row
-    /// would sit under them. Estimate: 45 pt per button plus a margin, for the
-    /// buttons actually shown (pane toggle unless full-window style, focus,
-    /// Ask AI when AI features are on). Only the toggle's width is measured.
-    static let windowButtonWidth: CGFloat = 45
-    static func windowButtonsReserve(paneToggle: Bool, askAI: Bool) -> CGFloat {
-        let count = (paneToggle ? 1 : 0) + 1 + (askAI ? 1 : 0)
-        return CGFloat(count) * windowButtonWidth + 10
-    }
     /// Widest the results panel gets.
     static let panelMaxWidth: CGFloat = 600
 }
@@ -35,8 +21,13 @@ enum ListSearchMetrics {
 struct ListHeaderBar: ViewModifier {
     @Environment(MailStore.self) private var store
     @FocusState private var searchFocused: Bool
-    /// Extra leading space for the window's own toolbar buttons.
-    var leadingReserve: CGFloat = 0
+    /// The layout the column is rendered in (the `mode` `mailboxLayout` was
+    /// given: in centre peek that is `.list` while the stored layout is not).
+    var mode: MailLayoutMode = .list
+    /// The window's toolbar buttons (one description with the toolbar).
+    var windowButtons: [WindowToolbarButton] = []
+    /// The system sidebar toggle sits at the row's leading edge.
+    var sidebarCollapsed = false
 
     private var searching: Bool {
         !store.committedSearch.trimmingCharacters(in: .whitespaces).isEmpty
@@ -63,11 +54,19 @@ struct ListHeaderBar: ViewModifier {
                 GeometryReader { proxy in
                     // The window's toolbar band above this column's content.
                     let band = proxy.safeAreaInsets.top > 0 ? proxy.safeAreaInsets.top : 44
+                    let layout = ListHeaderLayout.resolve(
+                        columnWidth: proxy.size.width,
+                        buttonsOverRow: ListHeaderLayout.windowButtonsOverRow(mode: mode)
+                            ? windowButtons : [],
+                        sidebarToggleOverRow: sidebarCollapsed,
+                        searching: searching)
                     ZStack(alignment: .topTrailing) {
-                        bar
+                        bar(layout)
                             .frame(height: band)
                             .offset(y: -band)
                             .zIndex(1)
+                            // Read before the list rows: it is an overlay.
+                            .accessibilitySortPriority(10)
                         if store.searchActive {
                             SearchResultsPanel()
                                 .frame(maxWidth: ListSearchMetrics.panelMaxWidth,
@@ -87,28 +86,39 @@ struct ListHeaderBar: ViewModifier {
             .animation(.easeOut(duration: 0.06), value: store.searchActive)
     }
 
-    private var bar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: store.selectedView.selectedIcon)
-                .foregroundStyle(.mailIcon(selected: false))
-                .accessibilityHidden(true)
-            Text(store.selectedView.title)
-                .font(.headline)
-                .lineLimit(1)
-                // The field shrinks to its minimum before the title truncates.
-                .layoutPriority(2)
-                .accessibilityIdentifier("listHeaderTitle")
-            Spacer(minLength: 8)
+    private func bar(_ layout: ListHeaderLayout.Result) -> some View {
+        HStack(spacing: ListHeaderLayout.spacing) {
+            HStack(spacing: ListHeaderLayout.spacing) {
+                Image(systemName: store.selectedView.selectedIcon)
+                    .foregroundStyle(.mailIcon(selected: false))
+                    .accessibilityHidden(true)
+                Text(store.selectedView.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    // Never below its guaranteed width; truncates last.
+                    .frame(minWidth: layout.titleMinWidth, alignment: .leading)
+                    .accessibilityIdentifier("listHeaderTitle")
+            }
+            // The field shrinks to its minimum before the title truncates.
+            .layoutPriority(2)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("listHeaderLeading")
+            Spacer(minLength: ListHeaderLayout.spacing)
             // While searching, let the user reach past the local cache to Gmail.
             if searching {
                 Button { store.searchAllGmail() } label: {
-                    Image(systemName: "magnifyingglass.circle")
+                    if layout.showsSearchAllText {
+                        Label("Search Gmail", systemImage: "magnifyingglass.circle")
+                    } else {
+                        Image(systemName: "magnifyingglass.circle")
+                    }
                 }
                 .buttonStyle(.borderless)
                 .disabled(store.serverSearching)
                 .help(store.serverSearching ? "Searching…"
                       : "Search all of Gmail — pull matching messages from Gmail, beyond the local cache")
                 .accessibilityLabel(store.serverSearching ? "Searching…" : "Search all of Gmail")
+                .accessibilityIdentifier("listSearchAll")
                 .layoutPriority(1)
             }
             SearchField(prompt: "Search", text: Bindable(store).searchText,
@@ -121,15 +131,26 @@ struct ListHeaderBar: ViewModifier {
                 NSApp.keyWindow?.makeFirstResponder(nil)
                 if store.selectedThreadId == nil { store.moveSelection(1) }
             })
-            .frame(minWidth: ListSearchMetrics.minWidth, maxWidth: ListSearchMetrics.maxWidth)
+            .frame(minWidth: layout.fieldMinWidth, maxWidth: layout.fieldMaxWidth)
             .help("Search — from: to: subject: label: has:attachment is:unread is:starred after: before:")
             // One element for the whole field box (its children keep their own).
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("listSearchBox")
             // Gmail's `/`: focus search. A request made while this column was
             // not mounted (compact layout) is honoured when it appears.
-            .onChange(of: store.searchFocusToken) { searchFocused = true }
-            .onAppear { if store.searchFocusPending { searchFocused = true } }
+            .onChange(of: store.searchFocusToken) {
+                searchFocused = true
+                store.searchFocusPending = false
+            }
+            .onAppear {
+                guard store.searchFocusPending else { return }
+                // Not if something else took the keyboard meanwhile.
+                if store.searchFocusStillWanted { searchFocused = true }
+                else { store.searchFocusPending = false }
+            }
+            // Unmounted while focused (layout switch): end the search-active
+            // state, or the key monitor keeps swallowing arrows and Enter.
+            .onDisappear { store.dismissSearchPanel() }
             // Drive the results panel from the field's focus. Blur is
             // deferred (see noteSearchFocused) so a click on a result row can
             // land before the panel is torn down.
@@ -138,7 +159,7 @@ struct ListHeaderBar: ViewModifier {
                 store.noteSearchFocused(searchFocused)
             }
         }
-        .padding(.leading, ListSearchMetrics.sidePadding + 4 + leadingReserve)
-        .padding(.trailing, ListSearchMetrics.sidePadding)
+        .padding(.leading, ListHeaderLayout.leadingPadding + layout.reserve)
+        .padding(.trailing, ListHeaderLayout.trailingPadding)
     }
 }

@@ -69,6 +69,7 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertEqual(titleText(title), "Inbox", "\(when): title shown in full")
         XCTAssertGreaterThanOrEqual(field.frame.width, 149, "\(when): at least the minimum (\(field.frame))")
         XCTAssertLessThanOrEqual(field.frame.width, 381, "\(when): at most the maximum (\(field.frame))")
+        assertClearOfToolbarButtons(app, when)
         // Not in the sidebar: the sidebar's rows are all left of the field.
         let sidebarRow = element(app, "sidebar.inbox")
         if sidebarRow.exists {
@@ -76,15 +77,59 @@ final class ListSearchFieldUITests: XCTestCase {
         }
     }
 
+    /// Every button the window toolbar exposes (the window group, the system
+    /// sidebar toggle, ...): none overlaps the row's icon+title, the field or
+    /// "Search all of Gmail". Prints the frames.
+    private func assertClearOfToolbarButtons(_ app: XCUIApplication, _ when: String) {
+        let leading = element(app, "listHeaderLeading").frame
+        let box = element(app, "listSearchBox").frame
+        let searchAll = element(app, "listSearchAll")
+        let buttons = app.toolbars.buttons.allElementsBoundByIndex
+            .filter { $0.exists && !$0.frame.isEmpty }
+            .map { ($0.label, $0.frame) }
+        print("ListSearchField frames [\(when)]: leading \(leading), field \(box), "
+              + "search-all \(searchAll.exists ? "\(searchAll.frame)" : "-"), toolbar buttons \(buttons)")
+        for (label, frame) in buttons {
+            let hit = frame.insetBy(dx: -2, dy: -2)
+            XCTAssertFalse(leading.intersects(hit), "\(when): icon+title overlap the toolbar button \"\(label)\" (row \(leading), button \(frame))")
+            XCTAssertFalse(box.intersects(hit), "\(when): the field overlaps the toolbar button \"\(label)\" (field \(box), button \(frame))")
+            if searchAll.exists {
+                XCTAssertFalse(searchAll.frame.intersects(hit), "\(when): search-all overlaps the toolbar button \"\(label)\"")
+            }
+        }
+    }
+
+    /// The mouse reaches the field through the title-bar band: a click focuses
+    /// it, it takes typing, its clear button works, and the window does not
+    /// move (the band is draggable).
+    private func assertMouseReach(_ app: XCUIApplication, _ when: String) {
+        let window = app.windows.firstMatch
+        let before = window.frame
+        let text = textField(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5), "\(when): text field")
+        text.click()
+        XCTAssertTrue(waitUntil { self.hasFocus(text) }, "\(when): a click focuses the field")
+        app.typeText("ab")
+        XCTAssertTrue(waitUntil { ((text.value as? String) ?? "") == "ab" }, "\(when): it accepts typing (\(String(describing: text.value)))")
+        let clear = element(app, "listSearchBox").buttons["Clear"].firstMatch
+        XCTAssertTrue(clear.waitForExistence(timeout: 5), "\(when): the clear button exists")
+        clear.click()
+        XCTAssertTrue(waitUntil { ((text.value as? String) ?? "x").isEmpty }, "\(when): the clear button clears")
+        XCTAssertEqual(window.frame, before, "\(when): the window did not move or resize")
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+    }
+
     func testFieldInTheListBar_paneOpen() {
         let app = launch(paneHidden: false)
         XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "composeButton").waitForExistence(timeout: 5), "sidebar shown")
-        assertFieldInListBar(app, "sidebar expanded")
+        assertFieldInListBar(app, "pane open, sidebar expanded")
+        assertMouseReach(app, "pane open, sidebar expanded")
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
-        assertFieldInListBar(app, "sidebar collapsed")
+        assertFieldInListBar(app, "pane open, sidebar collapsed")
+        assertMouseReach(app, "pane open, sidebar collapsed")
     }
 
     /// The list is the window's last column: the field stays clear of the
@@ -95,24 +140,11 @@ final class ListSearchFieldUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "composeButton").waitForExistence(timeout: 5))
         assertFieldInListBar(app, "pane hidden, sidebar expanded")
-        let show = app.buttons.matching(NSPredicate(format: "label == 'Show Reading Pane'")).firstMatch
-        XCTAssertTrue(show.waitForExistence(timeout: 5))
-        let box = element(app, "listSearchBox").frame
-        let title = element(app, "listHeaderTitle").frame
-        var buttons: [CGRect] = []
-        for label in ["Show Reading Pane", "Focus Conversation", "Ask AI"] {
-            let b = app.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
-            if b.exists { buttons.append(b.frame) }
-        }
-        print("ListSearchField frames: field \(box), title \(title), window buttons \(buttons)")
-        for button in buttons {
-            let hit = button.insetBy(dx: -2, dy: -2)
-            XCTAssertFalse(box.intersects(hit), "the field does not overlap a window toolbar button (field \(box), button \(button))")
-            XCTAssertFalse(title.intersects(hit), "the title does not overlap a window toolbar button (title \(title), button \(button))")
-        }
+        assertMouseReach(app, "pane hidden, sidebar expanded")
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
         assertFieldInListBar(app, "pane hidden, sidebar collapsed")
+        assertMouseReach(app, "pane hidden, sidebar collapsed")
     }
 
     func testSlashFocusesSearchFiltersAndEscRestores() {
