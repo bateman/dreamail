@@ -216,6 +216,18 @@ minor versions may still change behavior.
   the label is read again in full, since the list is not guaranteed to
   carry colours.
 
+- **The label colour sheet says what is stored.** "⋮" → Label color →
+  Choose color now shows a line "Current: #rrggbb" (with the text colour,
+  and "not in this palette" when the colour is not one of the swatches
+  offered) or "Current: none", for the colour on Gmail and for the one
+  picked only on this Mac. The sheet offers 64 of Gmail's colours, so a
+  label can have a Gmail colour with no swatch ticked. In dark appearance a
+  very dark label colour (a dark grey, black) is lightened in the sidebar
+  just enough to be seen, instead of a nearly invisible fill with an
+  outline that looked like "no colour"; light appearance is unchanged.
+  Known open point: some labels with a colour on Gmail are still drawn
+  without one, and the cause is not known yet.
+
 - **Sidebar and Settings touch-ups.** The Settings window is titled just
   "Settings". The "+" next to Labels has the size of the
   "+" of "Add view"; the label "⋮" is three small dots. In Settings →
