@@ -66,30 +66,24 @@ struct NewMailNotifications {
         return String(id[..<colon.lowerBound])
     }
 
-    /// Unread and awake in the Inbox list, whatever its Gmail category,
-    /// unless the user hides that category in the Inbox (`hide`, the inbox
-    /// category-hide set; empty by default). Same rule as the Inbox list and
-    /// its unread badge (`SidebarCounts.isHiddenFromInbox`): a star pins
-    /// through. `unreadInboxCandidates` narrows the read in SQL; this is the
-    /// rule of record.
-    static func isEligible(_ c: Candidate, now: Date, hide: Set<String> = []) -> Bool {
+    /// Unread and awake in the Inbox, whatever its Gmail category.
+    /// `unreadInboxCandidates` narrows the read in SQL; this is the rule of
+    /// record. An Inbox category hide does not make a thread ineligible: it
+    /// only silences it (`isHidden`), so the thread is still recorded and
+    /// lifting the hide or starring it later does not replay old mail.
+    static func isEligible(_ c: Candidate, now: Date) -> Bool {
         guard c.isUnread, c.inInbox, !c.inTrash, !c.inSpam else { return false }
-        if isHiddenFromInbox(c, hide: hide) { return false }
         if let until = c.snoozeUntil, until > now { return false }
         return !c.gmailSnoozed
     }
 
-    private static func isHiddenFromInbox(_ c: Candidate, hide: Set<String>) -> Bool {
-        guard !c.isStarred else { return false }
-        let labels = Set(c.labelIds.split(separator: " ").map(String.init))
-        for cat in hide where SidebarCounts.inboxHideableCategories.contains(cat) {
-            switch cat {
-            case "CATEGORY_PROMOTIONS": if c.inPromotions { return true }
-            case "CATEGORY_SOCIAL": if c.inSocial { return true }
-            default: if labels.contains(cat) { return true }
-            }
-        }
-        return false
+    /// Whether the user's Inbox category hide (`hide`, empty by default)
+    /// keeps the thread out of the Inbox list: same rule as the list and its
+    /// unread badge (`SidebarCounts.isHiddenFromInbox`), a star pins through.
+    static func isHidden(_ c: Candidate, hide: Set<String>) -> Bool {
+        SidebarCounts.isHiddenFromInbox(
+            hide: hide, isStarred: c.isStarred, inPromotions: c.inPromotions,
+            inSocial: c.inSocial, labelIds: c.labelIds)
     }
 
     /// Adopts `current` as already known, so none of it notifies.
@@ -103,18 +97,20 @@ struct NewMailNotifications {
     /// Silent when: this is the first pass (it becomes the baseline), the
     /// thread is first seen and its mail is backlog (`quietBacklog`), demo
     /// mode, the thread has no inbound message (own sent mail), the inbound
-    /// date did not advance, or a blocked sender wrote in the thread. Silent
-    /// passes still record what they saw, so unblocking a sender or leaving
-    /// the demo does not replay old mail as new.
+    /// date did not advance, a blocked sender wrote in the thread, or the
+    /// user's Inbox category hide (`hide`) keeps it out of the Inbox list.
+    /// Silent passes still record what they saw, so unblocking a sender,
+    /// leaving the demo, lifting a hide or starring hidden mail does not
+    /// replay old mail as new.
     mutating func fresh(current: [Candidate], now: Date, demoMode: Bool,
                         hide: Set<String> = [],
                         isBlocked: (String) -> Bool) -> [String] {
         guard isSeeded else {
-            seed(current.filter { Self.isEligible($0, now: now, hide: hide) })
+            seed(current.filter { Self.isEligible($0, now: now) })
             return []
         }
         var ids: [String] = []
-        for c in current where Self.isEligible(c, now: now, hide: hide) {
+        for c in current where Self.isEligible(c, now: now) {
             guard let inbound = c.lastInboundDate else { continue }
             if let known = knownInbound[c.id], inbound <= known { continue }
             let unseen = knownInbound[c.id] == nil
@@ -123,7 +119,8 @@ struct NewMailNotifications {
                let cutoff = backlogBefore[Self.accountId(ofThread: c.id)], inbound < cutoff {
                 continue
             }
-            if demoMode || Self.hasBlockedSender(c, isBlocked: isBlocked) { continue }
+            if demoMode || Self.hasBlockedSender(c, isBlocked: isBlocked)
+                || Self.isHidden(c, hide: hide) { continue }
             ids.append(c.id)
         }
         return ids
@@ -152,7 +149,7 @@ struct NewMailNotifications {
     /// decision needs.
     static func unreadInboxCandidates(_ db: Database, now: Date) throws -> [Candidate] {
         // Every unread Inbox thread, any category: the Inbox lists them all
-        // by default. An Inbox category hide is applied by `isEligible`.
+        // by default. An Inbox category hide only silences (`fresh`).
         // Match inbox badge / inbox list: skip actively snoozed rows so
         // a sleeping unread does not notify or seed the baseline.
         try MailThread
@@ -169,35 +166,5 @@ struct NewMailNotifications {
                     Column("isStarred"), Column("labelIds"))
             .asRequest(of: Candidate.self)
             .fetchAll(db)
-    }
-}
-
-extension NewMailNotifications.Candidate {
-    private enum CodingKeys: String, CodingKey {
-        case id, fromEmail, allFromEmails, lastInboundDate, isUnread, inInbox
-        case inTrash, inSpam, inPromotions, inSocial, snoozeUntil, gmailSnoozed
-        case isStarred, labelIds
-    }
-
-    /// Decoded in an extension so the memberwise initializer stays. The two
-    /// hide-rule columns are optional in a projection: a read that leaves
-    /// them out gets "not starred, no labels", the rule before they existed.
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            id: try c.decode(String.self, forKey: .id),
-            fromEmail: try c.decode(String.self, forKey: .fromEmail),
-            allFromEmails: try c.decode(String.self, forKey: .allFromEmails),
-            lastInboundDate: try c.decodeIfPresent(Date.self, forKey: .lastInboundDate),
-            isUnread: try c.decode(Bool.self, forKey: .isUnread),
-            inInbox: try c.decode(Bool.self, forKey: .inInbox),
-            inTrash: try c.decode(Bool.self, forKey: .inTrash),
-            inSpam: try c.decode(Bool.self, forKey: .inSpam),
-            inPromotions: try c.decode(Bool.self, forKey: .inPromotions),
-            inSocial: try c.decode(Bool.self, forKey: .inSocial),
-            snoozeUntil: try c.decodeIfPresent(Date.self, forKey: .snoozeUntil),
-            gmailSnoozed: try c.decodeIfPresent(Bool.self, forKey: .gmailSnoozed) ?? false,
-            isStarred: try c.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false,
-            labelIds: try c.decodeIfPresent(String.self, forKey: .labelIds) ?? "")
     }
 }

@@ -2270,7 +2270,9 @@ final class AppDatabase: @unchecked Sendable {
         // full-table SUM(CASE) badge SQL. These partials make each count scan
         // only matching rows (unread inbox, starred, drafts, …).
         m.registerMigration("v21") { db in
-            // Primary inbox unread (+ dock badge same predicate).
+            // Primary inbox unread, the count before category mail joined the
+            // Inbox. No count query matches it any more; drop in a later
+            // migration.
             try db.execute(sql: """
                 CREATE INDEX thread_unread_primary_inbox
                 ON thread(accountId)

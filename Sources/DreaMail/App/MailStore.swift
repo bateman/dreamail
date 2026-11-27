@@ -3744,8 +3744,8 @@ struct ComposeRequest: Identifiable {
     /// Sidebar counts + dock badge. Delegates to `SidebarCounts` (shared with
     /// unit tests). Safe off MainActor.
     ///
-    /// `hideCategories` is the inbox "do not contain" set so Updates/Forums
-    /// excluded from the list do not inflate the primary unread badge.
+    /// `hideCategories` is the inbox "do not contain" set (empty by default),
+    /// so categories the user hides from the list leave the Inbox count too.
     nonisolated static func fetchSidebarCounts(
         db: Database,
         activeAccount: String?,
@@ -3758,7 +3758,7 @@ struct ComposeRequest: Identifiable {
                                 hideCategories: hideCategories)
     }
 
-    /// Inbox category hide used for the primary unread / dock badge.
+    /// Inbox category hide used for the Inbox unread / dock badge.
     /// Live chips when the user is on inbox (or a per-account inbox); otherwise
     /// the persisted inbox pick so the badge still matches what Inbox shows.
     var inboxBadgeHideCategories: Set<String> {

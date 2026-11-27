@@ -171,6 +171,43 @@ final class NewMailNotificationsTests: XCTestCase {
         ], hide: ["CATEGORY_SOCIAL", "CATEGORY_UPDATES"]), ["a:starredSocial", "a:promo"])
     }
 
+    /// Mail that arrived while its category was hidden is recorded: lifting
+    /// the hide does not post it as new; a later reply in it does notify.
+    func testLiftingAHideDoesNotReplayHiddenMail() {
+        var state = seeded()
+        let promo = candidate("a:promo", inbound: nineAM, inPromotions: true,
+                              labelIds: "INBOX UNREAD CATEGORY_PROMOTIONS")
+        XCTAssertEqual(fresh(&state, [promo], hide: ["CATEGORY_PROMOTIONS"]), [])
+        XCTAssertEqual(fresh(&state, [promo]), [], "un-hiding replays nothing")
+        let reply = candidate("a:promo", inbound: tenAM, inPromotions: true,
+                              labelIds: "INBOX UNREAD CATEGORY_PROMOTIONS")
+        XCTAssertEqual(fresh(&state, [reply]), ["a:promo"])
+    }
+
+    /// Starring an unread hidden thread pins it into the Inbox list; its mail
+    /// is not new, so it does not notify.
+    func testStarringHiddenMailDoesNotNotify() {
+        var state = seeded()
+        let hide: Set<String> = ["CATEGORY_SOCIAL"]
+        let social = candidate("a:social", inbound: nineAM, inSocial: true,
+                               labelIds: "INBOX UNREAD CATEGORY_SOCIAL")
+        XCTAssertEqual(fresh(&state, [social], hide: hide), [])
+        var starred = social
+        starred.isStarred = true
+        XCTAssertEqual(fresh(&state, [starred], hide: hide), [])
+    }
+
+    /// A sync that beats the launch baseline seeds it with hidden mail too,
+    /// so lifting the hide later replays nothing.
+    func testBaselineTakenUnderAHideIncludesHiddenMail() {
+        var state = NewMailNotifications()
+        let promo = candidate("a:promo", inbound: nineAM, inPromotions: true,
+                              labelIds: "INBOX UNREAD CATEGORY_PROMOTIONS")
+        XCTAssertEqual(fresh(&state, [promo], hide: ["CATEGORY_PROMOTIONS"]), [])
+        XCTAssertTrue(state.isSeeded)
+        XCTAssertEqual(fresh(&state, [promo]), [])
+    }
+
     func testSnoozedThreadDoesNotNotifyUntilItWakes() {
         var state = seeded()
         let asleep = candidate("a:t1", inbound: nineAM,

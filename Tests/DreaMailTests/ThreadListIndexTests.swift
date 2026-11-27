@@ -88,9 +88,9 @@ final class ThreadListIndexTests: XCTestCase {
     func testAccountScopedInboxWalksAccountSortIndex() throws {
         try makeDB().read { db in
             let scoped = withPromoSocialHidden(ThreadListQuery.inbox())
-                .filter(Column("accountId") == "a@x.com")
+                .filter(Column("accountId") == "a@example.com")
             assertIndexedOrder(try plan(db, page(scoped)), index: "_sort")
-            let account = withPromoSocialHidden(ThreadListQuery.accountInbox("a@x.com"))
+            let account = withPromoSocialHidden(ThreadListQuery.accountInbox("a@example.com"))
             assertIndexedOrder(try plan(db, page(account)), index: "thread_account_inbox_sort")
         }
     }

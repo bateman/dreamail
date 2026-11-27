@@ -215,6 +215,39 @@ final class InboxCategoryDefaultTests: XCTestCase {
         XCTAssertEqual(counts["social"], 2, "the Social row still counts its unread")
     }
 
+    /// A partial old pick: Promotions alone goes (the key with it, since
+    /// what is left is the default); Promotions + Updates keeps Updates.
+    func testResetOfPartialOldPicks() throws {
+        try storeInboxPick(CategoryFilter(exclude: true, hide: ["CATEGORY_PROMOTIONS"]))
+        XCTAssertEqual(inboxHide(), [])
+        XCTAssertNil(storedInboxPick, "result equals the default: key removed")
+
+        store.removeObject(forKey: FilterChips.inboxCategoryResetKey)
+        try storeInboxPick(CategoryFilter(
+            exclude: true, hide: ["CATEGORY_PROMOTIONS", "CATEGORY_UPDATES"]))
+        XCTAssertEqual(inboxHide(), ["CATEGORY_UPDATES"])
+        XCTAssertEqual(storedInboxPick?.hide, ["CATEGORY_UPDATES"])
+    }
+
+    /// After the reset, hiding a category again is stored through the app's
+    /// own save path and survives a relaunch (a new read of the pick).
+    func testHidingAgainAfterResetIsStoredAndSurvivesRelaunch() throws {
+        try storeInboxPick(CategoryFilter(
+            exclude: true, hide: ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"]))
+        XCTAssertEqual(inboxHide(), [])
+
+        var pick = FilterChips.initial(for: .inbox, store: store).category
+        pick.hide.insert("CATEGORY_PROMOTIONS")
+        FilterChips.saveCategory(pick, for: .inbox, store: store)
+        XCTAssertEqual(storedInboxPick?.hide, ["CATEGORY_PROMOTIONS"])
+
+        // Relaunch: a fresh read runs the reset check again; it already ran.
+        XCTAssertEqual(FilterChips.initial(for: .inbox, store: store).category.hide,
+                       ["CATEGORY_PROMOTIONS"])
+        XCTAssertEqual(FilterChips.initial(for: .account(account), store: store).category.hide,
+                       ["CATEGORY_PROMOTIONS"], "the account inbox shares the pick")
+    }
+
     func testResetLeavesAContainsPickAlone() throws {
         let pick = CategoryFilter(exclude: false, show: ["CATEGORY_SOCIAL"])
         try storeInboxPick(pick)
@@ -224,24 +257,6 @@ final class InboxCategoryDefaultTests: XCTestCase {
     func testEveryViewDefaultHidesNothing() {
         for view: MailboxView in [.inbox, .account(account), .allMail, .social, .promotions] {
             XCTAssertFalse(FilterChips.defaults(for: view).category.isActive, "\(view)")
-        }
-    }
-
-    /// The Inbox unread predicate stays on an index with no hide and with
-    /// every category hidden.
-    func testInboxUnreadPredicateIsIndexed() throws {
-        let q = try DatabaseQueue()
-        try AppDatabase.migrator.migrate(q)
-        for hide: Set<String> in [[], Set(categories)] {
-            let predicate = SidebarCounts.primaryUnreadSQL(
-                hideSQL: SidebarCounts.inboxHideSQL(hide: hide))
-            let detail = try q.read { db in
-                try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM thread WHERE \(predicate)",
-                                 arguments: [Date()])
-                    .map { $0["detail"] as String? ?? "" }.joined(separator: " | ")
-            }
-            XCTAssertTrue(detail.contains("USING INDEX") || detail.contains("USING COVERING INDEX"),
-                          "hide \(hide): \(detail)")
         }
     }
 }

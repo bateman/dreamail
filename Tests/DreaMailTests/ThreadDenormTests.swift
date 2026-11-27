@@ -59,7 +59,7 @@ final class ThreadDenormTests: XCTestCase {
             try SidebarCounts.fetch(db: $0, activeAccount: nil, badgeAccount: nil,
                                     now: now)
         }
-        XCTAssertEqual(counts["inbox"], 1, "only awake primary unread")
+        XCTAssertEqual(counts["inbox"], 1, "only awake inbox unread")
         XCTAssertEqual(badge, 1)
         XCTAssertEqual(counts["promotions"], 0, "snoozed promo leaves promo badge")
         XCTAssertEqual(counts["snoozed"], 2)
@@ -370,9 +370,8 @@ final class ThreadDenormTests: XCTestCase {
                        "in-inbox promo and social count in the Inbox badge (listed by default)")
     }
 
-    /// When the inbox filter hides Updates/Forums, the primary badge must
-    /// match the list (exclude those categories) — not still count them as
-    /// primary just because they aren't promo/social.
+    /// When the inbox filter hides a category, the Inbox badge must match
+    /// the list (exclude it); without a hide every category counts.
     func testPrimaryBadgeRespectsUpdatesForumsHide() throws {
         let q = try makeDB()
         try q.write { db in
@@ -421,7 +420,7 @@ final class ThreadDenormTests: XCTestCase {
                 ])
         }
         XCTAssertEqual(hideAll.counts["inbox"], 1,
-                       "only true-primary mail; promo still on its tab")
+                       "only uncategorized mail; promo still on its own row")
         XCTAssertEqual(hideAll.badge, 1)
         XCTAssertEqual(hideAll.counts["promotions"], 1)
     }
@@ -439,13 +438,13 @@ final class ThreadDenormTests: XCTestCase {
         XCTAssertEqual(
             SidebarCounts.memberships(of: updates, now: now),
             ["inbox"],
-            "updates count as primary when not hidden")
+            "updates count in the Inbox badge when not hidden")
         XCTAssertEqual(
             SidebarCounts.memberships(
                 of: updates, now: now,
                 hideCategories: ["CATEGORY_UPDATES"]),
             [],
-            "hidden updates leave the primary badge")
+            "hidden updates leave the Inbox badge")
 
         // A star pins hidden Updates through into the Inbox list
         // (CategoryHide), so the Inbox badge counts it too.

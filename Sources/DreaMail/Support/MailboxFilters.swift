@@ -239,15 +239,16 @@ struct FilterChips: Equatable, Codable {
         return try? JSONDecoder().decode(CategoryFilter.self, from: data)
     }
 
-    static func saveCategory(_ category: CategoryFilter, for view: MailboxView) {
+    static func saveCategory(_ category: CategoryFilter, for view: MailboxView,
+                             store: UserDefaults = .standard) {
         guard let key = view.prefsKey,
               let data = try? JSONEncoder().encode(category) else { return }
         // Persisting the factory default is the same as having no pick;
         // drop the key so future built-in default changes reach the user.
         if category == defaults(for: view).category {
-            UserDefaults.standard.removeObject(forKey: "categoryFilter.\(key)")
+            store.removeObject(forKey: "categoryFilter.\(key)")
         } else {
-            UserDefaults.standard.set(data, forKey: "categoryFilter.\(key)")
+            store.set(data, forKey: "categoryFilter.\(key)")
         }
     }
 
