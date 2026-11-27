@@ -277,6 +277,27 @@ final class CategoryRowsTests: XCTestCase {
             .social, shown: CategoryRows.shown(accounts: [a, b], scope: nil, off: [a])), .social)
     }
 
+    /// With the unified inbox off the scope is always one account (the first
+    /// in the rail when none is requested): the unified rule never applies,
+    /// and that account's own setting decides, whatever the others have.
+    func testUnifiedOffScopeFollowsTheFirstAccountsSetting() {
+        let rail = [a, b]
+        let off: Set<String> = [a]
+        let scope = UnifiedInbox.scope(requested: nil, enabled: false, railOrder: rail)
+        XCTAssertEqual(scope, a)
+        XCTAssertFalse(CategoryRows.shown(accounts: rail, scope: scope, off: off),
+                       "A has it off: no rows, although B has it on")
+        XCTAssertEqual(CategoryRows.view(.promotions, shown: false), .inbox)
+        // Unified on: the same settings show the rows (B has them on).
+        let unified = UnifiedInbox.scope(requested: nil, enabled: true, railOrder: rail)
+        XCTAssertNil(unified)
+        XCTAssertTrue(CategoryRows.shown(accounts: rail, scope: unified, off: off))
+        // Unified off, B on screen: B's setting, on.
+        XCTAssertTrue(CategoryRows.shown(
+            accounts: rail, scope: UnifiedInbox.scope(requested: b, enabled: false, railOrder: rail),
+            off: off))
+    }
+
     func testSwitchingToAnAccountThatHasItOffLeavesForTheInbox() {
         let off: Set<String> = [b]
         XCTAssertEqual(CategoryRows.view(

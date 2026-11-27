@@ -1,6 +1,6 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.39
+Versione: 0.40
 Ultimo aggiornamento: 27 novembre 2026
 Stato: documento in evoluzione
 
@@ -96,6 +96,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-082 | **Selezione della barra laterale: squadrata, senza trattino del fuoco** (corregge DEC-077) | Decisione del proprietario dopo aver visto l'app: la riga selezionata della barra laterale è una banda rettangolare come quella dell'elenco dei messaggi, non una capsula arrotondata (la capsula rientrata di #99, scelta dall'orchestratore, è ritirata), dipinta dall'app in ogni stato così la capsula di sistema non si vede mai; vale anche per Settings e per la striscia di icone. Il trattino verticale del fuoco introdotto con DEC-077 è tolto ovunque. La banda arriva a filo dell'elenco sul lato destro; la barra laterale non mostra la barra di scorrimento. Sul lato sinistro restano 8 pt: è il margine che macOS 26 dà alla colonna della barra laterale, non chiuso per non forzare il comportamento di sistema. Resta di DEC-077: il colore accent vuol dire "aperto" e resta senza fuoco. |
 | DEC-083 | **Pallino dell'etichetta nella barra laterale: nel tema scuro sempre un riempimento visibile** (precisa DEC-029) | Nel tema scuro un colore troppo vicino allo sfondo della barra laterale (grigio scuro, nero) non riceve più il contorno di DEC-029, che su un riempimento quasi invisibile si leggeva come "senza colore": il riempimento è schiarito solo quanto basta (differenza 25 dallo sfondo della barra). Nel tema chiaro resta DEC-029: colore vero di Gmail e contorno sottile dove serve. Solo l'etichetta senza colore è un contorno. Il foglio "Label color" mostra il colore in archivio ("Current:"). PR #108. |
 | DEC-084 | **Inbox mostra tutta la posta con l'etichetta Inbox** | Come un Gmail senza schede per categoria: nessuna categoria (Promotions, Social, Updates, Forums) è nascosta da Inbox per impostazione predefinita, né su un'installazione nuova né su una esistente; conteggi, badge e notifiche seguono l'elenco. L'API di Gmail non dice se l'utente usa le schede, quindi non le si imita. Un filtro di categoria è una scelta esplicita dell'utente; dove un valore salvato non si distingue dal vecchio default, si mostra la posta. Le viste salvate restano com'erano (scelta del proprietario). Decisione dopo la segnalazione di posta nuova mancante in Inbox; PR #111. |
+| DEC-085 | **Inbox unificata disattivabile** | Richiesta del proprietario: un'impostazione globale (Settings → Appearance, attiva per impostazione predefinita) toglie la vista "All accounts" e ogni via per raggiungerla; l'app mostra allora il primo account. Gmail non ha una posta unificata: è una regola propria dell'app. Le viste salvate di tutti gli account restano nascoste finché l'opzione è spenta, senza essere modificate né cancellate (scelta del proprietario); badge, numero sul Dock e notifiche non dipendono dall'opzione. PR #114. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -514,6 +515,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-27 | **0.37** | Aggiunta DEC-082 (selezione della barra laterale squadrata, senza trattino del fuoco). |
 | 2026-11-27 | **0.38** | Aggiunta DEC-083 (pallino dell'etichetta sempre visibile nel tema scuro; riga "Current:" nel foglio dei colori). |
 | 2026-11-27 | **0.39** | Aggiunta DEC-084 (Inbox mostra tutta la posta con l'etichetta Inbox, senza categorie nascoste). |
+| 2026-11-27 | **0.40** | Aggiunta DEC-085 (inbox unificata disattivabile). |
 
 ---
 

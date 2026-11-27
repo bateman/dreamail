@@ -125,7 +125,7 @@ struct CommandPalette: View {
                 .map { .init(isStarred: $0.isStarred, isUnread: $0.isUnread,
                              isMuted: $0.isMuted, isImportant: $0.isImportant) },
             checkedCount: checkedIds.count,
-            savedViews: store.savedViews.map { .init(id: $0.id ?? -1, name: $0.name) },
+            savedViews: store.visibleSavedViews.map { .init(id: $0.id ?? -1, name: $0.name) },
             categoryViews: store.categoryRowsShown)
         return PaletteCommands.entries(context).map { entry in
             Command(id: entry.id, title: entry.title, icon: entry.icon,
