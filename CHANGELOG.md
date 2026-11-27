@@ -193,10 +193,19 @@ minor versions may still change behavior.
   label's setting in Gmail (a "show if unread" family shows up when any of
   its labels has unread mail). No label appears twice and none is shown as
   "parent/child". Labels are in Gmail's order (symbols and emoji first,
-  upper and lower case mixed) unless you reordered them in Organize Labels;
-  an order an older version had stored by itself is dropped once. Dragging
-  a label in Organize Labels now fixes the order of its own group only. A
+  upper and lower case mixed) unless you reordered them in Organize Labels.
+  Every order stored by earlier versions is dropped once, when you update
+  (an older version stored one for all labels on any drag, so it could not
+  be told from a deliberate one): reorder again if you had done so on
+  purpose. Dragging a label in Organize Labels now fixes the order of its
+  own group only, and "Use Gmail's Order" there goes back to Gmail's. A
   label deleted on Gmail leaves nothing behind on this Mac.
+
+- **Label colours.** A label without a colour is drawn as an outline only,
+  so any filled tag has a colour (a dark grey one no longer looks like "no
+  colour"). For labels that Gmail's label list returns without a colour,
+  the label is read again in full, since the list is not guaranteed to
+  carry colours.
 
 - **Sidebar and Settings touch-ups.** The Settings window is titled just
   "Settings". The "+" next to Labels has the size of the
