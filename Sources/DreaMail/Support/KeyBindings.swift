@@ -126,7 +126,7 @@ final class KeyBindings: ObservableObject {
         .init(command: .forward, title: "Forward", category: .actions, defaultKey: "f"),
         .init(command: .label, title: "Label…", category: .actions, defaultKey: "l"),
         .init(command: .moveTo, title: "Move to…", category: .actions, defaultKey: "v"),
-        .init(command: .moveToInbox, title: "Move to Inbox", category: .actions, defaultKey: nil),
+        .init(command: .moveToInbox, title: InboxMove.title, category: .actions, defaultKey: nil),
         .init(command: .mute, title: "Mute / Unmute", category: .actions, defaultKey: "m"),
         // Gmail lists `+` and `=`: `=` is an alias (see `aliases`).
         .init(command: .markImportant, title: "Mark as important", category: .actions, defaultKey: "+"),

@@ -58,7 +58,7 @@ enum LabelPickerInboxRow {
 
     /// The name the row shows and matches against.
     static let name = "Inbox"
-    static let labelModeTitle = "Move to Inbox"
+    static let labelModeTitle = InboxMove.title
 
     static func placement(moveMode: Bool, inInbox: Bool, inSpam: Bool, inTrash: Bool,
                           query: String) -> Placement? {

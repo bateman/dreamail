@@ -42,6 +42,14 @@ final class MoveToInboxUITests: XCTestCase {
         return !element.exists
     }
 
+    /// A context-menu item of `row`: by its identifier, else by its title
+    /// inside the row's own menu (the menu bar has items of the same names).
+    private func menuItem(_ app: XCUIApplication, _ row: XCUIElement,
+                          _ id: String, _ title: String) -> XCUIElement {
+        let byId = app.menuItems.matching(identifier: "rowMenu.\(id)").firstMatch
+        return byId.waitForExistence(timeout: 2) ? byId : row.menuItems[title]
+    }
+
     private func goTo(_ app: XCUIApplication, _ key: String) {
         app.typeKey("g", modifierFlags: [])
         app.typeKey(key, modifierFlags: [])
@@ -49,6 +57,15 @@ final class MoveToInboxUITests: XCTestCase {
 
     func testArchiveThenMoveBackToInboxFromAllMail() {
         let app = launch()
+        XCTContext.runActivity(named: "An Inbox row's menu has Archive") { _ in
+            let inboxRow = row(app)
+            XCTAssertTrue(inboxRow.waitForExistence(timeout: 10), "demo inbox should load")
+            inboxRow.rightClick()
+            XCTAssertTrue(menuItem(app, inboxRow, "archive", "Archive").waitForExistence(timeout: 5))
+            XCTAssertFalse(app.menuItems.matching(identifier: "rowMenu.moveToInbox").firstMatch.exists)
+            XCTAssertFalse(inboxRow.menuItems["Move to inbox"].exists)
+            app.typeKey(.escape, modifierFlags: [])
+        }
         XCTContext.runActivity(named: "Archive from the Inbox") { _ in
             let inboxRow = row(app)
             XCTAssertTrue(inboxRow.waitForExistence(timeout: 10), "demo inbox should load")
@@ -65,6 +82,29 @@ final class MoveToInboxUITests: XCTestCase {
             let allMailRow = row(app)
             XCTAssertTrue(allMailRow.waitForExistence(timeout: 10),
                           "the archived conversation is in All Mail")
+            // Gmail's right-click menu, in its order: Reply …, Move to
+            // inbox, Delete …, Move to…, Label as…, Mute.
+            allMailRow.rightClick()
+            let expected: [(String, String)] = [
+                ("reply", "Reply"), ("replyAll", "Reply all"), ("forward", "Forward"),
+                ("moveToInbox", "Move to inbox"), ("delete", "Delete"),
+                ("markUnread", "Mark as unread"), ("snooze", "Snooze"),
+                ("moveTo", "Move to…"), ("labelAs", "Label as…"), ("mute", "Mute"),
+                ("findFromSender", "Find emails from"),
+            ]
+            var ys: [CGFloat] = []
+            for (id, title) in expected {
+                let item = id == "findFromSender"
+                    ? app.menuItems.matching(NSPredicate(
+                        format: "identifier == %@ OR title BEGINSWITH %@",
+                        "rowMenu.findFromSender", "Find emails from ")).firstMatch
+                    : menuItem(app, allMailRow, id, title)
+                XCTAssertTrue(item.waitForExistence(timeout: 5), title)
+                ys.append(item.frame.minY)
+            }
+            XCTAssertEqual(ys, ys.sorted(), "Gmail's order, top to bottom")
+            XCTAssertFalse(app.menuItems.matching(identifier: "rowMenu.archive").firstMatch.exists)
+            app.typeKey(.escape, modifierFlags: [])
             allMailRow.hover()
             let move = button(allMailRow, "moveToInbox")
             XCTAssertTrue(move.waitForExistence(timeout: 5),

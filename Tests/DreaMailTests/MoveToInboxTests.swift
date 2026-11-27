@@ -241,7 +241,7 @@ final class MoveToInboxTests: XCTestCase {
         XCTAssertEqual(slot.title(isUnread: false), "Archive")
         XCTAssertEqual(slot.symbol(isUnread: false), "archivebox")
         XCTAssertEqual(slot.identifier(), "archive")
-        XCTAssertEqual(slot.title(isUnread: false, movesToInbox: true), "Move to Inbox")
+        XCTAssertEqual(slot.title(isUnread: false, movesToInbox: true), "Move to inbox")
         XCTAssertEqual(slot.symbol(isUnread: true, movesToInbox: true), "tray.and.arrow.down")
         XCTAssertEqual(slot.identifier(movesToInbox: true), "moveToInbox")
         // The other slots do not change.
@@ -267,7 +267,7 @@ final class MoveToInboxTests: XCTestCase {
         let archived = PaletteCommands.entries(ctx)
         XCTAssertFalse(archived.contains { $0.id == "act.archive" })
         let entry = try? XCTUnwrap(archived.first { $0.id == "act.moveToInbox" })
-        XCTAssertEqual(entry?.title, "Move Conversation to Inbox")
+        XCTAssertEqual(entry?.title, "Move to inbox")
         XCTAssertEqual(entry?.action, .perform(.moveToInbox))
         XCTAssertEqual(entry?.shortcut, .moveToInbox)
         XCTAssertEqual(entry?.icon, InboxMove.symbol)
@@ -315,7 +315,7 @@ final class MoveToInboxTests: XCTestCase {
         XCTAssertNil(p(false, true, false, false, "inbox"), "already in the Inbox")
         XCTAssertNil(p(false, false, false, true, "inbox"), "Trash keeps its restore")
         XCTAssertNil(p(false, false, true, false, "inbox"))
-        XCTAssertEqual(LabelPickerInboxRow.labelModeTitle, "Move to Inbox")
+        XCTAssertEqual(LabelPickerInboxRow.labelModeTitle, "Move to inbox")
     }
 
     func testNoCreateRowForReservedNames() {

@@ -91,10 +91,12 @@ extension MailStore {
         openLabelPicker(mode: .move, moveTargetIds: ids)
     }
 
-    /// The conversation whose account the picker lists labels for: in move
-    /// mode the first move target still in the list, else the focused row.
+    /// The conversation the picker acts on and lists labels for: the first
+    /// target still in the list (move mode, or label mode opened from a
+    /// row's menu), else the focused row.
     var labelPickerThread: MailThread? {
-        if labelPicker.mode == .move {
+        // Label mode with a target: the row whose context menu opened it.
+        if labelPicker.mode == .move || !labelPicker.moveTargetIds.isEmpty {
             let ids = labelPicker.moveTargetIds
             return ids.lazy.compactMap { id in self.threads.first { $0.id == id } }.first
         }

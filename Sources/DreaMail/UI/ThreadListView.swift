@@ -729,76 +729,120 @@ private struct ThreadListSections: View, Equatable {
         // is the historical union and stays true after discarded DRAFT+TRASH
         // (Fund Expense / Anna). Edit/Delete would no-op on those threads.
         if thread.inDrafts {
-            Button("Edit Draft") { store.editDraft(inThread: thread) }
-            Button("Delete Draft", role: .destructive) {
+            Button { store.editDraft(inThread: thread) } label: {
+                Label("Edit Draft", systemImage: "square.and.pencil")
+            }
+            Button(role: .destructive) {
                 if let draft = store.newestDraft(inThread: thread.id) {
                     store.confirmingDraftDelete = draft
                 }
+            } label: {
+                Label("Delete Draft", systemImage: "trash")
             }
             Divider()
         }
-        // A Trash row of an otherwise live conversation takes no
-        // thread-wide action (`MailStore.isPartlyTrashedRow`).
-        let partlyTrashed = store.isPartlyTrashedRow(thread)
-        if InboxMove.offered(for: thread) {
-            Button(InboxMove.title) { store.moveToInboxTargets(thread) }
-        } else {
-            Button("Archive") { store.archive(thread) }
-                .disabled(partlyTrashed)
-        }
-        Button(thread.isStarred ? "Unstar" : "Star") { store.toggleStar(thread) }
-            .disabled(partlyTrashed)
-        Button(thread.isUnread ? "Mark Read" : "Mark Unread") {
-            store.setRead(thread, read: thread.isUnread)
-        }
-        .disabled(partlyTrashed)
-        Menu("Snooze") {
-            if thread.gmailSnoozed {
-                // No wake-up time is readable from Gmail, and Gmail wakes it:
-                // a date picked here would never be used.
-                Text("Snoozed in Gmail: Gmail brings it back")
-            } else {
-                // Its own view so the presets (daypart math + one date format
-                // per preset) are computed when the submenu is materialized,
-                // not for every row whenever the section body runs.
-                SnoozePresetMenuItems(thread: thread)
-                Button("Pick date & time…") { store.mailboxOverlay = .snoozeThread(thread) }
-                if thread.snoozeUntil != nil {
-                    Button("Unsnooze") { store.snooze(thread, until: nil) }
-                }
-            }
-        }
-        .disabled(partlyTrashed)
-        Menu("Remind me") {
-            Button("Tomorrow") { store.setReminder(thread, after: 1) }
-            Button("In 3 days") { store.setReminder(thread, after: 3) }
-            Button("In a week") { store.setReminder(thread, after: 7) }
-            if thread.reminderAt != nil {
-                Button("Clear reminder") { store.setReminder(thread, after: nil) }
-            }
-        }
+        // Gmail web's right-click menu, in its groups and order
+        // (`ThreadRowMenu`), then the app's own items. Acts on this row.
         // `fromEmail` is the denormalized newest-sender address; the menu
         // builder runs for every visible row on each body pass, so it must
         // not query the database per row.
-        if thread.fromEmail.contains("@"),
-           let vipAction = ParticipantMenuVIP.action(
-               email: thread.fromEmail,
-               vipEmails: store.vipEmails,
-               ownEmails: store.ownEmailAddresses) {
-            Divider()
-            Button(ParticipantMenuVIP.title(for: vipAction)) {
-                switch vipAction {
-                case .add(let e): store.addVIP(e)
-                case .remove(let e): store.removeVIP(e)
-                }
+        let vipAction = thread.fromEmail.contains("@")
+            ? ParticipantMenuVIP.action(email: thread.fromEmail, vipEmails: store.vipEmails,
+                                        ownEmails: store.ownEmailAddresses)
+            : nil
+        let state = ThreadRowMenu.State(
+            offersMoveToInbox: InboxMove.offered(for: thread),
+            isUnread: thread.isUnread, isMuted: thread.isMuted, isStarred: thread.isStarred,
+            inTrash: thread.inTrash,
+            // A Trash row of an otherwise live conversation takes no
+            // thread-wide action (`MailStore.isPartlyTrashedRow`).
+            partlyTrashed: store.isPartlyTrashedRow(thread),
+            hasSenderAddress: thread.fromEmail.contains("@"),
+            senderIsVIP: vipAction.map { action -> Bool in
+                if case .remove = action { return true }
+                return false
+            })
+        let groups = ThreadRowMenu.groups(state)
+        ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
+            if index > 0 { Divider() }
+            ForEach(group, id: \.self) { item in
+                threadMenuItem(item, thread: thread, vipAction: vipAction)
+                    .disabled(ThreadRowMenu.isDisabled(item, state))
+                    .accessibilityIdentifier("rowMenu.\(item.rawValue)")
             }
         }
-        Divider()
-        Button("Copy Gmail Link") { store.copyThreadLink(thread) }
-        Divider()
-        // Already in the Trash: nothing to move there.
-        Button("Trash", role: .destructive) { store.trash(thread) }
-            .disabled(thread.inTrash || partlyTrashed)
+    }
+
+    @ViewBuilder
+    private func threadMenuItem(_ item: ThreadRowMenuItem, thread: MailThread,
+                                vipAction: ParticipantMenuVIP.Action?) -> some View {
+        let label = Label(item.title(sender: thread.fromDisplay), systemImage: item.symbol)
+        switch item {
+        case .reply, .replyAll, .forward:
+            // As the keys: the newest *sent* message, never a draft.
+            Button {
+                guard let msg = store.newestSentMessage(inThread: thread.id) else { return }
+                store.openCompose(ComposeRequest(replyTo: msg, replyAll: item == .replyAll,
+                                                 forward: item == .forward))
+            } label: { label }
+        case .moveToInbox:
+            Button { store.moveToInboxTargets(thread) } label: { label }
+        case .archive:
+            Button { store.archive(thread) } label: { label }
+        case .delete:
+            Button(role: .destructive) { store.trash(thread) } label: { label }
+        case .markUnread, .markRead:
+            Button { store.setRead(thread, read: thread.isUnread) } label: { label }
+        case .snooze:
+            Menu {
+                if thread.gmailSnoozed {
+                    // No wake-up time is readable from Gmail, and Gmail wakes it:
+                    // a date picked here would never be used.
+                    Text("Snoozed in Gmail: Gmail brings it back")
+                } else {
+                    // Its own view so the presets (daypart math + one date format
+                    // per preset) are computed when the submenu is materialized,
+                    // not for every row whenever the section body runs.
+                    SnoozePresetMenuItems(thread: thread)
+                    Button("Pick date & time…") { store.mailboxOverlay = .snoozeThread(thread) }
+                    if thread.snoozeUntil != nil {
+                        Button("Unsnooze") { store.snooze(thread, until: nil) }
+                    }
+                }
+            } label: { label }
+        case .moveTo:
+            Button { store.openMovePicker(thread: thread) } label: { label }
+        case .labelAs:
+            Button { store.openLabelPicker(for: thread) } label: { label }
+        case .mute, .unmute:
+            Button { store.toggleMuteTargets(thread) } label: { label }
+        case .findFromSender:
+            Button { store.commitSearch("from:\(thread.fromEmail)") } label: { label }
+        case .star, .unstar:
+            Button { store.toggleStar(thread) } label: { label }
+        case .remindMe:
+            Menu {
+                Button("Tomorrow") { store.setReminder(thread, after: 1) }
+                Button("In 3 days") { store.setReminder(thread, after: 3) }
+                Button("In a week") { store.setReminder(thread, after: 7) }
+                if thread.reminderAt != nil {
+                    Button("Clear reminder") { store.setReminder(thread, after: nil) }
+                }
+            } label: { label }
+        case .addVIP, .removeVIP:
+            if let vipAction {
+                Button {
+                    switch vipAction {
+                    case .add(let e): store.addVIP(e)
+                    case .remove(let e): store.removeVIP(e)
+                    }
+                } label: {
+                    Label(ParticipantMenuVIP.title(for: vipAction), systemImage: item.symbol)
+                }
+            }
+        case .copyLink:
+            Button { store.copyThreadLink(thread) } label: { label }
+        }
     }
 }
 

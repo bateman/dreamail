@@ -459,9 +459,17 @@ final class MailStore {
         labelPicker.navigated = false
         labelPicker.changed = false
         labelPicker.mode = mode
-        labelPicker.moveTargetIds = mode == .move ? moveTargetIds : []
+        // Label mode: empty for the focused conversation, or the one
+        // conversation a row's context menu opened it for.
+        labelPicker.moveTargetIds = moveTargetIds
         labelPicker.session = UUID()
         mailboxOverlay = .labels
+    }
+
+    /// "Label as…" from a list row's context menu: the picker for that row,
+    /// focused or not.
+    func openLabelPicker(for thread: MailThread) {
+        openLabelPicker(mode: .label, moveTargetIds: [thread.id])
     }
     var showFilterMenu = false   // "+ Filter" popover (Ctrl-F)
 

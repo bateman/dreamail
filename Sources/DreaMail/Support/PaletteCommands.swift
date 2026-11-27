@@ -138,7 +138,7 @@ enum PaletteCommands {
         var list: [Entry] = [
             movingToInbox
                 ? Entry(id: "act.moveToInbox",
-                        title: bulk ? "Move \(noun) to Inbox" : "Move Conversation to Inbox",
+                        title: bulk ? "Move \(noun) to inbox" : InboxMove.title,
                         icon: InboxMove.symbol, shortcut: .moveToInbox,
                         action: .perform(.moveToInbox))
                 : Entry(id: "act.archive", title: bulk ? "Archive \(noun)" : "Archive Conversation",

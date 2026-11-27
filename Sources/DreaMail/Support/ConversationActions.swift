@@ -176,11 +176,11 @@ enum InboxMove {
 
     /// Every surface's label and SF Symbol (monochrome, macOS 11+): a tray
     /// with a down arrow, Gmail's own "Move to Inbox" glyph.
-    static let title = "Move to Inbox"
+    static let title = "Move to inbox"
     static let symbol = "tray.and.arrow.down"
 
     static func undoLabel(count n: Int) -> String {
-        n == 1 ? "Conversation moved to Inbox" : "\(n) conversations moved to Inbox"
+        n == 1 ? "Conversation moved to inbox" : "\(n) conversations moved to inbox"
     }
 }
 
