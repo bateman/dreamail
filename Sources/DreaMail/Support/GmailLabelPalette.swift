@@ -61,9 +61,13 @@ enum GmailLabelPalette {
 }
 
 /// Gmail's label color presets (`colorPreset`, e.g.
-/// `LABEL_COLOR_PRESET_DARK_GREEN`). The REST reference does not list the
-/// field; the names and colors are the ones Google gives in its Gmail MCP
-/// server's `update_label` schema, where `color` is marked deprecated.
+/// `LABEL_COLOR_PRESET_DARK_GREEN`).
+///
+/// Source: Google's Gmail MCP server, the `colorPreset` enum of its
+/// `update_label` tool schema (where `color` is marked deprecated). This is
+/// NOT Gmail REST v1 documentation: neither the users.labels reference nor
+/// the v1 discovery document (revision 20261116) lists the field or these
+/// colors. The one table of names and colors is `table` below.
 enum GmailLabelColorPreset {
     static let prefix = "LABEL_COLOR_PRESET_"
 
@@ -114,12 +118,10 @@ enum GmailLabelColorPreset {
 /// backgrounds, and any text color) is still visible.
 enum LabelCurrentColor {
     /// "Current: none", or "Current: #rrggbb" with ", text #rrggbb" when
-    /// there is a text color, ", preset NAME" when Gmail sent one (any
-    /// value, as sent), and " (not in this palette)" when the background is
-    /// not one of `palette`.
-    static func text(background: String?, text: String? = nil, preset: String? = nil,
+    /// there is a text color, then `presetPart`, and " (not in this
+    /// palette)" when the background is not one of `palette`.
+    static func text(background: String?, text: String? = nil, presetPart: String = "",
                      palette: [String]) -> String {
-        let presetPart = GmailLabelColorPreset.shortName(preset).map { ", preset " + $0 } ?? ""
         guard let raw = background else { return "Current: none" + presetPart }
         guard let hex = LabelRGB.normalizedHex(raw) else { return "Current: unreadable value" + presetPart }
         var line = "Current: " + hex
@@ -130,10 +132,17 @@ enum LabelCurrentColor {
         return line
     }
 
-    /// The color on Gmail, against the 64 swatches the sheet offers.
+    /// ", preset NAME" for any preset Gmail sent (as sent, without
+    /// `LABEL_COLOR_PRESET_`), ", no preset" when it sent none.
+    static func presetPart(_ raw: String?) -> String {
+        GmailLabelColorPreset.shortName(raw).map { ", preset " + $0 } ?? ", no preset"
+    }
+
+    /// The color on Gmail, against the 64 swatches the sheet offers, and
+    /// whether Gmail sent a preset.
     static func gmail(_ row: LabelRow) -> String {
         text(background: row.gmailBackgroundColor, text: row.gmailTextColor,
-             preset: row.gmailColorPreset,
+             presetPart: presetPart(row.gmailColorPreset),
              palette: GmailLabelPalette.swatches.map(\.background))
     }
 

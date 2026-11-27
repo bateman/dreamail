@@ -178,8 +178,10 @@ final class LabelColorPresetTests: XCTestCase {
         XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "LABEL_COLOR_PRESET_TEAL")),
                        "Current: none, preset TEAL")
         XCTAssertEqual(LabelCurrentColor.gmail(row(fallback)),
-                       "Current: #eeeeee, text #222222 (not in this palette)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row()), "Current: none")
+                       "Current: #eeeeee, text #222222, no preset (not in this palette)")
+        XCTAssertEqual(LabelCurrentColor.gmail(row()), "Current: none, no preset")
+        XCTAssertEqual(LabelCurrentColor.gmail(row(LabelColors(background: "oops", text: nil))),
+                       "Current: unreadable value, no preset")
     }
 
     /// A preset the app does not know is shown too, exactly as sent.
@@ -188,7 +190,7 @@ final class LabelColorPresetTests: XCTestCase {
                        "Current: #eeeeee, text #222222, preset NEW_HUE (not in this palette)")
         XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "SOMETHING_ELSE")),
                        "Current: none, preset SOMETHING_ELSE")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "")), "Current: none")
+        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "")), "Current: none, no preset")
     }
 
     /// The Mac-only line never shows Gmail's preset.
@@ -255,13 +257,23 @@ final class LabelColorPresetTests: XCTestCase {
         }
     }
 
-    /// The preset values Google gives, kept independently of the table.
-    func testPresetTableMatchesGooglesList() {
+    /// All 21 pairs Google's Gmail MCP schema gives, kept independently of
+    /// the table (not REST documentation).
+    func testPresetTablePinsAllGooglePairs() {
         let expected: [String: (String, String)] = [
-            "DARK_GREEN": ("#076239", "#ffffff"), "GREEN": ("#16a765", "#ffffff"),
-            "MINT": ("#43d692", "#000000"), "BLACK": ("#000000", "#ffffff"),
-            "WHITE": ("#ffffff", "#000000"), "BROWN": ("#7a4706", "#ffffff"),
+            "BLACK": ("#000000", "#ffffff"), "DARK_GRAY": ("#434343", "#ffffff"),
+            "GRAY": ("#666666", "#ffffff"), "LIGHT_GRAY": ("#cccccc", "#000000"),
+            "WHITE": ("#ffffff", "#000000"), "RED": ("#fb4c2f", "#ffffff"),
+            "ORANGE": ("#ffad47", "#000000"), "YELLOW": ("#fad165", "#000000"),
+            "GREEN": ("#16a765", "#ffffff"), "MINT": ("#43d692", "#000000"),
+            "TEAL": ("#2da2bb", "#ffffff"), "BLUE": ("#4a86e8", "#ffffff"),
+            "PURPLE": ("#a479e2", "#ffffff"), "PINK": ("#f691b2", "#000000"),
+            "DARK_RED": ("#822111", "#ffffff"), "DARK_ORANGE": ("#a46a21", "#ffffff"),
+            "DARK_GREEN": ("#076239", "#ffffff"), "DARK_BLUE": ("#1c4587", "#ffffff"),
+            "DARK_PURPLE": ("#41236d", "#ffffff"), "DARK_PINK": ("#83334c", "#ffffff"),
+            "BROWN": ("#7a4706", "#ffffff"),
         ]
+        XCTAssertEqual(Set(GmailLabelColorPreset.colors.keys), Set(expected.keys))
         for (name, pair) in expected {
             XCTAssertEqual(GmailLabelColorPreset.colors[name]?.background, pair.0, name)
             XCTAssertEqual(GmailLabelColorPreset.colors[name]?.text, pair.1, name)
