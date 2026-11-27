@@ -74,9 +74,16 @@ final class SidebarSingleSelectionUITests: XCTestCase {
         }
 
         // Collapse and expand the sidebar: the selection survives.
-        main.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
-        RunLoop.current.run(until: Date().addingTimeInterval(1))
-        main.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
+        // The list holds the keyboard focus after a click, so ← would act on
+        // the list: Esc first, then ←, and wait for the strip.
+        let strip = app.descendants(matching: .any).matching(identifier: "sidebarStrip").firstMatch
+        for _ in 0..<2 where !strip.exists {
+            app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+            app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
+            _ = strip.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(strip.exists, "← collapses the sidebar to the icon strip")
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(waitForHittable(row("inbox")), "the sidebar rows are back after the expand")
         row("inbox").click()
         expect(only: "inbox", in: main, "after collapse and expand")
