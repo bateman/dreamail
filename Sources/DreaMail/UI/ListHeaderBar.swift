@@ -34,10 +34,19 @@ struct ListHeaderBar: ViewModifier {
         !store.committedSearch.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// The title moves into the bar below; the window title stays. The toolbar
+    /// title can only be removed from macOS 15 (the app targets 14).
+    @ViewBuilder
+    private func withoutToolbarTitle(_ content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content
+        }
+    }
+
     func body(content: Content) -> some View {
-        content
-            // The title moves into the bar below; the window title stays.
-            .toolbar(removing: .title)
+        withoutToolbarTitle(content)
             .overlay(alignment: .top) {
                 GeometryReader { proxy in
                     // The window's toolbar band above this column's content.
