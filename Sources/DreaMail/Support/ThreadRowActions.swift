@@ -10,19 +10,27 @@ enum ThreadRowHoverAction: String, CaseIterable {
     /// SF Symbol (monochrome, macOS 11+). Gmail's archive glyph has a down
     /// arrow; SF Symbols has no such box, so `archivebox` stands in. Only the
     /// read/unread button changes with the thread's state.
-    func symbol(isUnread: Bool) -> String {
+    /// `movesToInbox`: the archive slot shows Gmail's "Move to Inbox" for a
+    /// conversation not in the Inbox (`InboxMove.offered`).
+    func symbol(isUnread: Bool, movesToInbox: Bool = false) -> String {
         switch self {
-        case .archive: return "archivebox"
+        case .archive: return movesToInbox ? InboxMove.symbol : "archivebox"
         case .trash: return "trash"
         case .toggleRead: return isUnread ? "envelope.open" : "envelope.badge"
         case .snooze: return "clock"
         }
     }
 
+    /// UI-test identifier: the archive slot is `moveToInbox` while it
+    /// shows that action.
+    func identifier(movesToInbox: Bool = false) -> String {
+        self == .archive && movesToInbox ? "moveToInbox" : rawValue
+    }
+
     /// Tooltip and VoiceOver label. "Trash" as everywhere else in the app.
-    func title(isUnread: Bool) -> String {
+    func title(isUnread: Bool, movesToInbox: Bool = false) -> String {
         switch self {
-        case .archive: return "Archive"
+        case .archive: return movesToInbox ? InboxMove.title : "Archive"
         case .trash: return "Trash"
         case .toggleRead: return isUnread ? "Mark as read" : "Mark as unread"
         case .snooze: return "Snooze"

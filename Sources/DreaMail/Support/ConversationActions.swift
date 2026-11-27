@@ -24,6 +24,12 @@ enum ConversationAction: Equatable {
     /// `alsoRemove`: what the move leaves besides INBOX (`MoveSource`).
     case moveTo(labelId: String, alsoRemove: [String] = [])
 
+    /// Gmail's "Move to Inbox": adds INBOX and nothing else, so the
+    /// conversation keeps its labels and stays in All Mail, a label view or
+    /// a search. Undo removes INBOX again (archives it).
+    static let moveToInbox = ConversationAction.moveTo(labelId: inboxLabel)
+
+    static let inboxLabel = "INBOX"
     static let mutedLabel = "MUTED"
     static let importantLabel = "IMPORTANT"
 
@@ -34,7 +40,10 @@ enum ConversationAction: Equatable {
         case .markImportant: return ([Self.importantLabel], [])
         case .markNotImportant: return ([], [Self.importantLabel])
         case .moveTo(let labelId, let alsoRemove):
-            return ([labelId], ["INBOX"] + alsoRemove.filter { $0 != labelId && $0 != "INBOX" })
+            // Moving to the Inbox itself (Gmail's "Move to Inbox") adds INBOX
+            // and leaves only what the place it leaves asks for.
+            return ([labelId], (["INBOX"] + alsoRemove.filter { $0 != "INBOX" })
+                .filter { $0 != labelId })
         }
     }
 
@@ -47,6 +56,11 @@ enum ConversationAction: Equatable {
     /// The local side: labels and the denormalized flags together.
     func apply(_ t: inout MailThread) {
         Self.applyLabels(remote, &t)
+        // Back in the Inbox means awake: a conversation snoozed here takes
+        // the unsnooze path (date cleared, Gmail's snooze ended).
+        if labelEdit.add.contains(Self.inboxLabel), t.snoozeUntil != nil {
+            ThreadUndo.unsnooze(&t)
+        }
     }
 
     /// Gmail side of the undo for one thread, from its pre-action snapshot.
@@ -139,4 +153,54 @@ struct ConversationActionRun {
 extension MailThread {
     var isMuted: Bool { labels.contains(ConversationAction.mutedLabel) }
     var isImportant: Bool { labels.contains(ConversationAction.importantLabel) }
+}
+
+/// Where Gmail shows "Move to Inbox" instead of "Archive": for every
+/// conversation not in the Inbox (archived, snoozed, found in All Mail, a
+/// label, Sent or a search). Trash and Spam keep their own restore actions
+/// (Move to, Not spam), so their rows keep the surfaces they had.
+enum InboxMove {
+    static func offered(for t: MailThread) -> Bool {
+        !t.inInbox && !t.inTrash && !t.inSpam
+    }
+
+    /// Over several targets (keys, palette, menu): only when every one of
+    /// them offers it; a mix keeps Archive, as before.
+    static func offered(for threads: [MailThread]) -> Bool {
+        !threads.isEmpty && threads.allSatisfy { offered(for: $0) }
+    }
+
+    /// A conversation snoozed here goes back through unsnooze (it also clears
+    /// the wake-up date), not through a plain label edit.
+    static func isUnsnooze(_ t: MailThread) -> Bool { t.snoozeUntil != nil }
+
+    /// Every surface's label and SF Symbol (monochrome, macOS 11+): a tray
+    /// with a down arrow, Gmail's own "Move to Inbox" glyph.
+    static let title = "Move to Inbox"
+    static let symbol = "tray.and.arrow.down"
+
+    static func undoLabel(count n: Int) -> String {
+        n == 1 ? "Conversation moved to Inbox" : "\(n) conversations moved to Inbox"
+    }
+}
+
+/// Gmail reserves the names of its system labels: "no USER label can be
+/// created with the same name as any SYSTEM label", and other reserved names
+/// fail with "HTTP 400 Invalid label name" (developers.google.com/gmail/api/
+/// guides/labels). Only the system labels that guide documents are listed
+/// (DRAFTS too: the API reference spells it so). The picker never offers
+/// "Create" for them; for "Inbox" it offers Move to Inbox instead.
+enum ReservedLabelNames {
+    static let names: Set<String> = [
+        "inbox", "spam", "trash", "unread", "starred", "important", "sent",
+        "draft", "drafts", "category_personal", "category_social",
+        "category_promotions", "category_updates", "category_forums",
+    ]
+
+    static func isReserved(_ name: String) -> Bool {
+        let key = name.trimmingCharacters(in: .whitespaces)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .lowercased()
+        return names.contains(key)
+    }
 }

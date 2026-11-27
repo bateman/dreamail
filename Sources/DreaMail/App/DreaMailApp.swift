@@ -189,8 +189,15 @@ struct DreaMailApp: App {
                 Button("Forward") { store.perform(.forward) }
                     .disabled(!hasSingleThreadSelection)
                 Divider()
-                Button("Archive") { store.perform(.archive) }
-                    .disabled(!hasMessageSelection)
+                // Gmail: Move to Inbox in place of Archive when no target
+                // is in the Inbox.
+                if store.targetsOfferMoveToInbox {
+                    Button(InboxMove.title) { store.perform(.moveToInbox) }
+                        .disabled(!hasMessageSelection)
+                } else {
+                    Button("Archive") { store.perform(.archive) }
+                        .disabled(!hasMessageSelection)
+                }
                 Button("Trash") { store.perform(.trash) }
                     .disabled(!hasMessageSelection)
                 Button("Star/Unstar") {

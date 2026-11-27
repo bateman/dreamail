@@ -599,7 +599,14 @@ private struct ThreadListSections: View, Equatable {
                         },
                         onOpenIfFocused: { store.requestOpenSelected() },
                         onStar: { store.toggleStar(thread) },
-                        onArchive: { store.archive(thread) },
+                        onArchive: {
+                            // Gmail: Archive for Inbox mail, Move to Inbox otherwise.
+                            if InboxMove.offered(for: thread) {
+                                store.moveToInboxTargets(thread)
+                            } else {
+                                store.archive(thread)
+                            }
+                        },
                         onSnooze: { store.mailboxOverlay = .snoozeThread(thread) },
                         onTrash: { store.trash(thread) },
                         onToggleRead: { store.setRead(thread, read: thread.isUnread) }
@@ -614,9 +621,15 @@ private struct ThreadListSections: View, Equatable {
                                 focus: store.listFocus, threadId: thread.id,
                                 checked: checked, unread: thread.isUnread))
                         .swipeActions(edge: .trailing) {
-                            Button { store.archive(thread) } label: {
-                                Label("Archive", systemImage: "archivebox")
-                            }.tint(.green)
+                            if InboxMove.offered(for: thread) {
+                                Button { store.moveToInboxTargets(thread) } label: {
+                                    Label(InboxMove.title, systemImage: InboxMove.symbol)
+                                }.tint(.green)
+                            } else {
+                                Button { store.archive(thread) } label: {
+                                    Label("Archive", systemImage: "archivebox")
+                                }.tint(.green)
+                            }
                             Button(role: .destructive) { store.trash(thread) } label: {
                                 Label("Trash", systemImage: "trash")
                             }
@@ -727,8 +740,12 @@ private struct ThreadListSections: View, Equatable {
         // A Trash row of an otherwise live conversation takes no
         // thread-wide action (`MailStore.isPartlyTrashedRow`).
         let partlyTrashed = store.isPartlyTrashedRow(thread)
-        Button("Archive") { store.archive(thread) }
-            .disabled(partlyTrashed)
+        if InboxMove.offered(for: thread) {
+            Button(InboxMove.title) { store.moveToInboxTargets(thread) }
+        } else {
+            Button("Archive") { store.archive(thread) }
+                .disabled(partlyTrashed)
+        }
         Button(thread.isStarred ? "Unstar" : "Star") { store.toggleStar(thread) }
             .disabled(partlyTrashed)
         Button(thread.isUnread ? "Mark Read" : "Mark Unread") {
@@ -2009,7 +2026,8 @@ struct ThreadRow: View, Equatable {
         // (DREAMAIL_UI_ROW_BUTTONS=1 only) also need the buttons in the tree.
         .accessibilityElement(children: Self.exposesButtons ? .contain : .ignore)
         .accessibilityLabel(model.display.accessibilityLabel)
-        .accessibilityAction(named: "Archive", onArchive)
+        .accessibilityAction(named: ThreadRowHoverAction.archive.title(
+            isUnread: thread.isUnread, movesToInbox: movesToInbox), onArchive)
         .accessibilityAction(named: "Trash", onTrash)
         .accessibilityAction(named: thread.isStarred ? "Unstar" : "Star", onStar)
         .accessibilityAction(named: "Snooze", onSnooze)
@@ -2068,9 +2086,12 @@ struct ThreadRow: View, Equatable {
         return thread.isUnread ? .content : .readRow
     }
 
+    /// The archive slot shows "Move to Inbox" (`InboxMove.offered`).
+    private var movesToInbox: Bool { InboxMove.offered(for: thread) }
+
     private func hoverButton(_ action: ThreadRowHoverAction) -> some View {
         let isUnread = thread.isUnread
-        let title = action.title(isUnread: isUnread)
+        let title = action.title(isUnread: isUnread, movesToInbox: movesToInbox)
         return Button {
             switch action {
             case .archive: onArchive()
@@ -2079,7 +2100,7 @@ struct ThreadRow: View, Equatable {
             case .snooze: onSnooze()
             }
         } label: {
-            Image(systemName: action.symbol(isUnread: isUnread))
+            Image(systemName: action.symbol(isUnread: isUnread, movesToInbox: movesToInbox))
                 .font(.system(size: ThreadRowActionLayout.iconSize * fontScale))
                 .foregroundStyle(inked(.secondary, emphasis: 0.8))
                 .padding(.horizontal, ThreadRowActionLayout.iconPaddingH)
@@ -2092,7 +2113,7 @@ struct ThreadRow: View, Equatable {
         .buttonStyle(PressScaleButtonStyle())
         .help(title)
         .accessibilityLabel(title)
-        .accessibilityIdentifier("rowAction.\(action.rawValue)")
+        .accessibilityIdentifier("rowAction.\(action.identifier(movesToInbox: movesToInbox))")
     }
 
     private var relativeFormat: Date.FormatStyle {

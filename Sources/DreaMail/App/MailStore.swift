@@ -4174,6 +4174,7 @@ struct ComposeRequest: Identifiable {
         case .markImportant: setImportantTargets(true)
         case .markNotImportant: setImportantTargets(false)
         case .moveTo: openMovePicker()
+        case .moveToInbox: moveToInboxTargets()
         case .open, .backToList, .archiveNext, .archivePrevious,
              .nextMessage, .previousMessage, .expandAll, .collapseAll:
             viewCommandHandler?(command)
@@ -4199,18 +4200,31 @@ struct ComposeRequest: Identifiable {
     /// which label is highlighted. Matching is per whitespace token, using
     /// locale-aware case/diacritic-insensitive comparison.
     func labelPickerLabels(for thread: MailThread) -> [LabelRow] {
-        userLabels(forAccount: thread.accountId)
+        let labels = userLabels(forAccount: thread.accountId)
             .filter { LabelSearch.matches($0.name, query: labelPicker.query) }
+        switch LabelPickerInboxRow.placement(
+            moveMode: labelPicker.mode == .move, inInbox: thread.inInbox,
+            inSpam: thread.inSpam, inTrash: thread.inTrash, query: labelPicker.query) {
+        case .first: return [Self.inboxPickerRow(thread.accountId)] + labels
+        case .last: return labels + [Self.inboxPickerRow(thread.accountId)]
+        case nil: return labels
+        }
+    }
+
+    /// The picker's Inbox row (`LabelPickerInboxRow`): not a stored label.
+    static func inboxPickerRow(_ accountId: String) -> LabelRow {
+        LabelRow(id: "\(accountId):\(ConversationAction.inboxLabel)", accountId: accountId,
+                 gmailLabelId: ConversationAction.inboxLabel,
+                 name: LabelPickerInboxRow.name, type: "system", color: nil)
     }
 
     /// The "Create <query>" row's label name: the trimmed query, when it
-    /// wouldn't duplicate an existing label on the thread's account.
+    /// wouldn't duplicate an existing label on the thread's account and is
+    /// not a name Gmail reserves (`LabelPickerInboxRow.createName`).
     func labelPickerCreateName(for thread: MailThread) -> String? {
-        let name = labelPicker.query.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return nil }
-        let exists = userLabels(forAccount: thread.accountId)
-            .contains { $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
-        return exists ? nil : name
+        LabelPickerInboxRow.createName(
+            query: labelPicker.query,
+            existing: userLabels(forAccount: thread.accountId).map(\.name))
     }
 
     /// Creates the label on the thread's account, then applies it. The new

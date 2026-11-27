@@ -83,14 +83,24 @@ struct LabelPicker: View {
                             VStack(spacing: 0) {
                                 ForEach(Array(labels.enumerated()), id: \.element.id) { idx, label in
                                     let applied = thread.labels.contains(label.gmailLabelId)
+                                    // The Inbox row (`LabelPickerInboxRow`) is an
+                                    // action, not a label: no box, no color dot.
+                                    let isInbox = label.gmailLabelId == ConversationAction.inboxLabel
+                                    let shownName = isInbox && picker.mode == .label
+                                        ? LabelPickerInboxRow.labelModeTitle : label.name
                                     HStack(spacing: 8) {
-                                        if picker.mode == .label {
-                                            Image(systemName: applied ? "checkmark.square.fill" : "square")
-                                                .foregroundStyle(applied ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
+                                        if isInbox {
+                                            Image(systemName: InboxMove.symbol)
+                                                .foregroundStyle(.secondary)
+                                        } else {
+                                            if picker.mode == .label {
+                                                Image(systemName: applied ? "checkmark.square.fill" : "square")
+                                                    .foregroundStyle(applied ? AnyShapeStyle(.accentForeground) : AnyShapeStyle(.secondary))
+                                            }
+                                            LabelDot(colors: store.labelColors(label.name, account: label.accountId),
+                                                     size: 8)
                                         }
-                                        LabelDot(colors: store.labelColors(label.name, account: label.accountId),
-                                                 size: 8)
-                                        Text(LabelSearch.highlighted(label.name, query: picker.query))
+                                        Text(LabelSearch.highlighted(shownName, query: picker.query))
                                             .font(.system(size: 13))
                                         Spacer()
                                     }
@@ -101,9 +111,10 @@ struct LabelPicker: View {
                                     .onHover { if $0 { picker.highlight = idx } }
                                     .id(label.id)
                                     .accessibilityElement(children: .ignore)
-                                    .accessibilityLabel(label.name)
-                                    .accessibilityValue(picker.mode == .label ? (applied ? "on" : "off") : "")
-                                    .accessibilityHint(picker.mode == .label
+                                    .accessibilityLabel(shownName)
+                                    .accessibilityValue(picker.mode == .label && !isInbox ? (applied ? "on" : "off") : "")
+                                    .accessibilityHint(isInbox ? "Moves the conversation to the Inbox."
+                                        : picker.mode == .label
                                         ? "Click to toggle. Return applies and closes; Space toggles."
                                         : "Return moves here.")
                                     .accessibilityAddTraits(.isButton)

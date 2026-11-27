@@ -44,3 +44,41 @@ enum LabelPickerKeyRules {
             : ["↑↓ select", "↵ apply and close", "space toggle", "esc close"]
     }
 }
+
+/// The picker's Inbox row and its "Create" row, as Gmail's pickers have
+/// them. Pure; `MailStore.labelPickerLabels` / `labelPickerCreateName` use it.
+/// - "Move to" lists Inbox first as a destination for a conversation that is
+///   not in the Inbox (not for spam: that leaves Spam with Not spam).
+/// - "Label as" never lists Inbox on its own: typing a name that matches it
+///   offers "Move to Inbox", after the matching labels, when the
+///   conversation is not in the Inbox (`InboxMove.offered`).
+/// - No "Create" row for a name Gmail reserves (`ReservedLabelNames`).
+enum LabelPickerInboxRow {
+    enum Placement: Equatable { case first, last }
+
+    /// The name the row shows and matches against.
+    static let name = "Inbox"
+    static let labelModeTitle = "Move to Inbox"
+
+    static func placement(moveMode: Bool, inInbox: Bool, inSpam: Bool, inTrash: Bool,
+                          query: String) -> Placement? {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        if moveMode {
+            guard !inInbox, !inSpam, q.isEmpty || LabelSearch.matches(name, query: q) else { return nil }
+            return .first
+        }
+        guard !inInbox, !inSpam, !inTrash, !q.isEmpty, LabelSearch.matches(name, query: q) else { return nil }
+        return .last
+    }
+
+    /// The "Create" row's name: the trimmed query, unless it is empty,
+    /// reserved by Gmail, or already a label of the account.
+    static func createName(query: String, existing: [String]) -> String? {
+        let name = query.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, !ReservedLabelNames.isReserved(name) else { return nil }
+        let exists = existing.contains {
+            $0.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        }
+        return exists ? nil : name
+    }
+}

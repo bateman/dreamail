@@ -54,6 +54,30 @@ extension MailStore {
                 : (n == 1 ? "Marked as not important" : "\(n) marked as not important"))
     }
 
+    // MARK: - Move to Inbox
+
+    /// Gmail's "Move to Inbox" (toolbar, row, menu, palette, the
+    /// `moveToInbox` command): adds INBOX to the conversation and nothing
+    /// else, so it stays in All Mail, its labels and a search. A snoozed one
+    /// is unsnoozed (`ConversationAction.apply`). Targets already in the
+    /// Inbox, in Trash or Spam are left alone (`InboxMove.offered`); the
+    /// undo archives them again. `thread`: the toolbar's or row's own
+    /// conversation instead of the key's targets.
+    func moveToInboxTargets(_ thread: MailThread? = nil) {
+        let all = thread.map { [$0] } ?? actionTargets
+        guard !refusesPartlyTrashed(all) else { return }
+        let targets = all.filter { InboxMove.offered(for: $0) && !isPartlyTrashedRow($0) }
+        guard !targets.isEmpty else { return }
+        run(ConversationActionRun(ConversationAction.moveToInbox, targets: targets),
+            bulk: thread == nil && !checkedThreadIds.isEmpty,
+            autoAdvance: "move-to-inbox",
+            undoLabel: InboxMove.undoLabel(count: targets.count))
+    }
+
+    /// True when the key's targets (checked rows, else the focused one) get
+    /// "Move to Inbox" in place of "Archive" (app menu, palette).
+    var targetsOfferMoveToInbox: Bool { InboxMove.offered(for: actionTargets) }
+
     // MARK: - Move to
 
     /// `v` (and the menu and palette): the label picker in "move" mode, over
@@ -84,7 +108,10 @@ extension MailStore {
     func moveThreads(ids: [String], toLabel labelId: String, accountId: String) {
         mailboxOverlay = nil
         let byId = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // Inbox is a "Move to" destination too; a spam conversation leaves
+        // Spam with Not spam, not by gaining INBOX next to SPAM.
         var all = ids.compactMap { byId[$0] }
+            .filter { labelId != ConversationAction.inboxLabel || !$0.inSpam }
         // A Trash row of a conversation that is otherwise live gives back
         // only its trashed messages; the rest of it is not touched.
         do {
@@ -118,7 +145,8 @@ extension MailStore {
         }
         guard !plan.targets.isEmpty else { return }
         let n = plan.targets.count
-        let name = labelName(labelId, account: accountId) ?? "label"
+        let name = labelId == ConversationAction.inboxLabel
+            ? LabelPickerInboxRow.name : (labelName(labelId, account: accountId) ?? "label")
         run(plan, bulk: n > 1 || !checkedThreadIds.isEmpty, autoAdvance: "move",
             undoLabel: n == 1 ? "Moved to \(name)" : "Moved \(n) to \(name)")
     }
@@ -134,6 +162,10 @@ extension MailStore {
     /// The label picker's Return / click / Space on a label row.
     func labelPickerCommit(_ label: LabelRow, thread: MailThread) {
         switch labelPicker.mode {
+        case .label where label.gmailLabelId == ConversationAction.inboxLabel:
+            // "Label as" → "Move to Inbox": an action, not a label box.
+            mailboxOverlay = nil
+            moveToInboxTargets(thread)
         case .label:
             toggleLabel(thread, labelId: label.gmailLabelId)
             labelPicker.changed = true

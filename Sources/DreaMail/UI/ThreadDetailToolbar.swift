@@ -163,11 +163,21 @@ struct ThreadDetailToolbar: ViewModifier {
                     ToolbarSpacer(.fixed, placement: .principal)
                 }
                 ToolbarItemGroup {
-                    Button { store.archive(thread) } label: {
-                        Label("Archive", systemImage: "archivebox")
+                    // Gmail: Archive for Inbox mail, Move to Inbox otherwise.
+                    if InboxMove.offered(for: thread) {
+                        Button { store.moveToInboxTargets(thread) } label: {
+                            Label(InboxMove.title, systemImage: InboxMove.symbol)
+                        }
+                        .help(store.keyBindings.key(for: .moveToInbox).map {
+                            "\(InboxMove.title) (\($0))" } ?? InboxMove.title)
+                        .accessibilityIdentifier("toolbar.moveToInbox")
+                    } else {
+                        Button { store.archive(thread) } label: {
+                            Label("Archive", systemImage: "archivebox")
+                        }
+                        .help("Archive (\(store.keyBindings.displayKey(for: .archive)))")
+                        .disabled(store.isPartlyTrashedRow(thread))
                     }
-                    .help("Archive (\(store.keyBindings.displayKey(for: .archive)))")
-                    .disabled(store.isPartlyTrashedRow(thread))
                     Button { store.toggleStar(thread) } label: {
                         Label(thread.isStarred ? "Unstar" : "Star",
                               systemImage: thread.isStarred ? "star.fill" : "star")

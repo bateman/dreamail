@@ -39,6 +39,8 @@ enum PaletteCommands {
         var isUnread = false
         var isMuted = false
         var isImportant = false
+        /// `InboxMove.offered`: not in the Inbox, Trash or Spam.
+        var offersMoveToInbox = false
     }
 
     struct SavedViewRef: Equatable {
@@ -128,9 +130,19 @@ enum PaletteCommands {
             ? ctx.checked.contains { $0.isUnread }
             : (ctx.focused?.isUnread ?? false)
 
+        // Gmail: Move to Inbox in place of Archive when no target is in the
+        // Inbox (the store's `targetsOfferMoveToInbox`).
+        let movingToInbox = bulk
+            ? !ctx.checked.isEmpty && ctx.checked.allSatisfy(\.offersMoveToInbox)
+            : (ctx.focused?.offersMoveToInbox ?? false)
         var list: [Entry] = [
-            Entry(id: "act.archive", title: bulk ? "Archive \(noun)" : "Archive Conversation",
-                  icon: "archivebox", shortcut: .archive, action: .perform(.archive)),
+            movingToInbox
+                ? Entry(id: "act.moveToInbox",
+                        title: bulk ? "Move \(noun) to Inbox" : "Move Conversation to Inbox",
+                        icon: InboxMove.symbol, shortcut: .moveToInbox,
+                        action: .perform(.moveToInbox))
+                : Entry(id: "act.archive", title: bulk ? "Archive \(noun)" : "Archive Conversation",
+                        icon: "archivebox", shortcut: .archive, action: .perform(.archive)),
             Entry(id: "act.trash", title: bulk ? "Trash \(noun)" : "Trash Conversation",
                   icon: "trash", shortcut: .trash, action: .perform(.trash)),
             Entry(id: "act.star",
