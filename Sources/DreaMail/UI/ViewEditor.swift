@@ -20,7 +20,9 @@ struct ViewEditor: View {
                 TextField("View name", text: $view.name)
 
                 Picker("Account", selection: $view.accountId) {
-                    Text("All accounts").tag(String?.none)
+                    if store.unifiedInboxEnabled {
+                        Text("All accounts").tag(String?.none)
+                    }
                     ForEach(store.accounts) { Text($0.id).tag(String?.some($0.id)) }
                 }
 
@@ -74,6 +76,12 @@ struct ViewEditor: View {
             .padding()
         }
         .frame(width: 420, height: 480)
+        // No "All accounts" choice while the unified inbox is off.
+        .onAppear {
+            if !store.unifiedInboxEnabled, view.accountId == nil {
+                view.accountId = store.accounts.first?.id
+            }
+        }
     }
 
     private var allLabels: [LabelRow] {

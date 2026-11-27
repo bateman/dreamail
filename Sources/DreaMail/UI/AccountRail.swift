@@ -29,9 +29,11 @@ struct AccountRail: View {
             // Many accounts scroll; the bottom area stays put.
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 10) {
-                    if store.accounts.count > 1 { allEntry }
+                    if UnifiedInbox.railShowsEntry(enabled: store.unifiedInboxEnabled,
+                                                   accountCount: store.accounts.count) { allEntry }
                     ForEach(Array(store.accounts.enumerated()), id: \.element.id) { index, account in
-                        accountEntry(account, shortcut: index + 2)
+                        accountEntry(account, shortcut: UnifiedInbox.shortcutDigit(
+                            forAccountAt: index, enabled: store.unifiedInboxEnabled))
                             .onDrag {
                                 draggingAccountId = account.id
                                 return NSItemProvider(object: account.id as NSString)

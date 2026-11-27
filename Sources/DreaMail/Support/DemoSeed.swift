@@ -27,6 +27,11 @@ enum DemoSeed {
     }
 
     static let account = "you@example.com"
+    /// A second, empty account for UI tests of the multi-account rail
+    /// (`DREAMAIL_UI_TEST=1` with `DREAMAIL_DEMO_SECOND_ACCOUNT=1`).
+    static let secondAccount = "zoe@example.com"
+
+    static func owns(_ id: String) -> Bool { id == account || id == secondAccount }
 
     /// What the demo account's Gmail returns for its signature: imported at
     /// launch by the same code as a real account's (no network).
@@ -37,7 +42,7 @@ enum DemoSeed {
     static let vipSenders: Set<String> = ["dana@brightloop.io", "priya@example.edu"]
 
     static func canActivate(accountIDs: [String]) -> Bool {
-        accountIDs.isEmpty || accountIDs.allSatisfy { $0 == account }
+        accountIDs.allSatisfy(owns)
     }
 
     @discardableResult
@@ -103,6 +108,12 @@ enum DemoSeed {
                 let acct = Account(id: account, displayName: "Personal",
                                    historyId: nil, lastSyncAt: Date(), senderName: "Alex Rivera")
                 try acct.insert(database)
+                let env = ProcessInfo.processInfo.environment
+                if env["DREAMAIL_UI_TEST"] == "1", env["DREAMAIL_DEMO_SECOND_ACCOUNT"] == "1" {
+                    try Account(id: secondAccount, displayName: "Zoe",
+                                historyId: nil, lastSyncAt: Date(),
+                                senderName: "Zoe Example").insert(database)
+                }
                 // A signature made in the app; the account's Gmail one
                 // arrives through `gmailSignatures`, as for a real account.
                 try SignatureStore.insert(database, accountId: account, name: "Short",
@@ -174,9 +185,10 @@ enum DemoSeed {
                              arguments: ["\(account):%"])
         try database.execute(sql: "DELETE FROM scheduledSend WHERE accountId = ?",
                              arguments: [account])
-        try database.execute(sql: "DELETE FROM savedView WHERE accountId = ?",
-                             arguments: [account])
-        try database.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [account])
+        try database.execute(sql: "DELETE FROM savedView WHERE accountId IN (?, ?)",
+                             arguments: [account, secondAccount])
+        try database.execute(sql: "DELETE FROM account WHERE id IN (?, ?)",
+                             arguments: [account, secondAccount])
     }
 
     // MARK: - Fixture data

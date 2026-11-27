@@ -1576,11 +1576,57 @@ struct ComposeRequest: Identifiable {
         threads.first { $0.id == selectedThreadId }
     }
 
-    func setActiveAccount(_ id: String?) {
+    /// Settings → Appearance → "Show unified inbox". Turning it off while
+    /// the unified view is showing moves to the first account (same view).
+    var unifiedInboxEnabled = UnifiedInbox.isEnabled() {
+        didSet {
+            guard unifiedInboxEnabled != oldValue else { return }
+            UserDefaults.standard.set(unifiedInboxEnabled, forKey: UnifiedInbox.enabledKey)
+            enforceUnifiedScope()
+        }
+    }
+
+    /// Saved views the current setting lets through: those of all accounts
+    /// are hidden (not deleted) while the unified inbox is off.
+    var visibleSavedViews: [SavedView] {
+        savedViews.filter {
+            UnifiedInbox.savedViewVisible(accountId: $0.accountId, enabled: unifiedInboxEnabled)
+        }
+    }
+
+    /// Brings the account filter and the selected view in line with the
+    /// setting: no unified scope, no hidden saved view while it is off.
+    /// `reload: false` before the first list load (launch).
+    func enforceUnifiedScope(reload: Bool = true) {
+        let scoped = UnifiedInbox.scope(requested: activeAccountId,
+                                        enabled: unifiedInboxEnabled,
+                                        railOrder: accounts.map(\.id))
+        let view = viewAfterUnifiedSetting(selectedView)
+        guard scoped != activeAccountId || view != selectedView else { return }
+        if reload {
+            setActiveAccount(scoped)
+        } else {
+            activeAccountId = scoped
+            selectedView = view
+        }
+    }
+
+    private func viewAfterUnifiedSetting(_ view: MailboxView) -> MailboxView {
+        guard case .saved(let viewId, _) = view,
+              let saved = savedViews.first(where: { $0.id == viewId }),
+              !UnifiedInbox.savedViewVisible(accountId: saved.accountId,
+                                             enabled: unifiedInboxEnabled)
+        else { return view }
+        return .inbox
+    }
+
+    func setActiveAccount(_ requested: String?) {
+        let id = UnifiedInbox.scope(requested: requested, enabled: unifiedInboxEnabled,
+                                    railOrder: accounts.map(\.id))
         activeAccountId = id
         // A label belongs to one account: switching to another leaves it
         // for that account's Inbox, as Gmail does.
-        let next = SidebarScope.view(selectedView, afterSwitchingTo: id)
+        let next = viewAfterUnifiedSetting(SidebarScope.view(selectedView, afterSwitchingTo: id))
         if next != selectedView { selectedView = next }
         clearSelection()
         clearCheckedThreads()
@@ -1864,10 +1910,12 @@ struct ComposeRequest: Identifiable {
         // An environment flag must never turn a real Debug account into a
         // fake/offline account when seeding was correctly refused.
         demoMode = demoSeeded && !accounts.isEmpty
-            && accounts.allSatisfy { $0.id == DemoSeed.account }
+            && accounts.allSatisfy { DemoSeed.owns($0.id) }
         // Primaries immediately; send-as aliases fill in after the API call.
         sendIdentities = fallbackIdentities()
         reloadSavedViews()
+        // A saved "off" must not show the unified view at launch.
+        enforceUnifiedScope(reload: false)
         loadVIPs()
         // Tiny table, but correctness-critical before any early Sync All:
         // applyBlocklist with an empty set is a silent no-op. Keep this on
@@ -2817,6 +2865,11 @@ struct ComposeRequest: Identifiable {
         // Its own database read: `snapshot` may be the empty fallback of a
         // failed read, which would make every account look removed.
         sweepRemovedAccountResidueOnce()
+        // Unified inbox off: the first account added (or loaded at launch)
+        // takes the scope the unified view would have had.
+        let scopeBefore = activeAccountId
+        enforceUnifiedScope(reload: false)
+        if activeAccountId != scopeBefore { reloadThreadsDebounced() }
     }
 
     func reloadSavedViews() {

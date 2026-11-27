@@ -1314,16 +1314,17 @@ private extension ContentView {
             // (one shortcut per inbox).
             if mods == .command, let chars = event.charactersIgnoringModifiers,
                chars.count == 1, let digit = Int(chars), (1...9).contains(digit) {
-                if digit == 1 {
+                switch UnifiedInbox.shortcut(digit: digit, enabled: store.unifiedInboxEnabled,
+                                             railOrder: store.accounts.map(\.id)) {
+                case .unified:
                     store.setActiveAccount(nil)
                     return nil
-                }
-                let index = digit - 2
-                if index < store.accounts.count {
-                    store.setActiveAccount(store.accounts[index].id)
+                case .account(let id):
+                    store.setActiveAccount(id)
                     return nil
+                case .none:
+                    return event
                 }
-                return event
             }
             if mods == .control, event.charactersIgnoringModifiers == "f" {
                 store.showFilterMenu.toggle()
@@ -1990,7 +1991,7 @@ struct Sidebar: View {
                     }
                 }
                 Section("Views") {
-                    ForEach(store.savedViews) { view in
+                    ForEach(store.visibleSavedViews) { view in
                         sidebarItem(.saved(view.id ?? -1, view.name))
                             .contextMenu {
                                 Button("Edit View…") { store.editingView = view }
