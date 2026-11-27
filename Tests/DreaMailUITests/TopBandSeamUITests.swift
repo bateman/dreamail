@@ -44,14 +44,20 @@ final class TopBandSeamUITests: XCTestCase {
     }
 
     private func check(_ window: XCUIElement, _ context: String, dark: Bool) throws {
-        // The system toggle: the leftmost toolbar button right of the window
-        // buttons, in the title-bar row.
-        let buttons = window.toolbars.firstMatch.buttons
+        // The system toggle: the leftmost button of the window, in the
+        // title-bar row, right of the window buttons. Looked up over the whole
+        // window (it is not always listed under `toolbars`); every candidate's
+        // frame is printed, so the position is known.
+        let rowTop = window.frame.minY
+        let buttons = window.descendants(matching: .button)
         var toggle: XCUIElement?
         for i in 0..<buttons.count {
             let b = buttons.element(boundBy: i)
             guard b.exists else { continue }
-            if toggle == nil || b.frame.minX < toggle!.frame.minX { toggle = b }
+            let f = b.frame
+            guard f.midY - rowTop < 60, f.minX - window.frame.minX >= 80 else { continue }
+            print("TopBandSeam: \(context): title-bar button id=\(b.identifier) label=\(b.label) frame=\(f)")
+            if toggle == nil || f.minX < toggle!.frame.minX { toggle = b }
         }
         let frame = window.frame
         let found = try XCTUnwrap(toggle, "\(context): no toolbar button")
