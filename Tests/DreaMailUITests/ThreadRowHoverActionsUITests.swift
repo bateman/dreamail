@@ -104,7 +104,7 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         toggle.click()
         XCTAssertTrue(UITestWait.until { read.label.hasPrefix("Unread") },
                       "mark unread applied to the row: \(read.label)")
-        XCTAssertFalse(subject.appears(timeout: 2),
+        XCTAssertFalse(subject.waitForExistence(timeout: 2),
                        "acting on a row must not open its conversation")
 
         other.hover()
@@ -113,7 +113,7 @@ final class ThreadRowHoverActionsUITests: XCTestCase {
         trash.click()
         XCTAssertTrue(other.waitForNonExistence(timeout: 10), "trash removed that row")
         XCTAssertTrue(read.exists, "and only that row")
-        XCTAssertFalse(subject.appears(timeout: 2),
+        XCTAssertFalse(subject.waitForExistence(timeout: 2),
                        "the reading pane did not change")
     }
 }

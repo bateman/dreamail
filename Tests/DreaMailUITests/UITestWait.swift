@@ -18,6 +18,9 @@ extension XCUIElement {
     /// checks about a second after the call even when the element is already
     /// there (686 such waits cost about 700 s of a CI run). Same result and
     /// same timeout; an element already on screen returns at once.
+    /// Not for "must be gone" checks (`XCTAssertFalse`): there the delay
+    /// gives a closing element its time to go, so those keep
+    /// `waitForExistence`.
     @discardableResult
     func appears(timeout: TimeInterval) -> Bool {
         exists || waitForExistence(timeout: timeout)

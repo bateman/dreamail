@@ -102,7 +102,7 @@ final class SignatureMenuUITests: XCTestCase {
         app.menuItems["Edit signature as text"].click()
         XCTAssertTrue(waitForBody(app) { $0.contains("Alex Rivera") && $0.contains("-- ") },
                       "Edit signature as text puts it in the body")
-        XCTAssertFalse(block.appears(timeout: 1), "and the rendered block goes")
+        XCTAssertFalse(block.waitForExistence(timeout: 1), "and the rendered block goes")
 
         // Rendered again: the text it left is swapped for the block.
         openMenu(app)
@@ -171,7 +171,7 @@ final class SignatureMenuUITests: XCTestCase {
         XCTAssertTrue(look.appears(timeout: 5), "a rich paste shows how it is sent")
         XCTAssertTrue((editor.value as? String ?? "").contains("**Ada Example**"))
         app.buttons["Remove formatting"].click()
-        XCTAssertFalse(look.appears(timeout: 1), "Remove formatting leaves the text only")
+        XCTAssertFalse(look.waitForExistence(timeout: 1), "Remove formatting leaves the text only")
         XCTAssertTrue((editor.value as? String ?? "").contains("Ada Example"))
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
     }
