@@ -412,7 +412,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             AccountRail()
             if sidebarStripOnScreen {
-                SidebarIconStrip(onSearch: revealSearch)
+                SidebarIconStrip()
                     // Under the center peek's backdrop, as the full
                     // sidebar is (`centerPeekOverlay`).
                     .overlay {

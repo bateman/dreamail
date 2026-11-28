@@ -76,25 +76,19 @@ struct SidebarSystemRows {
 
 /// The collapsed sidebar, Gmail-style: icons only, right of the account rail
 /// and exactly as wide as the top band's step past it
-/// (`AccountRailMetrics.stripWidth`). Search, then the system views down to
+/// (`AccountRailMetrics.stripWidth`). The system views down to
 /// and including "More" (and what is under it while open). No labels, saved
 /// views or counts: a view's count is in its tooltip.
 struct SidebarIconStrip: View {
     @Environment(MailStore.self) private var store
     @Environment(SidebarDisclosureModel.self) private var disclosure
     @Environment(\.mailAccent) private var accent
-    /// Focuses the search field in the list column's top bar (as `/`).
-    let onSearch: () -> Void
-
     private typealias Metrics = AccountRailMetrics
 
     var body: some View {
         let system = SidebarSystemRows(store: store, disclosure: disclosure)
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 2) {
-                item(id: "sidebarStrip.search", glyph: "magnifyingglass", selected: false,
-                     help: "Search (/)", label: "Search", value: "", action: onSearch)
-                    .padding(.bottom, 6)
                 ForEach(system.rows, id: \.self) { id in
                     if id == SidebarSystemOrder.moreId {
                         let open = disclosure.moreOpen

@@ -46,7 +46,7 @@ final class SidebarIconStripUITests: XCTestCase {
             stepClickingAnIconOpensTheView(app) }
         XCTContext.runActivity(named: "More shows and hides the icons under it") { _ in
             stepMoreShowsAndHidesItsIcons(app) }
-        XCTContext.runActivity(named: "Search focuses the top-bar field, strip stays") { _ in
+        XCTContext.runActivity(named: "/ focuses the top-bar field, strip stays") { _ in
             stepSearchFocusesTheTopBarFieldAndKeepsTheStrip(app) }
         XCTContext.runActivity(named: "Toggling restores the full sidebar at its width") { _ in
             stepTogglingRestoresTheFullSidebarAtItsWidth(app) }
@@ -57,7 +57,7 @@ final class SidebarIconStripUITests: XCTestCase {
         XCTAssertTrue(strip.waitForExistence(timeout: 5), "the collapsed sidebar is the icon strip")
         // Gmail's order (the default), top to bottom.
         var lastY = -CGFloat.infinity
-        for id in ["search", "inbox", "starred", "snoozed", "important", "sent", "drafts",
+        for id in ["inbox", "starred", "snoozed", "important", "sent", "drafts",
                    "allMail", "trash", "more"] {
             let icon = element(app, "sidebarStrip.\(id)")
             XCTAssertTrue(icon.exists, "strip icon \(id)")
@@ -92,8 +92,12 @@ final class SidebarIconStripUITests: XCTestCase {
                        "the strip starts at the rail's right edge (\(strip.frame))")
         XCTAssertEqual(strip.frame.width, 40, accuracy: 1, "the strip is 40 pt wide")
         XCTAssertEqual(band.frame.width, 104, accuracy: 1, "the band is rail + strip wide")
-        XCTAssertGreaterThanOrEqual(element(app, "sidebarStrip.search").frame.minY, band.frame.maxY,
+        XCTAssertGreaterThanOrEqual(element(app, "sidebarStrip.inbox").frame.minY, band.frame.maxY,
                                     "the icons start below the band")
+        XCTAssertFalse(element(app, "sidebarStrip.search").exists, "no search icon above Inbox")
+        XCTAssertEqual(strip.descendants(matching: .image).matching(
+            NSPredicate(format: "label CONTAINS[c] 'search' OR identifier CONTAINS[c] 'search'")).count, 0,
+            "no magnifier in the strip")
         let inbox = element(app, "sidebarStrip.inbox")
         XCTAssertTrue(inbox.isSelected, "the open view's icon is selected")
     }
@@ -133,7 +137,7 @@ final class SidebarIconStripUITests: XCTestCase {
     }
 
     private func stepSearchFocusesTheTopBarFieldAndKeepsTheStrip(_ app: XCUIApplication) {
-        element(app, "sidebarStrip.search").click()
+        app.typeKey("/", modifierFlags: [])
         let field = element(app, "listSearchBox")
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the field is in the list's top bar")
         let text = app.textFields.matching(NSPredicate(format: "placeholderValue == 'Search'")).firstMatch
