@@ -1,7 +1,7 @@
 # Client Gmail per macOS — Registro delle decisioni
 
-Versione: 0.47
-Ultimo aggiornamento: 27 novembre 2026
+Versione: 0.48
+Ultimo aggiornamento: 28 novembre 2026
 Stato: documento in evoluzione
 
 ## 1. Obiettivo
@@ -103,6 +103,7 @@ Sviluppare un client e-mail desktop per macOS, dedicato esclusivamente agli acco
 | DEC-089 | **Promotions e Social disattivabili per account** | Ogni account ha "Show Promotions and Social" (acceso per default): spento, l'account non ha le due righe, le due scelte nei filtri né il chip di categoria. È una scelta di presentazione, non un filtro: la posta resta in Inbox, All Mail, ricerca, conteggi, Dock e notifiche (DEC-084 resta valida). In "All accounts" le due righe si vedono se almeno un account le ha accese ed elencano solo la posta di quegli account. Un filtro di categoria memorizzato per Inbox è senza effetto per un account spento, nel suo ambito come in "All accounts", e resta memorizzato. Le viste salvate conservano i propri filtri anche per un account spento (deciso dal proprietario). Scostamento da Gmail, che ha le schede per casella e non questo interruttore nell'app. PR #119. |
 | DEC-090 | **Azioni sul singolo messaggio e apertura sui messaggi stellati** | Come Gmail web: ogni messaggio aperto ha stella, Reply, Reply all e un menu "⋮" con le sole voci che l'app sa fare, senza voci spente. La stella e "Delete this message" valgono per quel solo messaggio; cancellare un messaggio sposta nel Cestino solo quello (etichetta TRASH, mai una cancellazione definitiva) e la conversazione resta dov'è finché ha un messaggio vivo (DEC-081); cancellato l'ultimo, va nel Cestino la conversazione. Deciso dal proprietario: una conversazione con messaggi stellati si apre sul messaggio stellato più recente; precisazione dell'orchestratore: restano aperti anche l'ultimo messaggio e i non letti (al più 5), e se c'è posta non letta più recente della stella la vista va sul più vecchio di quei non letti. Senza stelle l'apertura non cambia. Da un messaggio cestinato non si offrono azioni che toccano i messaggi vivi (Delete, Report spam, Block). Fuori: Print (in attesa del permesso di stampa), Add sender to Contacts, Report phishing, Translate. PR #110. |
 | DEC-091 | **Barra di selezione come Gmail ed etichette su più conversazioni** | Come la barra di Gmail web: con più conversazioni spuntate la barra offre Archive o Move to inbox, Report spam o Not spam, Trash, Read/Unread, Snooze, Move to…, Label as… e Star, e ciò che non entra passa sotto "⋮". Scelte dell'app: dove Gmail nasconde un pulsante (Cestino, Spam) qui è spento; una selezione mista di spam mostra Report spam; Star è l'ultima. "Label as…" su più conversazioni segue Gmail: spunta se l'hanno tutte, trattino se alcune, un clic la aggiunge a tutte oppure la toglie quando l'avevano tutte; si scrivono e si inviano solo le conversazioni che cambiano, e l'annullamento rimette esattamente quelle. Le etichette sono di un account: le conversazioni di altri account restano fuori, con un avviso; le copie cestinate di conversazioni vive non sono contate né toccate (DEC-081). PR #123. |
+| DEC-092 | **Colore delle etichette solo di Gmail** (sostituisce in parte DEC-071 e DEC-087) | Il foglio "Label color" è come il menu di Gmail web: la griglia dei colori di Gmail e "Remove color", nient'altro. Il colore "solo su questo Mac" non c'è più: non è letto né scritto, un'etichetta che lo aveva mostra di nuovo il colore di Gmail; il valore resta nel database (colonna `color`), senza migrazione. Tolta anche la riga diagnostica "Current:" (#118), non più necessaria: i colori mancanti erano colori non standard in Gmail, corretti dal proprietario. Restano valide da DEC-071 la propagazione del colore alle annidate e l'eredità della sottoetichetta nuova (DEC-087), solo per il colore di Gmail. PR #127. |
 
 ## 3. Stack (verificato nel fork al commit `18294fa`, salvo dove indicato)
 
@@ -529,6 +530,7 @@ Fonte canonica: questo documento unifica piano e risultati essenziali dell'audit
 | 2026-11-27 | **0.45** | Aggiunta DEC-090 (azioni sul singolo messaggio e apertura sui messaggi stellati). |
 | 2026-11-27 | **0.46** | Aggiornata DEC-079: il campo di ricerca è nella barra in alto dell'elenco e il pulsante Search della striscia lo attiva senza riaprire la barra laterale (PR #113). |
 | 2026-11-27 | **0.47** | Aggiunta DEC-091 (barra di selezione come Gmail ed etichette su più conversazioni). |
+| 2026-11-28 | **0.48** | Aggiunta DEC-092 (colore delle etichette solo di Gmail; via il colore "solo su questo Mac"). |
 
 ---
 

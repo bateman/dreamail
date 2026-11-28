@@ -7,6 +7,11 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **The label colour sheet is Gmail's.** It shows Gmail's colour grid and
+  "Remove color", nothing else. Mac-only label colours are gone: a label
+  that had one shows its Gmail colour again (the stored value is kept but
+  no longer used). (#127)
+
 - **Menus show their icons; one search field beside the view title.** The
   right-click menu of a conversation and the "⋮" menu of an open message
   now draw an icon next to every item. The top-bar search field is a
