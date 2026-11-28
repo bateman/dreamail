@@ -22,7 +22,7 @@ final class TopBandSeamUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -33,11 +33,11 @@ final class TopBandSeamUITests: XCTestCase {
 
     private func run(dark: Bool) throws {
         let app = launch(dark: dark)
-        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").appears(timeout: 10))
         let window = app.windows.firstMatch
         // Collapsed whatever an earlier suite left.
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5), "collapsed")
+        XCTAssertTrue(element(app, "sidebarStrip").appears(timeout: 5), "collapsed")
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         let collapsed = try row(window, "collapsed")
         // Reading pane open (a thread selected), then a row above the glyphs
@@ -47,7 +47,7 @@ final class TopBandSeamUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         let wide = try row(window, "collapsed, reading pane open", y: 5, xMax: Int(window.frame.width) - 16)
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(element(app, "composeButton").waitForExistence(timeout: 5), "expanded")
+        XCTAssertTrue(element(app, "composeButton").appears(timeout: 5), "expanded")
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         let expanded = try row(window, "expanded")
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])

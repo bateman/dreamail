@@ -23,20 +23,20 @@ final class SidebarSingleSelectionUITests: XCTestCase {
         addTeardownBlock { app.terminate() }
         let main = app.windows.matching(
             NSPredicate(format: "NOT (title CONTAINS 'Settings')")).firstMatch
-        XCTAssertTrue(main.waitForExistence(timeout: 10))
+        XCTAssertTrue(main.appears(timeout: 10))
         app.activate()
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
 
         func row(_ id: String) -> XCUIElement {
             main.descendants(matching: .any).matching(identifier: "sidebar.\(id)").firstMatch
         }
-        XCTAssertTrue(row("inbox").waitForExistence(timeout: 5))
+        XCTAssertTrue(row("inbox").appears(timeout: 5))
         row("inbox").click()
         expect(only: "inbox", in: main, "Inbox clicked")
 
         // A row under "More": open it, click Social.
         row("more").click()
-        XCTAssertTrue(row("social").waitForExistence(timeout: 5))
+        XCTAssertTrue(row("social").appears(timeout: 5))
         row("social").click()
         expect(only: "social", in: main, "Social clicked under More")
 
@@ -46,7 +46,7 @@ final class SidebarSingleSelectionUITests: XCTestCase {
         XCTAssertTrue(waitForAbsence(row("social")))
         expect(only: nil, in: main, "More closed over the selected Social")
         row("more").click()
-        XCTAssertTrue(row("social").waitForExistence(timeout: 5))
+        XCTAssertTrue(row("social").appears(timeout: 5))
         expect(only: "social", in: main, "More reopened")
 
         // Keyboard: `g p` (Promotions, under More) and `g i` (Inbox).

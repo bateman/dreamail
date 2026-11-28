@@ -24,7 +24,7 @@ final class ComposeTabFocusUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -33,18 +33,18 @@ final class ComposeTabFocusUITests: XCTestCase {
         // Let the thread list settle, then `c` for new mail.
         let demoThread = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
-        XCTAssertTrue(demoThread.waitForExistence(timeout: 10))
+        XCTAssertTrue(demoThread.appears(timeout: 10))
         app.typeKey("c", modifierFlags: [])
 
         let compose = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier IN {'composeCard', 'composeInline'}")).firstMatch
-        XCTAssertTrue(compose.waitForExistence(timeout: 5))
+        XCTAssertTrue(compose.appears(timeout: 5))
 
         let to = app.textFields.matching(identifier: "addressField.To").firstMatch
-        XCTAssertTrue(to.waitForExistence(timeout: 5))
+        XCTAssertTrue(to.appears(timeout: 5))
         let subject = app.textFields.matching(
             NSPredicate(format: "placeholderValue == 'Subject' OR identifier == 'composeSubject'")).firstMatch
-        XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        XCTAssertTrue(subject.appears(timeout: 5))
 
         // The To field auto-focuses ~0.1s after mount; wait for it.
         XCTAssertTrue(waitForKeyboardFocus(to, timeout: 5),
@@ -171,7 +171,7 @@ final class ComposeTabFocusUITests: XCTestCase {
         let suggestion = app.buttons.matching(NSPredicate(
             format: "identifier == 'addressSuggestion.To.dana@brightloop.io' "
                 + "OR label CONTAINS 'dana@brightloop.io'")).firstMatch
-        XCTAssertTrue(suggestion.waitForExistence(timeout: 10),
+        XCTAssertTrue(suggestion.appears(timeout: 10),
                       "recipient suggestion should appear once contacts are mined")
         suggestion.click()
 

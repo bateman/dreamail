@@ -20,16 +20,16 @@ final class OpenPGPSettingsUITests: XCTestCase {
         addTeardownBlock { app.terminate() }
         let main = app.windows.matching(
             NSPredicate(format: "NOT (title CONTAINS 'Settings')")).firstMatch
-        XCTAssertTrue(main.waitForExistence(timeout: 10))
+        XCTAssertTrue(main.appears(timeout: 10))
         app.activate()
 
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         // The per-account section is there…
         XCTAssertTrue(settings.descendants(matching: .any)
-            .matching(identifier: "settings.pane.signatures").firstMatch.waitForExistence(timeout: 5))
+            .matching(identifier: "settings.pane.signatures").firstMatch.appears(timeout: 5))
         // …without the OpenPGP row or pane.
         XCTAssertFalse(settings.descendants(matching: .any)
             .matching(identifier: "settings.pane.openPGP").firstMatch.exists)

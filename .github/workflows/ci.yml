@@ -176,10 +176,10 @@ jobs:
       # One shard failing must not cancel the others: every result counts.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
-    # About twelve minutes each: a build of about four, then about eight of
-    # tests (November 2026: two shards reached 20 minutes). The limit is
-    # headroom for slow runners; a shard regularly over twelve minutes
+        shard: [1, 2]
+    # Each shard restores the unit-test job's build cache (read-only, below)
+    # and runs about half of the suite's measured time. The limit is
+    # headroom for slow runners; a shard regularly over fifteen minutes
     # wants another shard, not a higher limit.
     timeout-minutes: 25
     # Separate job so a UI hang or desktop hijack cannot hide unit-test results.
@@ -187,18 +187,50 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history: the build cache needs commit times (see the test job).
+          fetch-depth: 0
 
       # A fixed, checksummed release; the log and job summary record it.
       - name: Install xcodegen
         run: bash .github/scripts/install-xcodegen.sh
 
+      # The same preparation as the test job, so its cache is valid here.
+      - name: Prepare the build cache
+        id: cache-key
+        run: |
+          python3 scripts/ci-restore-mtimes.py
+          defaults write com.apple.dt.XCBuild IgnoreFileSystemDeviceInodeChanges -bool YES
+          echo "xcode=$(xcodebuild -version | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
+      # The DerivedData the test job saves on main, same key. Restore only:
+      # this job never saves a cache (no actions/cache/save step here).
+      - name: Restore the build cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/dd.noindex
+          key: dd-${{ runner.os }}-${{ steps.cache-key.outputs.xcode }}-${{ hashFiles('project.yml') }}-${{ github.sha }}
+          restore-keys: |
+            dd-${{ runner.os }}-${{ steps.cache-key.outputs.xcode }}-${{ hashFiles('project.yml') }}-
+
+      # As in the test job: every run downloads GRDB again, so SwiftPM
+      # verifies its checksum.
+      - name: Drop cached Swift packages
+        run: |
+          if [ -d build/dd.noindex/SourcePackages ]; then
+            echo "Removing restored $(du -sh build/dd.noindex/SourcePackages | cut -f1) of Swift packages"
+          fi
+          rm -rf build/dd.noindex/SourcePackages
+
+      # WARNINGS_AS_ERRORS=1: the cache was built with it, and a different
+      # setting would recompile every DreaMail source. It also makes a
+      # warning in the UI-test target fail the build.
       - name: Run UI smoke test
         env:
           UI_SHARD: ${{ matrix.shard }}
           UI_SHARDS: ${{ strategy.job-total }}
         run: |
           set -o pipefail
-          make ui-test 2>&1 | tee "$RUNNER_TEMP/ui-tests.log"
+          make ui-test WARNINGS_AS_ERRORS=1 2>&1 | tee "$RUNNER_TEMP/ui-tests.log"
 
       # A class assigned to this shard that ran no test (for example a
       # class whose name -only-testing does not match) would pass silently.

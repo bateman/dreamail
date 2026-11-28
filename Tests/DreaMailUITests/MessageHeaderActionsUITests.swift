@@ -22,7 +22,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -78,9 +78,9 @@ final class MessageHeaderActionsUITests: XCTestCase {
     private func open(_ app: XCUIApplication, _ thread: String) {
         showList(app)
         let row = element(app, "threadRow.you@example.com:\(thread)")
-        XCTAssertTrue(row.waitForExistence(timeout: 10), thread)
+        XCTAssertTrue(row.appears(timeout: 10), thread)
         row.click()
-        XCTAssertTrue(element(app, "threadSubject").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "threadSubject").appears(timeout: 5))
     }
 
     private func readingPane(_ app: XCUIApplication) -> XCUIElement {
@@ -105,7 +105,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
         open(app, "t7")
         let ids = ["messageHeaderStar", "messageHeaderReply", "messageHeaderReplyAll", "messageHeaderMore"]
         for id in ids {
-            XCTAssertTrue(element(app, id).waitForExistence(timeout: 5), "\(id) is in the header")
+            XCTAssertTrue(element(app, id).appears(timeout: 5), "\(id) is in the header")
         }
         let date = element(app, "messageHeaderDate").frame
         let sender = element(app, "messageSender").frame
@@ -134,8 +134,8 @@ final class MessageHeaderActionsUITests: XCTestCase {
         element(app, "messageHeaderReplyAll").click()
         compose = openedCompose(app)
         XCTAssertTrue(compose.descendants(matching: .any).matching(identifier: "addressField.Cc")
-            .firstMatch.waitForExistence(timeout: 5), "Reply all opens with a Cc")
-        XCTAssertTrue(compose.buttons.matching(ccChip).firstMatch.waitForExistence(timeout: 5),
+            .firstMatch.appears(timeout: 5), "Reply all opens with a Cc")
+        XCTAssertTrue(compose.buttons.matching(ccChip).firstMatch.appears(timeout: 5),
                       "Reply all keeps the demo Cc recipient")
         closeCompose(app)
     }
@@ -143,7 +143,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
     private func openedCompose(_ app: XCUIApplication) -> XCUIElement {
         let compose = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier IN {'composeCard', 'composeInline'}")).firstMatch
-        XCTAssertTrue(compose.waitForExistence(timeout: 5), "the compose opens")
+        XCTAssertTrue(compose.appears(timeout: 5), "the compose opens")
         return compose
     }
 
@@ -167,13 +167,13 @@ final class MessageHeaderActionsUITests: XCTestCase {
     private func stepMoreMenuKeepsGmailsOrder(_ app: XCUIApplication) {
         open(app, "t7")
         let more = element(app, "messageHeaderMore")
-        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        XCTAssertTrue(more.appears(timeout: 5))
         more.click()
         let expected = ["Reply", "Reply to all", "Forward", "Filter messages like this",
                         "Delete this message", "Block \"Marcus Bell\"", "Report spam",
                         "Show original", "Download message", "Mark unread from here"]
         let menu = moreMenu(app)
-        XCTAssertTrue(menu.waitForExistence(timeout: 5), "the menu opens")
+        XCTAssertTrue(menu.appears(timeout: 5), "the menu opens")
         var tops: [CGFloat] = []
         for title in expected {
             let item = menu.menuItems[title]
@@ -210,7 +210,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
         guard opened.count == 4 else { return }
         // One open message: one star, the oldest's.
         let star = element(app, "messageHeaderStar")
-        XCTAssertTrue(star.waitForExistence(timeout: 5))
+        XCTAssertTrue(star.appears(timeout: 5))
         XCTAssertEqual(star.label, "Star this message")
         star.click()
         XCTAssertTrue(waitUntil { star.label == "Unstar this message" }, "the message is starred")
@@ -260,7 +260,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
         XCTAssertNotNil(more, "an open message has More")
         more?.click()
         let delete = moreMenu(app).menuItems["Delete this message"]
-        XCTAssertTrue(delete.waitForExistence(timeout: 5))
+        XCTAssertTrue(delete.appears(timeout: 5))
         delete.click()
     }
 
@@ -276,7 +276,7 @@ final class MessageHeaderActionsUITests: XCTestCase {
         // The undo capsule stays 3.5 s: checked and clicked right away.
         deleteTopOpenMessage(app)
         let undo = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Undo'")).firstMatch
-        XCTAssertTrue(undo.waitForExistence(timeout: 3), "the delete offers Undo")
+        XCTAssertTrue(undo.appears(timeout: 3), "the delete offers Undo")
         XCTAssertTrue(waitUntil(3) { self.frames("messageRowFrame", in: app).count == count - 1 },
                       "only that message leaves the conversation")
         if undo.exists { undo.click() }
@@ -289,26 +289,26 @@ final class MessageHeaderActionsUITests: XCTestCase {
         XCTAssertEqual(left.count, count - 1, "only that message leaves the conversation")
         XCTAssertTrue(element(app, "threadSubject").exists, "the conversation stays open")
         showList(app)
-        XCTAssertTrue(element(app, "threadRow.you@example.com:t2").waitForExistence(timeout: 5),
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t2").appears(timeout: 5),
                       "the conversation is still in the Inbox")
 
         // #107's line agrees: View shows it "In Trash" with Restore as its
         // only action (no star, reply or More), and Restore brings it back.
         open(app, "t2")
         let line = element(app, "thread.deletedMessages")
-        XCTAssertTrue(line.waitForExistence(timeout: 5), "the deleted-messages line is shown")
+        XCTAssertTrue(line.appears(timeout: 5), "the deleted-messages line is shown")
         XCTAssertEqual(line.label, "1 deleted message in this conversation")
         let moreBefore = frames("messageHeaderMore", in: app).count
         let view = element(app, "thread.deletedMessages.view")
-        XCTAssertTrue(view.waitForExistence(timeout: 5))
+        XCTAssertTrue(view.appears(timeout: 5))
         view.click()
-        XCTAssertTrue(element(app, "messageInTrashTag").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "messageInTrashTag").appears(timeout: 5))
         let expand = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH 'Open deleted message from'")).firstMatch
-        XCTAssertTrue(expand.waitForExistence(timeout: 5))
+        XCTAssertTrue(expand.appears(timeout: 5))
         expand.click()
         let restore = element(app, "messageActionRestore")
-        XCTAssertTrue(restore.waitForExistence(timeout: 5), "the open deleted message offers Restore")
+        XCTAssertTrue(restore.appears(timeout: 5), "the open deleted message offers Restore")
         XCTAssertLessThanOrEqual(frames("messageHeaderMore", in: app).count, moreBefore,
                                  "the deleted message adds no header controls")
         // The open deleted card can end below the pane: scroll down to it.

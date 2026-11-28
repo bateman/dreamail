@@ -25,7 +25,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -57,7 +57,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
                                line: UInt = #line) -> (rows: [CGRect], headers: [CGRect]) {
         let first = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'")).firstMatch
-        XCTAssertTrue(first.waitForExistence(timeout: 10), file: file, line: line)
+        XCTAssertTrue(first.appears(timeout: 10), file: file, line: line)
         var last = (rows: frames("threadRow.", in: app),
                     headers: frames("threadSectionHeader.", in: app))
         let deadline = Date().addingTimeInterval(10)
@@ -178,14 +178,14 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         let pane = settings.descendants(matching: .any)
             .matching(identifier: "settings.pane.appearance").firstMatch
-        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        XCTAssertTrue(pane.appears(timeout: 5))
         pane.click()
         let choice = settings.descendants(matching: .any).matching(identifier: "settings.listDensity")
             .firstMatch.radioButtons[title]
-        XCTAssertTrue(choice.waitForExistence(timeout: 5), "List density has a \(title) choice")
+        XCTAssertTrue(choice.appears(timeout: 5), "List density has a \(title) choice")
         choice.click()
         app.typeKey("w", modifierFlags: .command)
         XCTAssertTrue(settings.waitForNonExistence(timeout: 5), "Settings closes")
@@ -193,7 +193,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
 
     private func densityShortensTheRowsAndComfortableRestoresThem(_ app: XCUIApplication) {
         let first = anyRow(app)
-        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        XCTAssertTrue(first.appears(timeout: 10))
         let id = first.identifier
         let row = app.descendants(matching: .any).matching(identifier: id).firstMatch
         let comfortable = row.frame.height
@@ -211,7 +211,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         row.hover()
         for action in ["archive", "trash", "toggleRead", "snooze"] {
             let b = row.descendants(matching: .button).matching(identifier: "rowAction.\(action)").firstMatch
-            XCTAssertTrue(b.waitForExistence(timeout: 5))
+            XCTAssertTrue(b.appears(timeout: 5))
             XCTAssertGreaterThanOrEqual(b.frame.minY, compact.minY - 0.5, "\(action) above the row")
             XCTAssertLessThanOrEqual(b.frame.maxY, compact.maxY + 0.5, "\(action) below the row")
         }
@@ -241,10 +241,10 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         // The all-labels view left the sidebar (it lists the labels
         // themselves now); it stays on Go ▸ Labels and `g l`.
         let go = app.menuBars.menuBarItems["Go"]
-        XCTAssertTrue(go.waitForExistence(timeout: 5))
+        XCTAssertTrue(go.appears(timeout: 5))
         go.click()
         let labels = app.menuBars.menuItems["Labels"]
-        XCTAssertTrue(labels.waitForExistence(timeout: 5))
+        XCTAssertTrue(labels.appears(timeout: 5))
         labels.click()
         // A header that is not one of the inbox's date sections.
         let inboxSections = ["Priority", "Today", "Yesterday", "Last 7 days",
@@ -252,7 +252,7 @@ final class ThreadListSectionSpacingUITests: XCTestCase {
         let pill = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'threadSectionHeader.' AND NOT (identifier IN %@)",
                                   inboxSections)).firstMatch
-        XCTAssertTrue(pill.waitForExistence(timeout: 5), "Labels view must show section headers")
+        XCTAssertTrue(pill.appears(timeout: 5), "Labels view must show section headers")
         // The chip is about 2 pt taller than a plain title.
         assertCompactSectionBreaks(app, baseline: inbox, maxHeaderShare: 0.95)
     }

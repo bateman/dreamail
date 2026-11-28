@@ -27,7 +27,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         // Sidebar starts collapsed; → reveals it (see SidebarNavUITests).
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
@@ -93,7 +93,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
     private func stepSystemViewsAndMoreRow(_ app: XCUIApplication) {
         for id in ["inbox", "starred", "snoozed", "important", "sent", "drafts",
                    "allMail", "trash"] {
-            XCTAssertTrue(element("sidebar.\(id)", in: app).waitForExistence(timeout: 5),
+            XCTAssertTrue(element("sidebar.\(id)", in: app).appears(timeout: 5),
                           "sidebar.\(id) must be listed")
         }
         // The single all-labels view is no longer a sidebar row.
@@ -101,9 +101,9 @@ final class SidebarLabelTreeUITests: XCTestCase {
         let spam = element("sidebar.spam", in: app)
         XCTAssertFalse(spam.exists, "Spam sits behind a closed More row")
         let more = element("sidebar.more", in: app)
-        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        XCTAssertTrue(more.appears(timeout: 5))
         more.click()
-        XCTAssertTrue(spam.waitForExistence(timeout: 5), "More opens Spam")
+        XCTAssertTrue(spam.appears(timeout: 5), "More opens Spam")
         XCTAssertTrue(element("sidebar.reminders", in: app).exists)
         // The categories are plain rows above Spam, with no "Categories" group.
         XCTAssertFalse(element("sidebar.categories", in: app).exists)
@@ -118,30 +118,30 @@ final class SidebarLabelTreeUITests: XCTestCase {
 
     private func stepLabelRowOpensItsView(_ app: XCUIApplication) {
         let unlabelled = element("threadRow.\(account):t3", in: app)
-        XCTAssertTrue(unlabelled.waitForExistence(timeout: 10))
+        XCTAssertTrue(unlabelled.appears(timeout: 10))
         let research = element("sidebar.label.\(account).Label_research", in: app)
-        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        XCTAssertTrue(research.appears(timeout: 5))
         research.click()
         XCTAssertTrue(waitForAbsence(unlabelled),
                       "the Research view must not list an unlabelled thread")
-        XCTAssertTrue(element("threadRow.\(account):t2", in: app).waitForExistence(timeout: 5),
+        XCTAssertTrue(element("threadRow.\(account):t2", in: app).appears(timeout: 5),
                       "the Research view lists its thread")
     }
 
     private func stepParentLabelCollapsesItsSublabels(_ app: XCUIApplication) {
         let parent = element("sidebar.label.\(account).Label_vendors", in: app)
-        XCTAssertTrue(parent.waitForExistence(timeout: 5))
+        XCTAssertTrue(parent.appears(timeout: 5))
         let child = element("sidebar.label.\(account).Label_vendors_aws", in: app)
         XCTAssertFalse(child.exists, "parents start closed, as in Gmail")
         // The disclosure triangle of the parent's outline row.
         let row = app.outlineRows.containing(.any, identifier: parent.identifier).firstMatch
         let triangle = row.disclosureTriangles.firstMatch
-        XCTAssertTrue(triangle.waitForExistence(timeout: 5),
+        XCTAssertTrue(triangle.appears(timeout: 5),
                       "a parent label has a disclosure triangle\n\(app.debugDescription)")
         reveal(parent, in: app)
         XCTAssertTrue(triangle.isHittable, "the parent's triangle is on screen")
         triangle.click()
-        XCTAssertTrue(child.waitForExistence(timeout: 5), "opening the parent shows AWS")
+        XCTAssertTrue(child.appears(timeout: 5), "opening the parent shows AWS")
         triangle.click()
         XCTAssertTrue(waitForAbsence(child), "closing it hides AWS again")
     }
@@ -151,10 +151,10 @@ final class SidebarLabelTreeUITests: XCTestCase {
     /// Promotions with More closed and still lists nothing.
     private func stepClosedMoreHidesEverythingUnderIt(_ app: XCUIApplication) {
         let more = element("sidebar.more", in: app)
-        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        XCTAssertTrue(more.appears(timeout: 5))
         more.click()
         let promotions = element("sidebar.promotions", in: app)
-        XCTAssertTrue(promotions.waitForExistence(timeout: 5), "More lists Promotions")
+        XCTAssertTrue(promotions.appears(timeout: 5), "More lists Promotions")
         XCTAssertFalse(element("sidebar.categories", in: app).exists, "no Categories row")
         promotions.click()
         more.click()
@@ -168,7 +168,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
         let inboxThread = element("threadRow.\(account):t3", in: app)
         app.typeKey("g", modifierFlags: [])
         app.typeKey("i", modifierFlags: [])
-        XCTAssertTrue(inboxThread.waitForExistence(timeout: 5), "g i lists the inbox")
+        XCTAssertTrue(inboxThread.appears(timeout: 5), "g i lists the inbox")
         app.typeKey("g", modifierFlags: [])
         app.typeKey("p", modifierFlags: [])
         XCTAssertTrue(waitForAbsence(inboxThread), "g p opens Promotions: the list changed")
@@ -185,7 +185,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
             + "drafts,allMail,trash,outbox,more,scheduled,reminders,social,spam)")
         let promotions = element("sidebar.promotions", in: app)
         let drafts = element("sidebar.drafts", in: app)
-        XCTAssertTrue(promotions.waitForExistence(timeout: 10),
+        XCTAssertTrue(promotions.appears(timeout: 10),
                       "Promotions is listed with More closed")
         XCTAssertTrue(drafts.exists)
         XCTAssertLessThan(promotions.frame.minY, drafts.frame.minY, "Promotions sits above Drafts")
@@ -193,7 +193,7 @@ final class SidebarLabelTreeUITests: XCTestCase {
         let more = element("sidebar.more", in: app)
         XCTAssertTrue(more.exists)
         more.click()
-        XCTAssertTrue(element("sidebar.social", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("sidebar.social", in: app).appears(timeout: 5))
         XCTAssertLessThan(drafts.frame.minY, more.frame.minY)
         XCTAssertLessThan(promotions.frame.minY, more.frame.minY, "Promotions is not under More")
     }

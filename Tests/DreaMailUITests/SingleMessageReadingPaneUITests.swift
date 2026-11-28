@@ -20,7 +20,7 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -43,10 +43,10 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
         // Demo t1 is a single message from Dana (plain text, several lines).
         let demoThread = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
-        XCTAssertTrue(demoThread.waitForExistence(timeout: 10))
+        XCTAssertTrue(demoThread.appears(timeout: 10))
         demoThread.click()
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
-        XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        XCTAssertTrue(subject.appears(timeout: 5))
         // t3 was open before: wait until the pane shows t1, so the checks
         // below read t1's card. A selectable Text exposes its string as the
         // value; the label is often empty.
@@ -60,7 +60,7 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
         // Expanded: the body is mounted, without any click on the card.
         let body = app.descendants(matching: .any)
             .matching(identifier: "messageBody").firstMatch
-        XCTAssertTrue(body.waitForExistence(timeout: 5),
+        XCTAssertTrue(body.appears(timeout: 5),
                       "the only message must open expanded")
         // A collapsed card shows a single snippet line (~17 pt). The body of
         // t1 is eight lines of text.
@@ -74,7 +74,7 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
         // header-only row. It must stay open.
         let date = app.descendants(matching: .any)
             .matching(identifier: "messageHeaderDate").firstMatch
-        XCTAssertTrue(date.waitForExistence(timeout: 5))
+        XCTAssertTrue(date.appears(timeout: 5))
         let heightBefore = body.frame.height
         date.click()
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
@@ -91,12 +91,12 @@ final class SingleMessageReadingPaneUITests: XCTestCase {
 
         let row = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t3").firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(row.appears(timeout: 10))
         row.click()
 
         let body = app.descendants(matching: .any)
             .matching(identifier: "messageBody").firstMatch
-        XCTAssertTrue(body.waitForExistence(timeout: 5),
+        XCTAssertTrue(body.appears(timeout: 5),
                       "the only message must open expanded")
         // The body's span in the card: from the header's date to the action
         // bar right below the body. (The body's own accessibility frame is

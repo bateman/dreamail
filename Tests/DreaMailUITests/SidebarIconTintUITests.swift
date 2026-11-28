@@ -53,7 +53,7 @@ final class SidebarIconTintUITests: XCTestCase {
         // the test clicks around, so match it by title.
         let main = app.windows.matching(
             NSPredicate(format: "NOT (title CONTAINS 'Settings')")).firstMatch
-        XCTAssertTrue(main.waitForExistence(timeout: 10))
+        XCTAssertTrue(main.appears(timeout: 10))
         app.activate()
 
         // Sidebar starts collapsed; → reveals it. Clicking Inbox gives the
@@ -61,13 +61,13 @@ final class SidebarIconTintUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         let inbox = main.descendants(matching: .any)
             .matching(identifier: "sidebar.inbox").firstMatch
-        XCTAssertTrue(inbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(inbox.appears(timeout: 5))
         inbox.click()
         // Control: an unselected row's outline glyph is grey too, so the
         // measure itself does not see colour where there is none.
         let starred = main.descendants(matching: .any)
             .matching(identifier: "sidebar.starred").firstMatch
-        XCTAssertTrue(starred.waitForExistence(timeout: 5))
+        XCTAssertTrue(starred.appears(timeout: 5))
         try Self.assertMonochrome(row: starred, window: main, band: .grey,
                                   "main sidebar, unselected row")
         try Self.assertMonochrome(row: inbox, window: main, band: .accent,
@@ -76,7 +76,7 @@ final class SidebarIconTintUITests: XCTestCase {
         // Focus to the thread list, window still active.
         let thread = main.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t3").firstMatch
-        XCTAssertTrue(thread.waitForExistence(timeout: 5))
+        XCTAssertTrue(thread.appears(timeout: 5))
         thread.click()
         try Self.assertMonochrome(row: inbox, window: main, band: .accent,
                                   "main sidebar, focus in the thread list")
@@ -86,10 +86,10 @@ final class SidebarIconTintUITests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         let snippets = settings.descendants(matching: .any)
             .matching(identifier: "settings.pane.snippets").firstMatch
-        XCTAssertTrue(snippets.waitForExistence(timeout: 5))
+        XCTAssertTrue(snippets.appears(timeout: 5))
         snippets.click()
         try Self.assertMonochrome(row: snippets, window: settings, band: .accent,
                                   "Settings sidebar, focused")
@@ -107,11 +107,11 @@ final class SidebarIconTintUITests: XCTestCase {
         XCTAssertTrue(Self.waitUntil { !settings.exists }, "Settings should close with Cmd-W")
         // XCUITest opens the app menu on its way to the item.
         let about = app.menuItems["About DreaMail"]
-        XCTAssertTrue(about.waitForExistence(timeout: 5))
+        XCTAssertTrue(about.appears(timeout: 5))
         about.click()
         // The About panel is an NSPanel: XCUITest lists it as a dialog.
         let panel = app.dialogs.firstMatch
-        XCTAssertTrue(panel.waitForExistence(timeout: 5), "the About panel should open")
+        XCTAssertTrue(panel.appears(timeout: 5), "the About panel should open")
         let strip = Self.strip(row: inbox, window: main)
         XCTAssertFalse(panel.frame.intersects(strip),
                        "About panel \(panel.frame) covers the Inbox row \(strip)")

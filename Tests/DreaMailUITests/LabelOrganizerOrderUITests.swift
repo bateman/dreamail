@@ -40,22 +40,22 @@ final class LabelOrganizerOrderUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         // Sidebar starts collapsed; → reveals it (see SidebarNavUITests).
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(element("threadRow.\(account):t3", in: app).waitForExistence(timeout: 10),
+        XCTAssertTrue(element("threadRow.\(account):t3", in: app).appears(timeout: 10),
                       "demo inbox should load")
 
         let research = element("sidebar.label.\(account).Label_research", in: app)
-        XCTAssertTrue(research.waitForExistence(timeout: 10))
+        XCTAssertTrue(research.appears(timeout: 10))
         research.rightClick()
         let organize = app.menuItems.matching(
             NSPredicate(format: "identifier == %@ OR title == %@", "labelMenu.organize", "Organize Labels…")).firstMatch
-        XCTAssertTrue(organize.waitForExistence(timeout: 5))
+        XCTAssertTrue(organize.appears(timeout: 5))
         organize.click()
         let button = element("labelOrganizer.useGmailOrder", in: app)
-        XCTAssertTrue(button.waitForExistence(timeout: 5), "the sheet has Use Gmail's Order")
+        XCTAssertTrue(button.appears(timeout: 5), "the sheet has Use Gmail's Order")
 
         // The demo mailbox stores an order for every label (its seed), so the
         // sheet starts with a stored order that is not Gmail's. A synthesized

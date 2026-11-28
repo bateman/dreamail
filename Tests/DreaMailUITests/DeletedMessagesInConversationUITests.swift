@@ -24,7 +24,7 @@ final class DeletedMessagesInConversationUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -55,7 +55,7 @@ final class DeletedMessagesInConversationUITests: XCTestCase {
     private func revealRow(_ app: XCUIApplication) -> XCUIElement {
         let row = element(rowId, in: app)
         let anchor = element("threadRow.\(account):t1", in: app)
-        XCTAssertTrue(anchor.waitForExistence(timeout: 10))
+        XCTAssertTrue(anchor.appears(timeout: 10))
         var tries = 0
         while !(row.exists && row.isHittable), tries < 15 {
             let target = row.exists ? row : anchor
@@ -84,7 +84,7 @@ final class DeletedMessagesInConversationUITests: XCTestCase {
 
     private func open(_ app: XCUIApplication) {
         revealRow(app).click()
-        XCTAssertTrue(element("threadSubject", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("threadSubject", in: app).appears(timeout: 5))
         wait("two live messages") { count("messageRowFrame", in: app) == 2 }
     }
 
@@ -94,15 +94,15 @@ final class DeletedMessagesInConversationUITests: XCTestCase {
         open(app)
 
         let line = element("thread.deletedMessages", in: app)
-        XCTAssertTrue(line.waitForExistence(timeout: 5), "the line is shown")
+        XCTAssertTrue(line.appears(timeout: 5), "the line is shown")
         XCTAssertEqual(line.label, "1 deleted message in this conversation")
         XCTAssertFalse(element("messageInTrashTag", in: app).exists)
 
         XCTContext.runActivity(named: "View shows the deleted message marked In Trash") { _ in
             let view = element("thread.deletedMessages.view", in: app)
-            XCTAssertTrue(view.waitForExistence(timeout: 5))
+            XCTAssertTrue(view.appears(timeout: 5))
             view.click()
-            XCTAssertTrue(element("messageInTrashTag", in: app).waitForExistence(timeout: 5))
+            XCTAssertTrue(element("messageInTrashTag", in: app).appears(timeout: 5))
             wait("three rows") { count("messageRowFrame", in: app) == 3 }
             XCTAssertTrue(element("thread.deletedMessages.hide", in: app).exists)
             XCTAssertTrue(element("thread.deletedMessages.restoreAll", in: app).exists)
@@ -113,15 +113,15 @@ final class DeletedMessagesInConversationUITests: XCTestCase {
             XCTAssertEqual(rowText(app), before)
             // Not remembered: reopening shows the line with View again.
             open(app)
-            XCTAssertTrue(element("thread.deletedMessages.view", in: app).waitForExistence(timeout: 5))
+            XCTAssertTrue(element("thread.deletedMessages.view", in: app).appears(timeout: 5))
             XCTAssertFalse(element("messageInTrashTag", in: app).exists)
         }
 
         XCTContext.runActivity(named: "Hide hides it") { _ in
             element("thread.deletedMessages.view", in: app).click()
-            XCTAssertTrue(element("messageInTrashTag", in: app).waitForExistence(timeout: 5))
+            XCTAssertTrue(element("messageInTrashTag", in: app).appears(timeout: 5))
             let hide = element("thread.deletedMessages.hide", in: app)
-            XCTAssertTrue(hide.waitForExistence(timeout: 5))
+            XCTAssertTrue(hide.appears(timeout: 5))
             hide.click()
             wait("the deleted message is hidden") {
                 !element("messageInTrashTag", in: app).exists && count("messageRowFrame", in: app) == 2
@@ -131,13 +131,13 @@ final class DeletedMessagesInConversationUITests: XCTestCase {
 
         XCTContext.runActivity(named: "Restore makes it a normal message; the line goes") { _ in
             element("thread.deletedMessages.view", in: app).click()
-            XCTAssertTrue(element("messageInTrashTag", in: app).waitForExistence(timeout: 5))
+            XCTAssertTrue(element("messageInTrashTag", in: app).appears(timeout: 5))
             let expand = app.buttons.matching(
                 NSPredicate(format: "label BEGINSWITH 'Open deleted message from'")).firstMatch
-            XCTAssertTrue(expand.waitForExistence(timeout: 5))
+            XCTAssertTrue(expand.appears(timeout: 5))
             expand.click()
             let restore = element("messageActionRestore", in: app)
-            XCTAssertTrue(restore.waitForExistence(timeout: 5))
+            XCTAssertTrue(restore.appears(timeout: 5))
             // The open card is the deleted one (one open card at a time):
             // it has no reply bar.
             XCTAssertEqual(count("messageActionReply", in: app), 0, "a deleted message offers no reply")

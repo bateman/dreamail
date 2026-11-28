@@ -23,10 +23,10 @@ final class LabelPickerUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { [app] in app?.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         let row = element("threadRow.\(thread)")
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "demo inbox should load")
+        XCTAssertTrue(row.appears(timeout: 10), "demo inbox should load")
         row.click()
     }
 
@@ -51,10 +51,10 @@ final class LabelPickerUITests: XCTestCase {
     /// highlight is on it whatever the pointer does.
     private func openPicker(filter: String? = nil) {
         app.typeKey("l", modifierFlags: [])
-        XCTAssertTrue(search.waitForExistence(timeout: 5), "the picker opens")
+        XCTAssertTrue(search.appears(timeout: 5), "the picker opens")
         if let filter {
             app.typeText(filter)
-            XCTAssertTrue(row(filter).waitForExistence(timeout: 5), "filtered to \(filter)")
+            XCTAssertTrue(row(filter).appears(timeout: 5), "filtered to \(filter)")
         }
     }
 
@@ -119,7 +119,7 @@ final class LabelPickerUITests: XCTestCase {
 
     private func stepClicksKeepThePickerOpenAndEscClosesWithBothApplied() {
         openPicker()
-        XCTAssertTrue(row("Work").waitForExistence(timeout: 5))
+        XCTAssertTrue(row("Work").appears(timeout: 5))
         let work = value("Work"), research = value("Research")
         row("Work").click()
         wait(row("Work"), value: flipped(work), "first click toggled")

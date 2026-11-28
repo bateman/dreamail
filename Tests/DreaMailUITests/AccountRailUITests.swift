@@ -16,7 +16,7 @@ final class AccountRailUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -38,10 +38,10 @@ final class AccountRailUITests: XCTestCase {
     /// icon strip, then shown), and the rail below it is 64 pt wide.
     private func stepWindowButtonsLieInsideTheTopBandAndTheRailBelowIsNarrow(_ app: XCUIApplication) {
         let settings = element(app, "accountRail.settings")
-        XCTAssertTrue(settings.waitForExistence(timeout: 10), "the rail is on screen")
+        XCTAssertTrue(settings.appears(timeout: 10), "the rail is on screen")
         let window = app.windows.firstMatch
         let band = element(app, "accountRail.topBand")
-        XCTAssertTrue(band.waitForExistence(timeout: 5), "the top band is on screen")
+        XCTAssertTrue(band.appears(timeout: 5), "the top band is on screen")
         let buttons = [window.buttons[XCUIIdentifierCloseWindow],
                        window.buttons[XCUIIdentifierMinimizeWindow],
                        window.buttons[XCUIIdentifierFullScreenWindow]]
@@ -73,7 +73,7 @@ final class AccountRailUITests: XCTestCase {
         // right edge, and the sidebar's content starts below it.
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         let compose = element(app, "composeButton")
-        XCTAssertTrue(compose.waitForExistence(timeout: 5), "the sidebar is shown")
+        XCTAssertTrue(compose.appears(timeout: 5), "the sidebar is shown")
         func assertBandOverSidebar(_ when: String) {
             XCTAssertTrue(waitUntil { band.frame.maxX > compose.frame.maxX },
                           "\(when): the band reaches the sidebar's right edge (\(band.frame), compose \(compose.frame))")
@@ -87,9 +87,9 @@ final class AccountRailUITests: XCTestCase {
 
         // The layout is rebuilt when a conversation opens: the band follows.
         let row = element(app, "threadRow.you@example.com:t3")
-        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue(row.appears(timeout: 5))
         row.click()
-        XCTAssertTrue(compose.waitForExistence(timeout: 5))
+        XCTAssertTrue(compose.appears(timeout: 5))
         assertBandOverSidebar("conversation open")
 
         // Collapsed again: the band covers rail + icon strip, no wider.
@@ -97,7 +97,7 @@ final class AccountRailUITests: XCTestCase {
         XCTAssertTrue(waitUntil { abs(band.frame.width - 104) < 1 },
                       "sidebar collapsed: the band is rail + strip, 104 pt wide (\(band.frame))")
         let strip = element(app, "sidebarStrip")
-        XCTAssertTrue(strip.waitForExistence(timeout: 5), "the collapsed sidebar is the icon strip")
+        XCTAssertTrue(strip.appears(timeout: 5), "the collapsed sidebar is the icon strip")
         XCTAssertEqual(strip.frame.maxX, band.frame.maxX, accuracy: 1,
                        "no step: strip and band end together (\(strip.frame), band \(band.frame))")
         assertButtonsInBand("sidebar hidden again")
@@ -109,12 +109,12 @@ final class AccountRailUITests: XCTestCase {
         let app = launch(extra: ["-threadOpenStyle", "fullWindow"])
         let window = app.windows.firstMatch
         let band = element(app, "accountRail.topBand")
-        XCTAssertTrue(band.waitForExistence(timeout: 10))
+        XCTAssertTrue(band.appears(timeout: 10))
         let row = element(app, "threadRow.you@example.com:t1")
-        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(row.appears(timeout: 10))
         row.click()
         XCTAssertTrue(app.buttons.matching(identifier: "exitFocusButton").firstMatch
-            .waitForExistence(timeout: 5), "the conversation fills the window")
+            .appears(timeout: 5), "the conversation fills the window")
         XCTAssertTrue(waitUntil { !self.element(app, "sidebarStrip").exists },
                       "no icon strip beside a full-window conversation")
         XCTAssertFalse(element(app, "composeButton").exists, "no sidebar either")
@@ -131,17 +131,17 @@ final class AccountRailUITests: XCTestCase {
 
     private func stepAppearanceToggleHidesAndShowsTheAddEntry(_ app: XCUIApplication) {
         let add = element(app, "accountRail.add")
-        XCTAssertTrue(add.waitForExistence(timeout: 10), "+ is shown by default")
+        XCTAssertTrue(add.appears(timeout: 10), "+ is shown by default")
 
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         let pane = element(settings, "settings.pane.appearance")
-        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        XCTAssertTrue(pane.appears(timeout: 5))
         pane.click()
         let toggle = element(settings, "settings.showAddAccountInRail")
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.appears(timeout: 5))
 
         toggle.click()
         XCTAssertTrue(waitUntil { !add.exists }, "+ disappears at once with the toggle off")

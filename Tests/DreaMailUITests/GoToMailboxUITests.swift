@@ -21,7 +21,7 @@ final class GoToMailboxUITests: XCTestCase {
         app.launch()
         addTeardownBlock { app.terminate() }
 
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -32,11 +32,11 @@ final class GoToMailboxUITests: XCTestCase {
         -> (row: XCUIElement, exitFocus: XCUIElement) {
         let demoThread = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
-        XCTAssertTrue(demoThread.waitForExistence(timeout: 10))
+        XCTAssertTrue(demoThread.appears(timeout: 10))
         demoThread.click()
 
         let exitFocus = app.buttons.matching(identifier: "exitFocusButton").firstMatch
-        XCTAssertTrue(exitFocus.waitForExistence(timeout: 5),
+        XCTAssertTrue(exitFocus.appears(timeout: 5),
                       "clicking a row in full-window style should fill the app")
 
         // The actual regression trigger: reading the message parks first
@@ -44,7 +44,7 @@ final class GoToMailboxUITests: XCTestCase {
         // monitor used to read that as "the user is typing" and stand every
         // single-key shortcut down.
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
-        XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        XCTAssertTrue(subject.appears(timeout: 5))
         subject.click()
         return (demoThread, exitFocus)
     }
@@ -75,7 +75,7 @@ final class GoToMailboxUITests: XCTestCase {
         waitForDisappearance(exitFocus)
         XCTAssertFalse(exitFocus.exists,
                        "g i must exit the full-window conversation")
-        XCTAssertTrue(demoThread.waitForExistence(timeout: 5),
+        XCTAssertTrue(demoThread.appears(timeout: 5),
                       "g i must land back on the inbox list")
     }
 
@@ -89,7 +89,7 @@ final class GoToMailboxUITests: XCTestCase {
         waitForDisappearance(exitFocus)
         XCTAssertFalse(exitFocus.exists,
                        "u must exit the full-window conversation")
-        XCTAssertTrue(demoThread.waitForExistence(timeout: 5),
+        XCTAssertTrue(demoThread.appears(timeout: 5),
                       "u must land back on the list")
     }
 
@@ -114,16 +114,16 @@ final class GoToMailboxUITests: XCTestCase {
         app.launch()
         addTeardownBlock { app.terminate() }
 
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
 
         let demoThread = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
-        XCTAssertTrue(demoThread.waitForExistence(timeout: 10))
+        XCTAssertTrue(demoThread.appears(timeout: 10))
         demoThread.click()
 
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
-        XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        XCTAssertTrue(subject.appears(timeout: 5))
         let firstSubject = text(of: subject)
         XCTAssertFalse(firstSubject.isEmpty, "the subject text must be readable")
         subject.click()
@@ -136,7 +136,7 @@ final class GoToMailboxUITests: XCTestCase {
             if subject.exists, text(of: subject) != firstSubject { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        XCTAssertTrue(subject.waitForExistence(timeout: 2),
+        XCTAssertTrue(subject.appears(timeout: 2),
                       "j must open the next conversation")
         XCTAssertNotEqual(text(of: subject), firstSubject,
                           "after u, j must continue from the conversation just read")

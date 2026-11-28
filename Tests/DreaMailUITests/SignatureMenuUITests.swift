@@ -22,7 +22,7 @@ final class SignatureMenuUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -48,11 +48,11 @@ final class SignatureMenuUITests: XCTestCase {
     private func openMenu(_ app: XCUIApplication) {
         let button = app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier == 'compose.signature' OR label == 'Insert signature'")).firstMatch
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        XCTAssertTrue(button.appears(timeout: 5))
         let deadline = Date().addingTimeInterval(15)
         repeat {
             button.click()
-            if app.menuItems[gmailName].waitForExistence(timeout: 2) { return }
+            if app.menuItems[gmailName].appears(timeout: 2) { return }
             app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         } while Date() < deadline
         XCTFail("the Gmail signature should be in the menu")
@@ -62,11 +62,11 @@ final class SignatureMenuUITests: XCTestCase {
         let app = launchDemo()
         let thread = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
-        XCTAssertTrue(thread.waitForExistence(timeout: 10))
+        XCTAssertTrue(thread.appears(timeout: 10))
         app.typeKey("c", modifierFlags: [])
         let compose = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier IN {'composeCard', 'composeInline'}")).firstMatch
-        XCTAssertTrue(compose.waitForExistence(timeout: 5))
+        XCTAssertTrue(compose.appears(timeout: 5))
 
         // Gmail's order: Manage signatures, then No signature and each one.
         openMenu(app)
@@ -87,7 +87,7 @@ final class SignatureMenuUITests: XCTestCase {
         XCTAssertFalse(app.menuItems["Edit signature as text"].exists)
         app.menuItems[gmailName].click()
         // The Gmail signature is shown once, rendered, and not in the text.
-        XCTAssertTrue(block.waitForExistence(timeout: 5),
+        XCTAssertTrue(block.appears(timeout: 5),
                       "a Gmail signature is shown as it is sent")
         XCTAssertTrue(waitForBody(app) {
             !$0.contains("Alex Rivera") && !$0.contains(self.shortText) && !$0.contains("-- ")
@@ -102,12 +102,12 @@ final class SignatureMenuUITests: XCTestCase {
         app.menuItems["Edit signature as text"].click()
         XCTAssertTrue(waitForBody(app) { $0.contains("Alex Rivera") && $0.contains("-- ") },
                       "Edit signature as text puts it in the body")
-        XCTAssertFalse(block.waitForExistence(timeout: 1), "and the rendered block goes")
+        XCTAssertFalse(block.appears(timeout: 1), "and the rendered block goes")
 
         // Rendered again: the text it left is swapped for the block.
         openMenu(app)
         app.menuItems[gmailName].click()
-        XCTAssertTrue(block.waitForExistence(timeout: 5))
+        XCTAssertTrue(block.appears(timeout: 5))
         XCTAssertTrue(waitForBody(app) { !$0.contains("Alex Rivera") })
 
         openMenu(app)
@@ -122,10 +122,10 @@ final class SignatureMenuUITests: XCTestCase {
         app.menuItems["Manage signatures"].click()
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         XCTAssertTrue(settings.descendants(matching: .any)
             .matching(identifier: "settings.signatures.refresh").firstMatch
-            .waitForExistence(timeout: 5), "Manage signatures opens Settings → Signatures")
+            .appears(timeout: 5), "Manage signatures opens Settings → Signatures")
     }
 
     func testSettingsShowTheGmailSignatureWithoutAnImportButton() {
@@ -133,18 +133,18 @@ final class SignatureMenuUITests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         let refresh = settings.descendants(matching: .any)
             .matching(identifier: "settings.signatures.refresh").firstMatch
-        XCTAssertTrue(refresh.waitForExistence(timeout: 5))
+        XCTAssertTrue(refresh.appears(timeout: 5))
         XCTAssertFalse(settings.descendants(matching: .any)
             .matching(identifier: "settings.signatures.import").firstMatch.exists)
         XCTAssertFalse(settings.buttons["Import from Gmail…"].exists)
         // The Gmail signature arrived by itself, named after the address.
-        XCTAssertTrue(settings.staticTexts["From Gmail."].waitForExistence(timeout: 15))
+        XCTAssertTrue(settings.staticTexts["From Gmail."].appears(timeout: 15))
         XCTAssertTrue(settings.staticTexts["Short"].exists)
         refresh.click()
-        XCTAssertTrue(settings.staticTexts["From Gmail."].waitForExistence(timeout: 10))
+        XCTAssertTrue(settings.staticTexts["From Gmail."].appears(timeout: 10))
 
         // A signature copied from Gmail keeps its look when pasted.
         let pasteboard = NSPasteboard.general
@@ -155,23 +155,23 @@ final class SignatureMenuUITests: XCTestCase {
         pasteboard.setString("Ada Example\nExample Lab", forType: .string)
         let new = settings.descendants(matching: .any)
             .matching(identifier: "settings.signatures.new").firstMatch
-        XCTAssertTrue(new.waitForExistence(timeout: 5))
+        XCTAssertTrue(new.appears(timeout: 5))
         new.click()
         // The identifier sits on the editor's container; its text view is inside.
         let container = app.descendants(matching: .any)
             .matching(identifier: "settings.signatures.body").firstMatch
-        XCTAssertTrue(container.waitForExistence(timeout: 5))
+        XCTAssertTrue(container.appears(timeout: 5))
         let inner = container.textViews.firstMatch
         let editor = inner.exists ? inner : app.sheets.firstMatch.textViews.firstMatch
-        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertTrue(editor.appears(timeout: 5))
         editor.click()
         app.typeKey("v", modifierFlags: .command)
         let look = app.descendants(matching: .any)
             .matching(identifier: "settings.signatures.look").firstMatch
-        XCTAssertTrue(look.waitForExistence(timeout: 5), "a rich paste shows how it is sent")
+        XCTAssertTrue(look.appears(timeout: 5), "a rich paste shows how it is sent")
         XCTAssertTrue((editor.value as? String ?? "").contains("**Ada Example**"))
         app.buttons["Remove formatting"].click()
-        XCTAssertFalse(look.waitForExistence(timeout: 1), "Remove formatting leaves the text only")
+        XCTAssertFalse(look.appears(timeout: 1), "Remove formatting leaves the text only")
         XCTAssertTrue((editor.value as? String ?? "").contains("Ada Example"))
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
     }
