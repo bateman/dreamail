@@ -74,6 +74,24 @@ enum MessageActions {
         }
     }
 
+    /// SF Symbol of each item (drawn in the menu next to the title).
+    static func symbol(_ item: MenuItem) -> String {
+        switch item {
+        case .reply: return "arrowshape.turn.up.left"
+        case .replyAll: return "arrowshape.turn.up.left.2"
+        case .forward: return "arrowshape.turn.up.right"
+        case .filterLikeThis: return "line.3.horizontal.decrease.circle"
+        case .deleteMessage: return "trash"
+        case .blockSender: return "nosign"
+        case .unblockSender: return "checkmark.circle"
+        case .reportSpam: return "exclamationmark.octagon"
+        case .reportNotSpam: return "checkmark.shield"
+        case .showOriginal: return "doc.text.magnifyingglass"
+        case .downloadMessage: return "arrow.down.circle"
+        case .markUnreadFromHere: return "envelope.badge"
+        }
+    }
+
     static func isStarred(_ message: Message) -> Bool {
         SyncEngine.labelIdsContain(message.labelIds, "STARRED")
     }

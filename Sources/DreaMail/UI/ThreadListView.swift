@@ -900,6 +900,7 @@ private struct ThreadListSections: View, Equatable {
         if thread.inDrafts && !bulk {
             Button { store.editDraft(inThread: thread) } label: {
                 Label("Edit Draft", systemImage: "square.and.pencil")
+                    .labelStyle(.titleAndIcon)
             }
             Button(role: .destructive) {
                 if let draft = store.newestDraft(inThread: thread.id) {
@@ -907,6 +908,7 @@ private struct ThreadListSections: View, Equatable {
                 }
             } label: {
                 Label("Delete Draft", systemImage: "trash")
+                    .labelStyle(.titleAndIcon)
             }
             Divider()
         }
@@ -955,7 +957,9 @@ private struct ThreadListSections: View, Equatable {
                                 sender: String, address: String?,
                                 vipAction: ParticipantMenuVIP.Action?) -> some View {
         let bulk = !bulkIds.isEmpty
+        // macOS draws a Label in a menu title-only unless asked for both.
         let label = Label(item.title(sender: sender), systemImage: item.symbol)
+            .labelStyle(.titleAndIcon)
         switch item {
         case .reply, .replyAll, .forward:
             // As the keys: the newest *sent* message, never a draft.
@@ -1035,6 +1039,7 @@ private struct ThreadListSections: View, Equatable {
                     }
                 } label: {
                     Label(ParticipantMenuVIP.title(for: vipAction), systemImage: item.symbol)
+                        .labelStyle(.titleAndIcon)
                 }
             }
         case .copyLink:

@@ -204,13 +204,14 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focuses the field")
         app.typeText("zzzznomatch")
-        // The suggestions panel hangs under the field, at the column's trailing
-        // edge (the field's side), inside the column.
+        // The suggestions panel hangs under the field, at the column's leading
+        // edge, over the field, inside the column.
         let panel = element(app, "searchResultsPanel")
         XCTAssertTrue(panel.waitForExistence(timeout: 5), "the results panel opens")
         print("ListSearchField panel \(panel.frame), field \(field.frame)")
         XCTAssertGreaterThanOrEqual(panel.frame.minY, field.frame.maxY - 1, "panel below the field")
-        XCTAssertEqual(panel.frame.maxX, field.frame.maxX, accuracy: 24, "panel ends where the field ends")
+        XCTAssertLessThanOrEqual(panel.frame.minX, field.frame.minX + 1, "panel starts at the column's leading edge, over the field")
+        XCTAssertGreaterThanOrEqual(panel.frame.maxX, field.frame.maxX - 1, "panel spans the field")
         XCTAssertGreaterThanOrEqual(panel.frame.minX, t3.frame.minX - 1, "panel inside the list column")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(waitUntil { !t3.exists }, "the search filters the list")
@@ -249,6 +250,41 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(waitUntil { !app.buttons["exitFocusButton"].exists }, "/ left the conversation")
         XCTAssertTrue(element(app, "listSearchBox").waitForExistence(timeout: 5), "the list is back")
         XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focused the field")
+    }
+
+    /// The field sits right after the view's title with no conversation open
+    /// (the list fills the window), not at the window's far right.
+    func testSingleFieldRightAfterTheTitle_listOnly() {
+        let app = launch(paneHidden: true)
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
+        let box = element(app, "listSearchBox")
+        XCTAssertTrue(box.waitForExistence(timeout: 5))
+        let title = titleElement(app, "Inbox")
+        XCTAssertTrue(title.exists, "the title is shown")
+        let window = app.windows.firstMatch
+        let gap = box.frame.minX - title.frame.maxX
+        print("ListSearchField listOnly: window \(window.frame.width), title \(title.frame), field \(box.frame), gap \(gap)")
+        XCTAssertGreaterThanOrEqual(gap, 0, "field right of the title (title \(title.frame), field \(box.frame))")
+        // The toolbar leaves a constant inset (about 90 pt) after the title.
+        XCTAssertLessThanOrEqual(gap, 100, "field right after the title (title \(title.frame), field \(box.frame))")
+        XCTAssertLessThan(box.frame.maxX, window.frame.maxX - 200,
+                          "field not at the window's far right (field \(box.frame))")
+        // Not centred in the free space: the gap does not follow the window's width.
+        // Narrower window (it stops at its minimum, so on a small screen it may not shrink).
+        let widthBefore = window.frame.width
+        dragCorner(app, dx: -200)
+        _ = waitUntil(timeout: 5) { window.frame.width < widthBefore - 20 }
+        if window.frame.width < widthBefore - 20 {
+            let title2 = titleElement(app, "Inbox")
+            let box2 = element(app, "listSearchBox")
+            XCTAssertTrue(box2.waitForExistence(timeout: 5))
+            let gap2 = box2.frame.minX - title2.frame.maxX
+            print("ListSearchField listOnly narrower: window \(window.frame.width), title \(title2.frame), field \(box2.frame), gap \(gap2)")
+            XCTAssertLessThanOrEqual(abs(gap - gap2), 10,
+                                     "the gap does not depend on the window's width (\(gap) at \(widthBefore), \(gap2) at \(window.frame.width))")
+        } else {
+            print("ListSearchField listOnly: the window did not shrink (\(widthBefore)); one width measured")
+        }
     }
 
     func testNoDoubleChevronAndPaneToggleStillWorks() {
