@@ -261,11 +261,30 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(box.waitForExistence(timeout: 5))
         let title = titleElement(app, "Inbox")
         XCTAssertTrue(title.exists, "the title is shown")
+        let window = app.windows.firstMatch
         let gap = box.frame.minX - title.frame.maxX
+        print("ListSearchField listOnly: window \(window.frame.width), title \(title.frame), field \(box.frame), gap \(gap)")
         XCTAssertGreaterThanOrEqual(gap, 0, "field right of the title (title \(title.frame), field \(box.frame))")
-        XCTAssertLessThanOrEqual(gap, 40, "field right after the title, not at the window's far right (title \(title.frame), field \(box.frame))")
-        XCTAssertLessThan(box.frame.maxX, app.windows.firstMatch.frame.maxX - 200,
+        // The toolbar leaves a constant inset (about 90 pt) after the title.
+        XCTAssertLessThanOrEqual(gap, 100, "field right after the title (title \(title.frame), field \(box.frame))")
+        XCTAssertLessThan(box.frame.maxX, window.frame.maxX - 200,
                           "field not at the window's far right (field \(box.frame))")
+        // Not centred in the free space: the gap does not follow the window's width.
+        // Narrower window (it stops at its minimum, so on a small screen it may not shrink).
+        let widthBefore = window.frame.width
+        dragCorner(app, dx: -200)
+        _ = waitUntil(timeout: 5) { window.frame.width < widthBefore - 20 }
+        if window.frame.width < widthBefore - 20 {
+            let title2 = titleElement(app, "Inbox")
+            let box2 = element(app, "listSearchBox")
+            XCTAssertTrue(box2.waitForExistence(timeout: 5))
+            let gap2 = box2.frame.minX - title2.frame.maxX
+            print("ListSearchField listOnly narrower: window \(window.frame.width), title \(title2.frame), field \(box2.frame), gap \(gap2)")
+            XCTAssertLessThanOrEqual(abs(gap - gap2), 10,
+                                     "the gap does not depend on the window's width (\(gap) at \(widthBefore), \(gap2) at \(window.frame.width))")
+        } else {
+            print("ListSearchField listOnly: the window did not shrink (\(widthBefore)); one width measured")
+        }
     }
 
     func testNoDoubleChevronAndPaneToggleStillWorks() {

@@ -34,9 +34,7 @@ struct ListSearchToolbar: ViewModifier {
                 // Shared glass hidden (macOS 26): the field is the one rounded
                 // box, not a box inside the system capsule.
                 ToolbarItem(placement: .principal) {
-                    // The item takes all the room and the field sits at its leading
-                    // edge: a `.principal` item is centred in the free space.
-                    HStack(spacing: 0) {
+                    HStack(spacing: 8) {
                         ToolbarSearchField(
                             text: Bindable(store).searchText,
                             focusToken: store.searchFocusToken,
@@ -69,9 +67,7 @@ struct ListSearchToolbar: ViewModifier {
                         // search-active state, or the key monitor keeps swallowing
                         // arrows and Enter.
                         .onDisappear { store.dismissSearchPanel() }
-                        Spacer(minLength: 0)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .pmHideSharedBackground()
             }
