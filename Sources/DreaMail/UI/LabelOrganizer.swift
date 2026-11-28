@@ -167,6 +167,9 @@ struct LabelColorPalette: View {
             } label: {
                 Label("Remove color", systemImage: "circle.slash")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
+                    // The row spans the sheet, as in a menu: the whole row is the button.
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(saving || !label.hasGmailColor)
