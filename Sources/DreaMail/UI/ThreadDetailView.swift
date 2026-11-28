@@ -2738,8 +2738,7 @@ struct MessageCard: View {
     private var moreMenuItems: some View {
         let email = MessageParser.emailAddress(message.fromHeader)
         ForEach(MessageActions.menuItems(menuContext), id: \.self) { item in
-            Button(MessageActions.title(item, senderName: senderName),
-                   role: item == .deleteMessage || item == .blockSender ? .destructive : nil) {
+            Button(role: item == .deleteMessage || item == .blockSender ? .destructive : nil) {
                 switch item {
                 case .reply:
                     store.openCompose(.init(replyTo: message))
@@ -2769,6 +2768,11 @@ struct MessageCard: View {
                 case .markUnreadFromHere:
                     onMarkUnreadFromHere()
                 }
+            } label: {
+                // macOS draws a Label in a menu title-only unless asked for both.
+                Label(MessageActions.title(item, senderName: senderName),
+                      systemImage: MessageActions.symbol(item))
+                    .labelStyle(.titleAndIcon)
             }
             .accessibilityIdentifier("messageMenu.\(item)")
         }

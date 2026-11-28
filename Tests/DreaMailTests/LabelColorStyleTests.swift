@@ -543,4 +543,50 @@ final class LabelColorStyleTests: XCTestCase {
         XCTAssertNil(byId["Label_3"]?.color)
         XCTAssertNil(byId["Label_3"]?.gmailBackgroundColor)
     }
+
+    // MARK: - Colors outside today's API palette, and the neutral pair
+
+    /// Two pairs Gmail web shows for labels: a legacy one outside the 102
+    /// API values and the neutral pair. Both must reach the screen as sent.
+    private static let sentPairs: [LabelColors] = [
+        LabelColors(background: "#e0ecff", text: "#206cff"),
+        LabelColors(background: "#eeeeee", text: "#222222"),
+    ]
+
+    func testPairsOutsideTheApiPaletteAreStoredAndDrawnAsSent() throws {
+        let q = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(q)
+        try q.write { db in
+            try Account(id: "a@example.com", displayName: "P", historyId: nil,
+                        lastSyncAt: nil, senderName: "").save(db)
+            let labels = Self.sentPairs.enumerated().map { i, c in
+                GLabel(id: "L\(i)", name: "Work \(i)", type: "user",
+                       color: GLabel.GColor(backgroundColor: c.background, textColor: c.text))
+            }
+            try SyncEngine.applyLabels(db, accountId: "a@example.com", labels: labels)
+        }
+        for (i, pair) in Self.sentPairs.enumerated() {
+            let row = try XCTUnwrap(try q.read { db in try LabelRow.fetchOne(db, key: "a@example.com:L\(i)") })
+            XCTAssertEqual(row.displayColors, pair)
+            XCTAssertTrue(row.displayColors.isColored, "\(pair) is a color, not \"no color\"")
+            for appearance in LabelPillStyle.Appearance.allCases {
+                let chip = LabelPillStyle.resolve(row.displayColors, appearance: appearance)
+                XCTAssertEqual(chip.fill, LabelRGB(hexString: pair.background), "chip fill is Gmail's, \(appearance)")
+                XCTAssertNotEqual(chip.fill, LabelPillStyle.neutralFill(appearance), "not the no-color grey")
+                let tag = SidebarTagStyle.resolve(row.displayColors, appearance: appearance)
+                XCTAssertNotNil(tag.fill, "the sidebar tag has a fill, \(appearance)")
+            }
+            XCTAssertEqual(LabelPillStyle.resolve(row.displayColors, appearance: .light).fill,
+                           LabelRGB(hexString: pair.background))
+            XCTAssertEqual(SidebarTagStyle.resolve(row.displayColors, appearance: .light).fill,
+                           LabelRGB(hexString: pair.background), "light sidebar: exactly Gmail's fill")
+        }
+    }
+
+    /// What is written to Gmail stays the API palette: these pairs cannot be built.
+    func testWritingStillRefusesPairsOutsideTheApiPalette() {
+        for pair in Self.sentPairs {
+            XCTAssertNil(GmailLabelColor(background: pair.background, text: pair.text), "\(pair)")
+        }
+    }
 }

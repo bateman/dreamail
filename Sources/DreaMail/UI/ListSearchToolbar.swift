@@ -24,48 +24,65 @@ struct ListSearchToolbar: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .modifier(HiddenSystemTitle())
             .toolbar {
-                ToolbarItem(placement: .automatic) {
-                    ToolbarSearchField(
-                        text: Bindable(store).searchText,
-                        focusToken: store.searchFocusToken,
-                        pendingFocus: { store.searchFocusPending && store.searchFocusStillWanted },
-                        onFocusChange: { focused in
-                            // Drive the results panel from the field's focus. Blur
-                            // is deferred (see noteSearchFocused) so a click on a
-                            // result row can land before the panel is torn down.
-                            if focused { store.searchFocusPending = false }
-                            store.noteSearchFocused(focused)
-                        },
-                        onSubmit: {
-                            // Fallback path — with the dropdown open, Enter is handled
-                            // by the key monitor and routed to the panel instead.
-                            store.commitSearch(store.searchText)
-                            store.dismissSearchPanel()
-                            NSApp.keyWindow?.makeFirstResponder(nil)
-                            if store.selectedThreadId == nil { store.moveSelection(1) }
-                        })
-                    .frame(minWidth: ListHeaderLayout.fieldMinWidth,
-                           idealWidth: ListHeaderLayout.fieldIdealWidth,
-                           maxWidth: ListHeaderLayout.fieldMaxWidth)
-                    .disabled(store.threadFocusMode)
-                    .help("Search — from: to: subject: label: has:attachment is:unread is:starred after: before:")
-                    // One element for the whole field box (its children keep their own).
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("listSearchBox")
-                    // Unmounted while focused (layout switch): end the
-                    // search-active state, or the key monitor keeps swallowing
-                    // arrows and Enter.
-                    .onDisappear { store.dismissSearchPanel() }
+                // One leading item: view glyph, title, field. An `.automatic`
+                // item sits at the trailing end of its column's bar, which is
+                // the window's far right when the list is the only column; here
+                // the field follows the title in every layout. Shared glass is
+                // hidden (macOS 26): the field is the one rounded box, not a
+                // box inside the system capsule.
+                ToolbarItem(placement: .navigation) {
+                    HStack(spacing: 8) {
+                        Image(systemName: store.selectedView.selectedIcon)
+                            .foregroundStyle(.mailIcon(selected: false))
+                            .accessibilityHidden(true)
+                        Text(store.selectedView.title)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .fixedSize()
+                        ToolbarSearchField(
+                            text: Bindable(store).searchText,
+                            focusToken: store.searchFocusToken,
+                            pendingFocus: { store.searchFocusPending && store.searchFocusStillWanted },
+                            onFocusChange: { focused in
+                                // Drive the results panel from the field's focus. Blur
+                                // is deferred (see noteSearchFocused) so a click on a
+                                // result row can land before the panel is torn down.
+                                if focused { store.searchFocusPending = false }
+                                store.noteSearchFocused(focused)
+                            },
+                            onSubmit: {
+                                // Fallback path — with the dropdown open, Enter is handled
+                                // by the key monitor and routed to the panel instead.
+                                store.commitSearch(store.searchText)
+                                store.dismissSearchPanel()
+                                NSApp.keyWindow?.makeFirstResponder(nil)
+                                if store.selectedThreadId == nil { store.moveSelection(1) }
+                            })
+                        .frame(minWidth: ListHeaderLayout.fieldMinWidth,
+                               idealWidth: ListHeaderLayout.fieldIdealWidth,
+                               maxWidth: ListHeaderLayout.fieldMaxWidth)
+                        .disabled(store.threadFocusMode)
+                        .help("Search — from: to: subject: label: has:attachment is:unread is:starred after: before:")
+                        // One element for the whole field box (its children keep their own).
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("listSearchBox")
+                        // Unmounted while focused (layout switch): end the
+                        // search-active state, or the key monitor keeps swallowing
+                        // arrows and Enter.
+                        .onDisappear { store.dismissSearchPanel() }
+                    }
                 }
+                .pmHideSharedBackground()
             }
             // Command-K-style panel, floated over the top of the list column
-            // under the field, at the column's trailing edge (the field's
+            // under the field, at the column's leading edge (the field's
             // side), never wider than the column.
-            .overlay(alignment: .topTrailing) {
+            .overlay(alignment: .topLeading) {
                 if store.searchActive {
                     SearchResultsPanel()
-                        .frame(maxWidth: 600, alignment: .trailing)
+                        .frame(maxWidth: 600, alignment: .leading)
                         .padding(.horizontal, 10)
                         .padding(.top, 6)
                         .accessibilityElement(children: .contain)
@@ -75,6 +92,18 @@ struct ListSearchToolbar: ViewModifier {
                 }
             }
             .animation(.easeOut(duration: 0.06), value: store.searchActive)
+    }
+}
+
+/// The system's own title is drawn by the toolbar item above, so the field
+/// can follow it. The window title stays what `navigationTitle` set.
+private struct HiddenSystemTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content.navigationTitle("")
+        }
     }
 }
 
