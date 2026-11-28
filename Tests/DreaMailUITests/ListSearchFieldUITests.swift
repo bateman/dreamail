@@ -264,6 +264,8 @@ final class ListSearchFieldUITests: XCTestCase {
         let gap = box.frame.minX - title.frame.maxX
         XCTAssertGreaterThanOrEqual(gap, 0, "field right of the title (title \(title.frame), field \(box.frame))")
         XCTAssertLessThanOrEqual(gap, 40, "field right after the title, not at the window's far right (title \(title.frame), field \(box.frame))")
+        XCTAssertLessThan(box.frame.maxX, app.windows.firstMatch.frame.maxX - 200,
+                          "field not at the window's far right (field \(box.frame))")
     }
 
     func testNoDoubleChevronAndPaneToggleStillWorks() {
