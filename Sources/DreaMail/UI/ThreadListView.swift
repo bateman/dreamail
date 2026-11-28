@@ -433,8 +433,16 @@ struct ThreadListView: View {
         .background(Color.mailContent)
         .navigationTitle(store.selectedView.title)
         .toolbar {
-            // The view glyph and title are drawn with the search field
-            // (`ListSearchToolbar`), so the field follows the title.
+            // View glyph next to the title: the filled form, as on the
+            // selected sidebar row, in the same neutral tint. Shared glass is
+            // hidden so it stays a bare icon — no capsule, no scroll-edge
+            // flicker with the detail nav trio.
+            ToolbarItem(placement: .navigation) {
+                Image(systemName: store.selectedView.selectedIcon)
+                    .foregroundStyle(.mailIcon(selected: false))
+                    .accessibilityHidden(true)
+            }
+            .pmHideSharedBackground()
             // While searching, let the user reach past the local cache to Gmail.
             if !store.committedSearch.trimmingCharacters(in: .whitespaces).isEmpty {
                 ToolbarItem(placement: .automatic) {

@@ -24,25 +24,17 @@ struct ListSearchToolbar: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .modifier(HiddenSystemTitle())
+            // `.principal` + `.editor` role: the item sits in the column's title
+            // region, after the title, above the list column. `.navigation`
+            // pins to the window's leading edge on macOS 26 (over the sidebar),
+            // `.automatic` to the trailing end of the window when the list is
+            // the only column.
+            .toolbarRole(.editor)
             .toolbar {
-                // One leading item: view glyph, title, field. An `.automatic`
-                // item sits at the trailing end of its column's bar, which is
-                // the window's far right when the list is the only column; here
-                // the field follows the title in every layout. Shared glass is
-                // hidden (macOS 26): the field is the one rounded box, not a
-                // box inside the system capsule.
-                ToolbarItem(placement: .navigation) {
+                // Shared glass hidden (macOS 26): the field is the one rounded
+                // box, not a box inside the system capsule.
+                ToolbarItem(placement: .principal) {
                     HStack(spacing: 8) {
-                        Image(systemName: store.selectedView.selectedIcon)
-                            .foregroundStyle(.mailIcon(selected: false))
-                            .accessibilityHidden(true)
-                        // macOS 14 keeps the system title (it cannot be hidden).
-                        if #available(macOS 15.0, *) {
-                            Text(store.selectedView.title)
-                                .font(.headline)
-                                .lineLimit(1)
-                        }
                         ToolbarSearchField(
                             text: Bindable(store).searchText,
                             focusToken: store.searchFocusToken,
@@ -65,7 +57,7 @@ struct ListSearchToolbar: ViewModifier {
                         .frame(minWidth: ListHeaderLayout.fieldMinWidth,
                                idealWidth: ListHeaderLayout.fieldIdealWidth,
                                maxWidth: ListHeaderLayout.fieldMaxWidth)
-                    .layoutPriority(1)
+                        .layoutPriority(1)
                         .disabled(store.threadFocusMode)
                         .help("Search — from: to: subject: label: has:attachment is:unread is:starred after: before:")
                         // One element for the whole field box (its children keep their own).
@@ -95,18 +87,6 @@ struct ListSearchToolbar: ViewModifier {
                 }
             }
             .animation(.easeOut(duration: 0.06), value: store.searchActive)
-    }
-}
-
-/// The system's own title is drawn by the toolbar item above, so the field
-/// can follow it. The window title stays what `navigationTitle` set.
-private struct HiddenSystemTitle: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(macOS 15.0, *) {
-            content.toolbar(removing: .title)
-        } else {
-            content
-        }
     }
 }
 
