@@ -21,7 +21,7 @@ final class TrashUndoUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -42,12 +42,12 @@ final class TrashUndoUITests: XCTestCase {
     /// Trash `id` from its hover button; the toast shows.
     private func trash(_ app: XCUIApplication, _ id: String) {
         let r = row(app, id)
-        XCTAssertTrue(r.waitForExistence(timeout: 10), "demo inbox should load")
+        XCTAssertTrue(r.appears(timeout: 10), "demo inbox should load")
         r.hover()
         let button = r.descendants(matching: .button).matching(identifier: "rowAction.trash").firstMatch
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        XCTAssertTrue(button.appears(timeout: 5))
         button.click()
-        XCTAssertTrue(undoButton(app).waitForExistence(timeout: 3), "the undo toast shows")
+        XCTAssertTrue(undoButton(app).appears(timeout: 3), "the undo toast shows")
     }
 
     /// Trashing the selected row opens the next conversation, and at the CI
@@ -55,7 +55,7 @@ final class TrashUndoUITests: XCTestCase {
     /// Back to the list before looking for rows; says whether one was open.
     private func backToList(_ app: XCUIApplication) -> String {
         let subject = openConversation(app)
-        guard subject.waitForExistence(timeout: 2) else { return "no conversation was open" }
+        guard subject.appears(timeout: 2) else { return "no conversation was open" }
         app.typeKey(.escape, modifierFlags: [])
         let closed = subject.waitForNonExistence(timeout: 5)
         return closed ? "a conversation was open, closed with Esc"
@@ -70,7 +70,7 @@ final class TrashUndoUITests: XCTestCase {
             XCTAssertTrue(undoButton(app).exists, "the toast is still up when ⌘Z is typed")
             app.typeKey("z", modifierFlags: .command)
             let state = backToList(app)
-            XCTAssertTrue(row(app, "t1").waitForExistence(timeout: 10),
+            XCTAssertTrue(row(app, "t1").appears(timeout: 10),
                           "⌘Z brings the trashed row back (\(state))")
         }
 
@@ -78,7 +78,7 @@ final class TrashUndoUITests: XCTestCase {
             trash(app, "t1")
             undoButton(app).click()
             let state = backToList(app)
-            XCTAssertTrue(row(app, "t1").waitForExistence(timeout: 10),
+            XCTAssertTrue(row(app, "t1").appears(timeout: 10),
                           "the toast's Undo button brings the trashed row back (\(state))")
         }
     }

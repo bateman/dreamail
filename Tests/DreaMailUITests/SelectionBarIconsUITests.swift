@@ -22,7 +22,7 @@ final class SelectionBarIconsUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -41,10 +41,10 @@ final class SelectionBarIconsUITests: XCTestCase {
 
     private func check(_ app: XCUIApplication, _ id: String) {
         let r = row(app, id)
-        XCTAssertTrue(r.waitForExistence(timeout: 10), "demo inbox should load")
+        XCTAssertTrue(r.appears(timeout: 10), "demo inbox should load")
         r.hover()
         let box = r.descendants(matching: .button).matching(identifier: "rowCheck").firstMatch
-        XCTAssertTrue(box.waitForExistence(timeout: 5))
+        XCTAssertTrue(box.appears(timeout: 5))
         box.click()
     }
 
@@ -58,10 +58,10 @@ final class SelectionBarIconsUITests: XCTestCase {
     func testSelectionBar() {
         let app = launch()
         let t3 = row(app, "t3")
-        XCTAssertTrue(t3.waitForExistence(timeout: 10), "demo inbox should load")
+        XCTAssertTrue(t3.appears(timeout: 10), "demo inbox should load")
         t3.hover()
         let toggle = rowButton(app, "t3", "rowAction.toggleRead")
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.appears(timeout: 5))
         toggle.click()
         XCTAssertTrue(UITestWait.until { t3.label.hasPrefix("Unread") }, "t3 is unread")
         rowButton(app, "t3", "rowStar").click()
@@ -88,25 +88,25 @@ final class SelectionBarIconsUITests: XCTestCase {
     /// narrow) the ones under More.
     private func shown(_ app: XCUIApplication, _ ids: [String]) -> (bar: [XCUIElement], more: [String]) {
         let buttons = ids.map { bar(app, $0) }
-        let visible = buttons.prefix { $0.waitForExistence(timeout: 2) }
+        let visible = buttons.prefix { $0.appears(timeout: 2) }
         return (Array(visible), Array(ids.dropFirst(visible.count)))
     }
 
     /// Clicks the bar's button, or its item under More.
     private func tap(_ app: XCUIApplication, _ id: String) {
         let button = bar(app, id)
-        if button.waitForExistence(timeout: 2) { button.click(); return }
+        if button.appears(timeout: 2) { button.click(); return }
         let more = bar(app, "more")
         XCTAssertTrue(more.exists, "\(id) is a button or under More")
         more.click()
         let item = app.menuItems.matching(identifier: "selectionBar.more.\(id)").firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout: 5), id)
+        XCTAssertTrue(item.appears(timeout: 5), id)
         item.click()
     }
 
     private func stepIconsInOrder(_ app: XCUIApplication) {
         let count = bar(app, "count")
-        XCTAssertTrue(count.waitForExistence(timeout: 5), "the bar shows once rows are checked")
+        XCTAssertTrue(count.appears(timeout: 5), "the bar shows once rows are checked")
         XCTAssertEqual((count.value as? String) ?? count.label, "2 selected")
         let hint = bar(app, "hint"), close = bar(app, "close")
         XCTAssertTrue(close.exists)
@@ -171,7 +171,7 @@ final class SelectionBarIconsUITests: XCTestCase {
     private func stepSnoozeMenuOpens(_ app: XCUIApplication) {
         tap(app, "snooze")
         let pick = app.menuItems["Pick date & time…"]
-        XCTAssertTrue(pick.waitForExistence(timeout: 5), "the snooze menu is open")
+        XCTAssertTrue(pick.appears(timeout: 5), "the snooze menu is open")
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(UITestWait.until { !pick.exists }, "Esc closes the menu")
         XCTAssertTrue(bar(app, "count").exists, "closing the menu keeps the selection")
@@ -184,17 +184,17 @@ final class SelectionBarIconsUITests: XCTestCase {
     private func stepPickersOpen(_ app: XCUIApplication) {
         let search = app.descendants(matching: .any).matching(identifier: "labelPicker.search").firstMatch
         tap(app, "moveTo")
-        XCTAssertTrue(search.waitForExistence(timeout: 5), "Move to opens the picker")
+        XCTAssertTrue(search.appears(timeout: 5), "Move to opens the picker")
         XCTAssertEqual(search.placeholderValue, "Move 2 conversations to…", "for both checked rows")
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(UITestWait.until { !search.exists }, "Esc closes the picker")
         XCTAssertEqual((bar(app, "count").value as? String) ?? bar(app, "count").label, "2 selected")
 
         tap(app, "labelAs")
-        XCTAssertTrue(search.waitForExistence(timeout: 5), "Label as opens the picker")
+        XCTAssertTrue(search.appears(timeout: 5), "Label as opens the picker")
         XCTAssertEqual(search.placeholderValue, "Label 2 conversations…", "for both checked rows")
         let travel = app.descendants(matching: .any).matching(identifier: "labelPicker.row.Travel").firstMatch
-        XCTAssertTrue(travel.waitForExistence(timeout: 5))
+        XCTAssertTrue(travel.appears(timeout: 5))
         XCTAssertEqual(travel.value as? String, "off", "neither row has Travel")
         travel.click()
         XCTAssertTrue(UITestWait.until { (travel.value as? String) == "on" },
@@ -250,14 +250,14 @@ final class SelectionBarIconsUITests: XCTestCase {
         app.typeKey("a", modifierFlags: [])
         check(app, "t3")
         check(app, "t4")
-        XCTAssertTrue(bar(app, "moveToInbox").waitForExistence(timeout: 5), "archived rows: Move to inbox")
+        XCTAssertTrue(bar(app, "moveToInbox").appears(timeout: 5), "archived rows: Move to inbox")
         XCTAssertFalse(bar(app, "archive").exists)
         XCTAssertEqual(bar(app, "moveToInbox").label, "Move to inbox")
         tap(app, "moveToInbox")
         XCTAssertTrue(UITestWait.until { !bar(app, "count").exists }, "the move clears the selection")
         for id in ["t3", "t4"] {
             row(app, id).hover()
-            XCTAssertTrue(rowButton(app, id, "rowAction.archive").waitForExistence(timeout: 5),
+            XCTAssertTrue(rowButton(app, id, "rowAction.archive").appears(timeout: 5),
                           "\(id) is back in the Inbox: its row offers Archive")
         }
     }

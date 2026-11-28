@@ -22,7 +22,7 @@ final class ThreadMessageRowsUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -62,10 +62,10 @@ final class ThreadMessageRowsUITests: XCTestCase {
     private func openConversation(_ app: XCUIApplication) {
         let row = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t2").firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(row.appears(timeout: 10))
         row.click()
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
-        XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        XCTAssertTrue(subject.appears(timeout: 5))
         _ = settled("messageRowFrame", in: app) { $0.count == 4 }
         // The pane anchors the newest message at its top; bring the older
         // rows into view.
@@ -103,7 +103,7 @@ final class ThreadMessageRowsUITests: XCTestCase {
         showList(app)
         let other = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t1").firstMatch
-        XCTAssertTrue(other.waitForExistence(timeout: 10))
+        XCTAssertTrue(other.appears(timeout: 10))
         other.click()
         _ = settled("messageRowFrame", in: app) { $0.count != 4 }
         showList(app)
@@ -123,7 +123,7 @@ final class ThreadMessageRowsUITests: XCTestCase {
     private func stepNewestRowOpensUnclippedAtThePaneTop(_ app: XCUIApplication) {
         let row = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t2").firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(row.appears(timeout: 10))
         row.click()
         let rows = settled("messageRowFrame", in: app) { $0.count == 4 }
         guard rows.count == 4 else { return }

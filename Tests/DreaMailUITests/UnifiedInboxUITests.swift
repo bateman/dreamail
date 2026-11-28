@@ -22,7 +22,7 @@ final class UnifiedInboxUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -45,12 +45,12 @@ final class UnifiedInboxUITests: XCTestCase {
     private func flipSetting(_ app: XCUIApplication) {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         let pane = element(settings, "settings.pane.appearance")
-        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        XCTAssertTrue(pane.appears(timeout: 5))
         pane.click()
         let toggle = element(settings, "settings.showUnifiedInbox")
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.appears(timeout: 5))
         toggle.click()
         app.typeKey("w", modifierFlags: .command)
         XCTAssertTrue(waitUntil { !settings.exists })
@@ -60,18 +60,18 @@ final class UnifiedInboxUITests: XCTestCase {
         let app = launch(unified: "YES")
         let all = element(app, "accountRail.all")
         let a = element(app, first), b = element(app, second)
-        XCTAssertTrue(all.waitForExistence(timeout: 10), "on by default: the button is in the rail")
+        XCTAssertTrue(all.appears(timeout: 10), "on by default: the button is in the rail")
         XCTAssertTrue(a.exists && b.exists)
         let allOn = all.frame, aOn = a.frame, bOn = b.frame
         XCTAssertTrue(all.isSelected, "the unified view is the one on screen")
-        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").appears(timeout: 10))
 
         // Off while the unified view is on screen: the same view, one account.
         flipSetting(app)
         XCTAssertTrue(waitUntil { !all.exists }, "the button leaves the rail")
         XCTAssertTrue(waitUntil { a.isSelected && !b.isSelected },
                       "the first account in rail order is on screen instead")
-        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10),
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").appears(timeout: 10),
                       "its inbox is listed")
         // Geometry: no empty slot where the button was; same size and column.
         XCTAssertEqual(a.frame.minY, allOn.minY, accuracy: 1, "the first avatar takes the button's slot")
@@ -94,7 +94,7 @@ final class UnifiedInboxUITests: XCTestCase {
 
         // On again: the button returns, avatars are where they were.
         flipSetting(app)
-        XCTAssertTrue(all.waitForExistence(timeout: 5), "the button is back")
+        XCTAssertTrue(all.appears(timeout: 5), "the button is back")
         XCTAssertEqual(all.frame.minY, allOn.minY, accuracy: 1)
         XCTAssertEqual(a.frame.minY, aOn.minY, accuracy: 1)
         XCTAssertEqual(b.frame.minY, bOn.minY, accuracy: 1)
@@ -105,7 +105,7 @@ final class UnifiedInboxUITests: XCTestCase {
 
     func testSettingPersistsAndAppliesAtLaunch() {
         var app = launch(unified: "YES")
-        XCTAssertTrue(element(app, "accountRail.all").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "accountRail.all").appears(timeout: 10))
         flipSetting(app)
         XCTAssertTrue(waitUntil { !self.element(app, "accountRail.all").exists })
         app.terminate()
@@ -113,13 +113,13 @@ final class UnifiedInboxUITests: XCTestCase {
         // Relaunch with no argument: the stored "off" decides. The view at
         // launch is the first account's, not the unified one.
         app = launch()
-        XCTAssertTrue(element(app, first).waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, first).appears(timeout: 10))
         XCTAssertFalse(element(app, "accountRail.all").exists, "still off after a relaunch")
         XCTAssertTrue(waitUntil { self.element(app, self.first).isSelected },
                       "launches on the first account")
 
         // Put the default back for the other tests.
         flipSetting(app)
-        XCTAssertTrue(element(app, "accountRail.all").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "accountRail.all").appears(timeout: 5))
     }
 }

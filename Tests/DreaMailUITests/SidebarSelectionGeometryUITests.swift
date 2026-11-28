@@ -91,13 +91,13 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
 
         let main = app.windows.matching(
             NSPredicate(format: "NOT (title CONTAINS 'Settings')")).firstMatch
-        XCTAssertTrue(main.waitForExistence(timeout: 10))
+        XCTAssertTrue(main.appears(timeout: 10))
         app.activate()
 
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         let inbox = main.descendants(matching: .any)
             .matching(identifier: "sidebar.inbox").firstMatch
-        XCTAssertTrue(inbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(inbox.appears(timeout: 5))
         inbox.click()
         print("SidebarSelectionGeometry: macOS \(ProcessInfo.processInfo.operatingSystemVersionString), "
               + "window \(main.frame), outlines \(main.outlines.allElementsBoundByIndex.map(\.frame)), "
@@ -109,7 +109,7 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
               + "add label \(main.descendants(matching: .any).matching(identifier: "sidebar.labels.add").allElementsBoundByIndex.map(\.frame))")
         let starred = main.descendants(matching: .any)
             .matching(identifier: "sidebar.starred").firstMatch
-        XCTAssertTrue(starred.waitForExistence(timeout: 5))
+        XCTAssertTrue(starred.appears(timeout: 5))
         // One row pitch: the band must fill it, with no gap between the areas
         // of two adjacent rows.
         let pitch = Double(starred.frame.minY - inbox.frame.minY)
@@ -117,14 +117,14 @@ final class SidebarSelectionGeometryUITests: XCTestCase {
 
         let thread = main.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t3").firstMatch
-        XCTAssertTrue(thread.waitForExistence(timeout: 5))
+        XCTAssertTrue(thread.appears(timeout: 5))
         thread.click()
         let unfocused = try measure(inbox: inbox, window: main, "focus in the thread list")
 
         let about = app.menuItems["About DreaMail"]
-        XCTAssertTrue(about.waitForExistence(timeout: 5))
+        XCTAssertTrue(about.appears(timeout: 5))
         about.click()
-        XCTAssertTrue(app.dialogs.firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(app.dialogs.firstMatch.appears(timeout: 5),
                       "the About panel should open")
         let inactive = try measure(inbox: inbox, window: main, "inactive window")
 

@@ -16,7 +16,7 @@ final class SidebarIconStripUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         return app
     }
@@ -37,7 +37,7 @@ final class SidebarIconStripUITests: XCTestCase {
     /// One launch: every step starts and ends with the sidebar collapsed.
     func testIconStrip() {
         let app = launch()
-        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").appears(timeout: 10))
         // Collapsed whatever an earlier suite left.
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
         XCTContext.runActivity(named: "The strip shows icons only, aligned with the band") { _ in
@@ -54,7 +54,7 @@ final class SidebarIconStripUITests: XCTestCase {
 
     private func stepStripShowsIconsAlignedWithTheBand(_ app: XCUIApplication) {
         let strip = element(app, "sidebarStrip")
-        XCTAssertTrue(strip.waitForExistence(timeout: 5), "the collapsed sidebar is the icon strip")
+        XCTAssertTrue(strip.appears(timeout: 5), "the collapsed sidebar is the icon strip")
         // Gmail's order (the default), top to bottom.
         var lastY = -CGFloat.infinity
         for id in ["inbox", "starred", "snoozed", "important", "sent", "drafts",
@@ -85,7 +85,7 @@ final class SidebarIconStripUITests: XCTestCase {
 
         let window = app.windows.firstMatch
         let band = element(app, "accountRail.topBand")
-        XCTAssertTrue(band.waitForExistence(timeout: 5))
+        XCTAssertTrue(band.appears(timeout: 5))
         XCTAssertTrue(waitUntil { abs(band.frame.maxX - strip.frame.maxX) <= 1 },
                       "strip and band end together (\(strip.frame), band \(band.frame))")
         XCTAssertEqual(strip.frame.minX - window.frame.minX, 64, accuracy: 1,
@@ -104,16 +104,16 @@ final class SidebarIconStripUITests: XCTestCase {
 
     private func stepClickingAnIconOpensTheView(_ app: XCUIApplication) {
         let unstarred = element(app, "threadRow.you@example.com:t3")
-        XCTAssertTrue(unstarred.waitForExistence(timeout: 5))
+        XCTAssertTrue(unstarred.appears(timeout: 5))
         element(app, "sidebarStrip.starred").click()
         XCTAssertTrue(waitUntil { !unstarred.exists }, "Starred leaves the unstarred thread")
-        XCTAssertTrue(element(app, "threadRow.you@example.com:t1").waitForExistence(timeout: 5),
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t1").appears(timeout: 5),
                       "Starred lists the starred thread")
         XCTAssertTrue(waitUntil { self.element(app, "sidebarStrip.starred").isSelected },
                       "the Starred icon is now selected")
         XCTAssertTrue(element(app, "sidebarStrip").exists, "the sidebar stays collapsed")
         element(app, "sidebarStrip.inbox").click()
-        XCTAssertTrue(unstarred.waitForExistence(timeout: 5), "back to the inbox")
+        XCTAssertTrue(unstarred.appears(timeout: 5), "back to the inbox")
     }
 
     private func stepMoreShowsAndHidesItsIcons(_ app: XCUIApplication) {
@@ -124,14 +124,14 @@ final class SidebarIconStripUITests: XCTestCase {
         if spam.exists { more.click() }
         XCTAssertTrue(waitUntil { !spam.exists }, "a closed More hides the icons under it")
         more.click()
-        XCTAssertTrue(spam.waitForExistence(timeout: 5), "an open More lists Spam")
+        XCTAssertTrue(spam.appears(timeout: 5), "an open More lists Spam")
         XCTAssertGreaterThan(spam.frame.minY, more.frame.maxY - 1, "below More")
         // The full sidebar shows the same state.
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(element(app, "sidebar.spam").waitForExistence(timeout: 5),
+        XCTAssertTrue(element(app, "sidebar.spam").appears(timeout: 5),
                       "the full sidebar shares the open More")
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "sidebarStrip").appears(timeout: 5))
         more.click()
         XCTAssertTrue(waitUntil { !spam.exists }, "closing More hides Spam again")
     }
@@ -139,7 +139,7 @@ final class SidebarIconStripUITests: XCTestCase {
     private func stepSearchFocusesTheTopBarFieldAndKeepsTheStrip(_ app: XCUIApplication) {
         app.typeKey("/", modifierFlags: [])
         let field = element(app, "listSearchBox")
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "the field is in the list's top bar")
+        XCTAssertTrue(field.appears(timeout: 5), "the field is in the list's top bar")
         let text = app.textFields.matching(NSPredicate(format: "placeholderValue == 'Search'")).firstMatch
         XCTAssertTrue(waitUntil { (text.value(forKey: "hasKeyboardFocus") as? Bool) ?? false },
                       "the search field has the focus")
@@ -158,7 +158,7 @@ final class SidebarIconStripUITests: XCTestCase {
         let band = element(app, "accountRail.topBand")
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         let compose = element(app, "composeButton")
-        XCTAssertTrue(compose.waitForExistence(timeout: 5))
+        XCTAssertTrue(compose.appears(timeout: 5))
         XCTAssertTrue(waitUntil { band.frame.width > 200 }, "the band runs over the full sidebar")
         // Settled width of the full sidebar (the band follows its edge).
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
@@ -166,14 +166,14 @@ final class SidebarIconStripUITests: XCTestCase {
         XCTAssertFalse(element(app, "sidebarStrip").exists, "no strip next to the full sidebar")
 
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5), "collapsed to the strip")
+        XCTAssertTrue(element(app, "sidebarStrip").appears(timeout: 5), "collapsed to the strip")
         XCTAssertTrue(waitUntil { abs(band.frame.width - 104) < 1 }, "band back to rail + strip")
 
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(compose.waitForExistence(timeout: 5))
+        XCTAssertTrue(compose.appears(timeout: 5))
         XCTAssertTrue(waitUntil { abs(band.frame.width - fullWidth) <= 1 },
                       "the full sidebar comes back at its width (\(band.frame.width) vs \(fullWidth))")
         app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
-        XCTAssertTrue(element(app, "sidebarStrip").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "sidebarStrip").appears(timeout: 5))
     }
 }

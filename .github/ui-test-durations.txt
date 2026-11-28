@@ -4,31 +4,42 @@
 # entry. Update the numbers when the shards drift apart, from a manual run's
 # logs ("Test Case ... passed (N seconds)", summed per class).
 #
-# Slowest of three macos-26 runs on 2026-11-27 (45937364434, 45959955435 on
-# main; 45968097999 on a pull request branch).
-AccentColorUITests 97
-AccountLabelColorUITests 41
-AccountRailUITests 44
+# Manual run 46066576429 on main, 2026-11-27 (64 tests, 1849 s), before the
+# UI tests stopped paying XCTest's first-poll delay on every wait: absolute
+# times are now lower, the proportions are what the split uses.
+AccentColorUITests 73
+AccountLabelColorUITests 43
+AccountRailUITests 35
 AccountUnreadBadgeUITests 10
-ComposeTabFocusUITests 62
-ConversationKeysUITests 27
-DreaMailSmokeTests 46
-GoToMailboxUITests 32
-LabelOrganizerOrderUITests 61
-LabelPickerUITests 69
-OpenPGPSettingsUITests 8
-SettingsWindowUITests 103
-SidebarIconStripUITests 34
-SidebarIconTintUITests 55
-SidebarLabelMenuUITests 223
-SidebarLabelTreeUITests 96
-SidebarNavUITests 18
-SidebarSelectionGeometryUITests 74
-SidebarSheetEscapeUITests 27
-SignatureMenuUITests 104
-SingleMessageReadingPaneUITests 22
-SplitComposeUITests 21
-ThreadListSectionSpacingUITests 132
-ThreadMessageRowsUITests 82
-ThreadRowHoverActionsUITests 37
-WindowFrameRestoreUITests 15
+CategoryRowsUITests 46
+ComposeTabFocusUITests 49
+ConversationKeysUITests 25
+DeletedMessagesInConversationUITests 40
+DreaMailSmokeTests 33
+GoToMailboxUITests 29
+LabelOrganizerOrderUITests 60
+LabelPickerUITests 61
+ListSearchFieldUITests 129  # estimate: 113 s measured for 7 tests, plus one test added since (#126)
+MessageHeaderActionsUITests 91
+MoveToInboxUITests 53
+OpenPGPSettingsUITests 9
+SelectionBarIconsUITests 82
+SettingsWindowUITests 95
+SidebarIconStripUITests 33
+SidebarIconTintUITests 44
+SidebarLabelMenuUITests 211
+SidebarLabelTreeUITests 71
+SidebarNavUITests 16
+SidebarSelectionGeometryUITests 59
+SidebarSheetEscapeUITests 19
+SidebarSingleSelectionUITests 28
+SignatureMenuUITests 73
+SingleMessageReadingPaneUITests 16
+SplitComposeUITests 17
+ThreadListSectionSpacingUITests 99
+ThreadMessageRowsUITests 68
+ThreadRowHoverActionsUITests 32
+TopBandSeamUITests 35
+TrashUndoUITests 24
+UnifiedInboxUITests 45
+WindowFrameRestoreUITests 12

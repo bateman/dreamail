@@ -224,8 +224,9 @@ gen: icon
 # CI builds with WARNINGS_AS_ERRORS=1: a compiler warning in DreaMail's own
 # targets fails the build (project.yml routes it to
 # SWIFT/GCC_TREAT_WARNINGS_AS_ERRORS; Swift packages are not affected).
-# `build` and `test` take it, and so does whatever runs them (run, demo, the
-# pre-commit hook, release's `test` prerequisite) when it is set. The Release
+# `build`, `test` and `ui-test` take it, and so does whatever runs them (run,
+# demo, the pre-commit hook, release's `test` prerequisite) when it is set.
+# CI's UI job sets it too: its restored build cache was built with it. The Release
 # builds of install and release never take it. Note that `make release`
 # waits for a full CI run (`make ui-test-ci`), and that run fails on any
 # warning, e.g. a new deprecation after an Xcode update on the runner.
@@ -262,8 +263,8 @@ ui-test-ci:
 # takes focus, and injects keyboard/mouse events into the live desktop, so a
 # local run hijacks the machine for its duration. GitHub Actions runs unit
 # tests + build on every pull_request and push to main. The UI suite takes
-# about 25 minutes of tests (three parallel CI jobs of about eight minutes
-# plus a build of about four each), so it runs only for a release: `make release` starts it
+# about 20 minutes of tests (two parallel CI jobs, each on a restored
+# build cache), so it runs only for a release: `make release` starts it
 # on GitHub and waits (`make ui-test-ci`), and it runs again when the release
 # is published. Locally the gate is `make test`. To run the UI suite here
 # anyway (and surrender the desktop while it runs):
@@ -274,7 +275,9 @@ ui-test-ci:
 # splits the test classes by measured duration (.github/ui-test-durations.txt);
 # a new class gets a shard with no list to edit, and the last shard runs
 # every class the others do not, so none falls out of all of them.
-# `python3 .github/scripts/ui-shards.py show 3` prints the split.
+# `python3 .github/scripts/ui-shards.py show 2` prints the split.
+# CI passes WARNINGS_AS_ERRORS=1 as for `build`, so the UI job reuses the
+# unit-test job's DerivedData cache instead of recompiling the app.
 # No UI_SHARD: the whole suite.
 ui-test: gen
 	@if [ "$$CI" != "true" ] && [ "$(UI_TEST_LOCAL)" != "1" ]; then \
@@ -296,7 +299,7 @@ ui-test: gen
 	fi; \
 	set -x; \
 	xcodebuild test -project $(PROJECT) -scheme DreaMailUITests \
-		-destination '$(DESTINATION)' -derivedDataPath $(DD) $$flags
+		-destination '$(DESTINATION)' -derivedDataPath $(DD) $(WARNING_FLAGS) $$flags
 
 # The throwaway test app (Debug identity, isolated data).
 build: gen

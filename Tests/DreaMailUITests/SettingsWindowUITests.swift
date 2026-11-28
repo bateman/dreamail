@@ -26,7 +26,7 @@ final class SettingsWindowUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         // The sidebar starts collapsed; → reveals it (see SidebarNavUITests).
         if sidebar { app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: []) }
@@ -41,7 +41,7 @@ final class SettingsWindowUITests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         return settings
     }
 
@@ -64,7 +64,7 @@ final class SettingsWindowUITests: XCTestCase {
         // Another pane, close, reopen: still "Settings" (a pane change or a
         // reopen must not bring the system's title back).
         let pane = element("settings.pane.appearance", in: settings)
-        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        XCTAssertTrue(pane.appears(timeout: 5))
         pane.click()
         XCTAssertEqual(settings.title, "Settings")
         app.typeKey("w", modifierFlags: .command)
@@ -82,11 +82,11 @@ final class SettingsWindowUITests: XCTestCase {
     private func pickSidebarDensity(_ app: XCUIApplication, _ title: String) {
         let settings = openSettings(app)
         let pane = element("settings.pane.appearance", in: settings)
-        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        XCTAssertTrue(pane.appears(timeout: 5))
         pane.click()
         let choice = settings.descendants(matching: .any).matching(identifier: "settings.sidebarDensity")
             .firstMatch.radioButtons[title]
-        XCTAssertTrue(choice.waitForExistence(timeout: 5), "Sidebar density has a \(title) choice")
+        XCTAssertTrue(choice.appears(timeout: 5), "Sidebar density has a \(title) choice")
         choice.click()
         app.typeKey("w", modifierFlags: .command)
         XCTAssertTrue(settings.waitForNonExistence(timeout: 5), "Settings closes")
@@ -143,7 +143,7 @@ final class SettingsWindowUITests: XCTestCase {
         let labelUpper = "sidebar.label.\(account).Label_work"
         let labelLower = "sidebar.label.\(account).Label_research"
         for id in [systemUpper, systemLower, labelUpper, labelLower] {
-            XCTAssertTrue(element(id, in: app).waitForExistence(timeout: 10), id)
+            XCTAssertTrue(element(id, in: app).appears(timeout: 10), id)
         }
         // Fonts do not change in Compact: the text of a system row, a label
         // row and "Add view" keeps its height. (Icons and tags are not
@@ -190,7 +190,7 @@ final class SettingsWindowUITests: XCTestCase {
         }
         for use in ["new", "reply"] {
             for email in [account, alias] {
-                XCTAssertTrue(picker(use, email).waitForExistence(timeout: 10), "\(use) \(email)")
+                XCTAssertTrue(picker(use, email).appears(timeout: 10), "\(use) \(email)")
             }
         }
         for use in ["new", "reply"] {
@@ -214,7 +214,7 @@ final class SettingsWindowUITests: XCTestCase {
 
         let rows = settings.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'settings.pane.'"))
-        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(rows.firstMatch.appears(timeout: 10))
         var ids = [String]()
         for i in 0..<rows.count {
             let id = rows.element(boundBy: i).identifier
@@ -224,10 +224,10 @@ final class SettingsWindowUITests: XCTestCase {
 
         for id in ids {
             let row = element(id, in: settings)
-            XCTAssertTrue(row.waitForExistence(timeout: 5), id)
+            XCTAssertTrue(row.appears(timeout: 5), id)
             row.click()
             if id == "settings.pane.signatures" {
-                XCTAssertTrue(element("settings.signatures.new", in: settings).waitForExistence(timeout: 10))
+                XCTAssertTrue(element("settings.signatures.new", in: settings).appears(timeout: 10))
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
 

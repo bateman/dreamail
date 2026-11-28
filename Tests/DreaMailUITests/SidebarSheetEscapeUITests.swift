@@ -41,28 +41,28 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         // Sidebar starts collapsed; → reveals it (see SidebarNavUITests).
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
 
         // A conversation is selected: "e" or "#" would archive or delete it.
         let row = element("threadRow.\(account):t3", in: app)
-        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(row.appears(timeout: 10))
         row.click()
         XCTAssertTrue(app.staticTexts.matching(identifier: "threadSubject").firstMatch
-            .waitForExistence(timeout: 5), "the conversation is open")
+            .appears(timeout: 5), "the conversation is open")
 
         let before = openSubject(app)
         XCTAssertFalse(before.isEmpty)
         let add = element("sidebar.labels.add", in: app)
-        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertTrue(add.appears(timeout: 5))
         // The identifier lands on the whole "Labels" header row (UI test
         // log, November 2026), whose centre is blank: click the "+" at its
         // trailing end.
         add.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.5)).click()
         let field = element("newLabel.name", in: app)
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "the + opens the new label sheet")
+        XCTAssertTrue(field.appears(timeout: 5), "the + opens the new label sheet")
         field.click()
         // Shortcut keys, and Escape's own ladder (reading pane, selection).
         field.typeText("e#j")
@@ -79,14 +79,14 @@ final class SidebarSheetEscapeUITests: XCTestCase {
         // Organize Labels has only "Done" as its default action: Escape
         // closes it too, and the mailbox behind it is left alone.
         let research = element("sidebar.label.\(account).Label_research", in: app)
-        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        XCTAssertTrue(research.appears(timeout: 5))
         research.rightClick()
         let organize = app.menuItems.matching(
             NSPredicate(format: "identifier == %@ OR title == %@", "labelMenu.organize", "Organize Labels…")).firstMatch
-        XCTAssertTrue(organize.waitForExistence(timeout: 5), "the label menu has Organize Labels")
+        XCTAssertTrue(organize.appears(timeout: 5), "the label menu has Organize Labels")
         organize.click()
         let title = app.staticTexts["Organize Labels"]
-        XCTAssertTrue(title.waitForExistence(timeout: 5), "Organize Labels is up")
+        XCTAssertTrue(title.appears(timeout: 5), "Organize Labels is up")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         XCTAssertTrue(waitForAbsence(title), "Escape closes Organize Labels")
         XCTAssertEqual(openSubject(app), before, "Organize Labels left the conversation alone")

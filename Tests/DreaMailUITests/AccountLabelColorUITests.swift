@@ -23,14 +23,14 @@ final class AccountLabelColorUITests: XCTestCase {
         app.launch()
         addTeardownBlock { app.terminate() }
 
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
-        XCTAssertTrue(element(app, "threadRow.\(account):t3").waitForExistence(timeout: 10),
+        XCTAssertTrue(element(app, "threadRow.\(account):t3").appears(timeout: 10),
                       "demo inbox should load")
         // Choose the account in the rail (always visible): its tooltip and
         // VoiceOver name is the label, not the sender name.
         let avatar = element(app, "accountRail.account.\(account)")
-        XCTAssertTrue(avatar.waitForExistence(timeout: 5), "account avatar in the rail")
+        XCTAssertTrue(avatar.appears(timeout: 5), "account avatar in the rail")
         avatar.click()
         XCTAssertTrue(avatar.label.contains("Personal"),
                       "the avatar's name is the label: \(avatar.label)")
@@ -39,7 +39,7 @@ final class AccountLabelColorUITests: XCTestCase {
 
         openEditor(app)
         let picker = element(app, "accountLabelColorPicker.\(account)")
-        XCTAssertTrue(picker.waitForExistence(timeout: 5), "the editor has a color picker")
+        XCTAssertTrue(picker.appears(timeout: 5), "the editor has a color picker")
         XCTAssertTrue(element(app, "accountLabelColorPreview.\(account)").exists,
                       "the color row previews the ringed avatar")
         XCTAssertTrue(picker.isEnabled)
@@ -55,7 +55,7 @@ final class AccountLabelColorUITests: XCTestCase {
         XCTAssertTrue(picker.waitForNonExistence(timeout: 5), "Save closes the editor")
 
         openEditor(app)
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(picker.appears(timeout: 5))
         XCTAssertTrue(defaultButton.isEnabled, "the chosen color was saved")
         defaultButton.click()
         XCTAssertFalse(defaultButton.isEnabled)
@@ -63,7 +63,7 @@ final class AccountLabelColorUITests: XCTestCase {
         XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
 
         openEditor(app)
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(picker.appears(timeout: 5))
         XCTAssertFalse(defaultButton.isEnabled, "the reset to default was saved")
         // Without "Send as" the color still shows (as the ring), so the
         // color row stays enabled. Cancel keeps the demo's sender name.
@@ -87,10 +87,10 @@ final class AccountLabelColorUITests: XCTestCase {
     /// Opens "Edit Account Labels…" from the account avatar's context menu.
     private func openEditor(_ app: XCUIApplication) {
         let avatar = element(app, "accountRail.account.\(account)")
-        XCTAssertTrue(avatar.waitForExistence(timeout: 5), "account avatar in the rail")
+        XCTAssertTrue(avatar.appears(timeout: 5), "account avatar in the rail")
         avatar.rightClick()
         let edit = app.menuItems["Edit Account Labels…"]
-        XCTAssertTrue(edit.waitForExistence(timeout: 5), "context menu offers Edit Account Labels…")
+        XCTAssertTrue(edit.appears(timeout: 5), "context menu offers Edit Account Labels…")
         edit.click()
     }
 }

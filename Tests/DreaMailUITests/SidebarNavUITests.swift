@@ -26,13 +26,13 @@ final class SidebarNavUITests: XCTestCase {
         app.launch()
         addTeardownBlock { app.terminate() }
 
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
 
         // Inbox has unstarred demo mail; Starred does not include t3.
         let unstarred = app.descendants(matching: .any)
             .matching(identifier: "threadRow.you@example.com:t3").firstMatch
-        XCTAssertTrue(unstarred.waitForExistence(timeout: 10),
+        XCTAssertTrue(unstarred.appears(timeout: 10),
                       "demo inbox should list unstarred CI thread")
 
         // Sidebar starts collapsed; → reveals it (and compose lives there).
@@ -40,7 +40,7 @@ final class SidebarNavUITests: XCTestCase {
 
         let starred = app.descendants(matching: .any)
             .matching(identifier: "sidebar.starred").firstMatch
-        XCTAssertTrue(starred.waitForExistence(timeout: 5),
+        XCTAssertTrue(starred.appears(timeout: 5),
                       "sidebar Starred row must appear after → reveals the sidebar")
         starred.click()
 
@@ -56,7 +56,7 @@ final class SidebarNavUITests: XCTestCase {
         // On failure, embed the app's breadcrumb log and the accessibility
         // tree — this only runs on CI, where there is no way to see the
         // window or attach a debugger.
-        if !starredThread.waitForExistence(timeout: 5) {
+        if !starredThread.appears(timeout: 5) {
             XCTFail("""
                 Starred mailbox should still show the starred demo thread.
                 App breadcrumbs (selectThread/openDetail call stacks):
@@ -69,18 +69,18 @@ final class SidebarNavUITests: XCTestCase {
         // Compose open must not block further sidebar navigation (gutter
         // hit-testing under pin-to-pane / empty-pane fill when present).
         let compose = app.buttons.matching(identifier: "composeButton").firstMatch
-        XCTAssertTrue(compose.waitForExistence(timeout: 5))
+        XCTAssertTrue(compose.appears(timeout: 5))
         compose.click()
         XCTAssertTrue(app.descendants(matching: .any)
             .matching(identifier: "composeCard").firstMatch
-            .waitForExistence(timeout: 5))
+            .appears(timeout: 5))
 
         let inbox = app.descendants(matching: .any)
             .matching(identifier: "sidebar.inbox").firstMatch
-        XCTAssertTrue(inbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(inbox.appears(timeout: 5))
         inbox.click()
 
-        XCTAssertTrue(unstarred.waitForExistence(timeout: 5),
+        XCTAssertTrue(unstarred.appears(timeout: 5),
                       "sidebar Inbox click must work while compose is open")
     }
 

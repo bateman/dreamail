@@ -21,7 +21,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
         app.terminate()
         app.launch()
         addTeardownBlock { app.terminate() }
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
         // Sidebar starts collapsed; → reveals it (see SidebarNavUITests).
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
@@ -90,10 +90,10 @@ final class SidebarLabelMenuUITests: XCTestCase {
     func testMenuFromDotsAndRightClickAndDotsDoNotReopenTheLabel() {
         let app = launch()
         let research = label("Label_research", in: app)
-        XCTAssertTrue(research.waitForExistence(timeout: 10))
+        XCTAssertTrue(research.appears(timeout: 10))
         research.hover()
         let dots = element("sidebar.label.menu.\(account).Label_research", in: app)
-        XCTAssertTrue(dots.waitForExistence(timeout: 5), "hovering a label shows its ⋮")
+        XCTAssertTrue(dots.appears(timeout: 5), "hovering a label shows its ⋮")
         clickDots(dots, in: research, app: app)
         let items: [(String, String)] = [
             ("labelMenu.color", "Label color"),
@@ -106,13 +106,13 @@ final class SidebarLabelMenuUITests: XCTestCase {
             ("labelMenu.organize", "Organize Labels…"),
         ]
         for (id, title) in items {
-            XCTAssertTrue(menuItem(id, title, in: app).waitForExistence(timeout: 5),
+            XCTAssertTrue(menuItem(id, title, in: app).appears(timeout: 5),
                           "\(title) must be in the ⋮ menu\n\(app.debugDescription)")
         }
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         research.rightClick()
         for (id, title) in items {
-            XCTAssertTrue(menuItem(id, title, in: app).waitForExistence(timeout: 5),
+            XCTAssertTrue(menuItem(id, title, in: app).appears(timeout: 5),
                           "\(title) must be in the context menu")
         }
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
@@ -123,22 +123,22 @@ final class SidebarLabelMenuUITests: XCTestCase {
         // budget.)
         research.click()
         let row = element("threadRow.\(account):t2", in: app)
-        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue(row.appears(timeout: 5))
         row.click()
         let subject = app.staticTexts.matching(identifier: "threadSubject").firstMatch
-        XCTAssertTrue(subject.waitForExistence(timeout: 5), "the conversation is open")
+        XCTAssertTrue(subject.appears(timeout: 5), "the conversation is open")
 
         research.hover()
-        XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label shows its ⋮")
+        XCTAssertTrue(dots.appears(timeout: 5), "the open label shows its ⋮")
         clickDots(dots, in: research, app: app)
-        XCTAssertTrue(menuItem("labelMenu.edit", "Edit", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(menuItem("labelMenu.edit", "Edit", in: app).appears(timeout: 5))
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         XCTAssertTrue(subject.exists, "the ⋮ click did not reopen the label")
         // Gmail's "⋮" is vertical: its box is taller than wide (the old
         // horizontal ellipsis, drawn by AppKit, was wider than tall). Read
         // last, on the open label (which keeps its ⋮ without hover): reading
         // the frame before a click left the click "not hittable" in CI.
-        XCTAssertTrue(dots.waitForExistence(timeout: 5), "the open label keeps its ⋮")
+        XCTAssertTrue(dots.appears(timeout: 5), "the open label keeps its ⋮")
         XCTAssertGreaterThan(dots.frame.height, dots.frame.width, "the ⋮ is three dots stacked")
         // And no heavier than the sidebar's other glyphs: its box is not
         // taller than the row's title text plus a small margin.
@@ -152,19 +152,19 @@ final class SidebarLabelMenuUITests: XCTestCase {
         let app = launch()
         let vendors = label("Label_vendors", in: app)
         let aws = label("Label_vendors_aws", in: app)
-        XCTAssertTrue(vendors.waitForExistence(timeout: 10))
+        XCTAssertTrue(vendors.appears(timeout: 10))
         XCTAssertTrue(reveal(vendors, in: app), "Vendors can be scrolled to")
-        XCTAssertTrue(aws.waitForExistence(timeout: 5), "Vendors starts open")
+        XCTAssertTrue(aws.appears(timeout: 5), "Vendors starts open")
 
         vendors.rightClick()
         let color = menuItem("labelMenu.color", "Label color", in: app)
-        XCTAssertTrue(color.waitForExistence(timeout: 5))
+        XCTAssertTrue(color.appears(timeout: 5))
         color.hover()
         let choose = menuItem("labelMenu.color.choose", "Choose color…", in: app)
-        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        XCTAssertTrue(choose.appears(timeout: 5))
         choose.click()
         let swatch = element("labelColor.gmail.#fb4c2f", in: app)
-        XCTAssertTrue(swatch.waitForExistence(timeout: 5), "the sheet shows Gmail's palette")
+        XCTAssertTrue(swatch.appears(timeout: 5), "the sheet shows Gmail's palette")
         // The sheet hugs the palette: no empty half, Done close to its edge.
         let palette = element("labelColor.palette", in: app)
         let sheet = app.sheets.firstMatch
@@ -193,11 +193,11 @@ final class SidebarLabelMenuUITests: XCTestCase {
         XCTAssertTrue(reveal(vendors, in: app))
         vendors.rightClick()
         let remove = menuItem("labelMenu.remove", "Remove label", in: app)
-        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        XCTAssertTrue(remove.appears(timeout: 5))
         remove.click()
         let cancel = app.buttons.matching(NSPredicate(
             format: "identifier == %@ OR title == %@", "labelRemove.cancel", "Cancel")).firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "Remove asks for confirmation")
+        XCTAssertTrue(cancel.appears(timeout: 5), "Remove asks for confirmation")
         // Return presses the default button, Cancel.
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(waitForAbsence(cancel))
@@ -208,20 +208,20 @@ final class SidebarLabelMenuUITests: XCTestCase {
     func testHideInLabelListMovesTheLabelUnderMore() {
         let app = launch()
         let research = label("Label_research", in: app)
-        XCTAssertTrue(research.waitForExistence(timeout: 10))
+        XCTAssertTrue(research.appears(timeout: 10))
         let more = element("sidebar.labels.more.\(account)", in: app)
         XCTAssertFalse(more.exists, "every demo label is shown: no labels' More row")
 
         research.rightClick()
         let hide = menuItem("labelMenu.labelList.hide", "Hide", in: app)
-        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        XCTAssertTrue(hide.appears(timeout: 5))
         hide.click()
 
         XCTAssertTrue(waitForAbsence(research), "a hidden label leaves the list")
-        XCTAssertTrue(more.waitForExistence(timeout: 5), "and goes behind the labels' More row")
+        XCTAssertTrue(more.appears(timeout: 5), "and goes behind the labels' More row")
         XCTAssertTrue(reveal(more, in: app), "the labels' More row can be scrolled to")
         more.click()
-        XCTAssertTrue(research.waitForExistence(timeout: 5), "More shows it")
+        XCTAssertTrue(research.appears(timeout: 5), "More shows it")
         // Closed means closed: the open label goes too.
         research.click()
         XCTAssertTrue(reveal(more, in: app))
@@ -240,13 +240,13 @@ final class SidebarLabelMenuUITests: XCTestCase {
         let stripe = label("Label_vendors_stripe", in: app)
         let more = element("sidebar.labels.more.\(account)", in: app)
         XCTAssertTrue(reveal(vendors, in: app))
-        XCTAssertTrue(aws.waitForExistence(timeout: 5))
+        XCTAssertTrue(aws.appears(timeout: 5))
         XCTAssertTrue(stripe.exists)
         XCTAssertFalse(more.exists, "every demo label is shown: no labels' More row")
 
         stripe.rightClick()
         let hide = menuItem("labelMenu.labelList.hide", "Hide", in: app)
-        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        XCTAssertTrue(hide.appears(timeout: 5))
         hide.click()
         // Give a wrong removal time to show before asserting the row stays.
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
@@ -273,16 +273,16 @@ final class SidebarLabelMenuUITests: XCTestCase {
     func testColorSheetChecksNoSwatchForAnOffGridColor() {
         let app = launch()
         let work = label("Label_work", in: app)
-        XCTAssertTrue(work.waitForExistence(timeout: 10))
+        XCTAssertTrue(work.appears(timeout: 10))
         work.rightClick()
         let color = menuItem("labelMenu.color", "Label color", in: app)
-        XCTAssertTrue(color.waitForExistence(timeout: 5))
+        XCTAssertTrue(color.appears(timeout: 5))
         color.hover()
         let choose = menuItem("labelMenu.color.choose", "Choose color…", in: app)
-        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        XCTAssertTrue(choose.appears(timeout: 5))
         choose.click()
         let remove = element("labelColor.remove", in: app)
-        XCTAssertTrue(remove.waitForExistence(timeout: 5), "the sheet has Remove color")
+        XCTAssertTrue(remove.appears(timeout: 5), "the sheet has Remove color")
         let swatches = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'labelColor.gmail.'"))
         XCTAssertGreaterThan(swatches.count, 0, "the grid is there")
         for i in 0..<swatches.count {

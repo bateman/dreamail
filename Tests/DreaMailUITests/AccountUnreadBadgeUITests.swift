@@ -19,9 +19,9 @@ final class AccountUnreadBadgeUITests: XCTestCase {
         app.launch()
         addTeardownBlock { app.terminate() }
 
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.windows.firstMatch.appears(timeout: 10))
         app.activate()
-        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10),
+        XCTAssertTrue(element(app, "threadRow.you@example.com:t3").appears(timeout: 10),
                       "demo inbox should load")
         // The rail is always visible, also with the sidebar collapsed.
         let all = element(app, "accountRail.all")
@@ -29,7 +29,7 @@ final class AccountUnreadBadgeUITests: XCTestCase {
         // carries the badge as its value.
         XCTAssertFalse(all.exists, "no unified entry with a single account")
         let account = element(app, "accountRail.account.you@example.com")
-        XCTAssertTrue(account.waitForExistence(timeout: 5), "account avatar in the rail")
+        XCTAssertTrue(account.appears(timeout: 5), "account avatar in the rail")
         account.click()
         let badged = NSPredicate(format: "value MATCHES %@", "[0-9]+ unread")
         expectation(for: badged, evaluatedWith: account)

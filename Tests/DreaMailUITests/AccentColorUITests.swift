@@ -94,7 +94,7 @@ final class AccentColorUITests: XCTestCase {
 
         let main = app.windows.matching(
             NSPredicate(format: "NOT (title CONTAINS 'Settings')")).firstMatch
-        XCTAssertTrue(main.waitForExistence(timeout: 10))
+        XCTAssertTrue(main.appears(timeout: 10))
         app.activate()
         return (app, main)
     }
@@ -105,14 +105,14 @@ final class AccentColorUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         let inbox = main.descendants(matching: .any)
             .matching(identifier: "sidebar.inbox").firstMatch
-        XCTAssertTrue(inbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(inbox.appears(timeout: 5))
         inbox.click()
         return inbox
     }
 
     /// Back to the main window with the sidebar focused.
     private func refocus(_ inbox: XCUIElement, app: XCUIApplication, main: XCUIElement) throws {
-        XCTAssertTrue(main.waitForExistence(timeout: 5))
+        XCTAssertTrue(main.appears(timeout: 5))
         inbox.click()
     }
 
@@ -122,14 +122,14 @@ final class AccentColorUITests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(
             NSPredicate(format: "title CONTAINS 'Settings'")).firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.appears(timeout: 5))
         let pane = settings.descendants(matching: .any)
             .matching(identifier: "settings.pane.appearance").firstMatch
-        XCTAssertTrue(pane.waitForExistence(timeout: 5))
+        XCTAssertTrue(pane.appears(timeout: 5))
         pane.click()
         let id = swatch.map { "accentSwatch.\($0)" } ?? "accentColorDefault"
         let control = settings.descendants(matching: .any).matching(identifier: id).firstMatch
-        XCTAssertTrue(control.waitForExistence(timeout: 5), "\(id) in Settings → Appearance")
+        XCTAssertTrue(control.appears(timeout: 5), "\(id) in Settings → Appearance")
         if control.isEnabled { control.click() }
         let value = settings.descendants(matching: .any)
             .matching(identifier: "accentColorValue").firstMatch
@@ -165,7 +165,7 @@ final class AccentColorUITests: XCTestCase {
         // only on the selection.
         let starred = main.descendants(matching: .any)
             .matching(identifier: "sidebar.starred").firstMatch
-        XCTAssertTrue(starred.waitForExistence(timeout: 5))
+        XCTAssertTrue(starred.appears(timeout: 5))
         try assertRow({ Self.sidebarStrip(row: starred, window: main) }, in: main,
                       is: .grey, "sidebar, unselected row")
 
@@ -193,10 +193,10 @@ final class AccentColorUITests: XCTestCase {
 
         // Inactive window: the small, centred About panel takes key status.
         let about = app.menuItems["About DreaMail"]
-        XCTAssertTrue(about.waitForExistence(timeout: 5))
+        XCTAssertTrue(about.appears(timeout: 5))
         about.click()
         let panel = app.dialogs.firstMatch
-        XCTAssertTrue(panel.waitForExistence(timeout: 5), "the About panel should open")
+        XCTAssertTrue(panel.appears(timeout: 5), "the About panel should open")
         // The inactive check only needs the row's background, so the thread
         // strip is cut short of the panel (the wider account rail moves the
         // list towards the centred panel).
@@ -230,7 +230,7 @@ final class AccentColorUITests: XCTestCase {
                                  accent: Accent) throws -> () -> CGRect {
         let rows = window.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'threadRow.'"))
-        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(rows.firstMatch.appears(timeout: 10))
         var seen: [String] = []
         for attempt in 0..<4 {
             app.typeKey(XCUIKeyboardKey.tab.rawValue, modifierFlags: [])
