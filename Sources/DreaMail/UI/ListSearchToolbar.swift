@@ -24,16 +24,10 @@ struct ListSearchToolbar: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            // `.principal` + `.editor` role: the item sits in the column's title
-            // region, after the title, above the list column. `.navigation`
-            // pins to the window's leading edge on macOS 26 (over the sidebar),
-            // `.automatic` to the trailing end of the window when the list is
-            // the only column.
-            .toolbarRole(.editor)
             .toolbar {
                 // Shared glass hidden (macOS 26): the field is the one rounded
                 // box, not a box inside the system capsule.
-                ToolbarItem(placement: .principal) {
+                ToolbarItem(placement: .automatic) {
                     HStack(spacing: 8) {
                         ToolbarSearchField(
                             text: Bindable(store).searchText,
@@ -70,6 +64,13 @@ struct ListSearchToolbar: ViewModifier {
                     }
                 }
                 .pmHideSharedBackground()
+                // An `.automatic` item sits at the trailing end of its bar: with
+                // the list as the only column that is the window's far right.
+                // A flexible spacer after it keeps the field next to the title
+                // (macOS 26+; earlier systems keep the trailing end).
+                if #available(macOS 26.0, *) {
+                    ToolbarSpacer(.flexible, placement: .automatic)
+                }
             }
             // Command-K-style panel, floated over the top of the list column
             // under the field, at the column's leading edge (the field's
