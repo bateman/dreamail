@@ -690,8 +690,8 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     var gmailLabelId: String
     var name: String
     var type: String
-    /// The user's local color pick ("#RRGGBB") from the label organizer;
-    /// nil shows Gmail's own label color. Never written back to Gmail.
+    /// Unused since the label color sheet became Gmail-only: kept, not read
+    /// or written (shortcut: no migration).
     var color: String?
     var sortOrder: Int = LabelRow.unsorted
     /// Gmail's label color (`color.backgroundColor` / `color.textColor`),
@@ -743,7 +743,7 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     }
 
     /// Whether the label is drawn with a color from Gmail (pair or preset):
-    /// what enables "Remove color" and "No color on Gmail".
+    /// what enables "Remove color".
     var hasGmailColor: Bool { drawnGmailColors.isColored }
 }
 

@@ -228,6 +228,7 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertEqual(after[id("L1")]?.color, "#EB5757", "the stored value is kept")
         XCTAssertEqual(after[id("L3")]?.color, "#27AE60", "the stored value is kept")
         XCTAssertEqual(after[id("L5")]?.color, "#2D9CDB", "the look-alike is not touched")
+        XCTAssertEqual(after[id("L5")]?.displayColors, .none, "the look-alike is not recoloured")
     }
 
     /// "Remove color" on a parent: no color on the parent and its

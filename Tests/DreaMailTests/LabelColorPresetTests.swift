@@ -34,12 +34,10 @@ final class LabelColorPresetTests: XCTestCase {
                colorPreset: preset)
     }
 
-    private func row(_ colors: LabelColors = .none, preset: String? = nil, local: String? = nil,
-                     readInFull: Bool = false) -> LabelRow {
+    private func row(_ colors: LabelColors = .none, preset: String? = nil, local: String? = nil) -> LabelRow {
         LabelRow(id: "a:L", accountId: "a", gmailLabelId: "L", name: "n", type: "user",
                  color: local, gmailBackgroundColor: colors.background,
-                 gmailTextColor: colors.text, gmailColorPreset: preset,
-                 gmailColorReadInFull: readInFull)
+                 gmailTextColor: colors.text, gmailColorPreset: preset)
     }
 
     private func sync(_ q: DatabaseQueue, _ labels: [GLabel], readInFull: Set<String> = [],

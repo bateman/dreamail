@@ -27,7 +27,7 @@ extension Color {
     /// Sidebar background, a step warmer/lighter than the content.
     static let mailSidebar = Color(nsColor: NSColor.mailSidebar)
 
-    /// The label color palette offered in the organizer (name, hex).
+    /// The palette offered for account label colors (name, hex).
     /// Muted hues that read well as tinted pills in both themes.
     static let labelPalette: [(name: String, hex: String)] = [
         ("Red", "#EB5757"), ("Orange", "#F2994A"), ("Yellow", "#DFAB01"),
