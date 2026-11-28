@@ -3,7 +3,7 @@ import GRDB
 
 /// Changing a label's color on Gmail: the palette the API accepts, the
 /// labels.patch body, the optimistic write with its restore, no bounce from
-/// a sync, the Mac-only color's precedence, and system labels.
+/// a sync, the ignored Mac-only color, and system labels.
 final class GmailLabelColorEditTests: XCTestCase {
     private let account = "a@x.com"
     private var rowId: String { "\(account):Label_1" }
@@ -400,11 +400,11 @@ final class GmailLabelColorEditTests: XCTestCase {
         XCTAssertEqual(GmailClient.pathSegment("é"), "%C3%A9")
     }
 
-    // MARK: - Mac-only color precedence (DEC-023)
+    // MARK: - Mac-only color (DEC-023): stored, never used
 
-    /// A Mac-only color still wins after a Gmail edit and a sync, and is
-    /// never sent; clearing it shows the color on Gmail.
-    func testMacOnlyColorWinsOverTheGmailColor() async throws {
+    /// A stored Mac-only color is kept as it is and never drawn: the Gmail
+    /// color shows after a Gmail edit and a sync, and only it is sent.
+    func testMacOnlyColorIsIgnoredAndKept() async throws {
         let q = try makeDB(gmail: yellow)
         let id = rowId
         try await q.write { db in
@@ -418,11 +418,7 @@ final class GmailLabelColorEditTests: XCTestCase {
         }
         XCTAssertEqual(calls.calls.first?.1, blue, "only the Gmail color is sent")
         try sync(q, blue.colors, pending: PendingLabelColorEdits())
-        XCTAssertEqual(try row(q).color, "#EB5757")
-        XCTAssertEqual(try row(q).displayColors.background, "#EB5757")
-        try await q.write { db in
-            try db.execute(sql: "UPDATE label SET color = NULL WHERE id = ?", arguments: [id])
-        }
+        XCTAssertEqual(try row(q).color, "#EB5757", "kept, not read")
         XCTAssertEqual(try row(q).displayColors, blue.colors)
     }
 }

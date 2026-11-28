@@ -690,8 +690,8 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     var gmailLabelId: String
     var name: String
     var type: String
-    /// The user's local color pick ("#RRGGBB") from the label organizer;
-    /// nil shows Gmail's own label color. Never written back to Gmail.
+    /// Unused since the label color sheet became Gmail-only: kept, not read
+    /// or written (shortcut: no migration).
     var color: String?
     var sortOrder: Int = LabelRow.unsorted
     /// Gmail's label color (`color.backgroundColor` / `color.textColor`),
@@ -712,8 +712,8 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// list sends nothing that contradicts it (`SyncEngine.applyLabels`).
     var gmailColorPreset: String? = nil
     /// Whether the stored preset (or its absence) comes from a full read
-    /// (`labels.get`), not from the list alone (v71). Shown by the color
-    /// sheet's "Current:" line.
+    /// (`labels.get`), not from the list alone (v71). Decides which labels
+    /// the sync reads in full.
     var gmailColorReadInFull: Bool = false
 
     /// Clears the stored order of an account's user labels (`sortOrder` back
@@ -730,16 +730,9 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// Whether conversation rows show this label's chip.
     var showsInMessageList: Bool { messageListVisibility != "hide" }
 
-    /// The colors a label is drawn with: the local pick when there is one
-    /// (its text color is then chosen for contrast), else Gmail's pair.
-    var displayColors: LabelColors {
-        // A local pick that is not a color (empty, malformed) is no pick: it
-        // must not hide Gmail's color.
-        if let color, LabelRGB.normalizedHex(color) != nil {
-            return LabelColors(background: color, text: nil)
-        }
-        return drawnGmailColors
-    }
+    /// The colors a label is drawn with: Gmail's. The Mac-only `color` column
+    /// is no longer read (shortcut: the stored values stay, unused).
+    var displayColors: LabelColors { drawnGmailColors }
 
     /// Gmail's color as drawn: the stored pair, or the preset's pair when
     /// the stored one is absent or neutral (`GmailLabelColorPreset`).
@@ -750,7 +743,7 @@ struct LabelRow: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     }
 
     /// Whether the label is drawn with a color from Gmail (pair or preset):
-    /// what enables "Remove color" and "No color on Gmail".
+    /// what enables "Remove color".
     var hasGmailColor: Bool { drawnGmailColors.isColored }
 }
 

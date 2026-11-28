@@ -4533,8 +4533,7 @@ struct ComposeRequest: Identifiable {
         return ThreadRowLabelChip(name: row.name, colors: row.displayColors)
     }
 
-    /// Display colors for a label within an account: the user's local pick,
-    /// else Gmail's label colors; `.none` (neutral grey) when it has neither.
+    /// Display colors for a label within an account: Gmail's label colors; `.none` (neutral grey) when it has neither.
     /// Scoped by account so two accounts' same-named labels can differ.
     func labelColors(_ name: String, account accountId: String) -> LabelColors {
         labelsByName[accountId]?[name]?.displayColors ?? .none
@@ -4546,25 +4545,10 @@ struct ComposeRequest: Identifiable {
         labelsByAccount.values.lazy.flatMap { $0 }.first { $0.name == name }?.displayColors ?? .none
     }
 
-    /// Sets (or clears, with nil) a label's local color pick, and its
-    /// sublabels' at any depth (the owner's rule: a parent's color goes to
-    /// the labels nested under it). Clearing it shows Gmail's own label
-    /// color again.
-    func setLabelColor(_ label: LabelRow, hex: String?) {
-        let ids = labelFamily(label).map(\.id)
-        // Only the one column: the row passed in may be older than the
-        // stored one (a sync may have renamed it or changed Gmail's colors).
-        try? db.write { db in
-            try GmailLabelColorEdit.setLocalColor(db, hex: hex, labelRowIds: ids)
-        }
-        reloadAccounts()
-    }
-
     /// Sets (or removes, with nil) a user label's color on Gmail, so it
     /// shows on the web and the phone too, and the same color on every
     /// label nested under it. Shown at once; put back, label by label, where
-    /// Gmail refuses, with a retry for those. A Mac-only color, when set,
-    /// still wins on display.
+    /// Gmail refuses, with a retry for those.
     func setGmailLabelColor(_ label: LabelRow, to color: GmailLabelColor?) {
         guard !demoMode else {
             showNotice("Changing label colors on Gmail is disabled in the demo inbox")
@@ -4573,20 +4557,17 @@ struct ComposeRequest: Identifiable {
         let family = labelFamily(label).map(\.id)
         let ids = family.filter { !gmailLabelColorSaving.contains($0) }
         guard label.type == "user", !ids.isEmpty else { return }
-        // What is picked is what is seen: the Mac-only colors of the label
-        // and its sublabels, which would win on display (DEC-023), go.
-        setGmailLabelColor(rowIds: ids, clearing: Set(family), accountId: label.accountId,
-                           to: color)
+        setGmailLabelColor(rowIds: ids, accountId: label.accountId, to: color)
     }
 
-    private func setGmailLabelColor(rowIds ids: [String], clearing: Set<String>, accountId: String,
+    private func setGmailLabelColor(rowIds ids: [String], accountId: String,
                                     to color: GmailLabelColor?) {
         let client = client(for: accountId)
         let pool = db
         gmailLabelColorSaving.formUnion(ids)
         Task { @MainActor [weak self] in
             let result = await GmailLabelColorEdit.applyMany(
-                color, labelRowIds: ids, clearingLocalColor: clearing, db: pool,
+                color, labelRowIds: ids, db: pool,
                 didStore: { self?.reloadAccounts() }) { labelId, color in
                     try await client.patchLabelColor(id: labelId, color: color)
                 }
@@ -4613,21 +4594,20 @@ struct ComposeRequest: Identifiable {
                 self.labelMenu.failure = LabelEditFailure(
                     title: "Some labels kept their old color",
                     message: "\(reason)\n\n" + LabelEditFailure.list(names),
-                    retry: self.colorRetry(result.retryable, clearing: clearing,
-                                           accountId: accountId, to: color))
+                    retry: self.colorRetry(result.retryable, accountId: accountId, to: color))
             }
         }
     }
 
     /// Retry for the labels a retry can fix; nil when there are none.
-    private func colorRetry(_ ids: [String], clearing: Set<String>, accountId: String,
+    private func colorRetry(_ ids: [String], accountId: String,
                             to color: GmailLabelColor?) -> (@MainActor () -> Void)? {
         guard !ids.isEmpty else { return nil }
         return { [weak self] in
             guard let self else { return }
             let again = ids.filter { !self.gmailLabelColorSaving.contains($0) }
             guard !again.isEmpty else { return }
-            self.setGmailLabelColor(rowIds: again, clearing: clearing, accountId: accountId, to: color)
+            self.setGmailLabelColor(rowIds: again, accountId: accountId, to: color)
         }
     }
 

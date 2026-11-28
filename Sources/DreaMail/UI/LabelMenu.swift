@@ -15,17 +15,10 @@ struct LabelMenuItems: View {
                 Button("Choose color…", action: onPickColor)
                     .accessibilityIdentifier("labelMenu.color.choose")
                 Divider()
-                // The two colors stay apart (DEC-023): Gmail's, and the one
-                // only on this Mac that wins on display.
                 let family = store.labelFamily(row)
-                // Both kinds go, on the label and its sublabels: no color is
-                // what is seen.
                 Button("Remove color") { store.setGmailLabelColor(row, to: nil) }
-                    .disabled(!family.contains { $0.hasGmailColor || $0.color != nil })
+                    .disabled(!family.contains { $0.hasGmailColor })
                     .accessibilityIdentifier("labelMenu.color.remove")
-                Button("Remove color only on this Mac") { store.setLabelColor(row, hex: nil) }
-                    .disabled(!family.contains { $0.color != nil })
-                    .accessibilityIdentifier("labelMenu.color.removeLocal")
             }
             .accessibilityIdentifier("labelMenu.color")
 

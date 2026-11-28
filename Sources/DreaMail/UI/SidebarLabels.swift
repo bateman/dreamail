@@ -157,11 +157,10 @@ extension SidebarLabelRow {
     fileprivate var hidesCount: Bool { hovering }
 }
 
-/// Gmail's label glyph: a tag filled with the label's color (the Mac-only
-/// color first, DEC-023). The drawing is `SidebarTagStyle`: in dark
-/// appearance a colored label is always a visible fill (a dark grey is
-/// lightened), in light the true fill with its outline where needed; only a
-/// label with no color is an outline.
+/// Gmail's label glyph: a tag filled with the label's color on Gmail. The
+/// drawing is `SidebarTagStyle`: in dark appearance a colored label is
+/// always a visible fill (a dark grey is lightened), in light the true fill
+/// with its outline where needed; only a label with no color is an outline.
 struct SidebarLabelTag: View {
     let colors: LabelColors
     @Environment(\.colorScheme) private var colorScheme

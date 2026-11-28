@@ -455,16 +455,23 @@ final class LabelColorStyleTests: XCTestCase {
         XCTAssertTrue(white.needsBorder)
     }
 
-    /// A Mac-only pick that is not a color (empty, malformed) does not hide
-    /// Gmail's color; a valid one still wins.
-    func testInvalidLocalPickDoesNotHideGmailsColor() {
+    /// A stored Mac-only pick, valid or not, is ignored: Gmail's color is drawn.
+    func testStoredLocalPickIsIgnored() {
         var row = LabelRow(id: "a:1", accountId: "a", gmailLabelId: "1", name: "x", type: "user",
                            color: "", gmailBackgroundColor: "#16a766", gmailTextColor: "#ffffff")
         XCTAssertEqual(row.displayColors.background, "#16a766")
         row.color = "oops"
         XCTAssertEqual(row.displayColors.background, "#16a766")
         row.color = "#EB5757"
-        XCTAssertEqual(row.displayColors.background, "#EB5757")
+        XCTAssertEqual(row.displayColors, LabelColors(background: "#16a766", text: "#ffffff"))
+    }
+
+    /// A label with both a Gmail color and a stored Mac-only color draws Gmail's.
+    func testLabelWithGmailAndLocalColorDrawsGmails() {
+        let row = LabelRow(id: "a:1", accountId: "a", gmailLabelId: "1", name: "Work", type: "user",
+                           color: "#EB5757", gmailBackgroundColor: "#4a86e8", gmailTextColor: "#ffffff")
+        XCTAssertEqual(row.displayColors, LabelColors(background: "#4a86e8", text: "#ffffff"))
+        XCTAssertEqual(row.color, "#EB5757", "the stored value is kept, unused")
     }
 
     /// A label whose color was removed in Gmail goes back to neutral grey.
@@ -483,9 +490,9 @@ final class LabelColorStyleTests: XCTestCase {
         XCTAssertEqual(row.displayColors, .none)
     }
 
-    /// A color changed in Gmail shows on the next sync; a local pick from
-    /// the organizer still wins, and clearing it shows Gmail's color again.
-    func testGmailColorChangeIsFollowedAndLocalPickWins() throws {
+    /// A color changed in Gmail shows on the next sync; a stored local pick
+    /// is ignored throughout.
+    func testGmailColorChangeIsFollowedAndLocalPickIsIgnored() throws {
         let q = try makeDB()
         func sync(_ bg: String, _ text: String) throws {
             try q.write { db in
@@ -506,8 +513,8 @@ final class LabelColorStyleTests: XCTestCase {
             try db.execute(sql: "UPDATE label SET color = '#EB5757' WHERE id = 'a@x.com:Label_1'")
         }
         try sync("#16a766", "#ffffff")
-        XCTAssertEqual(try row().displayColors, LabelColors(background: "#EB5757", text: nil))
-        XCTAssertEqual(try row().gmailBackgroundColor, "#16a766")
+        XCTAssertEqual(try row().displayColors, LabelColors(background: "#16a766", text: "#ffffff"))
+        XCTAssertEqual(try row().color, "#EB5757", "the stored value is kept")
 
         try q.write { db in
             try db.execute(sql: "UPDATE label SET color = NULL WHERE id = 'a@x.com:Label_1'")

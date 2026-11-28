@@ -18,9 +18,8 @@ extension MailStore {
         case .duplicate: return "A label with this name already exists."
         case .unknownParent: return "Choose a label of this account to nest it under."
         }
-        // The owner's rule: a sublabel starts with its parent's colors, both
-        // the one on Gmail and the one only on this Mac (Gmail itself gives
-        // a new sublabel no color).
+        // The owner's rule: a sublabel starts with its parent's Gmail color
+        // (Gmail itself gives a new sublabel no color).
         let parentRow = parent.flatMap { p in rows.first { $0.name == p } }
         let created: GLabel
         do {
@@ -29,9 +28,7 @@ extension MailStore {
         } catch {
             return error.localizedDescription
         }
-        var fresh = LabelRow.created(created, accountId: accountId)
-        fresh.color = parentRow?.color
-        let row = fresh
+        let row = LabelRow.created(created, accountId: accountId)
         do {
             try await db.write { db in try row.save(db) }
         } catch {

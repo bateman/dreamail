@@ -1,11 +1,10 @@
 import SwiftUI
 
 /// Organize labels: drag to reorder and pick a color per label. The order is
-/// local. A label has two colors: its color on Gmail (written with
-/// labels.patch, shown on the web and the phone too) and an optional
-/// Mac-only color that is never sent to Gmail and wins on display (DEC-023).
-/// They drive the label pills, the Labels filter dropdown, and the "l"
-/// picker everywhere in the app.
+/// local. A label's color is its color on Gmail (written with
+/// labels.patch, shown on the web and the phone too). It drives the label
+/// pills, the Labels filter dropdown, and the "l" picker everywhere in the
+/// app.
 struct LabelOrganizer: View {
     @Environment(MailStore.self) var store
     @Environment(\.dismiss) private var dismiss
@@ -31,7 +30,7 @@ struct LabelOrganizer: View {
             }
             .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 10)
 
-            Text("Drag to reorder (only on this Mac); sublabels move with their label and stay under it. Click a swatch to change the color on Gmail, or set a color only on this Mac. A label's color also goes to its sublabels.")
+            Text("Drag to reorder (only on this Mac); sublabels move with their label and stay under it. Click a swatch to change the color on Gmail. A label's color also goes to its sublabels.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 16).padding(.bottom, 8)
 
@@ -125,25 +124,20 @@ private struct LabelOrganizerRow: View {
     }
 }
 
-/// The label color popover, in two parts that stay apart: the color on
-/// Gmail (Gmail's own palette, synced) and the color only on this Mac
-/// (local, never sent, shown instead of the Gmail color while set).
-/// Also opened from the sidebar's label menu ("Label color").
+/// The label color popover: Gmail's own palette (synced) and "Remove color",
+/// as in Gmail's "Label color" menu. Also opened from the sidebar's label
+/// menu ("Label color").
 struct LabelColorPalette: View {
     @Environment(MailStore.self) var store
     let label: LabelRow
     let onPick: () -> Void
 
-    private let columns = Array(repeating: GridItem(.fixed(28), spacing: 8), count: 6)
     private let gmailColumns = Array(repeating: GridItem(.fixed(22), spacing: 5),
                                      count: GmailLabelPalette.columns)
 
     var body: some View {
         let saving = store.gmailLabelColorSaving.contains(label.id)
         VStack(alignment: .leading, spacing: 10) {
-            Text("Color on Gmail").font(.system(size: 12, weight: .semibold))
-            Text("Also shown in Gmail on the web and on your phone.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
             LazyVGrid(columns: gmailColumns, spacing: 5) {
                 ForEach(GmailLabelPalette.swatches, id: \.self) { swatch in
                     Button {
@@ -171,84 +165,23 @@ struct LabelColorPalette: View {
                 store.setGmailLabelColor(label, to: nil)
                 onPick()
             } label: {
-                Label("No color on Gmail", systemImage: "circle.slash")
+                Label("Remove color", systemImage: "circle.slash")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
+                    // The row spans the sheet, as in a menu: the whole row is the button.
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(saving || !label.hasGmailColor)
-            CurrentColorLine(text: LabelCurrentColor.gmail(label),
-                             colors: LabelColors(background: label.gmailBackgroundColor,
-                                                 text: label.gmailTextColor),
-                             identifier: "labelColor.current.gmail")
+            .accessibilityIdentifier("labelColor.remove")
             if saving {
                 Text("Saving to Gmail…").font(.system(size: 11)).foregroundStyle(.secondary)
-            } else if LabelRGB.normalizedHex(label.color) != nil {
-                Text("A color only on this Mac is set and is shown instead.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
-
-            Divider()
-            Text("Only on this Mac").font(.system(size: 12, weight: .semibold))
-            Text("Never sent to Gmail.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(Color.labelPalette, id: \.hex) { swatch in
-                    Button {
-                        store.setLabelColor(label, hex: swatch.hex)
-                        onPick()
-                    } label: {
-                        Circle()
-                            .fill(LabelRGB(hexString: swatch.hex).map(Color.init) ?? .gray)
-                            .frame(width: 24, height: 24)
-                            .overlay {
-                                if label.color?.caseInsensitiveCompare(swatch.hex) == .orderedSame {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .foregroundStyle(.white)
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .help(swatch.name)
-                    .accessibilityLabel("Color only on this Mac: \(swatch.name)")
-                    .accessibilityIdentifier("labelColor.mac.\(swatch.hex)")
-                    .accessibilityAddTraits(label.color?.caseInsensitiveCompare(swatch.hex) == .orderedSame
-                                            ? .isSelected : [])
-                }
-            }
-            CurrentColorLine(text: LabelCurrentColor.local(label, palette: Color.labelPalette.map { $0.hex }),
-                             colors: LabelColors(background: label.color, text: nil),
-                             identifier: "labelColor.current.mac")
-            Button {
-                store.setLabelColor(label, hex: nil)
-                onPick()
-            } label: {
-                Label("Gmail color", systemImage: "arrow.uturn.backward")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .disabled(label.color == nil)
-            .help("Remove the Mac-only color and show the color on Gmail")
         }
+        // Fill the 244 pt, left-aligned: without the long caption lines the
+        // grid alone is narrower and would sit centred.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .frame(width: 244)
-    }
-}
-
-/// "Current: <swatch> #rrggbb": the stored color as text (and a swatch when
-/// there is one), readable by VoiceOver and UI tests.
-private struct CurrentColorLine: View {
-    let text: String
-    let colors: LabelColors
-    let identifier: String
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if colors.isColored { LabelDot(colors: colors, size: 12) }
-            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
-        .accessibilityIdentifier(identifier)
     }
 }
