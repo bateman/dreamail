@@ -175,6 +175,9 @@ struct LabelColorPalette: View {
                 Text("Saving to Gmail…").font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
+        // Fill the 244 pt, left-aligned: without the long caption lines the
+        // grid alone is narrower and would sit centred.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .frame(width: 244)
     }
