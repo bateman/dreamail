@@ -7,6 +7,13 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **CI: UI tests use fewer macOS runner minutes.** UI-test waits return at
+  once when the element is already there, UI jobs restore the unit-test
+  job's build cache (read-only), and the suite runs in two balanced shards
+  instead of three: about 30 runner minutes per UI run instead of about 40,
+  with the same wall-clock time. The UI-test target is now built with
+  warnings as errors. (#128)
+
 - **The label colour sheet is Gmail's.** It shows Gmail's colour grid and
   "Remove color", nothing else. Mac-only label colours are gone: a label
   that had one shows its Gmail colour again (the stored value is kept but
