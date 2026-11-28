@@ -90,7 +90,54 @@ enum MessagePrint {
             styleCSS: styleCSS)
     }
 
+    /// The print job's name, as Gmail's page title gives it: the subject.
+    /// Also the name "Save as PDF" proposes.
+    static func jobTitle(subject: String) -> String {
+        let shown = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        return shown.isEmpty ? "(no subject)" : shown
+    }
+
     private static func escape(_ s: String) -> String {
         ComposeLinks.escapeAttribute(s)
+    }
+}
+
+/// What `MessagePrinter` does with the web view's callbacks. Only the
+/// first navigation (the document's own `loadHTMLString`) is allowed; the
+/// print panel starts once, at that load's end or at the bound, whichever
+/// comes first; after that every navigation is refused and every failure
+/// ignored, so a `<meta http-equiv="refresh">` can neither open a second
+/// panel nor end the job while the panel is open. Pure — tested.
+struct MessagePrintGate: Equatable {
+    enum Phase: Equatable { case loading, printing, done }
+    private(set) var phase: Phase = .loading
+    private var navigationAllowed = false
+
+    /// A navigation policy decision: true for the initial load only.
+    mutating func allowsNavigation() -> Bool {
+        guard phase == .loading, !navigationAllowed else { return false }
+        navigationAllowed = true
+        return true
+    }
+
+    /// The initial load finished, or the load bound passed: true once,
+    /// when the print panel is to start.
+    mutating func startsPrinting() -> Bool {
+        guard phase == .loading else { return false }
+        phase = .printing
+        return true
+    }
+
+    /// The initial load failed: true when the job is to end (only before
+    /// printing started).
+    mutating func endsOnFailure() -> Bool {
+        guard phase == .loading else { return false }
+        phase = .done
+        return true
+    }
+
+    /// The print panel closed (or could not open).
+    mutating func printingEnded() {
+        phase = .done
     }
 }

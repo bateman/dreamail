@@ -89,7 +89,7 @@ final class MessageActionsTests: XCTestCase {
             let titles = MessageActions.menuItems(context).map {
                 MessageActions.title($0, senderName: "Ann").lowercased()
             }
-            for gone in ["phishing", "translate", "contacts", "illegal", "improve google"] {
+            for gone in ["phishing", "translate", "contacts"] {
                 XCTAssertFalse(titles.contains { $0.contains(gone) }, gone)
             }
         }

@@ -2763,7 +2763,9 @@ struct MessageCard: View {
         if case .text = body { allow = false }
         MessagePrinter.print(
             document: MessagePrint.document(header: header, body: body, allowRemoteImages: allow),
-            allowRemoteImages: allow, window: NSApp.keyWindow)
+            allowRemoteImages: allow,
+            jobTitle: MessagePrint.jobTitle(subject: message.subject),
+            window: NSApp.keyWindow)
     }
 
     private func moreMenuButton(_ item: MessageActions.MenuItem) -> some View {

@@ -93,4 +93,46 @@ final class MessagePrintTests: XCTestCase {
         let allowed = MessagePrint.document(header: "", body: body, allowRemoteImages: true)
         XCTAssertTrue(allowed.hasPrefix("<html><head>\(HTMLBodyCSP.metaTag(allowRemoteImages: true))"))
     }
+
+    func testJobIsNamedAfterTheSubject() {
+        XCTAssertEqual(MessagePrint.jobTitle(subject: " Plans "), "Plans")
+        XCTAssertEqual(MessagePrint.jobTitle(subject: ""), "(no subject)")
+    }
+
+    // MARK: - The printer's callbacks (`MessagePrintGate`)
+
+    func testOnlyTheInitialLoadIsAllowed() {
+        var gate = MessagePrintGate()
+        XCTAssertTrue(gate.allowsNavigation(), "loadHTMLString")
+        XCTAssertFalse(gate.allowsNavigation(), "a meta refresh, even to about:blank")
+    }
+
+    /// The load's end and the bound both ask to print: one panel only.
+    func testPrintingStartsOnce() {
+        var gate = MessagePrintGate()
+        XCTAssertTrue(gate.startsPrinting())
+        XCTAssertFalse(gate.startsPrinting())
+        XCTAssertEqual(gate.phase, .printing)
+    }
+
+    /// With the panel open nothing navigates and no failure ends the job:
+    /// only the panel closing does.
+    func testWhilePrintingNavigationsAreRefusedAndFailuresIgnored() {
+        var gate = MessagePrintGate()
+        XCTAssertTrue(gate.allowsNavigation())
+        XCTAssertTrue(gate.startsPrinting())
+        XCTAssertFalse(gate.allowsNavigation())
+        XCTAssertFalse(gate.endsOnFailure())
+        XCTAssertEqual(gate.phase, .printing)
+        gate.printingEnded()
+        XCTAssertEqual(gate.phase, .done)
+        XCTAssertFalse(gate.startsPrinting(), "a late load end opens nothing")
+    }
+
+    func testAFailedLoadEndsTheJobBeforePrinting() {
+        var gate = MessagePrintGate()
+        XCTAssertTrue(gate.endsOnFailure())
+        XCTAssertFalse(gate.startsPrinting(), "the bound then prints nothing")
+        XCTAssertFalse(gate.allowsNavigation())
+    }
 }
