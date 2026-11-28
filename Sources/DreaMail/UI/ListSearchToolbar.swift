@@ -37,10 +37,12 @@ struct ListSearchToolbar: ViewModifier {
                         Image(systemName: store.selectedView.selectedIcon)
                             .foregroundStyle(.mailIcon(selected: false))
                             .accessibilityHidden(true)
-                        Text(store.selectedView.title)
-                            .font(.headline)
-                            .lineLimit(1)
-                            .fixedSize()
+                        // macOS 14 keeps the system title (it cannot be hidden).
+                        if #available(macOS 15.0, *) {
+                            Text(store.selectedView.title)
+                                .font(.headline)
+                                .lineLimit(1)
+                        }
                         ToolbarSearchField(
                             text: Bindable(store).searchText,
                             focusToken: store.searchFocusToken,
@@ -63,6 +65,7 @@ struct ListSearchToolbar: ViewModifier {
                         .frame(minWidth: ListHeaderLayout.fieldMinWidth,
                                idealWidth: ListHeaderLayout.fieldIdealWidth,
                                maxWidth: ListHeaderLayout.fieldMaxWidth)
+                    .layoutPriority(1)
                         .disabled(store.threadFocusMode)
                         .help("Search — from: to: subject: label: has:attachment is:unread is:starred after: before:")
                         // One element for the whole field box (its children keep their own).
@@ -102,7 +105,7 @@ private struct HiddenSystemTitle: ViewModifier {
         if #available(macOS 15.0, *) {
             content.toolbar(removing: .title)
         } else {
-            content.navigationTitle("")
+            content
         }
     }
 }

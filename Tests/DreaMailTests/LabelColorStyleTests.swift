@@ -553,7 +553,7 @@ final class LabelColorStyleTests: XCTestCase {
         LabelColors(background: "#eeeeee", text: "#222222"),
     ]
 
-    func testPairsOutsideTheApiPaletteAreStoredAndDrawnAsSent() throws {
+    func testPairsOutsideTheApiPaletteKeepTheirFillAndAreNotNoColor() throws {
         let q = try DatabaseQueue()
         try AppDatabase.migrator.migrate(q)
         try q.write { db in

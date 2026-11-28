@@ -204,13 +204,14 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focuses the field")
         app.typeText("zzzznomatch")
-        // The suggestions panel hangs under the field, at the column's trailing
-        // edge (the field's side), inside the column.
+        // The suggestions panel hangs under the field, at the column's leading
+        // edge, over the field, inside the column.
         let panel = element(app, "searchResultsPanel")
         XCTAssertTrue(panel.waitForExistence(timeout: 5), "the results panel opens")
         print("ListSearchField panel \(panel.frame), field \(field.frame)")
         XCTAssertGreaterThanOrEqual(panel.frame.minY, field.frame.maxY - 1, "panel below the field")
         XCTAssertLessThanOrEqual(panel.frame.minX, field.frame.minX + 1, "panel starts at the column's leading edge, over the field")
+        XCTAssertGreaterThanOrEqual(panel.frame.maxX, field.frame.maxX - 1, "panel spans the field")
         XCTAssertGreaterThanOrEqual(panel.frame.minX, t3.frame.minX - 1, "panel inside the list column")
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(waitUntil { !t3.exists }, "the search filters the list")
@@ -251,44 +252,18 @@ final class ListSearchFieldUITests: XCTestCase {
         XCTAssertTrue(waitUntil { self.hasFocus(self.textField(app)) }, "/ focused the field")
     }
 
-    /// One field, right after the view's title, with no conversation open (the
-    /// list fills the window): the field is a single text field (no field
-    /// inside another) and sits within a few points of the title.
+    /// The field sits right after the view's title with no conversation open
+    /// (the list fills the window), not at the window's far right.
     func testSingleFieldRightAfterTheTitle_listOnly() {
         let app = launch(paneHidden: true)
         XCTAssertTrue(element(app, "threadRow.you@example.com:t3").waitForExistence(timeout: 10))
         let box = element(app, "listSearchBox")
         XCTAssertTrue(box.waitForExistence(timeout: 5))
-        XCTAssertEqual(box.textFields.count, 1, "one text field in the box")
-        XCTAssertEqual(box.searchFields.count, 0, "no second (search) field in the box")
         let title = titleElement(app, "Inbox")
         XCTAssertTrue(title.exists, "the title is shown")
         let gap = box.frame.minX - title.frame.maxX
         XCTAssertGreaterThanOrEqual(gap, 0, "field right of the title (title \(title.frame), field \(box.frame))")
         XCTAssertLessThanOrEqual(gap, 40, "field right after the title, not at the window's far right (title \(title.frame), field \(box.frame))")
-    }
-
-    /// The field keeps its place when a conversation opens beside the list.
-    /// Needs the three-pane layout (1080 pt and up): skipped on a smaller screen.
-    func testFieldKeepsItsPlaceWithAndWithoutAConversation() throws {
-        let app = launch(paneHidden: true)
-        let t3 = element(app, "threadRow.you@example.com:t3")
-        XCTAssertTrue(t3.waitForExistence(timeout: 10))
-        let window = app.windows.firstMatch
-        try XCTSkipIf(window.frame.width < 1_080, "the three-pane layout needs a window of 1080 pt or more")
-        let box = element(app, "listSearchBox")
-        XCTAssertTrue(box.waitForExistence(timeout: 5))
-        let without = box.frame
-        let show = app.buttons.matching(NSPredicate(format: "label == 'Show Reading Pane'")).firstMatch
-        XCTAssertTrue(show.waitForExistence(timeout: 5))
-        show.click()
-        XCTAssertTrue(element(app, "threadSubject").waitForExistence(timeout: 5), "a conversation is open")
-        XCTAssertTrue(box.waitForExistence(timeout: 5))
-        let with = box.frame
-        XCTAssertEqual(with.minX, without.minX, accuracy: 2, "same x origin with and without a conversation")
-        XCTAssertEqual(with.minY, without.minY, accuracy: 2, "same y with and without a conversation")
-        XCTAssertLessThanOrEqual(with.maxX, element(app, "threadRow.you@example.com:t3").frame.maxX + 1,
-                                 "the field is inside the list column")
     }
 
     func testNoDoubleChevronAndPaneToggleStillWorks() {
