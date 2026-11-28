@@ -2,7 +2,7 @@ import XCTest
 import GRDB
 
 /// Gmail's `colorPreset` next to `color`: decoded as sent, stored (v71),
-/// shown in the color sheet's "Current:" line, and used to draw a label
+/// and used to draw a label
 /// whose `color` is absent or the neutral #eeeeee / #222222 pair.
 final class LabelColorPresetTests: XCTestCase {
     private let account = "a@example.com"
@@ -193,8 +193,7 @@ final class LabelColorPresetTests: XCTestCase {
         try sync(q, [label(fallback, preset: nil)], readInFull: ["Label_1"])
         XCTAssertNil(try stored(q).gmailColorPreset)
         XCTAssertTrue(try stored(q).gmailColorReadInFull)
-        XCTAssertEqual(LabelCurrentColor.gmail(try stored(q)),
-                       "Current: #eeeeee, text #222222 (not in this palette), no preset (list and get)")
+        XCTAssertEqual(try stored(q).displayColors, fallback)
     }
 
     /// The list and the full read are merged: the full read's preset wins,
@@ -372,61 +371,13 @@ final class LabelColorPresetTests: XCTestCase {
         XCTAssertEqual(try stored(q).displayColors, .none)
     }
 
-    // MARK: - "Current:" line
-
-    func testCurrentLineShowsWhatGmailSent() {
-        XCTAssertEqual(LabelCurrentColor.gmail(row(fallback, preset: "LABEL_COLOR_PRESET_DARK_GREEN")),
-                       "Current: #eeeeee, text #222222 (not in this palette), preset DARK_GREEN")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(darkGreen, preset: "LABEL_COLOR_PRESET_DARK_GREEN")),
-                       "Current: #076239, text #ffffff, preset DARK_GREEN")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "LABEL_COLOR_PRESET_TEAL")),
-                       "Current: no color, preset TEAL")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(fallback)),
-                       "Current: #eeeeee, text #222222 (not in this palette), no preset (list only)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(fallback, readInFull: true)),
-                       "Current: #eeeeee, text #222222 (not in this palette), no preset (list and get)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row()), "Current: no color, no preset (list only)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(readInFull: true)), "Current: no color, no preset (list and get)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(LabelColors(background: "oops", text: nil))),
-                       "Current: unreadable value, no preset (list only)")
-    }
-
-    /// A preset the app does not know is shown too, exactly as sent.
-    func testCurrentLineShowsAnUnknownPreset() {
-        XCTAssertEqual(LabelCurrentColor.gmail(row(fallback, preset: "LABEL_COLOR_PRESET_NEW_HUE")),
-                       "Current: #eeeeee, text #222222 (not in this palette), preset NEW_HUE")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "SOMETHING_ELSE")),
-                       "Current: no color, preset SOMETHING_ELSE")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "")), "Current: no color, no preset (list only)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "LABEL_COLOR_PRESET_")),
-                       "Current: no color, no preset (list only)", "the bare prefix names no preset")
-    }
-
-    /// Only a plain name (1-40 of A-Z, 0-9, _) is shown; anything else is
-    /// "unknown preset", and the raw value stays stored.
-    func testCurrentLineShowsOnlyAPlainPresetName() throws {
-        let forty = String(repeating: "A", count: 40)
-        for raw in ["LABEL_COLOR_PRESET_" + forty + "A",
-                    "LABEL_COLOR_PRESET_RED\nCurrent: #ffffff",
-                    "LABEL_COLOR_PRESET_RED\u{202E}NEERG",
-                    "LABEL_COLOR_PRESET_dark_green",
-                    "LABEL_COLOR_PRESET_ÄÖ",
-                    "LABEL_COLOR_PRESET_RED GREEN"] {
-            XCTAssertEqual(LabelCurrentColor.gmail(row(preset: raw)), "Current: no color, unknown preset", raw)
-        }
-        XCTAssertEqual(LabelCurrentColor.gmail(row(preset: "LABEL_COLOR_PRESET_" + forty)),
-                       "Current: no color, preset " + forty)
+    /// A preset name that is not plain (newline, bidi control) is stored as sent.
+    func testOddPresetIsStoredAsSent() throws {
         let q = try makeDB()
         let odd = "LABEL_COLOR_PRESET_RED\u{202E}X"
         try sync(q, [label(nil, preset: odd)])
         XCTAssertEqual(try stored(q).gmailColorPreset, odd, "stored as sent")
-    }
-
-    /// The Mac-only line never shows Gmail's preset.
-    func testLocalLineIgnoresThePreset() {
-        XCTAssertEqual(LabelCurrentColor.local(row(preset: "LABEL_COLOR_PRESET_RED", local: "#eb5757"),
-                                               palette: ["#EB5757"]),
-                       "Current: #eb5757")
+        XCTAssertEqual(try stored(q).displayColors, .none, "an unknown preset draws nothing")
     }
 
     // MARK: - Drawing
@@ -460,10 +411,10 @@ final class LabelColorPresetTests: XCTestCase {
         XCTAssertEqual(row().displayColors, .none)
     }
 
-    /// The Mac-only color still comes first.
-    func testLocalPickWinsOverThePreset() {
+    /// The Mac-only color is ignored: the preset draws.
+    func testLocalPickIsIgnoredWithAPreset() {
         XCTAssertEqual(row(fallback, preset: "LABEL_COLOR_PRESET_DARK_GREEN", local: "#EB5757").displayColors,
-                       LabelColors(background: "#EB5757", text: nil))
+                       darkGreen)
     }
 
     /// The 21 presets Google lists, each a pair Gmail accepts, each drawn as

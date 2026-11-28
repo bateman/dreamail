@@ -551,15 +551,12 @@ extension GmailLabelColorEdit {
     }
 
     /// Sets (or removes) the Gmail color of several labels: a parent and
-    /// its sublabels. One transaction stores every new color (and clears the
-    /// Mac-only color of the labels in `clearingLocalColor`, so a sublabel
-    /// shows its parent's new color: the owner's rule), `didStore` runs once
+    /// its sublabels. One transaction stores every new color, `didStore` runs once
     /// (one tree rebuild), then one `labels.patch` per label goes out, at
     /// most `LabelBatch.maxInFlight` at a time; one transaction keeps Gmail's
     /// answers and puts back the colors of the labels whose call failed.
     static func applyMany(_ target: GmailLabelColor?,
                           labelRowIds ids: [String],
-                          clearingLocalColor: Set<String> = [],
                           db: any DatabaseWriter,
                           pending: PendingLabelColorEdits = .shared,
                           now: () -> Date = { Date() },
@@ -588,13 +585,10 @@ extension GmailLabelColorEdit {
                     begun.add(id)
                     try store(db, wanted, id: id)
                     if target == nil { try storePreset(db, nil, id: id) }
-                    let clearsLocal = clearingLocalColor.contains(id) && row.color != nil
-                    if clearsLocal { try setLocalColor(db, hex: nil, labelRowIds: [id]) }
                     claimed.append(Claim(id: id, gmailLabelId: row.gmailLabelId,
                                          before: LabelColors(background: row.gmailBackgroundColor,
                                                              text: row.gmailTextColor),
-                                         presetBefore: row.gmailColorPreset,
-                                         localBefore: clearsLocal ? row.color : nil))
+                                         presetBefore: row.gmailColorPreset))
                 }
                 return (claimed, refused)
             }
@@ -626,10 +620,6 @@ extension GmailLabelColorEdit {
                         try restore(db, id: claim.id, before: claim.before,
                                     presetBefore: claim.presetBefore, wanted: wanted,
                                     wantedPreset: target == nil ? nil : claim.presetBefore)
-                        if let local = claim.localBefore {
-                            try db.execute(sql: "UPDATE label SET color = ? WHERE id = ? AND color IS NULL",
-                                           arguments: [local, claim.id])
-                        }
                     }
                 }
             }
@@ -666,22 +656,12 @@ extension GmailLabelColorEdit {
         return result
     }
 
-    /// The color only on this Mac (DEC-023) of several labels, in one
-    /// transaction.
-    static func setLocalColor(_ db: Database, hex: String?, labelRowIds ids: [String]) throws {
-        for id in ids {
-            try db.execute(sql: "UPDATE label SET color = ? WHERE id = ?", arguments: [hex, id])
-        }
-    }
-
     private struct Claim: Sendable {
         let id: String
         let gmailLabelId: String
         let before: LabelColors
         /// The preset before the edit, put back if it fails.
         let presetBefore: String?
-        /// The Mac-only color this edit cleared, put back if it fails.
-        let localBefore: String?
     }
 
     private final class ClaimBox: @unchecked Sendable {

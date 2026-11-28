@@ -86,7 +86,7 @@ final class PendingLabelColorEdits: @unchecked Sendable {
 /// Changes a user label's color on Gmail (`labels.patch`): checks it
 /// first, shows it at once, then keeps Gmail's answer or puts the old
 /// color back if the call fails. The Mac-only color (`LabelRow.color`,
-/// DEC-023) is not touched and still wins on display. A color outside
+/// DEC-023) is no longer used and is not touched. A color outside
 /// Gmail's palette cannot be asked for: `GmailLabelColor` refuses it.
 enum GmailLabelColorEdit {
     enum Failure: LocalizedError, Equatable {

@@ -206,9 +206,8 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertGreaterThan(gauge.peak, 0)
     }
 
-    /// What is picked is what is seen: a Gmail color on a parent clears the
-    /// Mac-only colors of the parent and of its sublabels, which would win
-    /// on display (DEC-023); the look-alike is not touched.
+    /// A Gmail color on a parent is what the whole family shows; the stored
+    /// Mac-only colors are ignored and left as they are.
     func testGmailColorOnAParentIsWhatTheWholeFamilyShows() async throws {
         var labels = rows
         labels[0].color = "#EB5757"   // the parent
@@ -217,22 +216,23 @@ final class LabelMenuEditsTests: XCTestCase {
         let q = try makeDB(labels)
         let family = LabelFamily.members(of: labels[0], in: labels).map(\.id)
         let result = await GmailLabelColorEdit.applyMany(
-            blue, labelRowIds: family, clearingLocalColor: Set(family), db: q,
+            blue, labelRowIds: family, db: q,
             pending: PendingLabelColorEdits()) { id, color in
                 self.answer(id, color)
             }
         XCTAssertTrue(result.failed.isEmpty)
         let after = try stored(q)
         for rowId in family {
-            XCTAssertNil(after[rowId]?.color, rowId)
             XCTAssertEqual(after[rowId]?.displayColors.background, "#4a86e8", rowId)
         }
+        XCTAssertEqual(after[id("L1")]?.color, "#EB5757", "the stored value is kept")
+        XCTAssertEqual(after[id("L3")]?.color, "#27AE60", "the stored value is kept")
         XCTAssertEqual(after[id("L5")]?.color, "#2D9CDB", "the look-alike is not touched")
     }
 
     /// "Remove color" on a parent: no color on the parent and its
-    /// sublabels, of either kind.
-    func testRemoveColorOnAParentLeavesNoColorOfEitherKind() async throws {
+    /// sublabels, whatever Mac-only value is stored.
+    func testRemoveColorOnAParentLeavesNoColor() async throws {
         var labels = rows
         labels[0].color = "#EB5757"
         labels[1].gmailBackgroundColor = "#4a86e8"
@@ -241,7 +241,7 @@ final class LabelMenuEditsTests: XCTestCase {
         let q = try makeDB(labels)
         let family = LabelFamily.members(of: labels[0], in: labels).map(\.id)
         let result = await GmailLabelColorEdit.applyMany(
-            nil, labelRowIds: family, clearingLocalColor: Set(family), db: q,
+            nil, labelRowIds: family, db: q,
             pending: PendingLabelColorEdits()) { id, _ in
                 self.answer(id, nil)
             }
@@ -250,14 +250,17 @@ final class LabelMenuEditsTests: XCTestCase {
         for rowId in family { XCTAssertEqual(after[rowId]?.displayColors, LabelColors.none, rowId) }
     }
 
-    /// A failed sublabel gets its Mac-only color back with its Gmail color.
-    func testCascadeFailurePutsBackTheClearedMacOnlyColor() async throws {
+    /// A failed sublabel keeps its old Gmail color; its stored Mac-only
+    /// value is not touched either way.
+    func testCascadeFailureKeepsTheOldGmailColor() async throws {
         var labels = rows
         labels[2].color = "#27AE60"
+        labels[2].gmailBackgroundColor = "#fad165"
+        labels[2].gmailTextColor = "#000000"
         let q = try makeDB(labels)
         let family = LabelFamily.members(of: labels[0], in: labels).map(\.id)
         let result = await GmailLabelColorEdit.applyMany(
-            blue, labelRowIds: family, clearingLocalColor: Set(family.dropFirst()), db: q,
+            blue, labelRowIds: family, db: q,
             pending: PendingLabelColorEdits()) { id, color in
                 if id == "L3" { throw GmailError.http(400, "bad") }
                 return self.answer(id, color)
@@ -265,6 +268,8 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertEqual(result.failed, [id("L3")])
         XCTAssertEqual(result.permanent, [id("L3")], "a 400 is not offered for retry")
         XCTAssertTrue(result.retryable.isEmpty)
+        XCTAssertEqual(try stored(q)[id("L3")]?.displayColors,
+                       LabelColors(background: "#fad165", text: "#000000"))
         XCTAssertEqual(try stored(q)[id("L3")]?.color, "#27AE60")
     }
 
@@ -282,29 +287,22 @@ final class LabelMenuEditsTests: XCTestCase {
         XCTAssertEqual(result.retryable, [id("L2"), id("L4")])
     }
 
-    func testMacOnlyColorGoesToEverySublabel() throws {
-        let q = try makeDB()
-        let family = LabelFamily.members(of: rows[0], in: rows).map(\.id)
-        try q.write { db in
-            try GmailLabelColorEdit.setLocalColor(db, hex: "#EB5757", labelRowIds: family)
-        }
-        var after = try stored(q)
-        for rowId in family { XCTAssertEqual(after[rowId]?.color, "#EB5757", rowId) }
-        XCTAssertNil(after[id("L5")]?.color)
-        XCTAssertNil(after[id("L1", b)]?.color)
-
-        // A sublabel's own later color stays until the parent changes again.
-        try q.write { db in
-            try GmailLabelColorEdit.setLocalColor(db, hex: "#27AE60", labelRowIds: [self.id("L3")])
-        }
-        after = try stored(q)
-        XCTAssertEqual(after[id("L3")]?.color, "#27AE60")
+    /// A cascade never writes the Mac-only column.
+    func testCascadeNeverWritesTheMacOnlyColor() async throws {
+        var labels = rows
+        labels[1].color = "#EB5757"
+        labels[2].color = "#27AE60"
+        let q = try makeDB(labels)
+        let family = LabelFamily.members(of: labels[0], in: labels).map(\.id)
+        _ = await GmailLabelColorEdit.applyMany(
+            blue, labelRowIds: family, db: q, pending: PendingLabelColorEdits()) { id, color in
+                self.answer(id, color)
+            }
+        let after = try stored(q)
         XCTAssertEqual(after[id("L2")]?.color, "#EB5757")
-        try q.write { db in
-            try GmailLabelColorEdit.setLocalColor(db, hex: nil, labelRowIds: family)
-        }
-        after = try stored(q)
-        for rowId in family { XCTAssertNil(after[rowId]?.color, rowId) }
+        XCTAssertEqual(after[id("L3")]?.color, "#27AE60")
+        XCTAssertNil(after[id("L1")]?.color)
+        XCTAssertNil(after[id("L5")]?.color)
     }
 
     // MARK: Edit: rename and move

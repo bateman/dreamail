@@ -160,8 +160,8 @@ final class SidebarLabelTreeTests: XCTestCase {
         var r = row("L1", "work")
         r.gmailBackgroundColor = "#111111"
         r.color = "#222222"
-        XCTAssertEqual(SidebarLabelTree.build([r])[0].colors.background, "#222222",
-                       "the Mac-only color wins (DEC-023)")
+        XCTAssertEqual(SidebarLabelTree.build([r])[0].colors.background, "#111111",
+                       "the Mac-only color is ignored: Gmail's is drawn")
     }
 
     func testHundredsOfLabelsBuildQuickly() {

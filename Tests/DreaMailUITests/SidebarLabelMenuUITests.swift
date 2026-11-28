@@ -148,7 +148,7 @@ final class SidebarLabelMenuUITests: XCTestCase {
                                  "the ⋮ \(dots.frame) is taller than the title \(title.frame)")
     }
 
-    func testParentColorGoesToItsSublabelsAndRemoveAsksFirst() {
+    func testColorSheetIsGmailsPaletteAndRemoveAsksFirst() {
         let app = launch()
         let vendors = label("Label_vendors", in: app)
         let aws = label("Label_vendors_aws", in: app)
@@ -163,8 +163,8 @@ final class SidebarLabelMenuUITests: XCTestCase {
         let choose = menuItem("labelMenu.color.choose", "Choose color…", in: app)
         XCTAssertTrue(choose.waitForExistence(timeout: 5))
         choose.click()
-        let red = element("labelColor.mac.#EB5757", in: app)
-        XCTAssertTrue(red.waitForExistence(timeout: 5), "the organizer's palette opens")
+        let swatch = element("labelColor.gmail.#fb4c2f", in: app)
+        XCTAssertTrue(swatch.waitForExistence(timeout: 5), "the sheet shows Gmail's palette")
         // The sheet hugs the palette: no empty half, Done close to its edge.
         let palette = element("labelColor.palette", in: app)
         let sheet = app.sheets.firstMatch
@@ -176,20 +176,17 @@ final class SidebarLabelMenuUITests: XCTestCase {
                        "the sheet \(sheet.frame) is as wide as the palette \(palette.frame) with its padding")
         XCTAssertLessThanOrEqual(done.frame.maxX, palette.frame.maxX + 16,
                                  "Done \(done.frame) is not far beyond the palette \(palette.frame)")
-        red.click()
-        XCTAssertTrue(waitForAbsence(red), "picking a color closes the palette")
-
-        // The sublabel now has the same color: its palette checks it.
-        XCTAssertTrue(reveal(aws, in: app))
-        aws.rightClick()
-        XCTAssertTrue(color.waitForExistence(timeout: 5))
-        color.hover()
-        XCTAssertTrue(choose.waitForExistence(timeout: 5))
-        choose.click()
-        XCTAssertTrue(red.waitForExistence(timeout: 5))
-        XCTAssertTrue(red.isSelected, "the parent's color went to Vendors/AWS")
+        // Gmail's menu: the grid and "Remove color", nothing else.
+        XCTAssertTrue(element("labelColor.remove", in: app).exists, "Remove color is there")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'labelColor.mac.'")).count, 0, "no Mac-only swatches")
+        XCTAssertFalse(element("labelColor.current.gmail", in: app).exists, "no Current line")
+        XCTAssertFalse(element("labelColor.current.mac", in: app).exists, "no Mac-only Current line")
+        XCTAssertFalse(app.staticTexts["Only on this Mac"].exists, "no Mac-only section")
+        XCTAssertFalse(app.staticTexts["Also shown in Gmail on the web and on your phone."].exists,
+                       "no caption")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
-        XCTAssertTrue(waitForAbsence(red), "Escape closes the palette")
+        XCTAssertTrue(waitForAbsence(swatch), "Escape closes the sheet")
 
         // Remove asks first, and Cancel keeps the label (same launch: the UI
         // job has a time budget).
@@ -271,10 +268,9 @@ final class SidebarLabelMenuUITests: XCTestCase {
                        "the parent's name appears once")
     }
 
-    /// The color sheet states what is stored: the demo's Work label has
-    /// Gmail color #6E56CF, which is not one of the 64 swatches, so the line
-    /// says so and no swatch is checked.
-    func testColorSheetShowsTheStoredColorAndNoSwatchForAnOffGridOne() {
+    /// The demo's Work label has Gmail color #6E56CF, which is not one of
+    /// the 64 swatches: the grid is there and no swatch is checked.
+    func testColorSheetChecksNoSwatchForAnOffGridColor() {
         let app = launch()
         let work = label("Label_work", in: app)
         XCTAssertTrue(work.waitForExistence(timeout: 10))
@@ -285,14 +281,12 @@ final class SidebarLabelMenuUITests: XCTestCase {
         let choose = menuItem("labelMenu.color.choose", "Choose color…", in: app)
         XCTAssertTrue(choose.waitForExistence(timeout: 5))
         choose.click()
-        let current = element("labelColor.current.gmail", in: app)
-        XCTAssertTrue(current.waitForExistence(timeout: 5), "the sheet has a Current line")
-        XCTAssertEqual(current.label, "Current: #6e56cf (not in this palette), no preset (list only)")
+        let remove = element("labelColor.remove", in: app)
+        XCTAssertTrue(remove.waitForExistence(timeout: 5), "the sheet has Remove color")
         let swatches = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'labelColor.gmail.'"))
         XCTAssertGreaterThan(swatches.count, 0, "the grid is there")
         for i in 0..<swatches.count {
             XCTAssertFalse(swatches.element(boundBy: i).isSelected, "no swatch is checked for an off-grid color")
         }
-        XCTAssertEqual(element("labelColor.current.mac", in: app).label, "Current: none")
     }
 }

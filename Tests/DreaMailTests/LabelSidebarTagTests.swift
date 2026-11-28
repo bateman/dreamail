@@ -80,47 +80,42 @@ final class LabelSidebarTagTests: XCTestCase {
         }
     }
 
-    // MARK: - "Current:" line
-
-    private let grid = GmailLabelPalette.swatches.map(\.background)
+    // MARK: - What a label is drawn with
 
     private func row(gmail: String? = nil, text: String? = nil, local: String? = nil) -> LabelRow {
         LabelRow(id: "a:L", accountId: "a", gmailLabelId: "L", name: "n", type: "user",
                  color: local, gmailBackgroundColor: gmail, gmailTextColor: text)
     }
 
-    func testCurrentLineForAColorOnTheGrid() {
-        XCTAssertEqual(LabelCurrentColor.gmail(row(gmail: "#16a766", text: "#ffffff")),
-                       "Current: #16a766, text #ffffff, no preset (list only)")
+    func testAColorOnTheGridIsDrawnAsGmailSentIt() {
+        XCTAssertEqual(row(gmail: "#16a766", text: "#ffffff").displayColors,
+                       LabelColors(background: "#16a766", text: "#ffffff"))
     }
 
-    func testCurrentLineForAColorOffTheGrid() {
+    func testAColorOffTheGridIsDrawnAsGmailSentIt() {
         // In Gmail's 102, not among the 64 swatches.
-        XCTAssertFalse(grid.contains("#4986e7"))
-        XCTAssertEqual(LabelCurrentColor.gmail(row(gmail: "#4986E7", text: "#000000")),
-                       "Current: #4986e7, text #000000 (not in this palette), no preset (list only)")
-        XCTAssertEqual(LabelCurrentColor.gmail(row(gmail: "#4986e7")),
-                       "Current: #4986e7 (not in this palette), no preset (list only)")
+        XCTAssertFalse(GmailLabelPalette.swatches.map(\.background).contains("#4986e7"))
+        XCTAssertEqual(row(gmail: "#4986e7", text: "#000000").displayColors,
+                       LabelColors(background: "#4986e7", text: "#000000"))
+        XCTAssertEqual(row(gmail: "#4986e7").displayColors.background, "#4986e7")
     }
 
-    func testCurrentLineWithoutAColor() {
-        XCTAssertEqual(LabelCurrentColor.gmail(row()), "Current: no color, no preset (list only)")
-        XCTAssertEqual(LabelCurrentColor.local(row(), palette: ["#EB5757"]), "Current: none")
+    func testWithoutAColorNothingIsDrawn() {
+        XCTAssertEqual(row().displayColors, .none)
     }
 
-    func testCurrentLineForALocalPick() {
-        let mac = ["#EB5757", "#F2994A"]
-        XCTAssertEqual(LabelCurrentColor.local(row(local: "#eb5757"), palette: mac), "Current: #eb5757")
-        XCTAssertEqual(LabelCurrentColor.local(row(local: "#123456"), palette: mac),
-                       "Current: #123456 (not in this palette)")
+    /// The Mac-only column is not read: it neither draws nor hides Gmail's color.
+    func testALocalPickIsNotDrawn() {
+        XCTAssertEqual(row(local: "#eb5757").displayColors, .none)
+        XCTAssertEqual(row(gmail: "#16a766", text: "#ffffff", local: "#123456").displayColors,
+                       LabelColors(background: "#16a766", text: "#ffffff"))
     }
 
-    /// Every documented background gets a line that names it.
-    func testCurrentLineNamesEveryDocumentedColor() {
+    /// Every documented background is drawn with itself.
+    func testEveryDocumentedColorIsDrawnWithItsBackground() {
         for hex in palette {
-            let line = LabelCurrentColor.gmail(row(gmail: hex))
-            XCTAssertTrue(line.hasPrefix("Current: \(hex)"), line)
-            XCTAssertEqual(line.contains("(not in this palette)"), !grid.contains(hex), hex)
+            XCTAssertEqual(LabelRGB.normalizedHex(row(gmail: hex).displayColors.background),
+                           LabelRGB.normalizedHex(hex), hex)
         }
     }
 }
