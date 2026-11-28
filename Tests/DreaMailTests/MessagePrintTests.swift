@@ -1,0 +1,96 @@
+import XCTest
+
+/// "Print" from a message's "More" menu (`MessagePrint`): the header Gmail
+/// prints, escaped; the body the pane shows; the pane's CSP.
+final class MessagePrintTests: XCTestCase {
+    private let utc = TimeZone(identifier: "UTC")!
+    /// 2025-11-27 15:04 UTC, a Thursday.
+    private let date = Date(timeIntervalSince1970: 1_764_255_840)
+
+    func testDateIsGmailsPrintFormat() {
+        XCTAssertEqual(MessagePrint.dateText(date, timeZone: utc), "Thu, Nov 27, 2025 at 3:04 PM")
+    }
+
+    func testHeaderShowsSubjectSenderRecipientsAndDate() {
+        let header = MessagePrint.headerHTML(
+            subject: "Plans", from: "Ann <ann@example.com>", to: "you@example.com",
+            cc: "bob@example.com", date: date, timeZone: utc)
+        XCTAssertTrue(header.contains(">Plans</div>"))
+        XCTAssertTrue(header.contains("Ann &lt;ann@example.com&gt;"))
+        XCTAssertTrue(header.contains("To: you@example.com"))
+        XCTAssertTrue(header.contains("Cc: bob@example.com"))
+        XCTAssertTrue(header.contains("Thu, Nov 27, 2025 at 3:04 PM"))
+        let order = ["Plans", "Ann", "To:", "Cc:"].map { header.range(of: $0)!.lowerBound }
+        XCTAssertEqual(order, order.sorted(), "subject, sender, To, Cc")
+    }
+
+    func testHeaderLeavesOutEmptyCcAndNamesAMissingSubject() {
+        let header = MessagePrint.headerHTML(subject: "  ", from: "ann@example.com",
+                                             to: "you@example.com", cc: "", date: date)
+        XCTAssertFalse(header.contains("Cc:"))
+        XCTAssertTrue(header.contains("(no subject)"))
+    }
+
+    /// HTML in a subject or a sender name is printed as text.
+    func testHeaderValuesAreEscaped() {
+        let header = MessagePrint.headerHTML(
+            subject: "<img src=\"https://tracker.example.com/p.gif\"> & <b>hi</b>",
+            from: "\"<script>x</script>\" <ann@example.com>",
+            to: "<i>you</i>@example.com", cc: "\"q\" <c@example.com>", date: date)
+        XCTAssertFalse(header.contains("<img"))
+        XCTAssertFalse(header.contains("<b>"))
+        XCTAssertFalse(header.contains("<script"))
+        XCTAssertFalse(header.contains("<i>"))
+        XCTAssertTrue(header.contains("&lt;img src=&quot;https://tracker.example.com/p.gif&quot;&gt; &amp; &lt;b&gt;hi&lt;/b&gt;"))
+        XCTAssertTrue(header.contains("&quot;&lt;script&gt;x&lt;/script&gt;&quot; &lt;ann@example.com&gt;"))
+    }
+
+    func testBodyFollowsThePane() {
+        XCTAssertEqual(MessagePrint.body(pgp: nil, showPlainText: false, html: "<p>x</p>", text: "x"),
+                       .html("<p>x</p>"))
+        XCTAssertEqual(MessagePrint.body(pgp: .original, showPlainText: false, html: "<p>x</p>", text: "x"),
+                       .html("<p>x</p>"))
+        XCTAssertEqual(MessagePrint.body(pgp: nil, showPlainText: true, html: "<p>x</p>", text: "x"),
+                       .text("x"), "Show plain text")
+        XCTAssertEqual(MessagePrint.body(pgp: nil, showPlainText: true, html: "<p>x</p>", text: ""),
+                       .html("<p>x</p>"), "no text to show: the pane keeps the HTML")
+        XCTAssertEqual(MessagePrint.body(pgp: nil, showPlainText: false, html: nil, text: "plain"),
+                       .text("plain"))
+        XCTAssertEqual(MessagePrint.body(pgp: nil, showPlainText: false, html: "", text: "plain"),
+                       .text("plain"))
+    }
+
+    /// OpenPGP: the decrypted or signed text, or the notice; never the armor.
+    func testPGPReplacementIsPrintedInsteadOfTheBody() {
+        let armor = "-----BEGIN PGP MESSAGE-----"
+        XCTAssertEqual(MessagePrint.body(pgp: .text("secret plans"), showPlainText: false,
+                                         html: "<p>\(armor)</p>", text: armor),
+                       .text("secret plans"))
+        XCTAssertEqual(MessagePrint.body(pgp: .notice(.noSecretKey), showPlainText: false,
+                                         html: "<p>\(armor)</p>", text: armor),
+                       .text(PGPBodyNotice.noSecretKey.text))
+    }
+
+    func testPlainTextBodyIsEscaped() {
+        let doc = MessagePrint.document(header: "", body: .text("<b>a</b> & b"), allowRemoteImages: false)
+        XCTAssertTrue(doc.contains("&lt;b&gt;a&lt;/b&gt; &amp; b"))
+        XCTAssertFalse(doc.contains("<b>a</b>"))
+    }
+
+    /// The pane's trusted wrapper: CSP first, ahead of any message markup,
+    /// and the variant the card's remote-content decision gives.
+    func testDocumentUsesThePanesCSP() {
+        let body = MessagePrint.Body.html("<img src=\"https://images.example.com/a.png\">")
+        let blocked = MessagePrint.document(header: "<div>H</div>", body: body, allowRemoteImages: false)
+        let blockedMeta = HTMLBodyCSP.metaTag(allowRemoteImages: false)
+        XCTAssertTrue(blocked.hasPrefix("<html><head>\(blockedMeta)"))
+        XCTAssertFalse(blocked.contains("img-src data: cid: https:"),
+                       "blocked images stay blocked for printing")
+        let headerAt = blocked.range(of: "<div>H</div>")!.lowerBound
+        let bodyAt = blocked.range(of: "<img")!.lowerBound
+        XCTAssertLessThan(headerAt, bodyAt, "the header comes before the body")
+
+        let allowed = MessagePrint.document(header: "", body: body, allowRemoteImages: true)
+        XCTAssertTrue(allowed.hasPrefix("<html><head>\(HTMLBodyCSP.metaTag(allowRemoteImages: true))"))
+    }
+}
