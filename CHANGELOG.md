@@ -7,6 +7,14 @@ minor versions may still change behavior.
 
 ## [Unreleased]
 
+- **Menus show their icons; one search field beside the view title.** The
+  right-click menu of a conversation and the "⋮" menu of an open message
+  now draw an icon next to every item. The top-bar search field is a
+  single rounded field (no second border around it) and stays right after
+  the view title whether or not a conversation is open; the results panel
+  opens under it. The collapsed sidebar no longer shows a search icon
+  (`/` still focuses the field). (#126)
+
 - **New OpenPGP library releases are integrated by a manual workflow.**
   *Integrate dreamail-openpgp* (Actions, run by hand) moves the app to the
   newest release of the library, or to the one given, and refuses
